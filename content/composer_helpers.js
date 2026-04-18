@@ -1,0 +1,412 @@
+(function () {
+  const root = typeof globalThis !== "undefined" ? globalThis : window;
+  root.PWM = root.PWM || {};
+
+  const BLOCK_TAGS = new Set(["DIV", "P", "LI", "PRE", "BLOCKQUOTE"]);
+
+  function normalizeComposerText(value) {
+    return String(value || "")
+      .replace(/\r\n?/g, "\n")
+      .replace(/\u00a0/g, " ")
+      .replace(/[\u200B-\u200D\uFEFF]/g, "");
+  }
+
+  function isTextArea(el) {
+    return !!el && el.tagName === "TEXTAREA";
+  }
+
+  function isContentEditable(el) {
+    return !!el && !isTextArea(el) && !!el.isContentEditable;
+  }
+
+  function isBlockElement(node) {
+    return (
+      !!node &&
+      node.nodeType === Node.ELEMENT_NODE &&
+      BLOCK_TAGS.has(node.tagName)
+    );
+  }
+
+  function hasRenderableContent(node) {
+    if (!node) return false;
+
+    if (node.nodeType === Node.TEXT_NODE) {
+      return !!normalizeComposerText(node.nodeValue);
+    }
+
+    if (node.nodeType !== Node.ELEMENT_NODE) return false;
+    if (node.tagName === "BR") return true;
+
+    return Array.from(node.childNodes).some(hasRenderableContent);
+  }
+
+  function hasFollowingRenderableSibling(node) {
+    let sibling = node?.nextSibling || null;
+
+    while (sibling) {
+      if (hasRenderableContent(sibling)) return true;
+      sibling = sibling.nextSibling;
+    }
+
+    return false;
+  }
+
+  function appendNewline(parts) {
+    if (!parts.length) return;
+
+    const last = parts[parts.length - 1];
+    if (last === "\n" || String(last).endsWith("\n")) return;
+
+    parts.push("\n");
+  }
+
+  function serializeComposerNode(node, parts, rootNode) {
+    if (!node) return;
+
+    if (node.nodeType === Node.TEXT_NODE) {
+      const text = normalizeComposerText(node.nodeValue);
+      if (text) parts.push(text);
+      return;
+    }
+
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+
+    if (node.tagName === "BR") {
+      parts.push("\n");
+      return;
+    }
+
+    for (const child of node.childNodes) {
+      serializeComposerNode(child, parts, rootNode);
+    }
+
+    if (node !== rootNode && isBlockElement(node) && hasFollowingRenderableSibling(node)) {
+      appendNewline(parts);
+    }
+  }
+
+  function readContentEditableText(el) {
+    const parts = [];
+
+    for (const child of el.childNodes) {
+      serializeComposerNode(child, parts, el);
+    }
+
+    return normalizeComposerText(parts.join(""));
+  }
+
+  function getInputText(el) {
+    if (!el) return "";
+    if (isTextArea(el)) return normalizeComposerText(el.value);
+    if (isContentEditable(el)) return readContentEditableText(el);
+    return "";
+  }
+
+  function lookupValueSetter(el) {
+    let proto = el;
+
+    while (proto) {
+      const descriptor = Object.getOwnPropertyDescriptor(proto, "value");
+      if (descriptor && typeof descriptor.set === "function") {
+        return descriptor.set;
+      }
+      proto = Object.getPrototypeOf(proto);
+    }
+
+    return null;
+  }
+
+  function dispatchInput(el, data, inputType) {
+    let event;
+
+    try {
+      event = new InputEvent("input", {
+        bubbles: true,
+        composed: true,
+        data: data == null ? null : String(data),
+        inputType: inputType || "insertText"
+      });
+    } catch {
+      event = new Event("input", { bubbles: true, composed: true });
+    }
+
+    el.dispatchEvent(event);
+  }
+
+  function setTextareaValue(el, value, options = {}) {
+    const nextValue = normalizeComposerText(value);
+    const setter = lookupValueSetter(el);
+
+    if (setter) {
+      setter.call(el, nextValue);
+    } else {
+      el.value = nextValue;
+    }
+
+    if (Number.isFinite(options.caretOffset)) {
+      const caret = Math.max(0, Math.min(options.caretOffset, nextValue.length));
+      el.setSelectionRange(caret, caret);
+    }
+
+    dispatchInput(el, nextValue, "insertReplacementText");
+    el.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+  }
+
+  function textToFragment(text) {
+    const fragment = document.createDocumentFragment();
+    const normalized = normalizeComposerText(text);
+    const parts = normalized.split("\n");
+
+    parts.forEach((part, index) => {
+      if (index > 0) {
+        fragment.appendChild(document.createElement("br"));
+      }
+
+      if (part) {
+        fragment.appendChild(document.createTextNode(part));
+      }
+    });
+
+    if (!fragment.childNodes.length) {
+      fragment.appendChild(document.createTextNode(""));
+    }
+
+    return fragment;
+  }
+
+  function textToBlockFragment(text) {
+    const fragment = document.createDocumentFragment();
+    const normalized = normalizeComposerText(text);
+    const lines = normalized.split("\n");
+
+    lines.forEach((line) => {
+      const block = document.createElement("div");
+
+      if (line) {
+        block.appendChild(document.createTextNode(line));
+      } else {
+        block.appendChild(document.createElement("br"));
+      }
+
+      fragment.appendChild(block);
+    });
+
+    if (!fragment.childNodes.length) {
+      const block = document.createElement("div");
+      block.appendChild(document.createElement("br"));
+      fragment.appendChild(block);
+    }
+
+    return fragment;
+  }
+
+  function placeCaretAtEnd(el) {
+    if (!isContentEditable(el)) return;
+
+    const selection = window.getSelection();
+    if (!selection) return;
+
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+
+  function placeCaretAtOffset(el, offset) {
+    if (!isContentEditable(el)) return;
+
+    const selection = window.getSelection();
+    if (!selection) return;
+
+    const targetOffset = Math.max(0, Math.min(Number(offset) || 0, getInputText(el).length));
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_ALL, {
+      acceptNode(node) {
+        if (node.nodeType === Node.TEXT_NODE) return NodeFilter.FILTER_ACCEPT;
+        if (node.nodeType === Node.ELEMENT_NODE && node.tagName === "BR") {
+          return NodeFilter.FILTER_ACCEPT;
+        }
+        return NodeFilter.FILTER_SKIP;
+      }
+    });
+
+    const range = document.createRange();
+    let seen = 0;
+    let current;
+
+    while ((current = walker.nextNode())) {
+      if (current.nodeType === Node.TEXT_NODE) {
+        const length = normalizeComposerText(current.nodeValue).length;
+
+        if (seen + length >= targetOffset) {
+          range.setStart(current, targetOffset - seen);
+          range.collapse(true);
+          selection.removeAllRanges();
+          selection.addRange(range);
+          return;
+        }
+
+        seen += length;
+        continue;
+      }
+
+      if (current.nodeType === Node.ELEMENT_NODE && current.tagName === "BR") {
+        if (seen >= targetOffset) {
+          const parent = current.parentNode;
+          const index = Array.prototype.indexOf.call(parent.childNodes, current);
+          range.setStart(parent, index);
+          range.collapse(true);
+          selection.removeAllRanges();
+          selection.addRange(range);
+          return;
+        }
+
+        seen += 1;
+
+        if (seen >= targetOffset) {
+          const parent = current.parentNode;
+          const index = Array.prototype.indexOf.call(parent.childNodes, current);
+          range.setStart(parent, index + 1);
+          range.collapse(true);
+          selection.removeAllRanges();
+          selection.addRange(range);
+          return;
+        }
+      }
+    }
+
+    placeCaretAtEnd(el);
+  }
+
+  function rewriteContentEditable(el, value, options = {}) {
+    const normalized = normalizeComposerText(value);
+    const fragment =
+      options.strategy === "blocks" ? textToBlockFragment(normalized) : textToFragment(normalized);
+
+    el.focus();
+    el.replaceChildren();
+    el.appendChild(fragment);
+
+    if (Number.isFinite(options.caretOffset)) {
+      placeCaretAtOffset(el, options.caretOffset);
+    } else {
+      placeCaretAtEnd(el);
+    }
+
+    dispatchInput(el, normalized, "insertReplacementText");
+  }
+
+  function setInputText(el, value, options = {}) {
+    if (!el) return;
+
+    if (isTextArea(el)) {
+      setTextareaValue(el, value, options);
+      return;
+    }
+
+    if (isContentEditable(el)) {
+      rewriteContentEditable(el, value, {
+        ...options,
+        strategy: "br"
+      });
+    }
+  }
+
+  function forceRewriteInputText(el, value, options = {}) {
+    if (!el) return;
+
+    if (isTextArea(el)) {
+      setTextareaValue(el, value, options);
+      return;
+    }
+
+    if (isContentEditable(el)) {
+      rewriteContentEditable(el, value, {
+        ...options,
+        strategy: "blocks"
+      });
+    }
+  }
+
+  function rangeTextLength(fragment) {
+    const wrapper = document.createElement("div");
+    wrapper.appendChild(fragment);
+    return readContentEditableText(wrapper).length;
+  }
+
+  function getSelectionOffsets(el) {
+    const text = getInputText(el);
+
+    if (isTextArea(el)) {
+      return {
+        start: el.selectionStart ?? text.length,
+        end: el.selectionEnd ?? text.length
+      };
+    }
+
+    if (!isContentEditable(el)) {
+      return {
+        start: text.length,
+        end: text.length
+      };
+    }
+
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) {
+      return {
+        start: text.length,
+        end: text.length
+      };
+    }
+
+    const range = selection.getRangeAt(0);
+    if (!el.contains(range.startContainer) || !el.contains(range.endContainer)) {
+      return {
+        start: text.length,
+        end: text.length
+      };
+    }
+
+    const startRange = document.createRange();
+    startRange.selectNodeContents(el);
+    startRange.setEnd(range.startContainer, range.startOffset);
+
+    const endRange = document.createRange();
+    endRange.selectNodeContents(el);
+    endRange.setEnd(range.endContainer, range.endOffset);
+
+    return {
+      start: rangeTextLength(startRange.cloneContents()),
+      end: rangeTextLength(endRange.cloneContents())
+    };
+  }
+
+  function spliceSelectionText(currentText, selection, insertedText) {
+    const current = normalizeComposerText(currentText);
+    const next = normalizeComposerText(insertedText);
+    const start = Math.max(0, Math.min(selection?.start ?? current.length, current.length));
+    const end = Math.max(start, Math.min(selection?.end ?? current.length, current.length));
+
+    return {
+      text: current.slice(0, start) + next + current.slice(end),
+      caretOffset: start + next.length
+    };
+  }
+
+  root.PWM.ComposerHelpers = {
+    normalizeComposerText,
+    isTextArea,
+    isContentEditable,
+    getInputText,
+    getSelectionOffsets,
+    spliceSelectionText,
+    textToFragment,
+    textToBlockFragment,
+    setInputText,
+    forceRewriteInputText
+  };
+
+  if (typeof module !== "undefined" && module.exports) {
+    module.exports = root.PWM.ComposerHelpers;
+  }
+})();
