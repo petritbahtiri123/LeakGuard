@@ -39,6 +39,7 @@
     "button[data-testid*='send']",
     "button[aria-label*='send' i]"
   ];
+  const PLACEHOLDER_TOKEN_REGEX = /\[[A-Z0-9_]+_\d+\]/g;
 
   const detector = new Detector();
   const manager = new PlaceholderManager();
@@ -90,6 +91,13 @@
     const snapshot = collectComposerDebugSnapshot(input, expected, writeText);
     console.groupCollapsed(`[PWM] ${label}`);
     console.log(snapshot);
+    console.groupEnd();
+  }
+
+  function debugReveal(label, payload) {
+    if (!isDebugEnabled()) return;
+    console.groupCollapsed(`[PWM] ${label}`);
+    console.log(payload);
     console.groupEnd();
   }
 
@@ -882,7 +890,14 @@
 
   async function lookupRawByPlaceholder(placeholder) {
     const local = manager.getRaw(placeholder);
-    if (local) return local;
+    if (local) {
+      debugReveal("reveal:lookup", {
+        placeholder,
+        source: "content-manager",
+        found: true
+      });
+      return local;
+    }
 
     const response = await chrome.runtime.sendMessage({
       type: "PWM_GET_RAW_BY_PLACEHOLDER",
@@ -890,7 +905,13 @@
       placeholder
     });
 
-    return response?.ok ? response.raw : null;
+    const raw = response?.ok ? response.raw : null;
+    debugReveal("reveal:lookup", {
+      placeholder,
+      source: "background-session",
+      found: !!raw
+    });
+    return raw;
   }
 
   function createSecretSpan(placeholder) {
@@ -901,6 +922,11 @@
     span.title = "Click to reveal locally for 8 seconds";
 
     span.addEventListener("click", async () => {
+      debugReveal("reveal:click", {
+        placeholder,
+        connected: span.isConnected
+      });
+
       if (span.classList.contains("is-revealed")) {
         span.classList.remove("is-revealed");
         span.textContent = placeholder;
@@ -908,7 +934,13 @@
       }
 
       const raw = await lookupRawByPlaceholder(placeholder);
-      if (!raw) return;
+      if (!raw) {
+        debugReveal("reveal:missing-raw", {
+          placeholder
+        });
+        span.title = "Placeholder is not available in this local session";
+        return;
+      }
 
       span.classList.add("is-revealed");
       span.textContent = raw;
@@ -919,6 +951,10 @@
           span.textContent = placeholder;
         }
       }, 8000);
+
+      debugReveal("reveal:success", {
+        placeholder
+      });
     });
 
     return span;
@@ -933,16 +969,58 @@
     );
   }
 
+  function tokenizePlaceholderText(text) {
+    const input = String(text || "");
+    const segments = [];
+    let lastIndex = 0;
+    let match;
+    const regex = new RegExp(PLACEHOLDER_TOKEN_REGEX.source, "g");
+
+    while ((match = regex.exec(input)) !== null) {
+      const placeholder = match[0];
+
+      if (match.index > lastIndex) {
+        segments.push({
+          type: "text",
+          value: input.slice(lastIndex, match.index)
+        });
+      }
+
+      segments.push({
+        type: "secret",
+        placeholder
+      });
+
+      lastIndex = match.index + placeholder.length;
+    }
+
+    if (lastIndex < input.length) {
+      segments.push({
+        type: "text",
+        value: input.slice(lastIndex)
+      });
+    }
+
+    return segments.length ? segments : [{ type: "text", value: input }];
+  }
+
   function hydrateTextNode(node) {
     const text = node.nodeValue;
-    if (!text || !/\[[A-Z0-9_]+_\d+\]/.test(text)) return;
+    if (!text || !PLACEHOLDER_TOKEN_REGEX.test(text)) return;
+    PLACEHOLDER_TOKEN_REGEX.lastIndex = 0;
     if (shouldSkipHydration(node)) return;
 
     const parent = node.parentElement;
     if (!parent) return;
 
-    const segments = manager.segmentText(text);
+    const segments = tokenizePlaceholderText(text);
     if (segments.length === 1 && segments[0].type === "text") return;
+
+    debugReveal("rehydrate:text-node", {
+      text,
+      parentTag: parent.tagName,
+      segments
+    });
 
     const fragment = document.createDocumentFragment();
 
@@ -970,9 +1048,10 @@
 
     while (walker.nextNode()) {
       const node = walker.currentNode;
-      if (node.nodeValue && /\[[A-Z0-9_]+_\d+\]/.test(node.nodeValue)) {
+      if (node.nodeValue && PLACEHOLDER_TOKEN_REGEX.test(node.nodeValue)) {
         nodes.push(node);
       }
+      PLACEHOLDER_TOKEN_REGEX.lastIndex = 0;
     }
 
     nodes.forEach(hydrateTextNode);
@@ -983,10 +1062,22 @@
 
     rehydrateObserver = new MutationObserver((mutations) => {
       for (const mutation of mutations) {
+        if (mutation.type === "characterData" && mutation.target?.nodeType === Node.TEXT_NODE) {
+          debugReveal("rehydrate:character-data", {
+            text: mutation.target.nodeValue || "",
+            parentTag: mutation.target.parentElement?.tagName || null
+          });
+          hydrateTextNode(mutation.target);
+        }
+
         mutation.addedNodes.forEach((node) => {
           if (node.nodeType === Node.TEXT_NODE) {
             hydrateTextNode(node);
           } else if (node.nodeType === Node.ELEMENT_NODE) {
+            debugReveal("rehydrate:element-added", {
+              tagName: node.tagName,
+              textPreview: (node.textContent || "").slice(0, 200)
+            });
             rehydrateTree(node);
           }
         });
@@ -995,6 +1086,7 @@
 
     rehydrateObserver.observe(document.body, {
       childList: true,
+      characterData: true,
       subtree: true
     });
 
@@ -1008,7 +1100,7 @@
     await initState();
     rehydrateTree(document.body);
     refreshBadgeFromCurrentInput();
-    setBadge("New chat session detected");
+    setBadge("Chat route changed");
     hideBadgeSoon(1400);
   }
 
