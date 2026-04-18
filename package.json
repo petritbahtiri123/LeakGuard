@@ -1,0 +1,9 @@
+{
+  "name": "portable-work-memory",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first secret redaction engine for LLM chat UIs",
+  "scripts": {
+    "test": "node tests/detector.test.js"
+  }
+}

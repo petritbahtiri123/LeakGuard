@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "Portable Work Memory",
+  "version": "0.1.0",
+  "description": "Local-only secret redaction layer for ChatGPT prompts.",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://chat.openai.com/*"
+  ],
+  "background": {
+    "service_worker": "background/service_worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*"
+      ],
+      "js": [
+        "shared/entropy.js",
+        "shared/patterns.js",
+        "shared/detector.js",
+        "shared/placeholders.js",
+        "shared/redactor.js",
+        "content/content.js"
+      ],
+      "css": ["content/overlay.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
