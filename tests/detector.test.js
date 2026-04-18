@@ -8,23 +8,120 @@ require(path.join(__dirname, "../shared/detector.js"));
 require(path.join(__dirname, "../shared/placeholders.js"));
 require(path.join(__dirname, "../shared/redactor.js"));
 
-const { Detector, PlaceholderManager, Redactor } = globalThis.PWM;
+const { Detector, PlaceholderManager, Redactor, PATTERNS } = globalThis.PWM;
 
 const fixtures = JSON.parse(
   fs.readFileSync(path.join(__dirname, "fixtures.json"), "utf8")
 );
 
+const NEW_PATTERN_NAMES = [
+  "openssh_private_key_block",
+  "aws_session_token_assignment",
+  "azure_storage_account_key_assignment",
+  "slack_webhook",
+  "discord_webhook",
+  "gitlab_pat",
+  "stripe_secret_key",
+  "google_service_account_private_key",
+  "basic_auth_header",
+  "azure_servicebus_connection_string",
+  "npm_token",
+  "docker_auth_config",
+  "cookie_session_token"
+];
+
+const NEGATIVE_CASES = [
+  {
+    name: "openssh private key example marker",
+    text:
+      "-----BEGIN OPENSSH PRIVATE KEY-----\nexample-placeholder-key-material\n-----END OPENSSH PRIVATE KEY-----",
+    expectsNoFindings: true
+  },
+  {
+    name: "aws session token replace me",
+    text: "AWS_SESSION_TOKEN=replace_me",
+    expectsNoFindings: true
+  },
+  {
+    name: "azure storage account key example",
+    text: 'AZURE_STORAGE_ACCOUNT_KEY="exampleStorageKeyMaterialShouldStayVisible1234567890=="',
+    expectsNoFindings: true
+  },
+  {
+    name: "slack webhook sample path",
+    text: "Use this sample https://hooks.slack.com/services/TEXAMPLE1/BEXAMPLE2/exampleWebhookToken for docs.",
+    expectsNoFindings: true
+  },
+  {
+    name: "discord webhook example token",
+    text: "Sample URL https://discord.com/api/webhooks/123456789012345678/exampleWebhookToken",
+    expectsNoFindings: true
+  },
+  {
+    name: "gitlab pat example token",
+    text: "glpat-example-placeholder-token-value should not trigger in docs.",
+    expectsNoFindings: true
+  },
+  {
+    name: "stripe publishable key",
+    text: "Frontend key pk_test_51Nn3ExamplePublishableKey0000 is safe to expose.",
+    expectsNoFindings: true
+  },
+  {
+    name: "google service account private key example block",
+    text:
+      '{"private_key":"-----BEGIN PRIVATE KEY-----\\nexample-placeholder\\n-----END PRIVATE KEY-----\\n"}',
+    expectsNoFindings: true
+  },
+  {
+    name: "basic auth prose only",
+    text: "Document the Authorization: Basic header format for onboarding.",
+    expectsNoFindings: true
+  },
+  {
+    name: "azure service bus sample docs",
+    text:
+      "Sample Endpoint=sb://example.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=example-shared-access-key",
+    expectsNoFindings: true
+  },
+  {
+    name: "npm token placeholder",
+    text: "NPM_TOKEN=replace_me",
+    expectsNoFindings: true
+  },
+  {
+    name: "docker auth placeholder",
+    text: '{"auths":{"https://index.docker.io/v1/":{"auth":"replace_me"}}}',
+    expectsNoFindings: true
+  },
+  {
+    name: "cookie preference",
+    text: "Cookie: theme=dark; locale=en-US",
+    expectsNoFindings: true
+  }
+];
+
 function assertSinglePlaceholderType(resultText, expectedType) {
-  const matches = resultText.match(/\[[A-Z0-9_]+_\d+\]/g) || [];
+  const regex = new RegExp(`\\[${expectedType}_\\d+\\]`, "g");
+  const matches = resultText.match(regex) || [];
   assert.ok(matches.length >= 1, `expected placeholder for ${expectedType}`);
 }
 
-function testFixtures() {
+function testPatternMetadata() {
+  for (const name of NEW_PATTERN_NAMES) {
+    const pattern = PATTERNS.find((entry) => entry.name === name);
+    assert.ok(pattern, `${name}: missing pattern definition`);
+    assert.ok(pattern.type, `${name}: missing type`);
+    assert.ok(pattern.category, `${name}: missing category`);
+    assert.ok(Number.isFinite(pattern.baseScore), `${name}: missing base score`);
+    assert.ok(pattern.suppressionNotes, `${name}: missing false-positive suppression notes`);
+  }
+}
+
+function testPositiveFixtures() {
   const detector = new Detector();
   const manager = new PlaceholderManager();
   const redactor = new Redactor(manager);
-
-  let passed = 0;
 
   for (const fixture of fixtures) {
     const findings = detector.scan(fixture.text);
@@ -39,10 +136,18 @@ function testFixtures() {
 
     const result = redactor.redact(fixture.text, findings);
     assertSinglePlaceholderType(result.redactedText, fixture.expectsType);
-    passed += 1;
   }
+}
 
-  return passed;
+function testNegativeExamples() {
+  const detector = new Detector();
+
+  for (const fixture of NEGATIVE_CASES) {
+    const findings = detector.scan(fixture.text);
+    if (fixture.expectsNoFindings) {
+      assert.strictEqual(findings.length, 0, `${fixture.name}: expected suppression`);
+    }
+  }
 }
 
 function testRepeatedSameSecret() {
@@ -109,12 +214,42 @@ function testMultilineRepeatedPassword() {
   );
 }
 
+function testRegressionMixedMultilineSecrets() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const text = [
+    'AWS_SESSION_TOKEN="IQoJb3JpZ2luX2VjEMv//////////wEaCXVzLWVhc3QtMSJGMEQCIBxY2FzZVN0dWR5VG9rZW4wMTIz"',
+    "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2NvdW50IjoiZGV2In0.c2lnbmF0dXJlX3ZhbHVlXzEyMzQ1",
+    "https://hooks.slack.com/services/T12345678/B12345678/abcdefghijklmnopqrstuvwxyzABCD"
+  ].join("\n");
+
+  const findings = detector.scan(text);
+  const result = redactor.redact(text, findings);
+
+  assert.ok(findings.length >= 3, "expected multiline mixed secrets to produce multiple findings");
+  assert.ok(/\[TOKEN_1\]/.test(result.redactedText), "expected first token placeholder");
+  assert.ok(/\[TOKEN_2\]/.test(result.redactedText), "expected second token placeholder");
+  assert.ok(/\[WEBHOOK_1\]/.test(result.redactedText), "expected webhook placeholder");
+}
+
 function testDbUriWithCredentials() {
   const detector = new Detector();
   const text = "Use mysql://reporter:S3cure!Pass@db.internal:3306/analytics for local debug.";
   const findings = detector.scan(text);
 
   assert.ok(findings.some((finding) => finding.type === "DB_URI"), "db uri should be detected");
+}
+
+function testGenericBasicAuthUrl() {
+  const detector = new Detector();
+  const text = "Internal URL https://deploy:Sup3rSecr3t!@ops.internal.corp/path is used by the deploy agent.";
+  const findings = detector.scan(text);
+
+  assert.ok(
+    findings.some((finding) => finding.type === "CONNECTION_STRING"),
+    "basic auth URL should be detected via generic credential URI rule"
+  );
 }
 
 function testOverlapBearerVsJwt() {
@@ -165,19 +300,73 @@ function testExampleValuesDoNotTrigger() {
   }
 }
 
+function testSuppressionFamilies() {
+  const detector = new Detector();
+  const cases = [
+    {
+      name: "webhook family suppression",
+      text:
+        "Slack docs example https://hooks.slack.com/services/TEXAMPLE1/BEXAMPLE2/exampleWebhookToken and sample https://discord.com/api/webhooks/123456789012345678/exampleWebhookToken should stay visible."
+    },
+    {
+      name: "connection string family suppression",
+      text:
+        "Example Endpoint=sb://example.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=example-shared-access-key and DefaultEndpointsProtocol=https;AccountName=example;AccountKey=replace_me;EndpointSuffix=core.windows.net"
+    },
+    {
+      name: "assignment family suppression",
+      text:
+        'SESSION_SECRET="replace_me"\nAZURE_STORAGE_ACCOUNT_KEY="exampleStorageKeyMaterialShouldStayVisible1234567890=="\nNPM_TOKEN=changeme'
+    }
+  ];
+
+  for (const fixture of cases) {
+    const findings = detector.scan(fixture.text);
+    assert.strictEqual(findings.length, 0, `${fixture.name}: expected all examples to suppress`);
+  }
+}
+
+function testRevealStateLookupUnit() {
+  const manager = new PlaceholderManager();
+  const placeholder = manager.getPlaceholder("real-session-value-1234567890", "TOKEN");
+  const state = manager.exportState();
+
+  const freshManager = new PlaceholderManager();
+  freshManager.setState(state);
+
+  assert.strictEqual(
+    freshManager.getRaw(placeholder),
+    "real-session-value-1234567890",
+    "placeholder lookup should survive state rehydration"
+  );
+
+  const segments = freshManager.segmentText(`before ${placeholder} after`);
+  assert.strictEqual(segments.length, 3, "segmentation should preserve revealable placeholder runs");
+  assert.strictEqual(segments[1].type, "secret", "middle segment should be revealable");
+  assert.strictEqual(segments[1].raw, "real-session-value-1234567890");
+}
+
 function run() {
-  const fixtureCount = testFixtures();
+  testPatternMetadata();
+  testPositiveFixtures();
+  testNegativeExamples();
   testRepeatedSameSecret();
   testRepeatedDifferentSecretsSameType();
   testMultilineDifferentPasswords();
   testMultilineRepeatedPassword();
+  testRegressionMixedMultilineSecrets();
   testDbUriWithCredentials();
+  testGenericBasicAuthUrl();
   testOverlapBearerVsJwt();
   testOverlappingMatchesPreferSinglePemBlock();
   testAllowlist();
   testExampleValuesDoNotTrigger();
+  testSuppressionFamilies();
+  testRevealStateLookupUnit();
 
-  console.log(`PASS ${fixtureCount} fixtures + targeted detector cases`);
+  console.log(
+    `PASS ${fixtures.length} positive fixtures + metadata, suppression, multiline, and reveal regressions`
+  );
 }
 
 run();

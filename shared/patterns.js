@@ -12,6 +12,16 @@
         /-----BEGIN(?: RSA| EC| OPENSSH| DSA| PGP)? PRIVATE KEY-----[\s\S]+?-----END(?: RSA| EC| OPENSSH| DSA| PGP)? PRIVATE KEY-----/g
     },
     {
+      name: "openssh_private_key_block",
+      type: "PRIVATE_KEY",
+      category: "private_key",
+      baseScore: 100,
+      suppressionNotes:
+        "Suppress example fixtures and placeholders; overlap resolution should prefer this over generic PEM blocks.",
+      regex:
+        /-----BEGIN OPENSSH PRIVATE KEY-----[\s\S]+?-----END OPENSSH PRIVATE KEY-----/g
+    },
+    {
       name: "pem_block",
       type: "PEM_BLOCK",
       category: "private_key",
@@ -29,11 +39,33 @@
       captureGroups: [1, 2, 3]
     },
     {
+      name: "aws_session_token_assignment",
+      type: "TOKEN",
+      category: "credential",
+      baseScore: 90,
+      suppressionNotes:
+        "Only match explicit AWS_SESSION_TOKEN assignments and still suppress placeholder/example values through shared suppression.",
+      regex:
+        /\bAWS_SESSION_TOKEN\b\s*[:=]\s*(?:"([^"\r\n]{24,})"|'([^'\r\n]{24,})'|([A-Za-z0-9\/+=]{24,}))\b/g,
+      captureGroups: [1, 2, 3]
+    },
+    {
       name: "aws_access_key",
       type: "AWS_KEY",
       category: "credential",
       baseScore: 92,
       regex: /\bAKIA[0-9A-Z]{16}\b/g
+    },
+    {
+      name: "azure_storage_account_key_assignment",
+      type: "SECRET",
+      category: "credential",
+      baseScore: 88,
+      suppressionNotes:
+        "Require Azure storage account key names plus base64-shaped values to avoid ordinary account labels or sample text.",
+      regex:
+        /\b(?:AZURE_STORAGE_ACCOUNT_KEY|AzureWebJobsStorage__accountKey|account[_-]?key)\b\s*[:=]\s*(?:"([A-Za-z0-9+/]{40,}={0,2})"|'([A-Za-z0-9+/]{40,}={0,2})'|([A-Za-z0-9+/]{40,}={0,2}))/g,
+      captureGroups: [1, 2, 3]
     },
     {
       name: "openai_api_key",
@@ -59,11 +91,40 @@
         /\b(?:xox(?:a|b|p|r|s)-[A-Za-z0-9-]{10,200}|xapp-[A-Za-z0-9-]{20,200})\b/g
     },
     {
+      name: "slack_webhook",
+      type: "WEBHOOK",
+      category: "webhook",
+      baseScore: 96,
+      suppressionNotes:
+        "Only detect canonical Slack webhook hosts and paths; shared example-host suppression removes docs placeholders.",
+      regex:
+        /\bhttps:\/\/hooks\.slack\.com\/services\/T[A-Z0-9]{8,12}\/B[A-Z0-9]{8,12}\/[A-Za-z0-9]{20,64}\b/g
+    },
+    {
+      name: "discord_webhook",
+      type: "WEBHOOK",
+      category: "webhook",
+      baseScore: 95,
+      suppressionNotes:
+        "Require Discord webhook host plus numeric id and token path so generic Discord links do not match.",
+      regex:
+        /\bhttps:\/\/discord(?:app)?\.com\/api\/webhooks\/\d{16,20}\/[A-Za-z0-9._-]{32,}\b/g
+    },
+    {
       name: "github_token",
       type: "TOKEN",
       category: "credential",
       baseScore: 88,
       regex: /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,255}\b/g
+    },
+    {
+      name: "gitlab_pat",
+      type: "TOKEN",
+      category: "credential",
+      baseScore: 89,
+      suppressionNotes:
+        "GitLab personal access tokens have a stable glpat- prefix; shared suppression handles example placeholders.",
+      regex: /\bglpat-[A-Za-z0-9_-]{20,255}\b/g
     },
     {
       name: "jwt_token",
@@ -73,6 +134,15 @@
       regex: /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9._-]{8,}\.[A-Za-z0-9._-]{8,}\b/g
     },
     {
+      name: "stripe_secret_key",
+      type: "API_KEY",
+      category: "credential",
+      baseScore: 93,
+      suppressionNotes:
+        "Stripe secret keys need sk_live_ or sk_test_ prefixes; publishable pk_ keys stay out of this rule.",
+      regex: /\bsk_(?:live|test)_[0-9A-Za-z]{16,}\b/g
+    },
+    {
       name: "google_api_key",
       type: "API_KEY",
       category: "credential",
@@ -80,11 +150,32 @@
       regex: /\bAIza[0-9A-Za-z\-_]{35}\b/g
     },
     {
+      name: "google_service_account_private_key",
+      type: "PRIVATE_KEY",
+      category: "private_key",
+      baseScore: 99,
+      suppressionNotes:
+        "Anchor on the service-account private_key field with escaped PEM content so ordinary JSON keys do not trigger.",
+      regex:
+        /"private_key"\s*:\s*"(-{5}BEGIN PRIVATE KEY-{5}\\n[\s\S]+?\\n-{5}END PRIVATE KEY-{5}\\n?)"/g,
+      captureGroups: [1]
+    },
+    {
       name: "bearer_token",
       type: "TOKEN",
       category: "credential",
       baseScore: 78,
       regex: /\bBearer\s+[A-Za-z0-9._~+\/=-]{20,}\b/g
+    },
+    {
+      name: "basic_auth_header",
+      type: "TOKEN",
+      category: "credential",
+      baseScore: 83,
+      suppressionNotes:
+        "Only match Authorization: Basic headers with realistic base64 payload length to avoid ordinary prose about basic auth.",
+      regex: /\bAuthorization\s*:\s*Basic\s+([A-Za-z0-9+/]{16,}={0,2})\b/gi,
+      captureGroups: [1]
     },
     {
       name: "db_uri",
@@ -103,12 +194,54 @@
         /\b[a-z][a-z0-9+.-]*:\/\/[^\/\s:@'"`<>]+:[^@\s'"`<>]+@[^\s'"`<>]+/gi
     },
     {
+      name: "azure_servicebus_connection_string",
+      type: "CONNECTION_STRING",
+      category: "connection_string",
+      baseScore: 93,
+      suppressionNotes:
+        "Require Azure Service Bus key fields in semicolon-delimited form; sample/example strings are suppressed centrally.",
+      regex:
+        /\bEndpoint=sb:\/\/[^\s;]+;SharedAccessKeyName=[^;\s]+;SharedAccessKey=[^;\s]+(?:;EntityPath=[^;\s]+)?/gi
+    },
+    {
       name: "azure_storage_connection_string",
       type: "CONNECTION_STRING",
       category: "connection_string",
       baseScore: 92,
+      suppressionNotes:
+        "Require the full Azure storage connection-string shape including AccountKey and EndpointSuffix.",
       regex:
         /\bDefaultEndpointsProtocol=https;AccountName=[^;]+;AccountKey=[^;]+;EndpointSuffix=[^\s;]+/g
+    },
+    {
+      name: "npm_token",
+      type: "TOKEN",
+      category: "credential",
+      baseScore: 91,
+      suppressionNotes:
+        "npm tokens use a stable npm_ prefix; shared suppression drops replace-me and example placeholders.",
+      regex: /\bnpm_[A-Za-z0-9]{36}\b/g
+    },
+    {
+      name: "docker_auth_config",
+      type: "TOKEN",
+      category: "credential",
+      baseScore: 82,
+      suppressionNotes:
+        "Only match Docker config auth fields and redact the base64 credential value, not the surrounding JSON structure.",
+      regex: /"auth"\s*:\s*"([A-Za-z0-9+/]{20,}={0,2})"/g,
+      captureGroups: [1]
+    },
+    {
+      name: "cookie_session_token",
+      type: "TOKEN",
+      category: "session",
+      baseScore: 81,
+      suppressionNotes:
+        "Restrict to cookie/session/auth names with long token-like values to avoid ordinary cookie preferences or short ids.",
+      regex:
+        /\b(?:Set-Cookie|Cookie)\s*:\s*[^;\n\r]*(?:session(?:id|_id)?|connect\.sid|sid|auth(?:entication)?(?:[_-]?token)?|access(?:[_-]?token)?|refresh(?:[_-]?token)?)=([A-Za-z0-9%._~-]{16,})/gi,
+      captureGroups: [1]
     }
   ];
 
@@ -126,6 +259,15 @@
     "auth",
     "bearer",
     "private key",
+    "session",
+    "session token",
+    "sessionid",
+    "cookie",
+    "webhook",
+    "stripe",
+    "gitlab",
+    "azure",
+    "storage account key",
     "pem",
     "openai",
     "slack",
@@ -156,10 +298,10 @@
   ];
 
   const ASSIGNMENT_KEY_REGEX =
-    /([A-Za-z_][A-Za-z0-9_.-]{0,80}(?:aws[_-]?secret[_-]?access[_-]?key|pass(?:word)?|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|auth(?:orization)?|connection(?:string|_string)?))/i;
+    /([A-Za-z_][A-Za-z0-9_.-]{0,80}(?:aws[_-]?secret[_-]?access[_-]?key|aws[_-]?session[_-]?token|pass(?:word)?|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|private[_-]?key|account[_-]?key|cookie|session(?:[_-]?id|[_-]?secret)?|auth(?:orization)?|connection(?:string|_string)?|webhook))/i;
 
   const ASSIGNMENT_REGEX =
-    /([A-Za-z_][A-Za-z0-9_.-]{0,80}(?:aws[_-]?secret[_-]?access[_-]?key|pass(?:word)?|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|auth(?:orization)?|connection(?:string|_string)?))\s*[:=]\s*((?:"[^"\n\r]*")|(?:'[^'\n\r]*')|(?:`[^`\n\r]*`)|(?:[^\s,;]+))/gim;
+    /([A-Za-z_][A-Za-z0-9_.-]{0,80}(?:aws[_-]?secret[_-]?access[_-]?key|aws[_-]?session[_-]?token|pass(?:word)?|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|private[_-]?key|account[_-]?key|cookie|session(?:[_-]?id|[_-]?secret)?|auth(?:orization)?|connection(?:string|_string)?|webhook))\s*[:=]\s*((?:"[^"\n\r]*")|(?:'[^'\n\r]*')|(?:`[^`\n\r]*`)|(?:[^\s,;]+))/gim;
 
   const SUPPRESSED_VALUE_REGEX = [
     /^\$\{[^}]+\}$/,
@@ -200,19 +342,32 @@
 
   const PLACEHOLDER_TYPE_MAP = {
     pem_private_key_block: "PRIVATE_KEY",
+    openssh_private_key_block: "PRIVATE_KEY",
     pem_block: "PEM_BLOCK",
     aws_secret_access_key_assignment: "AWS_SECRET_KEY",
+    aws_session_token_assignment: "TOKEN",
     aws_access_key: "AWS_KEY",
+    azure_storage_account_key_assignment: "SECRET",
     openai_api_key: "API_KEY",
     github_token: "TOKEN",
     github_pat: "TOKEN",
     slack_token: "TOKEN",
+    slack_webhook: "WEBHOOK",
+    discord_webhook: "WEBHOOK",
+    gitlab_pat: "TOKEN",
     jwt_token: "TOKEN",
+    stripe_secret_key: "API_KEY",
     bearer_token: "TOKEN",
     google_api_key: "API_KEY",
+    google_service_account_private_key: "PRIVATE_KEY",
+    basic_auth_header: "TOKEN",
     db_uri: "DB_URI",
     generic_uri_credentials: "CONNECTION_STRING",
+    azure_servicebus_connection_string: "CONNECTION_STRING",
     azure_storage_connection_string: "CONNECTION_STRING",
+    npm_token: "TOKEN",
+    docker_auth_config: "TOKEN",
+    cookie_session_token: "TOKEN",
     generic_assignment_secret: "SECRET",
     entropy_secret: "SECRET"
   };
