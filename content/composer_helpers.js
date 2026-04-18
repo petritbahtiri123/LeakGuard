@@ -2,13 +2,17 @@
   const root = typeof globalThis !== "undefined" ? globalThis : window;
   root.PWM = root.PWM || {};
 
-  const BLOCK_TAGS = new Set(["DIV", "P", "LI", "PRE", "BLOCKQUOTE"]);
-
   function normalizeComposerText(value) {
     return String(value || "")
       .replace(/\r\n?/g, "\n")
       .replace(/\u00a0/g, " ")
       .replace(/[\u200B-\u200D\uFEFF]/g, "");
+  }
+
+  function normalizeEditorInnerText(value) {
+    return normalizeComposerText(value)
+      .replace(/\n{3,}/g, "\n\n")
+      .replace(/([^\n])\n\n([^\n])/g, "$1\n$2");
   }
 
   function isTextArea(el) {
@@ -19,80 +23,8 @@
     return !!el && !isTextArea(el) && !!el.isContentEditable;
   }
 
-  function isBlockElement(node) {
-    return (
-      !!node &&
-      node.nodeType === Node.ELEMENT_NODE &&
-      BLOCK_TAGS.has(node.tagName)
-    );
-  }
-
-  function hasRenderableContent(node) {
-    if (!node) return false;
-
-    if (node.nodeType === Node.TEXT_NODE) {
-      return !!normalizeComposerText(node.nodeValue);
-    }
-
-    if (node.nodeType !== Node.ELEMENT_NODE) return false;
-    if (node.tagName === "BR") return true;
-
-    return Array.from(node.childNodes).some(hasRenderableContent);
-  }
-
-  function hasFollowingRenderableSibling(node) {
-    let sibling = node?.nextSibling || null;
-
-    while (sibling) {
-      if (hasRenderableContent(sibling)) return true;
-      sibling = sibling.nextSibling;
-    }
-
-    return false;
-  }
-
-  function appendNewline(parts) {
-    if (!parts.length) return;
-
-    const last = parts[parts.length - 1];
-    if (last === "\n" || String(last).endsWith("\n")) return;
-
-    parts.push("\n");
-  }
-
-  function serializeComposerNode(node, parts, rootNode) {
-    if (!node) return;
-
-    if (node.nodeType === Node.TEXT_NODE) {
-      const text = normalizeComposerText(node.nodeValue);
-      if (text) parts.push(text);
-      return;
-    }
-
-    if (node.nodeType !== Node.ELEMENT_NODE) return;
-
-    if (node.tagName === "BR") {
-      parts.push("\n");
-      return;
-    }
-
-    for (const child of node.childNodes) {
-      serializeComposerNode(child, parts, rootNode);
-    }
-
-    if (node !== rootNode && isBlockElement(node) && hasFollowingRenderableSibling(node)) {
-      appendNewline(parts);
-    }
-  }
-
   function readContentEditableText(el) {
-    const parts = [];
-
-    for (const child of el.childNodes) {
-      serializeComposerNode(child, parts, el);
-    }
-
-    return normalizeComposerText(parts.join(""));
+    return normalizeEditorInnerText(el?.innerText || "");
   }
 
   function getInputText(el) {
@@ -150,28 +82,6 @@
 
     dispatchInput(el, nextValue, "insertReplacementText");
     el.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
-  }
-
-  function textToFragment(text) {
-    const fragment = document.createDocumentFragment();
-    const normalized = normalizeComposerText(text);
-    const parts = normalized.split("\n");
-
-    parts.forEach((part, index) => {
-      if (index > 0) {
-        fragment.appendChild(document.createElement("br"));
-      }
-
-      if (part) {
-        fragment.appendChild(document.createTextNode(part));
-      }
-    });
-
-    if (!fragment.childNodes.length) {
-      fragment.appendChild(document.createTextNode(""));
-    }
-
-    return fragment;
   }
 
   function textToBlockFragment(text) {
@@ -280,8 +190,7 @@
 
   function rewriteContentEditable(el, value, options = {}) {
     const normalized = normalizeComposerText(value);
-    const fragment =
-      options.strategy === "blocks" ? textToBlockFragment(normalized) : textToFragment(normalized);
+    const fragment = textToBlockFragment(normalized);
 
     el.focus();
     el.replaceChildren();
@@ -305,10 +214,7 @@
     }
 
     if (isContentEditable(el)) {
-      rewriteContentEditable(el, value, {
-        ...options,
-        strategy: "br"
-      });
+      rewriteContentEditable(el, value, options);
     }
   }
 
@@ -321,10 +227,7 @@
     }
 
     if (isContentEditable(el)) {
-      rewriteContentEditable(el, value, {
-        ...options,
-        strategy: "blocks"
-      });
+      rewriteContentEditable(el, value, options);
     }
   }
 
@@ -395,12 +298,12 @@
 
   root.PWM.ComposerHelpers = {
     normalizeComposerText,
+    normalizeEditorInnerText,
     isTextArea,
     isContentEditable,
     getInputText,
     getSelectionOffsets,
     spliceSelectionText,
-    textToFragment,
     textToBlockFragment,
     setInputText,
     forceRewriteInputText
