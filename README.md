@@ -45,6 +45,13 @@ The project is split into engine logic and browser delivery logic.
 - `sandbox/composer-harness.html`
   Local manual harness for isolating textarea/contenteditable insertion behavior outside ChatGPT.
 
+## Security Guarantee (MVP)
+
+- Secrets are redacted before leaving the browser
+- No external API calls
+- No cloud processing
+- Local-only placeholder mapping
+
 ## Security Model
 
 Current design assumptions:
