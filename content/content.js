@@ -2,6 +2,7 @@
   const { Detector, PlaceholderManager, Redactor, ComposerHelpers } = globalThis.PWM;
   const {
     normalizeComposerText,
+    normalizeEditorInnerText,
     isTextArea,
     isContentEditable,
     getInputText,
@@ -51,6 +52,73 @@
   let inputScanTimer = 0;
   let rehydrateObserver = null;
   let modalOpen = false;
+
+  function isDebugEnabled() {
+    try {
+      return (
+        window.localStorage?.getItem("pwm:debug") === "1" ||
+        window.sessionStorage?.getItem("pwm:debug") === "1"
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  function collectComposerDebugSnapshot(input, expected, writeText) {
+    const actual = getInputText(input);
+    const normalizedExpected = normalizeComposerText(expected);
+    const normalizedWriteText =
+      typeof writeText === "string" ? normalizeComposerText(writeText) : normalizedExpected;
+    const rawInnerText = normalizeComposerText(input?.innerText || "");
+    const normalizedInnerText = normalizeEditorInnerText(input?.innerText || "");
+    return {
+      expected: normalizedExpected,
+      writeText: normalizedWriteText,
+      getInputText: actual,
+      innerText: rawInnerText,
+      normalizedInnerText,
+      textContent: normalizeComposerText(input?.textContent || ""),
+      innerHTML: input?.innerHTML || "",
+      actualMatchesExpected: actual === normalizedExpected,
+      actualMatchesWriteText: actual === normalizedWriteText
+    };
+  }
+
+  function debugLogSnapshot(label, input, expected, writeText) {
+    if (!isDebugEnabled()) return;
+
+    const snapshot = collectComposerDebugSnapshot(input, expected, writeText);
+    console.groupCollapsed(`[PWM] ${label}`);
+    console.log(snapshot);
+    console.groupEnd();
+  }
+
+  function collectFailureDetails(input, expectedText, actualText, context) {
+    return {
+      context,
+      expected: normalizeComposerText(expectedText),
+      actual: normalizeComposerText(actualText),
+      innerText: normalizeComposerText(input?.innerText || ""),
+      normalizedInnerText: normalizeEditorInnerText(input?.innerText || ""),
+      textContent: normalizeComposerText(input?.textContent || ""),
+      innerHTML: input?.innerHTML || ""
+    };
+  }
+
+  function logFailureDetails(details) {
+    console.group("[PWM] rewrite verification failure");
+    console.log(details);
+    console.groupEnd();
+  }
+
+  function buildComposerWritePlan(input, text) {
+    const canonical = normalizeComposerText(text);
+    return {
+      canonical,
+      writeText: canonical,
+      acceptableTexts: [canonical]
+    };
+  }
 
   function ensureBadge() {
     if (badgeEl) return badgeEl;
@@ -462,7 +530,7 @@
     return { ok: true };
   }
 
-  async function showRewriteFailure(context) {
+  async function showRewriteFailure(context, details) {
     const message =
       context === "submit"
         ? "Portable Work Memory blocked send because it could not verify the rewritten composer content."
@@ -470,34 +538,43 @@
 
     setBadge("Rewrite mismatch blocked");
     hideBadgeSoon(3200);
+    if (details) {
+      logFailureDetails(details);
+    }
+
+    const lines = [
+      `${message} Nothing was submitted. Review the composer and retry.`
+    ];
+
+    if (details) {
+      lines.push("");
+      lines.push(`Expected: ${JSON.stringify(details.expected)}`);
+      lines.push(`Actual: ${JSON.stringify(details.actual)}`);
+      lines.push(`innerText: ${JSON.stringify(details.innerText)}`);
+      lines.push(`normalizedInnerText: ${JSON.stringify(details.normalizedInnerText)}`);
+      lines.push(`textContent: ${JSON.stringify(details.textContent)}`);
+    }
 
     await showMessageModal(
       "Rewrite verification failed",
-      `${message} Nothing was submitted. Review the composer and retry.`
+      lines.join("\n")
     );
   }
 
   async function applyComposerText(input, expectedText, options = {}) {
-    const expected = normalizeComposerText(expectedText);
+    const plan = buildComposerWritePlan(input, expectedText);
+    const expected = plan.canonical;
+    const writeText = plan.writeText;
 
-    setInputText(input, expected, {
+    setInputText(input, writeText, {
       caretOffset: options.caretOffset
     });
     await settleComposer();
+    debugLogSnapshot("rewrite:block-rewrite", input, expected, writeText);
 
     let actual = getInputText(input);
-    if (actual === expected) {
-      return { ok: true, actual, strategy: "primary" };
-    }
-
-    forceRewriteInputText(input, expected, {
-      caretOffset: options.caretOffset
-    });
-    await settleComposer();
-
-    actual = getInputText(input);
-    if (actual === expected) {
-      return { ok: true, actual, strategy: "fallback" };
+    if (plan.acceptableTexts.includes(actual)) {
+      return { ok: true, actual, strategy: "block-rewrite" };
     }
 
     if (typeof options.restoreText === "string") {
@@ -511,6 +588,13 @@
       ok: false,
       actual
     };
+  }
+
+  function ensureExactComposerState(input, expectedText) {
+    const plan = buildComposerWritePlan(input, expectedText);
+    const actual = getInputText(input);
+    debugLogSnapshot("pre-submit-check", input, plan.canonical, plan.writeText);
+    return plan.acceptableTexts.includes(actual);
   }
 
   function findSendButton(contextEl) {
@@ -547,7 +631,10 @@
     });
 
     if (!applied.ok) {
-      await showRewriteFailure(context);
+      await showRewriteFailure(
+        context,
+        collectFailureDetails(input, next.text, applied.actual, context)
+      );
       refreshBadgeFromCurrentInput();
       return false;
     }
@@ -664,7 +751,10 @@
     });
 
     if (!applied.ok) {
-      await showRewriteFailure("submit");
+      await showRewriteFailure(
+        "submit",
+        collectFailureDetails(input, result.redactedText, applied.actual, "submit")
+      );
       refreshBadgeFromCurrentInput();
       return;
     }
@@ -674,6 +764,15 @@
     setBadge(`Redacted ${findings.length} item(s)`);
     hideBadgeSoon();
     refreshBadgeFromCurrentInput();
+
+    if (!ensureExactComposerState(input, result.redactedText)) {
+      await showRewriteFailure(
+        "submit",
+        collectFailureDetails(input, result.redactedText, getInputText(input), "submit")
+      );
+      refreshBadgeFromCurrentInput();
+      return;
+    }
 
     bypassNextSubmit = true;
     queueMicrotask(() => submitComposer(form, input));
@@ -729,7 +828,10 @@
     });
 
     if (!applied.ok) {
-      await showRewriteFailure("submit");
+      await showRewriteFailure(
+        "submit",
+        collectFailureDetails(input, result.redactedText, applied.actual, "submit")
+      );
       refreshBadgeFromCurrentInput();
       return;
     }
@@ -741,6 +843,14 @@
     refreshBadgeFromCurrentInput();
 
     queueMicrotask(() => {
+      if (!ensureExactComposerState(input, result.redactedText)) {
+        showRewriteFailure(
+          "submit",
+          collectFailureDetails(input, result.redactedText, getInputText(input), "submit")
+        ).catch(console.error);
+        refreshBadgeFromCurrentInput();
+        return;
+      }
       const button = findSendButton(input);
       if (button) button.click();
     });

@@ -184,6 +184,28 @@ Verify that manually:
 
 If the request payload contains the raw value, treat that as a blocker.
 
+## Live Debug Flag
+
+For browser-path debugging in the real ChatGPT page, enable console snapshots:
+
+```js
+localStorage.setItem("pwm:debug", "1")
+```
+
+Then reload the ChatGPT tab and retry the redaction flow. The extension will log, for each rewrite strategy:
+
+- expected redacted text
+- `getInputText(input)`
+- `input.innerText`
+- `input.textContent`
+- `input.innerHTML`
+
+Disable it with:
+
+```js
+localStorage.removeItem("pwm:debug")
+```
+
 ## Browser Rewrite Guardrails
 
 The browser layer now applies these guardrails:
@@ -194,6 +216,15 @@ The browser layer now applies these guardrails:
 - a stronger fallback rewrite path runs before failure is declared
 - if both rewrites fail verification, the original composer text is restored and submission stays blocked
 - runtime placeholder consistency is checked before insertion
+
+## Placeholder Reveal Rules
+
+The MVP distinction is:
+
+- the input/composer must contain literal placeholders only after redaction
+- raw values must not remain in the composer after redaction is accepted
+- assistant-response placeholders are revealable only when the current session map knows that placeholder
+- placeholder reveal is local-only and temporary; it does not change the composer payload
 
 ## Development Notes
 
