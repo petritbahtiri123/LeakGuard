@@ -10,8 +10,24 @@
 
   const scenarios = {
     multiline: 'db_password = "AlphaPass_111!!"\nbackup_password = "BetaPass_222!!"',
+    "aws-multiline": [
+      'AWS_ACCESS_KEY_ID="AKIAZQ1X2C3V4B5N6M7P"',
+      'AWS_SECRET_ACCESS_KEY="qY7bN2pL8rT4mV1xC6dF9gH3jK5sW0zA2uD7eL4p"',
+      'AWS_SESSION_TOKEN="IQoJb3JpZ2luX2VjEMv//////////wEaCXVzLWVhc3QtMSJGMEQCIBxY2FzZVN0dWR5VG9rZW4wMTIz"'
+    ].join("\n"),
+    "jwt-bearer":
+      "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2NvdW50IjoiZGV2In0.c2lnbmF0dXJlX3ZhbHVlXzEyMzQ1",
+    "pem-block":
+      "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAA=\n-----END OPENSSH PRIVATE KEY-----",
+    webhook:
+      "alerts:\nhttps://hooks.slack.com/services/T12345678/B12345678/abcdefghijklmnopqrstuvwxyzABCD\nhttps://discord.com/api/webhooks/123456789012345678/abcdefghijklmnopqrstuvwxyzABCDEFGHijklmnopQRSTUVWX",
     "same-value": 'db_password = "RepeatPass_111!!"\nbackup_password = "RepeatPass_111!!"',
     "different-values": 'db_password = "AlphaPass_111!!"\nbackup_password = "BetaPass_222!!"',
+    "mixed-multiline": [
+      'SESSION_SECRET="ProdSessionSecretValue_Alpha987654321"',
+      "Authorization: Basic ZGVwbG95OlN1cGVyU2VjcmV0IQ==",
+      '{"auths":{"https://index.docker.io/v1/":{"auth":"dXNlcjpTdXBlclNlY3JldDEyMw=="}}}'
+    ].join("\n"),
     "safe-text": "Write a short project update about the browser rewrite harness."
   };
 
@@ -20,6 +36,9 @@
   const expectedOutput = document.getElementById("expected-output");
   const statusTextArea = document.getElementById("status-textarea");
   const statusEditable = document.getElementById("status-editable");
+  const revealOutput = document.getElementById("reveal-output");
+  const revealStatus = document.getElementById("reveal-status");
+  const revealManager = new PlaceholderManager();
 
   function makeRedaction(text) {
     const manager = new PlaceholderManager();
@@ -52,6 +71,77 @@
       `Actual:   ${JSON.stringify(result.actual)}`,
       `Findings: ${result.findings.length}`
     ].join("\n");
+  }
+
+  function renderRevealStatus(message, ok) {
+    revealStatus.className = ok ? "status-ok" : "status-fail";
+    revealStatus.textContent = message;
+  }
+
+  function buildRevealSpan(segment) {
+    const span = document.createElement("span");
+    span.className = "pwm-secret";
+    span.dataset.placeholder = segment.placeholder;
+    span.textContent = segment.placeholder;
+    span.title = "Click to reveal locally";
+    span.addEventListener("click", () => {
+      const raw = revealManager.getRaw(segment.placeholder);
+      if (!raw) {
+        span.title = "Placeholder is not available in this local session";
+        renderRevealStatus(`Unknown placeholder lookup: ${segment.placeholder}`, false);
+        return;
+      }
+
+      span.textContent = raw;
+      span.classList.add("is-revealed");
+      renderRevealStatus(`Known placeholder lookup: ${segment.placeholder}`, true);
+      window.setTimeout(() => {
+        if (!span.isConnected) return;
+        span.textContent = segment.placeholder;
+        span.classList.remove("is-revealed");
+      }, 3000);
+    });
+    return span;
+  }
+
+  function renderRevealText(text) {
+    revealOutput.replaceChildren();
+    const segments = revealManager.segmentText(text);
+    for (const segment of segments) {
+      if (segment.type === "text") {
+        revealOutput.append(document.createTextNode(segment.value));
+      } else {
+        revealOutput.append(buildRevealSpan(segment));
+      }
+    }
+  }
+
+  function loadKnownReveal() {
+    revealManager.reset();
+    const placeholder = revealManager.getPlaceholder("known-local-secret-value-12345", "TOKEN");
+    renderRevealText(`Assistant echoed ${placeholder} after route change.`);
+    renderRevealStatus(`Loaded known placeholder: ${placeholder}`, true);
+  }
+
+  function loadUnknownReveal() {
+    revealManager.reset();
+    renderRevealText("Assistant echoed [TOKEN_404] without local state.");
+    renderRevealStatus("Loaded unknown placeholder fixture", false);
+  }
+
+  function rerenderKnownReveal() {
+    const state = revealManager.exportState();
+    const placeholder = Object.keys(state.placeholderToRaw || {})[0];
+    if (!placeholder) {
+      renderRevealStatus("Load a known placeholder first.", false);
+      return;
+    }
+
+    const nextManager = new PlaceholderManager();
+    nextManager.setState(state);
+    revealManager.setState(nextManager.exportState());
+    renderRevealText(`Assistant echoed ${placeholder} again after navigation.`);
+    renderRevealStatus(`Re-rendered placeholder from saved state: ${placeholder}`, true);
   }
 
   function redactTarget(target) {
@@ -129,7 +219,16 @@
     statusEditable.className = "";
     statusTextArea.textContent = "Idle.";
     statusEditable.textContent = "Idle.";
+    revealManager.reset();
+    revealOutput.textContent = "";
+    revealStatus.className = "";
+    revealStatus.textContent = "Idle.";
   });
 
+  document.getElementById("load-known-reveal").addEventListener("click", loadKnownReveal);
+  document.getElementById("load-unknown-reveal").addEventListener("click", loadUnknownReveal);
+  document.getElementById("rerender-known-reveal").addEventListener("click", rerenderKnownReveal);
+
   setScenario(scenarios.multiline);
+  loadKnownReveal();
 })();

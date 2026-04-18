@@ -45,9 +45,12 @@
     const value = String(key || "").toLowerCase();
 
     if (value.includes("aws_secret_access_key")) return "AWS_SECRET_KEY";
+    if (value.includes("private_key") || value.includes("private-key")) return "PRIVATE_KEY";
     if (value.includes("password") || value.endsWith("pwd") || value.includes("passwd")) {
       return "PASSWORD";
     }
+    if (value.includes("webhook")) return "WEBHOOK";
+    if (value.includes("cookie") || value.includes("session")) return "TOKEN";
     if (value.includes("token") || value.includes("auth")) return "TOKEN";
     if (value.includes("access_key") || value.includes("access-key")) return "AWS_KEY";
     if (value.includes("api") && value.includes("key")) return "API_KEY";
@@ -112,6 +115,26 @@
 
   function isDbUriWithCredentials(value) {
     return /:\/\/[^\/\s:@]+:[^@\s]+@/.test(value);
+  }
+
+  function assignmentKeyScoreBoost(key, value) {
+    const normalizedKey = String(key || "").toLowerCase();
+    const normalizedValue = String(value || "");
+    let score = 0;
+
+    if (/^[A-Z0-9_]+$/.test(key || "")) score += 4;
+    if (/session(?:_id|_secret)?|cookie|token|secret|private[_-]?key|account[_-]?key/.test(normalizedKey)) {
+      score += 8;
+    }
+    if (/webhook/.test(normalizedKey)) score += 10;
+    if (/azure|storage/.test(normalizedKey)) score += 8;
+    if (/stripe/.test(normalizedKey) && /^sk_(?:live|test)_/.test(normalizedValue)) score += 12;
+    if (/npm/.test(normalizedKey) && /^npm_[A-Za-z0-9]{36}$/.test(normalizedValue)) score += 12;
+    if (/account[_-]?key/.test(normalizedKey) && /^[A-Za-z0-9+/]{40,}={0,2}$/.test(normalizedValue)) {
+      score += 10;
+    }
+
+    return score;
   }
 
   function extractPatternValue(match, pattern) {
@@ -304,6 +327,7 @@
         if (placeholderType === "PASSWORD") score += 6;
         if (placeholderType === "AWS_SECRET_KEY") score += 20;
         if (placeholderType === "API_KEY" && /\bsk-/.test(normalized)) score += 10;
+        score += assignmentKeyScoreBoost(key, normalized);
 
         score += ctx;
 
