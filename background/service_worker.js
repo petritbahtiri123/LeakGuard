@@ -25,6 +25,15 @@ function newState(urlKey) {
   };
 }
 
+function hasStoredMappings(state) {
+  if (!state) return false;
+
+  return Boolean(
+    Object.keys(state.rawToPlaceholder || {}).length ||
+    Object.keys(state.placeholderToRaw || {}).length
+  );
+}
+
 async function getState(tabId) {
   if (typeof tabId !== "number") return null;
   const key = storageKey(tabId);
@@ -58,7 +67,21 @@ async function initState(tabId, url) {
   const nextUrlKey = urlKeyFrom(url);
   let state = await getState(tabId);
 
-  if (!state || state.urlKey !== nextUrlKey) {
+  if (!state) {
+    state = newState(nextUrlKey);
+    await setState(tabId, state);
+    return state;
+  }
+
+  if (state.urlKey !== nextUrlKey) {
+    if (hasStoredMappings(state)) {
+      state = await setState(tabId, {
+        ...state,
+        urlKey: nextUrlKey
+      });
+      return state;
+    }
+
     state = newState(nextUrlKey);
     await setState(tabId, state);
   }
