@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Portable Work Memory Composer Harness</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f3f5f7;
+        --panel: #ffffff;
+        --ink: #0f172a;
+        --muted: #475569;
+        --line: #cbd5e1;
+        --accent: #0f766e;
+        --warn: #b91c1c;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font: 15px/1.45 ui-sans-serif, system-ui, sans-serif;
+        color: var(--ink);
+        background: linear-gradient(180deg, #f8fafc 0%, var(--bg) 100%);
+      }
+
+      main {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 28px 20px 40px;
+      }
+
+      h1,
+      h2 {
+        margin: 0 0 10px;
+      }
+
+      p {
+        margin: 0 0 14px;
+        color: var(--muted);
+      }
+
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 18px;
+        box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+      }
+
+      .stack {
+        display: grid;
+        gap: 18px;
+      }
+
+      .scenario-grid,
+      .composer-grid {
+        display: grid;
+        gap: 18px;
+      }
+
+      .scenario-grid {
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      }
+
+      .composer-grid {
+        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      }
+
+      .controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 14px;
+      }
+
+      button {
+        border: 1px solid var(--line);
+        background: #fff;
+        color: var(--ink);
+        border-radius: 999px;
+        padding: 10px 14px;
+        font: inherit;
+        cursor: pointer;
+      }
+
+      button.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #fff;
+      }
+
+      textarea,
+      .composer {
+        width: 100%;
+        min-height: 180px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 14px;
+        font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+        background: #fff;
+        white-space: pre-wrap;
+      }
+
+      .composer {
+        outline: none;
+      }
+
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+
+      .status-ok {
+        color: var(--accent);
+      }
+
+      .status-fail {
+        color: var(--warn);
+      }
+    </style>
+  </head>
+  <body>
+    <main class="stack">
+      <section class="panel">
+        <h1>Portable Work Memory Composer Harness</h1>
+        <p>
+          Use this page to isolate browser insertion and rewrite behavior outside ChatGPT. The
+          textarea and contenteditable composer both use the same redaction engine and the same
+          composer helper layer that the extension uses.
+        </p>
+      </section>
+
+      <section class="panel">
+        <h2>Scenarios</h2>
+        <div class="scenario-grid">
+          <button data-scenario="multiline" class="primary">Multiline Secret Paste</button>
+          <button data-scenario="same-value">Same Value Twice</button>
+          <button data-scenario="different-values">Different Values Same Type</button>
+          <button data-scenario="safe-text">Normal Non-Secret Text</button>
+        </div>
+        <div class="controls">
+          <button id="redact-both" class="primary">Redact Both</button>
+          <button id="rewrite-both">Force Rewrite Both</button>
+          <button id="clear-all">Clear</button>
+        </div>
+      </section>
+
+      <section class="composer-grid">
+        <article class="panel stack">
+          <div>
+            <h2>Textarea</h2>
+            <p>Deterministic whole-value rewrite path.</p>
+          </div>
+          <textarea id="harness-textarea" spellcheck="false"></textarea>
+          <div class="controls">
+            <button data-redact-target="textarea" class="primary">Redact</button>
+            <button data-force-target="textarea">Force Rewrite</button>
+          </div>
+          <div class="stack">
+            <strong>Status</strong>
+            <pre id="status-textarea">Idle.</pre>
+          </div>
+        </article>
+
+        <article class="panel stack">
+          <div>
+            <h2>Contenteditable Composer</h2>
+            <p>Same helper layer, BR-first rewrite with block fallback available.</p>
+          </div>
+          <div
+            id="harness-editable"
+            class="composer"
+            contenteditable="true"
+            role="textbox"
+            aria-label="Harness composer"
+          ></div>
+          <div class="controls">
+            <button data-redact-target="editable" class="primary">Redact</button>
+            <button data-force-target="editable">Force Rewrite</button>
+          </div>
+          <div class="stack">
+            <strong>Status</strong>
+            <pre id="status-editable">Idle.</pre>
+          </div>
+        </article>
+      </section>
+
+      <section class="panel stack">
+        <div>
+          <h2>Expected Output</h2>
+          <p>
+            After redaction, the exact composer text should match this block. Any mismatch means
+            the insertion path is still unstable.
+          </p>
+        </div>
+        <pre id="expected-output">No scenario loaded.</pre>
+      </section>
+    </main>
+
+    <script src="../shared/entropy.js"></script>
+    <script src="../shared/patterns.js"></script>
+    <script src="../shared/detector.js"></script>
+    <script src="../shared/placeholders.js"></script>
+    <script src="../shared/redactor.js"></script>
+    <script src="../content/composer_helpers.js"></script>
+    <script src="./composer-harness.js"></script>
+  </body>
+</html>
