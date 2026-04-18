@@ -1,0 +1,42 @@
+[
+  {
+    "name": "aws access key",
+    "text": "Deploy with AWS_ACCESS_KEY_ID=AKIAZQ1X2C3V4B5N6M7P and keep it private.",
+    "expectsType": "AWS_KEY"
+  },
+  {
+    "name": "openai api key",
+    "text": "OPENAI_API_KEY=sk-proj-ABCD1234efgh5678IJKL9012mnop3456qrst7890",
+    "expectsType": "API_KEY"
+  },
+  {
+    "name": "slack token",
+    "text": "The bot token is xoxb-123456789012-123456789012-abcdefghijklmnopqrstuvwx",
+    "expectsType": "TOKEN"
+  },
+  {
+    "name": "aws secret access key assignment",
+    "text": "AWS_SECRET_ACCESS_KEY=\"qY7bN2pL8rT4mV1xC6dF9gH3jK5sW0zA2uD7eL4p\"",
+    "expectsType": "AWS_SECRET_KEY"
+  },
+  {
+    "name": "password assignment",
+    "text": "db_password = \"P@55w0rd_xYz_2026!!\"",
+    "expectsType": "PASSWORD"
+  },
+  {
+    "name": "pem private key block",
+    "text": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n-----END PRIVATE KEY-----",
+    "expectsType": "PRIVATE_KEY"
+  },
+  {
+    "name": "db uri",
+    "text": "DATABASE_URL=postgres://admin:S3curePa55!@db.internal:5432/app",
+    "expectsType": "DB_URI"
+  },
+  {
+    "name": "entropy fallback",
+    "text": "Use this temp secret: q7Qx8_nZpL2v7Q0Wm4V9Yd2R",
+    "expectsType": "SECRET"
+  }
+]

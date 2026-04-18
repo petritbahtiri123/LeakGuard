@@ -1,0 +1,116 @@
+.pwm-badge {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 2147483640;
+  background: #111827;
+  color: #fff;
+  border: 1px solid #374151;
+  border-radius: 999px;
+  padding: 8px 12px;
+  font: 12px/1.2 system-ui, sans-serif;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.25);
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 140ms ease, transform 140ms ease;
+  pointer-events: none;
+}
+
+.pwm-badge.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.pwm-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 2147483645;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pwm-modal {
+  width: min(680px, 92vw);
+  max-height: 80vh;
+  overflow: auto;
+  background: #0f172a;
+  color: #e5e7eb;
+  border: 1px solid #334155;
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+  padding: 18px;
+  font: 14px/1.45 system-ui, sans-serif;
+}
+
+.pwm-modal h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+
+.pwm-modal p {
+  margin: 0 0 12px;
+  color: #cbd5e1;
+}
+
+.pwm-findings {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.pwm-finding {
+  background: #111827;
+  border: 1px solid #374151;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.pwm-finding strong {
+  display: inline-block;
+  margin-right: 8px;
+}
+
+.pwm-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+
+.pwm-btn {
+  border: 1px solid #475569;
+  background: #1e293b;
+  color: #f8fafc;
+  border-radius: 10px;
+  padding: 9px 14px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.pwm-btn:hover {
+  filter: brightness(1.08);
+}
+
+.pwm-btn-primary {
+  background: #2563eb;
+  border-color: #2563eb;
+}
+
+.pwm-secret {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px dashed #60a5fa;
+  border-radius: 8px;
+  padding: 1px 6px;
+  background: rgba(37, 99, 235, 0.08);
+  cursor: pointer;
+  user-select: none;
+}
+
+.pwm-secret.is-revealed {
+  border-style: solid;
+  background: rgba(16, 185, 129, 0.08);
+}
