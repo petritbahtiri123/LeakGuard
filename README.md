@@ -97,13 +97,18 @@ npm test
 This currently covers:
 
 - deterministic fixture detection
+- enterprise-focused secret families across cloud, package, webhook, and session patterns
+- per-pattern suppression and example/doc false-positive cases
 - repeated same secret placeholder reuse
 - repeated different secrets of the same type
 - multiline placeholder correctness
+- multiline mixed-secret regression coverage
 - DB URIs with credentials
+- Basic auth headers and URI credentials
 - overlap behavior for bearer tokens and JWTs
 - allowlists
 - example/sample values that should not trigger
+- placeholder-state rehydration for reveal lookup
 
 ## Local Harness
 
@@ -116,7 +121,8 @@ The harness includes:
 - one `<textarea>`
 - one `contenteditable` composer
 - the same shared composer helper layer used by the extension
-- quick scenario buttons for multiline paste, repeated same value, repeated different values, and normal safe text
+- quick scenario buttons for multiline AWS credentials, JWT/Bearer, PEM/private key, webhook payloads, repeated same value, repeated different values, mixed multiline secrets, and normal safe text
+- a small reveal lab for known placeholder, unknown placeholder, and route-change re-render sanity checks
 
 Use it to confirm:
 
@@ -131,12 +137,18 @@ Run these in Chrome after loading the unpacked extension.
 1. Paste a multiline secret block into the ChatGPT composer.
 2. Choose `Redact`.
 3. Confirm the visible composer keeps each original line intact.
-4. Confirm different password values become different placeholders.
-5. Confirm repeated identical values reuse the same placeholder.
-6. Press Enter to send and confirm the extension does not submit if rewrite verification fails.
-7. Click Send instead of pressing Enter and confirm the same behavior.
-8. Start a new chat and confirm the tab/session mapping resets.
-9. Let the assistant echo a placeholder and confirm local reveal works only when the current session map knows that placeholder.
+4. Confirm multiline AWS credentials become distinct placeholders and line boundaries remain intact.
+5. Confirm JWT/Bearer input produces one token finding after overlap resolution.
+6. Confirm PEM/private key input redacts as a single block.
+7. Confirm webhook input redacts the webhook URL rather than surrounding text.
+8. Confirm different password values become different placeholders.
+9. Confirm repeated identical values reuse the same placeholder.
+10. Press Enter to send and confirm the extension does not submit if rewrite verification fails.
+11. Click Send instead of pressing Enter and confirm the same behavior.
+12. Start a new chat and confirm the tab/session mapping resets.
+13. Let the assistant echo a known placeholder and confirm local reveal works only when the current session map knows that placeholder.
+14. Let the assistant echo an unknown placeholder and confirm reveal fails gracefully without replacing it with raw text.
+15. Trigger a route change or response re-render and confirm known placeholders remain revealable from current session state only.
 
 Use these exact regression cases when testing multiline correctness:
 

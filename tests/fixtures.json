@@ -30,9 +30,84 @@
     "expectsType": "PRIVATE_KEY"
   },
   {
+    "name": "openssh private key block",
+    "text": "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAA=\n-----END OPENSSH PRIVATE KEY-----",
+    "expectsType": "PRIVATE_KEY"
+  },
+  {
     "name": "db uri",
     "text": "DATABASE_URL=postgres://admin:S3curePa55!@db.internal:5432/app",
     "expectsType": "DB_URI"
+  },
+  {
+    "name": "aws session token assignment",
+    "text": "AWS_SESSION_TOKEN=\"IQoJb3JpZ2luX2VjEMv//////////wEaCXVzLWVhc3QtMSJGMEQCIBxY2FzZVN0dWR5VG9rZW4wMTIz\"",
+    "expectsType": "TOKEN"
+  },
+  {
+    "name": "azure storage account key assignment",
+    "text": "AZURE_STORAGE_ACCOUNT_KEY=\"MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmPQ==\"",
+    "expectsType": "SECRET"
+  },
+  {
+    "name": "azure storage connection string",
+    "text": "AzureWebJobsStorage=DefaultEndpointsProtocol=https;AccountName=workmemory;AccountKey=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmPQ==;EndpointSuffix=core.windows.net",
+    "expectsType": "CONNECTION_STRING"
+  },
+  {
+    "name": "azure service bus connection string",
+    "text": "Endpoint=sb://pwm-prod.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=qwertyuiopASDFGHJKLzxcvbnm1234567890+/=;EntityPath=events",
+    "expectsType": "CONNECTION_STRING"
+  },
+  {
+    "name": "google service account private key",
+    "text": "{\"private_key\":\"-----BEGIN PRIVATE KEY-----\\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\\n-----END PRIVATE KEY-----\\n\"}",
+    "expectsType": "PRIVATE_KEY"
+  },
+  {
+    "name": "stripe secret key",
+    "text": "STRIPE_SECRET_KEY=sk_live_51NqProdSecretKeyValue9876543210ABCD",
+    "expectsType": "API_KEY"
+  },
+  {
+    "name": "slack webhook",
+    "text": "POST to https://hooks.slack.com/services/T12345678/B12345678/abcdefghijklmnopqrstuvwxyzABCD for alerts.",
+    "expectsType": "WEBHOOK"
+  },
+  {
+    "name": "discord webhook",
+    "text": "Webhook target https://discord.com/api/webhooks/123456789012345678/abcdefghijklmnopqrstuvwxyzABCDEFGHijklmnopQRSTUVWX",
+    "expectsType": "WEBHOOK"
+  },
+  {
+    "name": "gitlab pat",
+    "text": "Deploy token glpat-2nF6wYtF7bQ9xK1pL3mR5sT8uV0wX2yZaBcDeFgH",
+    "expectsType": "TOKEN"
+  },
+  {
+    "name": "npm token",
+    "text": "NPM_TOKEN=npm_1234567890abcdefghijklmnopqrstuvwxyz",
+    "expectsType": "TOKEN"
+  },
+  {
+    "name": "docker auth config",
+    "text": "{\"auths\":{\"https://index.docker.io/v1/\":{\"auth\":\"dXNlcjpTdXBlclNlY3JldDEyMw==\"}}}",
+    "expectsType": "TOKEN"
+  },
+  {
+    "name": "cookie session token",
+    "text": "Set-Cookie: sessionid=abcDEF1234567890ghIJklMNopQRstuV; Path=/; HttpOnly",
+    "expectsType": "TOKEN"
+  },
+  {
+    "name": "basic auth header",
+    "text": "Authorization: Basic ZGVwbG95OlN1cGVyU2VjcmV0IQ==",
+    "expectsType": "TOKEN"
+  },
+  {
+    "name": "session secret assignment",
+    "text": "SESSION_SECRET=\"ProdSessionSecretValue_Alpha987654321\"",
+    "expectsType": "TOKEN"
   },
   {
     "name": "entropy fallback",
