@@ -200,6 +200,14 @@ Then reload the ChatGPT tab and retry the redaction flow. The extension will log
 - `input.textContent`
 - `input.innerHTML`
 
+It will also log reveal-side events:
+
+- placeholder token seen during response rehydration
+- whether response-side hydration ran
+- whether local/background placeholder lookup succeeded
+- whether reveal click fired
+- whether ChatGPT re-rendered a hydrated node
+
 Disable it with:
 
 ```js
@@ -225,6 +233,7 @@ The MVP distinction is:
 - raw values must not remain in the composer after redaction is accepted
 - assistant-response placeholders are revealable only when the current session map knows that placeholder
 - placeholder reveal is local-only and temporary; it does not change the composer payload
+- assistant-response hydration may re-run after ChatGPT DOM churn, but composer/input content is never hydrated into raw values
 
 ## Development Notes
 
