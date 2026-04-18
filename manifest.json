@@ -23,6 +23,7 @@
         "shared/detector.js",
         "shared/placeholders.js",
         "shared/redactor.js",
+        "content/composer_helpers.js",
         "content/content.js"
       ],
       "css": ["content/overlay.css"],

@@ -1,15 +1,28 @@
 (function () {
-  const { Detector, PlaceholderManager, Redactor } = globalThis.PWM;
+  const { Detector, PlaceholderManager, Redactor, ComposerHelpers } = globalThis.PWM;
+  const {
+    normalizeComposerText,
+    isTextArea,
+    isContentEditable,
+    getInputText,
+    getSelectionOffsets,
+    spliceSelectionText,
+    setInputText,
+    forceRewriteInputText
+  } = ComposerHelpers;
 
   const COMPOSER_SELECTORS = [
     "#prompt-textarea",
     "textarea[data-testid='prompt-textarea']",
+    "textarea[placeholder*='Message' i]",
     "main form textarea",
     "form textarea",
     "main textarea",
     "[data-testid*='composer'] textarea",
+    "[data-testid*='composer'] [contenteditable='true']",
     "[contenteditable='true'][data-testid='prompt-textarea']",
     "[contenteditable='true'][role='textbox'][data-testid*='prompt']",
+    "[contenteditable='true'][role='textbox'][aria-label*='message' i]",
     "main form [contenteditable='true'][role='textbox']",
     "form [contenteditable='true'][role='textbox']",
     "main [contenteditable='true'][role='textbox']",
@@ -18,8 +31,10 @@
   ];
 
   const SEND_BUTTON_SELECTORS = [
+    "form button[data-testid='send-button']",
     "form button[data-testid*='send']",
     "form button[aria-label*='send' i]",
+    "button[data-testid='send-button']",
     "button[data-testid*='send']",
     "button[aria-label*='send' i]"
   ];
@@ -105,14 +120,6 @@
     return el.getClientRects().length > 0;
   }
 
-  function isTextArea(el) {
-    return !!el && el.tagName === "TEXTAREA";
-  }
-
-  function isContentEditable(el) {
-    return !!el && !isTextArea(el) && !!el.isContentEditable;
-  }
-
   function isEditableElement(el) {
     return (
       !!el &&
@@ -150,17 +157,19 @@
     const placeholder = el.getAttribute("placeholder") || "";
     const rect = el.getBoundingClientRect();
 
-    if (document.activeElement === el) score += 80;
+    if (document.activeElement === el) score += 100;
+    if (el.contains(document.activeElement)) score += 32;
     if (id === "prompt-textarea") score += 80;
     if (/prompt/i.test(dataTestId)) score += 60;
     if (/composer/i.test(dataTestId)) score += 45;
-    if (isTextArea(el)) score += 40;
+    if (isTextArea(el)) score += 36;
     if (isContentEditable(el)) score += 28;
-    if (el.getAttribute("role") === "textbox") score += 18;
-    if (/message|prompt|ask/i.test(ariaLabel)) score += 16;
-    if (/message|prompt|ask/i.test(placeholder)) score += 12;
-    if (el.closest("form")) score += 16;
-    if (rect.bottom > window.innerHeight * 0.45) score += 8;
+    if (el.getAttribute("role") === "textbox") score += 20;
+    if (/message|prompt|ask/i.test(ariaLabel)) score += 18;
+    if (/message|prompt|ask/i.test(placeholder)) score += 14;
+    if (el.closest("form")) score += 18;
+    if (el.closest("main")) score += 8;
+    if (rect.bottom > window.innerHeight * 0.45) score += 10;
     if (rect.height >= 36) score += 6;
 
     return score;
@@ -201,230 +210,6 @@
     }
 
     return bestScore >= 0 ? winner : null;
-  }
-
-  function normalizeTextValue(value) {
-    return String(value || "").replace(/\u00a0/g, " ");
-  }
-
-  function getInputText(el) {
-    if (!el) return "";
-    if (isTextArea(el)) return normalizeTextValue(el.value);
-    if (isContentEditable(el)) return normalizeTextValue(el.innerText || el.textContent || "");
-    return "";
-  }
-
-  function lookupValueSetter(el) {
-    let proto = el;
-
-    while (proto) {
-      const descriptor = Object.getOwnPropertyDescriptor(proto, "value");
-      if (descriptor && typeof descriptor.set === "function") {
-        return descriptor.set;
-      }
-      proto = Object.getPrototypeOf(proto);
-    }
-
-    return null;
-  }
-
-  function dispatchInput(el, data, inputType) {
-    let event;
-
-    try {
-      event = new InputEvent("input", {
-        bubbles: true,
-        composed: true,
-        data: data == null ? null : String(data),
-        inputType: inputType || "insertText"
-      });
-    } catch {
-      event = new Event("input", { bubbles: true, composed: true });
-    }
-
-    el.dispatchEvent(event);
-  }
-
-  function setTextareaValue(el, value) {
-    const setter = lookupValueSetter(el);
-
-    if (setter) {
-      setter.call(el, value);
-    } else {
-      el.value = value;
-    }
-
-    dispatchInput(el, value, "insertReplacementText");
-    el.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
-  }
-
-  function textToFragment(text) {
-    const fragment = document.createDocumentFragment();
-    const parts = String(text || "").split("\n");
-
-    parts.forEach((part, index) => {
-      if (index > 0) {
-        fragment.appendChild(document.createElement("br"));
-      }
-      if (part) {
-        fragment.appendChild(document.createTextNode(part));
-      }
-    });
-
-    if (!fragment.childNodes.length) {
-      fragment.appendChild(document.createTextNode(""));
-    }
-
-    return fragment;
-  }
-
-  function placeCaretAtEnd(el) {
-    if (!isContentEditable(el)) return;
-
-    const selection = window.getSelection();
-    if (!selection) return;
-
-    const range = document.createRange();
-    range.selectNodeContents(el);
-    range.collapse(false);
-    selection.removeAllRanges();
-    selection.addRange(range);
-  }
-
-  function setContentEditableText(el, value) {
-    el.focus();
-    const range = document.createRange();
-    range.selectNodeContents(el);
-    range.deleteContents();
-    range.insertNode(textToFragment(value));
-    placeCaretAtEnd(el);
-    dispatchInput(el, value, "insertReplacementText");
-  }
-
-  function setInputText(el, value) {
-    if (!el) return;
-
-    if (isTextArea(el)) {
-      setTextareaValue(el, value);
-      return;
-    }
-
-    if (isContentEditable(el)) {
-      setContentEditableText(el, value);
-    }
-  }
-
-  function captureSelectionState(el) {
-    if (!el) return null;
-
-    if (isTextArea(el)) {
-      return {
-        kind: "textarea",
-        start: el.selectionStart ?? el.value.length,
-        end: el.selectionEnd ?? el.value.length
-      };
-    }
-
-    if (isContentEditable(el)) {
-      const selection = window.getSelection();
-      if (!selection || selection.rangeCount === 0) return { kind: "contenteditable", range: null };
-
-      const range = selection.getRangeAt(0);
-      if (!el.contains(range.startContainer) || !el.contains(range.endContainer)) {
-        return { kind: "contenteditable", range: null };
-      }
-
-      return {
-        kind: "contenteditable",
-        range: range.cloneRange()
-      };
-    }
-
-    return null;
-  }
-
-  function restoreSelectionState(el, state) {
-    if (!el || !state) return;
-
-    if (state.kind === "textarea" && isTextArea(el)) {
-      el.focus();
-      const start = Math.min(state.start, el.value.length);
-      const end = Math.min(state.end, el.value.length);
-      el.setSelectionRange(start, end);
-      return;
-    }
-
-    if (state.kind === "contenteditable" && isContentEditable(el)) {
-      el.focus();
-      const selection = window.getSelection();
-      if (!selection) return;
-      selection.removeAllRanges();
-
-      if (state.range) {
-        selection.addRange(state.range);
-      } else {
-        placeCaretAtEnd(el);
-      }
-    }
-  }
-
-  function insertTextAtCursor(el, text) {
-    if (!el) return;
-
-    if (isTextArea(el)) {
-      const start = el.selectionStart ?? el.value.length;
-      const end = el.selectionEnd ?? el.value.length;
-
-      if (typeof el.setRangeText === "function") {
-        el.setRangeText(text, start, end, "end");
-        dispatchInput(el, text, "insertText");
-      } else {
-        const next = el.value.slice(0, start) + text + el.value.slice(end);
-        setTextareaValue(el, next);
-        const caret = start + text.length;
-        el.setSelectionRange(caret, caret);
-      }
-
-      return;
-    }
-
-    if (isContentEditable(el)) {
-      el.focus();
-      const selection = window.getSelection();
-      if (!selection) return;
-
-      let range;
-      if (selection.rangeCount > 0) {
-        range = selection.getRangeAt(0);
-      } else {
-        range = document.createRange();
-        range.selectNodeContents(el);
-        range.collapse(false);
-      }
-
-      if (!el.contains(range.startContainer) || !el.contains(range.endContainer)) {
-        range = document.createRange();
-        range.selectNodeContents(el);
-        range.collapse(false);
-      }
-
-      range.deleteContents();
-
-      const fragment = textToFragment(text);
-      const lastNode = fragment.lastChild;
-      range.insertNode(fragment);
-
-      if (lastNode) {
-        range.setStartAfter(lastNode);
-        range.collapse(true);
-        selection.removeAllRanges();
-        selection.addRange(range);
-      } else {
-        placeCaretAtEnd(el);
-      }
-
-      dispatchInput(el, text, "insertText");
-    }
   }
 
   function mask(raw) {
@@ -564,44 +349,168 @@
     });
   }
 
-  async function maybeHandlePaste(event) {
-    if (modalOpen || event.defaultPrevented) return;
-
-    const input = findComposer(event.target);
-    if (!input) return;
-
-    const pasted =
-      event.clipboardData?.getData("text/plain") || event.clipboardData?.getData("text") || "";
-
-    if (!pasted) return;
-
-    const findings = getFindings(pasted);
-    if (!findings.length) return;
-
-    event.preventDefault();
-
-    const selectionState = captureSelectionState(input);
-    const decision = await showDecisionModal(findings, "paste");
-
-    if (decision.action === "cancel") return;
-
-    restoreSelectionState(input, selectionState);
-
-    if (decision.action === "allow") {
-      insertTextAtCursor(input, pasted);
-      setBadge("Allowed once");
-      hideBadgeSoon();
-      refreshBadgeFromCurrentInput();
-      return;
+  function showMessageModal(titleText, bodyText) {
+    if (modalOpen) {
+      return Promise.resolve();
     }
 
-    const result = redactor.redact(pasted, findings);
-    insertTextAtCursor(input, result.redactedText);
-    await persistState();
+    modalOpen = true;
 
-    setBadge(`Redacted ${findings.length} item(s)`);
-    hideBadgeSoon();
-    refreshBadgeFromCurrentInput();
+    return new Promise((resolve) => {
+      const backdrop = document.createElement("div");
+      backdrop.className = "pwm-modal-backdrop";
+
+      const modal = document.createElement("div");
+      modal.className = "pwm-modal";
+      modal.setAttribute("role", "dialog");
+      modal.setAttribute("aria-modal", "true");
+      modal.tabIndex = -1;
+
+      const title = document.createElement("h2");
+      title.textContent = titleText;
+
+      const desc = document.createElement("p");
+      desc.textContent = bodyText;
+
+      const actions = document.createElement("div");
+      actions.className = "pwm-actions";
+
+      const closeBtn = document.createElement("button");
+      closeBtn.className = "pwm-btn pwm-btn-primary";
+      closeBtn.type = "button";
+      closeBtn.textContent = "Close";
+
+      const finish = () => {
+        window.removeEventListener("keydown", onKeyDown, true);
+        closeModal(backdrop);
+        resolve();
+      };
+
+      const onKeyDown = (event) => {
+        if (event.key === "Escape" || event.key === "Enter") {
+          event.preventDefault();
+          finish();
+        }
+      };
+
+      closeBtn.addEventListener("click", finish);
+      backdrop.addEventListener("click", (event) => {
+        if (event.target === backdrop) {
+          finish();
+        }
+      });
+
+      actions.append(closeBtn);
+      modal.append(title, desc, actions);
+      backdrop.appendChild(modal);
+      document.documentElement.appendChild(backdrop);
+
+      window.addEventListener("keydown", onKeyDown, true);
+      closeBtn.focus();
+    });
+  }
+
+  async function settleComposer() {
+    await new Promise((resolve) => window.requestAnimationFrame(resolve));
+    await new Promise((resolve) => window.requestAnimationFrame(resolve));
+  }
+
+  function verifyPlaceholderConsistency(result) {
+    const rawToPlaceholder = new Map();
+    const placeholderToRawByType = new Map();
+
+    for (const replacement of result?.replacements || []) {
+      if (!replacement?.placeholder || !replacement?.raw || !replacement?.type) {
+        return {
+          ok: false,
+          error: "Redaction output was incomplete."
+        };
+      }
+
+      if (!result.redactedText.includes(replacement.placeholder)) {
+        return {
+          ok: false,
+          error: "A generated placeholder was missing from the redacted text."
+        };
+      }
+
+      const previousPlaceholder = rawToPlaceholder.get(replacement.raw);
+      if (previousPlaceholder && previousPlaceholder !== replacement.placeholder) {
+        return {
+          ok: false,
+          error: "The same secret mapped to multiple placeholders."
+        };
+      }
+
+      rawToPlaceholder.set(replacement.raw, replacement.placeholder);
+
+      const typeMap =
+        placeholderToRawByType.get(replacement.type) || new Map();
+      const previousRaw = typeMap.get(replacement.placeholder);
+
+      if (previousRaw && previousRaw !== replacement.raw) {
+        return {
+          ok: false,
+          error: "Different secrets of the same type reused one placeholder."
+        };
+      }
+
+      typeMap.set(replacement.placeholder, replacement.raw);
+      placeholderToRawByType.set(replacement.type, typeMap);
+    }
+
+    return { ok: true };
+  }
+
+  async function showRewriteFailure(context) {
+    const message =
+      context === "submit"
+        ? "Portable Work Memory blocked send because it could not verify the rewritten composer content."
+        : "Portable Work Memory blocked the paste because it could not verify the rewritten composer content.";
+
+    setBadge("Rewrite mismatch blocked");
+    hideBadgeSoon(3200);
+
+    await showMessageModal(
+      "Rewrite verification failed",
+      `${message} Nothing was submitted. Review the composer and retry.`
+    );
+  }
+
+  async function applyComposerText(input, expectedText, options = {}) {
+    const expected = normalizeComposerText(expectedText);
+
+    setInputText(input, expected, {
+      caretOffset: options.caretOffset
+    });
+    await settleComposer();
+
+    let actual = getInputText(input);
+    if (actual === expected) {
+      return { ok: true, actual, strategy: "primary" };
+    }
+
+    forceRewriteInputText(input, expected, {
+      caretOffset: options.caretOffset
+    });
+    await settleComposer();
+
+    actual = getInputText(input);
+    if (actual === expected) {
+      return { ok: true, actual, strategy: "fallback" };
+    }
+
+    if (typeof options.restoreText === "string") {
+      forceRewriteInputText(input, options.restoreText, {
+        caretOffset: options.restoreCaretOffset
+      });
+      await settleComposer();
+    }
+
+    return {
+      ok: false,
+      actual
+    };
   }
 
   function findSendButton(contextEl) {
@@ -627,6 +536,80 @@
     if (button) {
       button.click();
     }
+  }
+
+  async function applyPasteDecision(input, originalText, selection, insertedText, context) {
+    const next = spliceSelectionText(originalText, selection, insertedText);
+    const applied = await applyComposerText(input, next.text, {
+      caretOffset: next.caretOffset,
+      restoreText: originalText,
+      restoreCaretOffset: selection?.end
+    });
+
+    if (!applied.ok) {
+      await showRewriteFailure(context);
+      refreshBadgeFromCurrentInput();
+      return false;
+    }
+
+    return true;
+  }
+
+  async function maybeHandlePaste(event) {
+    if (modalOpen || event.defaultPrevented) return;
+
+    const input = findComposer(event.target);
+    if (!input) return;
+
+    const pasted =
+      event.clipboardData?.getData("text/plain") || event.clipboardData?.getData("text") || "";
+
+    if (!pasted) return;
+
+    const findings = getFindings(pasted);
+    if (!findings.length) return;
+
+    const originalText = getInputText(input);
+    const selection = getSelectionOffsets(input);
+
+    event.preventDefault();
+
+    const decision = await showDecisionModal(findings, "paste");
+    if (decision.action === "cancel") return;
+
+    if (decision.action === "allow") {
+      const ok = await applyPasteDecision(input, originalText, selection, pasted, "paste");
+      if (!ok) return;
+
+      setBadge("Allowed once");
+      hideBadgeSoon();
+      refreshBadgeFromCurrentInput();
+      return;
+    }
+
+    const result = redactor.redact(pasted, findings);
+    const placeholderCheck = verifyPlaceholderConsistency(result);
+
+    if (!placeholderCheck.ok) {
+      await showMessageModal("Redaction blocked", placeholderCheck.error);
+      return;
+    }
+
+    const ok = await applyPasteDecision(
+      input,
+      originalText,
+      selection,
+      result.redactedText,
+      "paste"
+    );
+
+    if (!ok) return;
+
+    await persistState();
+
+    setBadge(`Redacted ${findings.length} item(s)`);
+    hideBadgeSoon();
+    refreshBadgeFromCurrentInput();
   }
 
   async function maybeHandleSubmit(event) {
@@ -667,7 +650,25 @@
     }
 
     const result = redactor.redact(text, findings);
-    setInputText(input, result.redactedText);
+    const placeholderCheck = verifyPlaceholderConsistency(result);
+
+    if (!placeholderCheck.ok) {
+      await showMessageModal("Redaction blocked", placeholderCheck.error);
+      return;
+    }
+
+    const applied = await applyComposerText(input, result.redactedText, {
+      caretOffset: result.redactedText.length,
+      restoreText: text,
+      restoreCaretOffset: text.length
+    });
+
+    if (!applied.ok) {
+      await showRewriteFailure("submit");
+      refreshBadgeFromCurrentInput();
+      return;
+    }
+
     await persistState();
 
     setBadge(`Redacted ${findings.length} item(s)`);
@@ -714,8 +715,27 @@
     }
 
     const result = redactor.redact(text, findings);
-    setInputText(input, result.redactedText);
+    const placeholderCheck = verifyPlaceholderConsistency(result);
+
+    if (!placeholderCheck.ok) {
+      await showMessageModal("Redaction blocked", placeholderCheck.error);
+      return;
+    }
+
+    const applied = await applyComposerText(input, result.redactedText, {
+      caretOffset: result.redactedText.length,
+      restoreText: text,
+      restoreCaretOffset: text.length
+    });
+
+    if (!applied.ok) {
+      await showRewriteFailure("submit");
+      refreshBadgeFromCurrentInput();
+      return;
+    }
+
     await persistState();
+
     setBadge(`Redacted ${findings.length} item(s)`);
     hideBadgeSoon();
     refreshBadgeFromCurrentInput();

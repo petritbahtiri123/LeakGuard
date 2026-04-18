@@ -77,6 +77,38 @@ function testRepeatedDifferentSecretsSameType() {
   assert.strictEqual(unique.length, 2, "different secrets of same type need separate placeholders");
 }
 
+function testMultilineDifferentPasswords() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const text = 'db_password = "AlphaPass_111!!"\nbackup_password = "BetaPass_222!!"';
+
+  const findings = detector.scan(text);
+  const result = redactor.redact(text, findings);
+
+  assert.strictEqual(
+    result.redactedText,
+    "db_password = [PASSWORD_1]\nbackup_password = [PASSWORD_2]",
+    "different multiline password values should keep line boundaries and get unique placeholders"
+  );
+}
+
+function testMultilineRepeatedPassword() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const text = 'db_password = "RepeatPass_111!!"\nbackup_password = "RepeatPass_111!!"';
+
+  const findings = detector.scan(text);
+  const result = redactor.redact(text, findings);
+
+  assert.strictEqual(
+    result.redactedText,
+    "db_password = [PASSWORD_1]\nbackup_password = [PASSWORD_1]",
+    "repeated multiline password values should reuse the same placeholder"
+  );
+}
+
 function testDbUriWithCredentials() {
   const detector = new Detector();
   const text = "Use mysql://reporter:S3cure!Pass@db.internal:3306/analytics for local debug.";
@@ -137,6 +169,8 @@ function run() {
   const fixtureCount = testFixtures();
   testRepeatedSameSecret();
   testRepeatedDifferentSecretsSameType();
+  testMultilineDifferentPasswords();
+  testMultilineRepeatedPassword();
   testDbUriWithCredentials();
   testOverlapBearerVsJwt();
   testOverlappingMatchesPreferSinglePemBlock();
