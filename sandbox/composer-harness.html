@@ -140,8 +140,13 @@
         <h2>Scenarios</h2>
         <div class="scenario-grid">
           <button data-scenario="multiline" class="primary">Multiline Secret Paste</button>
+          <button data-scenario="aws-multiline">AWS Multiline</button>
+          <button data-scenario="jwt-bearer">JWT and Bearer</button>
+          <button data-scenario="pem-block">PEM Block</button>
+          <button data-scenario="webhook">Webhook Payload</button>
           <button data-scenario="same-value">Same Value Twice</button>
           <button data-scenario="different-values">Different Values Same Type</button>
+          <button data-scenario="mixed-multiline">Mixed Multiline Secrets</button>
           <button data-scenario="safe-text">Normal Non-Secret Text</button>
         </div>
         <div class="controls">
@@ -200,6 +205,23 @@
           </p>
         </div>
         <pre id="expected-output">No scenario loaded.</pre>
+      </section>
+
+      <section class="panel stack">
+        <div>
+          <h2>Reveal Lab</h2>
+          <p>
+            This exercises local placeholder lookup behavior outside the extension runtime, so
+            future browser automation has a stable fixture for known and unknown reveal states.
+          </p>
+        </div>
+        <div class="controls">
+          <button id="load-known-reveal" class="primary">Load Known Placeholder</button>
+          <button id="load-unknown-reveal">Load Unknown Placeholder</button>
+          <button id="rerender-known-reveal">Re-Render Known Placeholder</button>
+        </div>
+        <div id="reveal-output" class="composer" aria-live="polite"></div>
+        <pre id="reveal-status">Idle.</pre>
       </section>
     </main>
 
