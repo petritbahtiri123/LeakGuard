@@ -236,6 +236,27 @@
       captureGroups: [1]
     },
     {
+      name: "authorization_bearer_assignment",
+      type: "TOKEN",
+      category: "credential",
+      baseScore: 90,
+      suppressionNotes:
+        "Catch AUTHORIZATION or Authorization assignments that carry Bearer values even when the token is shorter or non-JWT-like.",
+      regex:
+        /\bAUTHORIZATION\b\s*[:=]\s*(?:"Bearer\s+([^"\r\n]{8,})"|'Bearer\s+([^'\r\n]{8,})'|Bearer\s+([^\s,;]{8,}))/gi,
+      captureGroups: [1, 2, 3]
+    },
+    {
+      name: "authorization_bearer_header",
+      type: "TOKEN",
+      category: "credential",
+      baseScore: 89,
+      suppressionNotes:
+        "Catch Authorization: Bearer header values even when the token is shorter or not JWT-shaped.",
+      regex: /\bAuthorization\s*:\s*Bearer\s+([^\s,;]{8,})\b/gi,
+      captureGroups: [1]
+    },
+    {
       name: "bearer_token",
       type: "TOKEN",
       category: "credential",
@@ -447,6 +468,8 @@
     bearer_token: "TOKEN",
     google_api_key: "API_KEY",
     google_service_account_private_key: "PRIVATE_KEY",
+    authorization_bearer_assignment: "TOKEN",
+    authorization_bearer_header: "TOKEN",
     basic_auth_header: "TOKEN",
     db_uri: "DB_URI",
     generic_uri_credentials: "CONNECTION_STRING",
