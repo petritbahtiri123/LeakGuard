@@ -9,6 +9,7 @@ const backgroundSource = fs.readFileSync(
   path.join(repoRoot, "background/service_worker.js"),
   "utf8"
 );
+const revealUiSource = fs.readFileSync(path.join(repoRoot, "ui/reveal_panel.js"), "utf8");
 const harnessSource = fs.readFileSync(
   path.join(repoRoot, "sandbox/composer-harness.js"),
   "utf8"
@@ -53,8 +54,8 @@ function testSafeRevealUiExists() {
     "content script should create opaque reveal requests"
   );
   assert.ok(
-    contentSource.includes("ui/reveal_panel.html"),
-    "content script should open the secure reveal iframe"
+    contentSource.includes("window.open(") && contentSource.includes("ui/reveal_panel.html"),
+    "content script should open the secure reveal surface in a separate extension window"
   );
   assert.ok(
     backgroundSource.includes("PWM_EXTENSION_REVEAL_SECRET"),
@@ -63,6 +64,37 @@ function testSafeRevealUiExists() {
   assert.ok(
     backgroundSource.includes("isExtensionUiSender"),
     "background reveal handler should verify extension UI sender context"
+  );
+  assert.ok(
+    backgroundSource.includes("requestMatchesState"),
+    "background reveal handler should bind reveal requests to the active tab session"
+  );
+  assert.ok(
+    revealUiSource.includes("secretValueEl.textContent = response.raw"),
+    "raw secret rendering should be confined to the extension-owned reveal UI"
+  );
+}
+
+function testRevealNeverInjectsHostDomContainers() {
+  assertNotIncludes(
+    contentSource,
+    'createElement("iframe")',
+    "host page reveal must not create iframe reveal containers in the page DOM"
+  );
+  assertNotIncludes(
+    contentSource,
+    ".pwm-reveal-host",
+    "host page reveal must not maintain a reveal host subtree"
+  );
+  assertNotIncludes(
+    contentSource,
+    "document.documentElement.appendChild(host)",
+    "host page reveal must not append a reveal container to the page DOM"
+  );
+  assertNotIncludes(
+    contentSource,
+    "allow-same-origin",
+    "host page reveal must not embed extension UI with same-origin iframe permissions"
   );
 }
 
@@ -127,6 +159,7 @@ function testOnlyPwmPlaceholdersRemainCanonical() {
 function run() {
   testUnsafeContentRevealPathRemoved();
   testSafeRevealUiExists();
+  testRevealNeverInjectsHostDomContainers();
   testManifestExposeOnlyRevealUiAssets();
   testPageUiNoLongerLeaksClassificationsOrMaskedFragments();
   testOnlyPwmPlaceholdersRemainCanonical();

@@ -60,10 +60,7 @@
   let rehydrateObserver = null;
   let modalOpen = false;
   let lastTypedPromptText = "";
-  let revealHostEl = null;
-  let revealRequestId = null;
-  let revealDismissHandler = null;
-  let revealResizeHandler = null;
+  const REVEAL_WINDOW_NAME = "pwm-secure-reveal";
 
   function isDebugEnabled() {
     try {
@@ -224,7 +221,7 @@
     });
 
     if (!response?.ok || !response?.requestId) {
-      throw new Error(response?.error || "Portable Work Memory could not open the secure reveal panel.");
+      throw new Error(response?.error || "Portable Work Memory could not open the secure reveal window.");
     }
 
     return response.requestId;
@@ -1083,105 +1080,60 @@
     }, 220);
   }
 
-  function closeRevealPanel() {
-    if (revealDismissHandler) {
-      document.removeEventListener("mousedown", revealDismissHandler, true);
-      document.removeEventListener("keydown", revealDismissHandler, true);
-      revealDismissHandler = null;
-    }
-
-    if (revealResizeHandler) {
-      window.removeEventListener("resize", revealResizeHandler, true);
-      window.removeEventListener("scroll", revealResizeHandler, true);
-      revealResizeHandler = null;
-    }
-
-    revealRequestId = null;
-
-    if (revealHostEl?.parentNode) {
-      revealHostEl.parentNode.removeChild(revealHostEl);
-    }
-
-    revealHostEl = null;
-  }
-
-  function positionRevealPanel(anchorRect) {
-    if (!revealHostEl || !anchorRect) return;
-
-    const width = 360;
-    const height = 248;
+  function buildRevealWindowFeatures(anchorRect) {
+    const width = 420;
+    const height = 340;
     const margin = 12;
+    const hostLeft = Number(window.screenX || window.screenLeft || 0);
+    const hostTop = Number(window.screenY || window.screenTop || 0);
+    const hostWidth = Number(window.outerWidth || window.innerWidth || width);
+    const hostHeight = Number(window.outerHeight || window.innerHeight || height);
+    const rectLeft = Number(anchorRect?.left || 0);
+    const rectTop = Number(anchorRect?.top || 0);
+    const rectBottom = Number(anchorRect?.bottom || rectTop);
 
-    let left = anchorRect.left + window.scrollX;
-    let top = anchorRect.bottom + window.scrollY + 10;
+    let left = hostLeft + rectLeft;
+    let top = hostTop + rectBottom + 20;
 
-    if (left + width + margin > window.scrollX + window.innerWidth) {
-      left = window.scrollX + window.innerWidth - width - margin;
-    }
+    const maxLeft = hostLeft + hostWidth - width - margin;
+    const maxTop = hostTop + hostHeight - height - margin;
 
-    if (left < window.scrollX + margin) {
-      left = window.scrollX + margin;
-    }
+    left = Math.max(hostLeft + margin, Math.min(left, maxLeft));
+    top = Math.max(hostTop + margin, Math.min(top, maxTop));
 
-    if (top + height + margin > window.scrollY + window.innerHeight) {
-      top = anchorRect.top + window.scrollY - height - 10;
-    }
-
-    if (top < window.scrollY + margin) {
-      top = window.scrollY + margin;
-    }
-
-    revealHostEl.style.left = `${left}px`;
-    revealHostEl.style.top = `${top}px`;
-  }
-
-  function attachRevealDismissHandlers() {
-    revealDismissHandler = (event) => {
-      if (event.type === "keydown") {
-        if (event.key === "Escape") {
-          closeRevealPanel();
-        }
-        return;
-      }
-
-      if (revealHostEl && !revealHostEl.contains(event.target)) {
-        closeRevealPanel();
-      }
-    };
-
-    revealResizeHandler = () => {
-      closeRevealPanel();
-    };
-
-    document.addEventListener("mousedown", revealDismissHandler, true);
-    document.addEventListener("keydown", revealDismissHandler, true);
-    window.addEventListener("resize", revealResizeHandler, true);
-    window.addEventListener("scroll", revealResizeHandler, true);
+    return [
+      "popup=yes",
+      "noopener=yes",
+      "noreferrer=yes",
+      `width=${width}`,
+      `height=${height}`,
+      `left=${Math.round(left)}`,
+      `top=${Math.round(top)}`
+    ].join(",");
   }
 
   async function openRevealPanel(placeholder, anchorRect) {
-    closeRevealPanel();
-
     const requestId = await createRevealRequest(placeholder);
-    revealRequestId = requestId;
+    const revealUrl = chrome.runtime.getURL(
+      `ui/reveal_panel.html#request=${encodeURIComponent(requestId)}`
+    );
+    const revealWindow = window.open(
+      revealUrl,
+      REVEAL_WINDOW_NAME,
+      buildRevealWindowFeatures(anchorRect)
+    );
 
-    const host = document.createElement("div");
-    host.className = "pwm-reveal-host";
+    if (!revealWindow) {
+      throw new Error("Portable Work Memory could not open the secure reveal window.");
+    }
 
-    const frame = document.createElement("iframe");
-    frame.className = "pwm-reveal-frame";
-    frame.src = chrome.runtime.getURL(`ui/reveal_panel.html#request=${encodeURIComponent(requestId)}`);
-    frame.setAttribute("title", "Portable Work Memory secure reveal panel");
-    frame.setAttribute("sandbox", "allow-scripts allow-same-origin");
+    try {
+      revealWindow.focus();
+    } catch {
+      // Ignore focus failures for blocked or backgrounded popup windows.
+    }
 
-    host.appendChild(frame);
-    document.documentElement.appendChild(host);
-
-    revealHostEl = host;
-    positionRevealPanel(anchorRect);
-    attachRevealDismissHandlers();
-
-    debugReveal("reveal:panel-open", {
+    debugReveal("reveal:window-open", {
       placeholder,
       requestId,
       knownPlaceholderCount: currentPublicState.knownPlaceholders.length
@@ -1194,7 +1146,7 @@
     span.textContent = placeholder;
     span.tabIndex = 0;
     span.setAttribute("role", "button");
-    span.setAttribute("aria-label", "Redacted sensitive content. Open secure reveal panel.");
+    span.setAttribute("aria-label", "Redacted sensitive content. Open secure reveal window.");
 
     const activate = (event) => {
       event.preventDefault();
@@ -1225,7 +1177,7 @@
     if (!parent) return true;
 
     return !!parent.closest(
-      ".pwm-modal-backdrop, .pwm-secret, .pwm-reveal-host, form, textarea, [role='textbox'], [contenteditable='true']"
+      ".pwm-modal-backdrop, .pwm-secret, form, textarea, [role='textbox'], [contenteditable='true']"
     );
   }
 
@@ -1361,7 +1313,6 @@
   async function handleUrlChange() {
     if (location.href === currentUrl) return;
 
-    closeRevealPanel();
     currentUrl = location.href;
     await initState();
     rehydrateTree(document.body);
