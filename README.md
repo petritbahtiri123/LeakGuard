@@ -2,7 +2,7 @@
 
 Portable Work Memory is a local-only Chrome extension MVP that reduces the chance of pasting or sending secrets into ChatGPT by mistake.
 
-It detects likely secrets in the browser, offers redaction before send, replaces raw values with stable placeholders like `[PASSWORD_1]`, and keeps the raw-to-placeholder map in `chrome.storage.session` for the active browser session only.
+It detects likely secrets in the browser, offers redaction before send, replaces raw values with stable placeholders like `[PWM_1]`, and keeps the private reveal map in `chrome.storage.session` for the active browser session only.
 
 This project is **risk reduction**, not a perfect privacy guarantee.
 
@@ -33,11 +33,11 @@ The project is split into engine logic and browser delivery logic.
 - `shared/detector.js`
   Detects likely secrets using deterministic patterns, assignment scanning, entropy fallback, overlap resolution, allowlists, and negative-context suppression.
 - `shared/placeholders.js`
-  Owns stable raw-to-placeholder and placeholder-to-raw mapping.
+  Owns neutral `[PWM_n]` placeholder assignment plus the split between sanitized public state and private reveal state.
 - `shared/redactor.js`
   Applies placeholders to findings and produces `redactedText`.
 - `background/service_worker.js`
-  Stores per-tab session state in `chrome.storage.session` so MV3 service worker restarts do not lose the placeholder map.
+  Stores per-tab private session state in `chrome.storage.session`, performs placeholder assignment, and serves secure reveal requests only to extension-owned UI.
 - `content/composer_helpers.js`
   Shared textarea/contenteditable read-write helpers used for deterministic browser insertion and the local harness.
 - `content/content.js`
@@ -57,11 +57,11 @@ The project is split into engine logic and browser delivery logic.
 Current design assumptions:
 
 - raw secrets should be detected and redacted before the user sends the prompt
-- raw-to-placeholder mapping should remain local to the browser session
+- placeholder mapping should remain local to the browser session
 - browser submission should be blocked if the rewritten composer content cannot be verified exactly
-- placeholder reveal is local-only and temporary
+- placeholder reveal should happen only inside extension-owned UI
 
-For this MVP, raw secret values are stored only in `chrome.storage.session`, not persistent extension storage.
+For this MVP, raw secret values are stored only in background-owned `chrome.storage.session`, not persistent extension storage or page-visible state.
 
 ## What This Does Not Protect Against
 
@@ -73,7 +73,7 @@ It does not protect against:
 - browser compromise, malware, or local shoulder-surfing
 - ChatGPT DOM changes that break heuristics or event interception
 - secrets inside files, screenshots, drag/drop payloads, or other unsupported upload flows
-- raw values revealed intentionally by the user via the local placeholder reveal UI
+- raw values revealed intentionally by the user via the secure extension reveal UI
 - copy/paste of raw secrets into sites outside the configured ChatGPT hosts
 
 ## Known Limitations
@@ -81,7 +81,7 @@ It does not protect against:
 - ChatGPT DOM churn can still break composer detection or send-button heuristics.
 - Contenteditable behavior varies by browser/editor implementation and still needs manual regression checks.
 - Placeholder rehydration only works for placeholders created in the current tab/session map.
-- The reveal interaction still puts the raw secret into the page DOM briefly while revealed.
+- Raw secrets are never written into the website DOM. Reveal happens only inside extension-origin UI.
 - The extension is Chrome-first and MV3-first; other browsers are out of scope for this MVP.
 
 ## Local Setup
@@ -154,9 +154,9 @@ Run these in Chrome after loading the unpacked extension.
 10. Press Enter to send and confirm the extension does not submit if rewrite verification fails.
 11. Click Send instead of pressing Enter and confirm the same behavior.
 12. Start a new chat and confirm the tab/session mapping resets.
-13. Let the assistant echo a known placeholder and confirm local reveal works only when the current session map knows that placeholder.
-14. Let the assistant echo an unknown placeholder and confirm reveal fails gracefully without replacing it with raw text.
-15. Trigger a route change or response re-render and confirm known placeholders remain revealable from current session state only.
+13. Let the assistant echo a known placeholder and confirm the secure reveal panel can show it only when the current tab session knows that placeholder.
+14. Let the assistant echo an unknown placeholder and confirm the secure reveal panel reports that it is unavailable without replacing page text.
+15. Trigger a route change or response re-render and confirm known placeholders remain revealable only from current session state.
 16. Paste a multiline block with empty lines between sections and confirm rewrite verification no longer collapses those blank lines in the ChatGPT composer.
 
 Use these exact regression cases when testing multiline correctness:
@@ -169,8 +169,8 @@ backup_password = "BetaPass_222!!"
 Expected:
 
 ```ini
-db_password = [PASSWORD_1]
-backup_password = [PASSWORD_2]
+db_password = [PWM_1]
+backup_password = [PWM_2]
 ```
 
 And:
@@ -183,8 +183,8 @@ backup_password = "RepeatPass_111!!"
 Expected:
 
 ```ini
-db_password = [PASSWORD_1]
-backup_password = [PASSWORD_1]
+db_password = [PWM_1]
+backup_password = [PWM_1]
 ```
 
 ## Manual Payload Verification
@@ -201,7 +201,7 @@ Verify that manually:
 6. Send the prompt.
 7. Find the outbound ChatGPT request in `Network`.
 8. Inspect the request payload/body.
-9. Confirm the payload contains placeholders such as `[PASSWORD_1]` instead of the raw secret.
+9. Confirm the payload contains placeholders such as `[PWM_1]` instead of the raw secret.
 
 If the request payload contains the raw value, treat that as a blocker.
 
@@ -213,20 +213,17 @@ For browser-path debugging in the real ChatGPT page, enable console snapshots:
 localStorage.setItem("pwm:debug", "1")
 ```
 
-Then reload the ChatGPT tab and retry the redaction flow. The extension will log, for each rewrite strategy:
+Then reload the ChatGPT tab and retry the redaction flow. The extension will log sanitized rewrite metadata for each strategy:
 
-- expected redacted text
-- `getInputText(input)`
-- `input.innerText`
-- `input.textContent`
-- `input.innerHTML`
+- expected length and placeholder counts
+- observed `getInputText(input)` length and placeholder counts
+- normalized composer shape checks
 
 It will also log reveal-side events:
 
-- placeholder token seen during response rehydration
 - whether response-side hydration ran
-- whether local/background placeholder lookup succeeded
-- whether reveal click fired
+- whether the secure reveal panel opened
+- whether the secure reveal request was available in the current session
 - whether ChatGPT re-rendered a hydrated node
 
 Disable it with:
@@ -258,8 +255,8 @@ The MVP distinction is:
 
 - the input/composer must contain literal placeholders only after redaction
 - raw values must not remain in the composer after redaction is accepted
-- assistant-response placeholders are revealable only when the current session map knows that placeholder
-- placeholder reveal is local-only and temporary; it does not change the composer payload
+- assistant-response placeholders are inspectable only when the current session map knows that placeholder
+- placeholder reveal happens only inside extension-owned UI and never changes the page DOM or composer payload
 - assistant-response hydration may re-run after ChatGPT DOM churn, but composer/input content is never hydrated into raw values
 
 ## Development Notes

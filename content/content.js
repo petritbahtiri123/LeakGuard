@@ -1,5 +1,10 @@
 (function () {
-  const { Detector, PlaceholderManager, Redactor, ComposerHelpers } = globalThis.PWM;
+  const {
+    Detector,
+    PLACEHOLDER_TOKEN_REGEX,
+    normalizeVisiblePlaceholders,
+    ComposerHelpers
+  } = globalThis.PWM;
   const {
     normalizeComposerText,
     normalizeEditorInnerText,
@@ -40,12 +45,13 @@
     "button[data-testid*='send']",
     "button[aria-label*='send' i]"
   ];
-  const PLACEHOLDER_TOKEN_REGEX = /\[[A-Z0-9_]+_\d+\]/g;
-
-  const manager = new PlaceholderManager();
-  const redactor = new Redactor(manager);
-
   let currentUrl = location.href;
+  let currentPublicState = {
+    sessionId: null,
+    urlKey: "",
+    placeholderCount: 0,
+    knownPlaceholders: []
+  };
   let badgeEl = null;
   let lastBadgeText = "";
   let badgeHideTimer = 0;
@@ -54,6 +60,10 @@
   let rehydrateObserver = null;
   let modalOpen = false;
   let lastTypedPromptText = "";
+  let revealHostEl = null;
+  let revealRequestId = null;
+  let revealDismissHandler = null;
+  let revealResizeHandler = null;
 
   function isDebugEnabled() {
     try {
@@ -66,21 +76,32 @@
     }
   }
 
+  function summarizeDebugText(text) {
+    const normalized = normalizeComposerText(normalizeVisiblePlaceholders(text));
+    const matches = normalized.match(new RegExp(PLACEHOLDER_TOKEN_REGEX.source, "g")) || [];
+
+    return {
+      length: normalized.length,
+      lineCount: normalized ? normalized.split("\n").length : 0,
+      placeholderCount: matches.length
+    };
+  }
+
   function collectComposerDebugSnapshot(input, expected, writeText) {
     const actual = getInputText(input);
     const normalizedExpected = normalizeComposerText(expected);
     const normalizedWriteText =
       typeof writeText === "string" ? normalizeComposerText(writeText) : normalizedExpected;
-    const rawInnerText = normalizeComposerText(input?.innerText || "");
+    const innerText = normalizeComposerText(input?.innerText || "");
     const normalizedInnerText = normalizeEditorInnerText(input?.innerText || "");
+
     return {
-      expected: normalizedExpected,
-      writeText: normalizedWriteText,
-      getInputText: actual,
-      innerText: rawInnerText,
-      normalizedInnerText,
-      textContent: normalizeComposerText(input?.textContent || ""),
-      innerHTML: input?.innerHTML || "",
+      expected: summarizeDebugText(normalizedExpected),
+      writeText: summarizeDebugText(normalizedWriteText),
+      getInputText: summarizeDebugText(actual),
+      innerText: summarizeDebugText(innerText),
+      normalizedInnerText: summarizeDebugText(normalizedInnerText),
+      textContent: summarizeDebugText(input?.textContent || ""),
       actualMatchesExpected: actual === normalizedExpected,
       actualMatchesWriteText: actual === normalizedWriteText
     };
@@ -105,12 +126,11 @@
   function collectFailureDetails(input, expectedText, actualText, context) {
     return {
       context,
-      expected: normalizeComposerText(expectedText),
-      actual: normalizeComposerText(actualText),
-      innerText: normalizeComposerText(input?.innerText || ""),
-      normalizedInnerText: normalizeEditorInnerText(input?.innerText || ""),
-      textContent: normalizeComposerText(input?.textContent || ""),
-      innerHTML: input?.innerHTML || ""
+      expected: summarizeDebugText(expectedText),
+      actual: summarizeDebugText(actualText),
+      innerText: summarizeDebugText(input?.innerText || ""),
+      normalizedInnerText: summarizeDebugText(normalizeEditorInnerText(input?.innerText || "")),
+      textContent: summarizeDebugText(input?.textContent || "")
     };
   }
 
@@ -121,7 +141,7 @@
   }
 
   function buildComposerWritePlan(input, text) {
-    const canonical = normalizeComposerText(text);
+    const canonical = normalizeComposerText(normalizeVisiblePlaceholders(text));
     return {
       canonical,
       writeText: canonical,
@@ -174,16 +194,40 @@
     });
 
     if (response?.ok && response.state) {
-      manager.setState(response.state);
+      currentPublicState = response.state;
     }
   }
 
-  async function persistState() {
-    return chrome.runtime.sendMessage({
-      type: "PWM_SET_STATE",
+  async function requestRedaction(text, findings) {
+    const response = await chrome.runtime.sendMessage({
+      type: "PWM_REDACT_TEXT",
       url: location.href,
-      state: manager.exportState()
+      text,
+      findings
     });
+
+    if (!response?.ok || !response?.result) {
+      throw new Error(response?.error || "Portable Work Memory could not redact this content.");
+    }
+
+    if (response.state) {
+      currentPublicState = response.state;
+    }
+
+    return response.result;
+  }
+
+  async function createRevealRequest(placeholder) {
+    const response = await chrome.runtime.sendMessage({
+      type: "PWM_CREATE_REVEAL_REQUEST",
+      placeholder
+    });
+
+    if (!response?.ok || !response?.requestId) {
+      throw new Error(response?.error || "Portable Work Memory could not open the secure reveal panel.");
+    }
+
+    return response.requestId;
   }
 
   function isVisible(el) {
@@ -289,28 +333,70 @@
     return bestScore >= 0 ? winner : null;
   }
 
-  function mask(raw) {
-    if (!raw) return "";
-    if (raw.length <= 8) return "••••••••";
-    return `${raw.slice(0, 4)}••••${raw.slice(-2)}`;
+  function analyzeText(text) {
+    const originalText = String(text || "");
+    const normalizedText = normalizeVisiblePlaceholders(originalText);
+
+    if (!normalizedText.trim()) {
+      return {
+        originalText,
+        normalizedText,
+        findings: [],
+        placeholderNormalized: normalizedText !== originalText
+      };
+    }
+
+    const detector = new Detector();
+    return {
+      originalText,
+      normalizedText,
+      findings: detector.scan(normalizedText).filter((finding) => finding.severity !== "low"),
+      placeholderNormalized: normalizedText !== originalText
+    };
   }
 
   function getFindings(text) {
-    if (!text || !text.trim()) return [];
-    const detector = new Detector();
-    return detector.scan(text).filter((finding) => finding.severity !== "low");
+    return analyzeText(text).findings;
   }
 
-  function summarizeFindings(findings) {
-    const counts = {};
+  async function applyNormalizedComposerRewrite(input, originalText, context) {
+    const normalizedText = normalizeVisiblePlaceholders(originalText);
 
-    for (const finding of findings) {
-      counts[finding.type] = (counts[finding.type] || 0) + 1;
+    if (normalizedText === originalText) {
+      return {
+        ok: true,
+        changed: false,
+        text: originalText
+      };
     }
 
-    return Object.entries(counts)
-      .map(([type, count]) => `${type} ×${count}`)
-      .join(", ");
+    const applied = await applyComposerText(input, normalizedText, {
+      caretOffset: normalizedText.length,
+      restoreText: normalizedText,
+      restoreCaretOffset: normalizedText.length
+    });
+
+    if (!applied.ok) {
+      await showRewriteFailure(
+        context,
+        collectFailureDetails(input, normalizedText, applied.actual, context)
+      );
+      refreshBadgeFromCurrentInput();
+      return {
+        ok: false,
+        changed: true,
+        text: normalizedText
+      };
+    }
+
+    setBadge("Placeholders normalized");
+    hideBadgeSoon();
+
+    return {
+      ok: true,
+      changed: true,
+      text: normalizedText
+    };
   }
 
   function closeModal(backdrop, onClose) {
@@ -325,24 +411,10 @@
     }
   }
 
-  function appendFindingRow(container, finding) {
+  function appendFindingRow(container) {
     const row = document.createElement("div");
     row.className = "pwm-finding";
-
-    const title = document.createElement("div");
-    const strong = document.createElement("strong");
-    strong.textContent = finding.type;
-    const score = document.createElement("span");
-    score.textContent = `score ${finding.score}`;
-    title.append(strong, score);
-
-    const raw = document.createElement("div");
-    raw.style.marginTop = "6px";
-    raw.style.color = "#cbd5e1";
-    raw.style.fontFamily = "ui-monospace, monospace";
-    raw.textContent = mask(finding.raw);
-
-    row.append(title, raw);
+    row.textContent = "Sensitive item detected";
     container.appendChild(row);
   }
 
@@ -364,19 +436,19 @@
       modal.tabIndex = -1;
 
       const title = document.createElement("h2");
-      title.textContent = "Potential secrets detected";
+      title.textContent = "Sensitive content detected";
 
       const desc = document.createElement("p");
       desc.textContent =
         mode === "paste"
-          ? "This pasted content appears to contain credentials or secrets. Redact before it reaches the chat input."
+          ? "This pasted content appears to contain sensitive material. Redact it before it reaches the chat input."
           : mode === "input"
-            ? "This typed content appears to contain credentials or secrets. Redact it before it sits in the chat input."
-          : "This message appears to contain credentials or secrets. Redact before sending it.";
+            ? "This typed content appears to contain sensitive material. Redact it before it sits in the chat input."
+          : "This message appears to contain sensitive material. Redact it before sending.";
 
       const findingsWrap = document.createElement("div");
       findingsWrap.className = "pwm-findings";
-      findings.slice(0, 8).forEach((finding) => appendFindingRow(findingsWrap, finding));
+      findings.slice(0, 8).forEach(() => appendFindingRow(findingsWrap));
 
       const actions = document.createElement("div");
       actions.className = "pwm-actions";
@@ -514,58 +586,11 @@
     return previous;
   }
 
-  function verifyPlaceholderConsistency(result) {
-    const rawToPlaceholder = new Map();
-    const placeholderToRawByType = new Map();
-
-    for (const replacement of result?.replacements || []) {
-      if (!replacement?.placeholder || !replacement?.raw || !replacement?.type) {
-        return {
-          ok: false,
-          error: "Redaction output was incomplete."
-        };
-      }
-
-      if (!result.redactedText.includes(replacement.placeholder)) {
-        return {
-          ok: false,
-          error: "A generated placeholder was missing from the redacted text."
-        };
-      }
-
-      const previousPlaceholder = rawToPlaceholder.get(replacement.raw);
-      if (previousPlaceholder && previousPlaceholder !== replacement.placeholder) {
-        return {
-          ok: false,
-          error: "The same secret mapped to multiple placeholders."
-        };
-      }
-
-      rawToPlaceholder.set(replacement.raw, replacement.placeholder);
-
-      const typeMap =
-        placeholderToRawByType.get(replacement.type) || new Map();
-      const previousRaw = typeMap.get(replacement.placeholder);
-
-      if (previousRaw && previousRaw !== replacement.raw) {
-        return {
-          ok: false,
-          error: "Different secrets of the same type reused one placeholder."
-        };
-      }
-
-      typeMap.set(replacement.placeholder, replacement.raw);
-      placeholderToRawByType.set(replacement.type, typeMap);
-    }
-
-    return { ok: true };
-  }
-
   async function showRewriteFailure(context, details) {
     const message =
       context === "submit"
-        ? "Portable Work Memory blocked send because it could not verify the rewritten composer content."
-        : "Portable Work Memory blocked the paste because it could not verify the rewritten composer content.";
+        ? "Portable Work Memory blocked send because it could not verify the rewritten composer content safely."
+        : "Portable Work Memory blocked the action because it could not verify the rewritten composer content safely.";
 
     setBadge("Rewrite mismatch blocked");
     hideBadgeSoon(3200);
@@ -573,22 +598,9 @@
       logFailureDetails(details);
     }
 
-    const lines = [
-      `${message} Nothing was submitted. Review the composer and retry.`
-    ];
-
-    if (details) {
-      lines.push("");
-      lines.push(`Expected: ${JSON.stringify(details.expected)}`);
-      lines.push(`Actual: ${JSON.stringify(details.actual)}`);
-      lines.push(`innerText: ${JSON.stringify(details.innerText)}`);
-      lines.push(`normalizedInnerText: ${JSON.stringify(details.normalizedInnerText)}`);
-      lines.push(`textContent: ${JSON.stringify(details.textContent)}`);
-    }
-
     await showMessageModal(
       "Rewrite verification failed",
-      lines.join("\n")
+      `${message} Nothing was submitted. Review the composer and retry.`
     );
   }
 
@@ -694,34 +706,53 @@
 
     if (!pasted) return;
 
-    const findings = getFindings(pasted);
-    if (!findings.length) return;
+    const analysis = analyzeText(pasted);
+    if (!analysis.findings.length && !analysis.placeholderNormalized) return;
 
     const originalText = getInputText(input);
     const selection = getSelectionOffsets(input);
 
-    event.preventDefault();
+    if (!analysis.findings.length) {
+      event.preventDefault();
 
-    const decision = await showDecisionModal(findings, "paste");
-    if (decision.action === "cancel") return;
+      const ok = await applyPasteDecision(
+        input,
+        originalText,
+        selection,
+        analysis.normalizedText,
+        "paste"
+      );
 
-    if (decision.action === "allow") {
-      const ok = await applyPasteDecision(input, originalText, selection, pasted, "paste");
       if (!ok) return;
 
-      setBadge("Allowed once");
+      setBadge("Placeholders normalized");
       hideBadgeSoon();
       refreshBadgeFromCurrentInput();
       return;
     }
 
-    const result = redactor.redact(pasted, findings);
-    const placeholderCheck = verifyPlaceholderConsistency(result);
+    event.preventDefault();
 
-    if (!placeholderCheck.ok) {
-      await showMessageModal("Redaction blocked", placeholderCheck.error);
+    const decision = await showDecisionModal(analysis.findings, "paste");
+    if (decision.action === "cancel") return;
+
+    if (decision.action === "allow") {
+      const ok = await applyPasteDecision(
+        input,
+        originalText,
+        selection,
+        analysis.normalizedText,
+        "paste"
+      );
+      if (!ok) return;
+
+      setBadge("Redaction skipped once");
+      hideBadgeSoon();
+      refreshBadgeFromCurrentInput();
       return;
     }
+
+    const result = await requestRedaction(analysis.normalizedText, analysis.findings);
 
     const ok = await applyPasteDecision(
       input,
@@ -733,9 +764,7 @@
 
     if (!ok) return;
 
-    await persistState();
-
-    setBadge(`Redacted ${findings.length} item(s)`);
+    setBadge("Content redacted");
     hideBadgeSoon();
     refreshBadgeFromCurrentInput();
   }
@@ -762,33 +791,59 @@
     const text = getInputText(input);
     if (!text || !text.trim()) return;
 
-    const findings = getFindings(text);
-    if (!findings.length) return;
+    const analysis = analyzeText(text);
+    if (!analysis.findings.length && !analysis.placeholderNormalized) return;
 
     event.preventDefault();
     event.stopPropagation();
 
-    const decision = await showDecisionModal(findings, "submit");
+    if (!analysis.findings.length) {
+      const normalized = await applyNormalizedComposerRewrite(input, text, "submit");
+      if (!normalized.ok) return;
+
+      if (!(await ensureExactComposerState(input, normalized.text))) {
+        await showRewriteFailure(
+          "submit",
+          collectFailureDetails(input, normalized.text, getInputText(input), "submit")
+        );
+        refreshBadgeFromCurrentInput();
+        return;
+      }
+
+      bypassNextSubmit = true;
+      queueMicrotask(() => submitComposer(form, input));
+      return;
+    }
+
+    const decision = await showDecisionModal(analysis.findings, "submit");
     if (decision.action === "cancel") return;
 
     if (decision.action === "allow") {
+      if (analysis.placeholderNormalized) {
+        const normalized = await applyNormalizedComposerRewrite(input, text, "submit");
+        if (!normalized.ok) return;
+
+        if (!(await ensureExactComposerState(input, normalized.text))) {
+          await showRewriteFailure(
+            "submit",
+            collectFailureDetails(input, normalized.text, getInputText(input), "submit")
+          );
+          refreshBadgeFromCurrentInput();
+          return;
+        }
+      }
+
       bypassNextSubmit = true;
       submitComposer(form, input);
       return;
     }
 
-    const result = redactor.redact(text, findings);
-    const placeholderCheck = verifyPlaceholderConsistency(result);
-
-    if (!placeholderCheck.ok) {
-      await showMessageModal("Redaction blocked", placeholderCheck.error);
-      return;
-    }
+    const result = await requestRedaction(analysis.normalizedText, analysis.findings);
 
     const applied = await applyComposerText(input, result.redactedText, {
       caretOffset: result.redactedText.length,
-      restoreText: text,
-      restoreCaretOffset: text.length
+      restoreText: analysis.normalizedText,
+      restoreCaretOffset: analysis.normalizedText.length
     });
 
     if (!applied.ok) {
@@ -800,9 +855,7 @@
       return;
     }
 
-    await persistState();
-
-    setBadge(`Redacted ${findings.length} item(s)`);
+    setBadge("Content redacted");
     hideBadgeSoon();
     refreshBadgeFromCurrentInput();
 
@@ -839,33 +892,57 @@
     const text = getInputText(input);
     if (!text || !text.trim()) return;
 
-    const findings = getFindings(text);
-    if (!findings.length) return;
+    const analysis = analyzeText(text);
+    if (!analysis.findings.length && !analysis.placeholderNormalized) return;
 
     event.preventDefault();
     event.stopPropagation();
 
-    const decision = await showDecisionModal(findings, "submit");
+    if (!analysis.findings.length) {
+      const normalized = await applyNormalizedComposerRewrite(input, text, "submit");
+      if (!normalized.ok) return;
+
+      queueMicrotask(() => {
+        ensureExactComposerState(input, normalized.text)
+          .then((isExact) => {
+            if (!isExact) {
+              return showRewriteFailure(
+                "submit",
+                collectFailureDetails(input, normalized.text, getInputText(input), "submit")
+              ).then(() => {
+                refreshBadgeFromCurrentInput();
+              });
+            }
+
+            const button = findSendButton(input);
+            if (button) button.click();
+            return null;
+          })
+          .catch(console.error);
+      });
+      return;
+    }
+
+    const decision = await showDecisionModal(analysis.findings, "submit");
     if (decision.action === "cancel") return;
 
     if (decision.action === "allow") {
+      if (analysis.placeholderNormalized) {
+        const normalized = await applyNormalizedComposerRewrite(input, text, "submit");
+        if (!normalized.ok) return;
+      }
+
       const button = findSendButton(input);
       if (button) button.click();
       return;
     }
 
-    const result = redactor.redact(text, findings);
-    const placeholderCheck = verifyPlaceholderConsistency(result);
-
-    if (!placeholderCheck.ok) {
-      await showMessageModal("Redaction blocked", placeholderCheck.error);
-      return;
-    }
+    const result = await requestRedaction(analysis.normalizedText, analysis.findings);
 
     const applied = await applyComposerText(input, result.redactedText, {
       caretOffset: result.redactedText.length,
-      restoreText: text,
-      restoreCaretOffset: text.length
+      restoreText: analysis.normalizedText,
+      restoreCaretOffset: analysis.normalizedText.length
     });
 
     if (!applied.ok) {
@@ -877,9 +954,7 @@
       return;
     }
 
-    await persistState();
-
-    setBadge(`Redacted ${findings.length} item(s)`);
+    setBadge("Content redacted");
     hideBadgeSoon();
     refreshBadgeFromCurrentInput();
 
@@ -915,25 +990,35 @@
       return;
     }
 
-    const findings = getFindings(text);
-    if (!findings.length) {
+    const analysis = analyzeText(text);
+    if (!analysis.findings.length) {
+      if (analysis.placeholderNormalized) {
+        if (text !== lastTypedPromptText) {
+          const normalized = await applyNormalizedComposerRewrite(input, text, "input");
+          if (normalized.ok) {
+            lastTypedPromptText = normalized.text;
+          }
+        }
+        return;
+      }
+
       lastTypedPromptText = "";
       return;
     }
 
-    if (PLACEHOLDER_TOKEN_REGEX.test(text)) {
+    if (PLACEHOLDER_TOKEN_REGEX.test(analysis.normalizedText)) {
       PLACEHOLDER_TOKEN_REGEX.lastIndex = 0;
       return;
     }
     PLACEHOLDER_TOKEN_REGEX.lastIndex = 0;
 
-    if (text === lastTypedPromptText) {
+    if (analysis.normalizedText === lastTypedPromptText) {
       return;
     }
 
-    lastTypedPromptText = text;
+    lastTypedPromptText = analysis.normalizedText;
 
-    const decision = await showDecisionModal(findings, "input");
+    const decision = await showDecisionModal(analysis.findings, "input");
     if (decision.action !== "redact") {
       refreshBadgeFromCurrentInput();
       return;
@@ -948,19 +1033,12 @@
       return;
     }
 
-    const result = redactor.redact(latestText, findings);
-    const placeholderCheck = verifyPlaceholderConsistency(result);
-
-    if (!placeholderCheck.ok) {
-      await showMessageModal("Redaction blocked", placeholderCheck.error);
-      refreshBadgeFromCurrentInput();
-      return;
-    }
+    const result = await requestRedaction(analysis.normalizedText, analysis.findings);
 
     const applied = await applyComposerText(latestInput, result.redactedText, {
       caretOffset: result.redactedText.length,
-      restoreText: latestText,
-      restoreCaretOffset: latestText.length
+      restoreText: analysis.normalizedText,
+      restoreCaretOffset: analysis.normalizedText.length
     });
 
     if (!applied.ok) {
@@ -972,10 +1050,8 @@
       return;
     }
 
-    await persistState();
-
     lastTypedPromptText = result.redactedText;
-    setBadge(`Redacted ${findings.length} item(s)`);
+    setBadge("Content redacted");
     hideBadgeSoon();
     refreshBadgeFromCurrentInput();
   }
@@ -990,13 +1066,13 @@
       return;
     }
 
-    const findings = getFindings(text);
-    if (!findings.length) {
+    const analysis = analyzeText(text);
+    if (!analysis.findings.length) {
       setBadge("");
       return;
     }
 
-    setBadge(`Shield: ${summarizeFindings(findings)}`);
+    setBadge("Sensitive content detected");
   }
 
   function scheduleInputScan() {
@@ -1007,82 +1083,138 @@
     }, 220);
   }
 
-  async function lookupRawByPlaceholder(placeholder) {
-    const local = manager.getRaw(placeholder);
-    if (local) {
-      debugReveal("reveal:lookup", {
-        placeholder,
-        source: "content-manager",
-        found: true
-      });
-      return local;
+  function closeRevealPanel() {
+    if (revealDismissHandler) {
+      document.removeEventListener("mousedown", revealDismissHandler, true);
+      document.removeEventListener("keydown", revealDismissHandler, true);
+      revealDismissHandler = null;
     }
 
-    const response = await chrome.runtime.sendMessage({
-      type: "PWM_GET_RAW_BY_PLACEHOLDER",
-      url: location.href,
-      placeholder
-    });
+    if (revealResizeHandler) {
+      window.removeEventListener("resize", revealResizeHandler, true);
+      window.removeEventListener("scroll", revealResizeHandler, true);
+      revealResizeHandler = null;
+    }
 
-    const raw = response?.ok ? response.raw : null;
-    debugReveal("reveal:lookup", {
-      placeholder,
-      source: "background-session",
-      found: !!raw
-    });
-    return raw;
+    revealRequestId = null;
+
+    if (revealHostEl?.parentNode) {
+      revealHostEl.parentNode.removeChild(revealHostEl);
+    }
+
+    revealHostEl = null;
   }
 
-  function getPlaceholderType(placeholder) {
-    const match = /^\[([A-Z0-9_]+)_\d+\]$/.exec(String(placeholder || ""));
-    return match ? match[1] : "SECRET";
+  function positionRevealPanel(anchorRect) {
+    if (!revealHostEl || !anchorRect) return;
+
+    const width = 360;
+    const height = 248;
+    const margin = 12;
+
+    let left = anchorRect.left + window.scrollX;
+    let top = anchorRect.bottom + window.scrollY + 10;
+
+    if (left + width + margin > window.scrollX + window.innerWidth) {
+      left = window.scrollX + window.innerWidth - width - margin;
+    }
+
+    if (left < window.scrollX + margin) {
+      left = window.scrollX + margin;
+    }
+
+    if (top + height + margin > window.scrollY + window.innerHeight) {
+      top = anchorRect.top + window.scrollY - height - 10;
+    }
+
+    if (top < window.scrollY + margin) {
+      top = window.scrollY + margin;
+    }
+
+    revealHostEl.style.left = `${left}px`;
+    revealHostEl.style.top = `${top}px`;
+  }
+
+  function attachRevealDismissHandlers() {
+    revealDismissHandler = (event) => {
+      if (event.type === "keydown") {
+        if (event.key === "Escape") {
+          closeRevealPanel();
+        }
+        return;
+      }
+
+      if (revealHostEl && !revealHostEl.contains(event.target)) {
+        closeRevealPanel();
+      }
+    };
+
+    revealResizeHandler = () => {
+      closeRevealPanel();
+    };
+
+    document.addEventListener("mousedown", revealDismissHandler, true);
+    document.addEventListener("keydown", revealDismissHandler, true);
+    window.addEventListener("resize", revealResizeHandler, true);
+    window.addEventListener("scroll", revealResizeHandler, true);
+  }
+
+  async function openRevealPanel(placeholder, anchorRect) {
+    closeRevealPanel();
+
+    const requestId = await createRevealRequest(placeholder);
+    revealRequestId = requestId;
+
+    const host = document.createElement("div");
+    host.className = "pwm-reveal-host";
+
+    const frame = document.createElement("iframe");
+    frame.className = "pwm-reveal-frame";
+    frame.src = chrome.runtime.getURL(`ui/reveal_panel.html#request=${encodeURIComponent(requestId)}`);
+    frame.setAttribute("title", "Portable Work Memory secure reveal panel");
+    frame.setAttribute("sandbox", "allow-scripts allow-same-origin");
+
+    host.appendChild(frame);
+    document.documentElement.appendChild(host);
+
+    revealHostEl = host;
+    positionRevealPanel(anchorRect);
+    attachRevealDismissHandlers();
+
+    debugReveal("reveal:panel-open", {
+      placeholder,
+      requestId,
+      knownPlaceholderCount: currentPublicState.knownPlaceholders.length
+    });
   }
 
   function createSecretSpan(placeholder) {
     const span = document.createElement("span");
-    let hideTimer = 0;
     span.className = "pwm-secret";
-    span.dataset.placeholder = placeholder;
-    span.dataset.secretType = getPlaceholderType(placeholder);
     span.textContent = placeholder;
-    span.title = "Click to reveal locally for 8 seconds";
+    span.tabIndex = 0;
+    span.setAttribute("role", "button");
+    span.setAttribute("aria-label", "Redacted sensitive content. Open secure reveal panel.");
 
-    span.addEventListener("click", async () => {
-      debugReveal("reveal:click", {
-        placeholder,
-        connected: span.isConnected
-      });
+    const activate = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
 
-      if (span.classList.contains("is-revealed")) {
-        window.clearTimeout(hideTimer);
-        span.classList.remove("is-revealed");
-        span.textContent = placeholder;
-        return;
-      }
-
-      const raw = await lookupRawByPlaceholder(placeholder);
-      if (!raw) {
-        debugReveal("reveal:missing-raw", {
-          placeholder
+      openRevealPanel(placeholder, span.getBoundingClientRect()).catch((error) => {
+        debugReveal("reveal:panel-error", {
+          placeholder,
+          error: error?.message || String(error)
         });
-        span.title = "Placeholder is not available in this local session";
-        return;
-      }
-
-      span.classList.add("is-revealed");
-      span.textContent = raw;
-
-      window.clearTimeout(hideTimer);
-      hideTimer = window.setTimeout(() => {
-        if (span.isConnected) {
-          span.classList.remove("is-revealed");
-          span.textContent = placeholder;
-        }
-      }, 8000);
-
-      debugReveal("reveal:success", {
-        placeholder
+        setBadge("Secure reveal unavailable");
+        hideBadgeSoon(2400);
       });
+    };
+
+    span.addEventListener("click", activate);
+    span.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        activate(event);
+      }
     });
 
     return span;
@@ -1093,12 +1225,12 @@
     if (!parent) return true;
 
     return !!parent.closest(
-      ".pwm-modal-backdrop, .pwm-secret, form, textarea, [role='textbox'], [contenteditable='true']"
+      ".pwm-modal-backdrop, .pwm-secret, .pwm-reveal-host, form, textarea, [role='textbox'], [contenteditable='true']"
     );
   }
 
   function tokenizePlaceholderText(text) {
-    const input = String(text || "");
+    const input = normalizeVisiblePlaceholders(text);
     const segments = [];
     let lastIndex = 0;
     let match;
@@ -1134,20 +1266,20 @@
 
   function hydrateTextNode(node) {
     const text = node.nodeValue;
-    if (!text || !PLACEHOLDER_TOKEN_REGEX.test(text)) return;
+    const normalizedText = normalizeVisiblePlaceholders(text);
+    if (!normalizedText || !PLACEHOLDER_TOKEN_REGEX.test(normalizedText)) return;
     PLACEHOLDER_TOKEN_REGEX.lastIndex = 0;
     if (shouldSkipHydration(node)) return;
 
     const parent = node.parentElement;
     if (!parent) return;
 
-    const segments = tokenizePlaceholderText(text);
+    const segments = tokenizePlaceholderText(normalizedText);
     if (segments.length === 1 && segments[0].type === "text") return;
 
     debugReveal("rehydrate:text-node", {
-      text,
       parentTag: parent.tagName,
-      segments
+      placeholderCount: segments.filter((segment) => segment.type === "secret").length
     });
 
     const fragment = document.createDocumentFragment();
@@ -1176,7 +1308,8 @@
 
     while (walker.nextNode()) {
       const node = walker.currentNode;
-      if (node.nodeValue && PLACEHOLDER_TOKEN_REGEX.test(node.nodeValue)) {
+      const normalizedText = normalizeVisiblePlaceholders(node.nodeValue || "");
+      if (normalizedText && PLACEHOLDER_TOKEN_REGEX.test(normalizedText)) {
         nodes.push(node);
       }
       PLACEHOLDER_TOKEN_REGEX.lastIndex = 0;
@@ -1191,10 +1324,12 @@
     rehydrateObserver = new MutationObserver((mutations) => {
       for (const mutation of mutations) {
         if (mutation.type === "characterData" && mutation.target?.nodeType === Node.TEXT_NODE) {
+          const normalizedText = normalizeVisiblePlaceholders(mutation.target.nodeValue || "");
           debugReveal("rehydrate:character-data", {
-            text: mutation.target.nodeValue || "",
-            parentTag: mutation.target.parentElement?.tagName || null
+            parentTag: mutation.target.parentElement?.tagName || null,
+            containsPlaceholder: PLACEHOLDER_TOKEN_REGEX.test(normalizedText)
           });
+          PLACEHOLDER_TOKEN_REGEX.lastIndex = 0;
           hydrateTextNode(mutation.target);
         }
 
@@ -1202,10 +1337,12 @@
           if (node.nodeType === Node.TEXT_NODE) {
             hydrateTextNode(node);
           } else if (node.nodeType === Node.ELEMENT_NODE) {
+            const normalizedText = normalizeVisiblePlaceholders(node.textContent || "");
             debugReveal("rehydrate:element-added", {
               tagName: node.tagName,
-              textPreview: (node.textContent || "").slice(0, 200)
+              containsPlaceholder: PLACEHOLDER_TOKEN_REGEX.test(normalizedText)
             });
+            PLACEHOLDER_TOKEN_REGEX.lastIndex = 0;
             rehydrateTree(node);
           }
         });
@@ -1224,6 +1361,7 @@
   async function handleUrlChange() {
     if (location.href === currentUrl) return;
 
+    closeRevealPanel();
     currentUrl = location.href;
     await initState();
     rehydrateTree(document.body);
