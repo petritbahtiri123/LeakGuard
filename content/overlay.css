@@ -99,18 +99,98 @@
 }
 
 .pwm-secret {
+  --pwm-secret-accent: #38bdf8;
+  --pwm-secret-soft: rgba(56, 189, 248, 0.14);
+  --pwm-secret-glow: rgba(56, 189, 248, 0.34);
+  --pwm-secret-ink: #dbeafe;
+  --pwm-secret-revealed-ink: #06141d;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  border: 1px dashed #60a5fa;
+  position: relative;
+  border: 1px dashed var(--pwm-secret-accent);
   border-radius: 8px;
   padding: 1px 6px;
-  background: rgba(37, 99, 235, 0.08);
+  color: var(--pwm-secret-ink);
+  background:
+    linear-gradient(135deg, var(--pwm-secret-soft), rgba(15, 23, 42, 0.02)),
+    rgba(15, 23, 42, 0.02);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
   cursor: pointer;
   user-select: none;
+  transition:
+    transform 140ms ease,
+    border-color 180ms ease,
+    color 180ms ease,
+    background 180ms ease,
+    box-shadow 220ms ease;
+}
+
+.pwm-secret:hover {
+  transform: translateY(-1px);
+}
+
+.pwm-secret[data-secret-type="API_KEY"] {
+  --pwm-secret-accent: #34d399;
+  --pwm-secret-soft: rgba(52, 211, 153, 0.16);
+  --pwm-secret-glow: rgba(16, 185, 129, 0.36);
+  --pwm-secret-revealed-ink: #052e24;
+}
+
+.pwm-secret[data-secret-type="PASSWORD"] {
+  --pwm-secret-accent: #fb7185;
+  --pwm-secret-soft: rgba(251, 113, 133, 0.16);
+  --pwm-secret-glow: rgba(244, 63, 94, 0.34);
+  --pwm-secret-revealed-ink: #3b0a16;
+}
+
+.pwm-secret[data-secret-type="AWS_SECRET_KEY"],
+.pwm-secret[data-secret-type="AWS_KEY"] {
+  --pwm-secret-accent: #f59e0b;
+  --pwm-secret-soft: rgba(245, 158, 11, 0.18);
+  --pwm-secret-glow: rgba(245, 158, 11, 0.34);
+  --pwm-secret-revealed-ink: #3b2605;
+}
+
+.pwm-secret[data-secret-type="PRIVATE_KEY"] {
+  --pwm-secret-accent: #fb923c;
+  --pwm-secret-soft: rgba(251, 146, 60, 0.18);
+  --pwm-secret-glow: rgba(249, 115, 22, 0.34);
+  --pwm-secret-revealed-ink: #3a1704;
+}
+
+.pwm-secret[data-secret-type="SECRET"],
+.pwm-secret[data-secret-type="CONNECTION_STRING"],
+.pwm-secret[data-secret-type="DB_URI"] {
+  --pwm-secret-accent: #22d3ee;
+  --pwm-secret-soft: rgba(34, 211, 238, 0.16);
+  --pwm-secret-glow: rgba(34, 211, 238, 0.32);
+  --pwm-secret-revealed-ink: #072a32;
 }
 
 .pwm-secret.is-revealed {
   border-style: solid;
-  background: rgba(16, 185, 129, 0.08);
+  color: var(--pwm-secret-revealed-ink);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.88), var(--pwm-secret-soft)),
+    rgba(255, 255, 255, 0.92);
+  box-shadow:
+    0 0 0 1px var(--pwm-secret-glow),
+    0 12px 30px -18px var(--pwm-secret-glow);
+  animation: pwm-secret-reveal 260ms ease-out;
+}
+
+@keyframes pwm-secret-reveal {
+  0% {
+    transform: scale(0.98);
+    box-shadow: 0 0 0 0 rgba(0, 0, 0, 0);
+  }
+
+  65% {
+    transform: scale(1.02);
+  }
+
+  100% {
+    transform: scale(1);
+  }
 }
