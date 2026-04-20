@@ -23,6 +23,34 @@
       "alerts:\nhttps://hooks.slack.com/services/T12345678/B12345678/abcdefghijklmnopqrstuvwxyzABCD\nhttps://discord.com/api/webhooks/123456789012345678/abcdefghijklmnopqrstuvwxyzABCDEFGHijklmnopQRSTUVWX",
     "same-value": 'db_password = "RepeatPass_111!!"\nbackup_password = "RepeatPass_111!!"',
     "different-values": 'db_password = "AlphaPass_111!!"\nbackup_password = "BetaPass_222!!"',
+    "natural-language-password": 'my password is "ForestLock!2026!PS"',
+    "final-regression": [
+      "FINAL REGRESSION TEST",
+      "",
+      "API_KEY=sk_live_7Qm2Lp9Xv4Nc8Tr6Yh1Zw5Kd3Bj0Pf",
+      "DB_PASSWORD=VaultHorse!2026!Test",
+      "TOKEN=eyJhbGciOiJIUzI1NiJ9.UExBQ0VIT0xERVJfUEFZTE9BRA.U2lnbmF0dXJlVGVzdDEyMw",
+      "AWS_SECRET_ACCESS_KEY=Qm9Wc3RrL1pXcDcrTjVxUXIvV2hKc1l4cG9DdzJm",
+      "",
+      "API_KEY=[API_KEY_1]",
+      "DB_PASSWORD=[PASSWORD_2]",
+      "TOKEN=[TOKEN_1]",
+      "AWS_SECRET_ACCESS_KEY=[AWS_SECRET_KEY_1]",
+      "",
+      "AUTHORIZATION=Bearer mF_9.B5f-4.1JqM",
+      "Authorization: Bearer HeaderToken123456",
+      "",
+      '{"password":"PrinterCable!2026!Demo","token":"eyJhbGciOiJIUzI1NiJ9.TESTPAYLOAD.TESTSIG"}',
+      "",
+      'export API_KEY="sk_proj_9Zx2Lm7Qp4Vc8Rt5Yn1Kd6Hs3Bw0Tf"',
+      '$env:DB_PASSWORD="ForestLock!2026!PS"',
+      "",
+      "[TOKEN_3]suffix",
+      "prefix_[PASSWORD_1]",
+      "",
+      "my api key is sk_live_7Qm2Lp9Xv4Nc8Tr6Yh1Zw5Kd3Bj0Pf",
+      "my password is VaultHorse!2026!Test"
+    ].join("\n"),
     "mixed-multiline": [
       'SESSION_SECRET="ProdSessionSecretValue_Alpha987654321"',
       "Authorization: Basic ZGVwbG95OlN1cGVyU2VjcmV0IQ==",
@@ -78,10 +106,17 @@
     revealStatus.textContent = message;
   }
 
+  function getPlaceholderType(placeholder) {
+    const match = /^\[([A-Z0-9_]+)_\d+\]$/.exec(String(placeholder || ""));
+    return match ? match[1] : "SECRET";
+  }
+
   function buildRevealSpan(segment) {
     const span = document.createElement("span");
+    let hideTimer = 0;
     span.className = "pwm-secret";
     span.dataset.placeholder = segment.placeholder;
+    span.dataset.secretType = getPlaceholderType(segment.placeholder);
     span.textContent = segment.placeholder;
     span.title = "Click to reveal locally";
     span.addEventListener("click", () => {
@@ -92,10 +127,11 @@
         return;
       }
 
+      window.clearTimeout(hideTimer);
       span.textContent = raw;
       span.classList.add("is-revealed");
       renderRevealStatus(`Known placeholder lookup: ${segment.placeholder}`, true);
-      window.setTimeout(() => {
+      hideTimer = window.setTimeout(() => {
         if (!span.isConnected) return;
         span.textContent = segment.placeholder;
         span.classList.remove("is-revealed");

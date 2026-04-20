@@ -212,9 +212,12 @@
       name: "natural_language_password",
       type: "PASSWORD",
       category: "credential",
-      baseScore: 72,
-      regex: /\b(?:my|the|our)?\s*password\s*(?:is|=|:)\s*([^\s,;]{8,})/gi,
-      captureGroups: [1]
+      baseScore: 76,
+      suppressionNotes:
+        "Catch bare or quoted natural-language password disclosures such as 'my password is ...' without consuming trailing punctuation or line breaks.",
+      regex:
+        /\b(?:my|the|our)?\s*password\s*(?:is|=|:)\s*(?:"([^"\r\n]{8,})"|'([^'\r\n]{8,})'|`([^`\r\n]{8,})`|([^\s,;]{8,}))/gi,
+      captureGroups: [1, 2, 3, 4]
     },
     {
       name: "natural_language_token",
