@@ -134,6 +134,7 @@ The harness includes:
 Use it to confirm:
 
 - line boundaries survive rewrites
+- intentional blank lines survive contenteditable rewrites
 - `getInputText()` matches the expected redacted text
 - contenteditable fallback rewrite still preserves placeholder boundaries
 
@@ -156,6 +157,7 @@ Run these in Chrome after loading the unpacked extension.
 13. Let the assistant echo a known placeholder and confirm local reveal works only when the current session map knows that placeholder.
 14. Let the assistant echo an unknown placeholder and confirm reveal fails gracefully without replacing it with raw text.
 15. Trigger a route change or response re-render and confirm known placeholders remain revealable from current session state only.
+16. Paste a multiline block with empty lines between sections and confirm rewrite verification no longer collapses those blank lines in the ChatGPT composer.
 
 Use these exact regression cases when testing multiline correctness:
 
@@ -238,11 +240,17 @@ localStorage.removeItem("pwm:debug")
 The browser layer now applies these guardrails:
 
 - multiline composer rewrites are normalized and verified after insertion
+- contenteditable reads use DOM-aware block serialization so blank paragraph lines are preserved during verification
 - paste redaction computes the next full composer value instead of trusting raw DOM insertion
 - submit is blocked if `getInputText(input) !== result.redactedText`
 - a stronger fallback rewrite path runs before failure is declared
 - if both rewrites fail verification, the original composer text is restored and submission stays blocked
 - runtime placeholder consistency is checked before insertion
+
+Current regression coverage includes:
+
+- detector regressions in `tests/detector.test.js`
+- composer multiline normalization regressions in `tests/composer_helpers.test.js`
 
 ## Placeholder Reveal Rules
 

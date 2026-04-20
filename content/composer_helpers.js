@@ -10,9 +10,9 @@
   }
 
   function normalizeEditorInnerText(value) {
-    return normalizeComposerText(value)
-      .replace(/\n{3,}/g, "\n\n")
-      .replace(/([^\n])\n\n([^\n])/g, "$1\n$2");
+    // Preserve intentional blank lines from contenteditable composers while
+    // still collapsing DOM-generated runs longer than one empty line.
+    return normalizeComposerText(value).replace(/\n{3,}/g, "\n\n");
   }
 
   function isTextArea(el) {
@@ -23,8 +23,83 @@
     return !!el && !isTextArea(el) && !!el.isContentEditable;
   }
 
+  function isTextNode(node) {
+    return !!node && node.nodeType === 3;
+  }
+
+  function isElementNode(node) {
+    return !!node && node.nodeType === 1;
+  }
+
+  function isBreakElement(node) {
+    return isElementNode(node) && node.tagName === "BR";
+  }
+
+  function isBlockElement(node) {
+    if (!isElementNode(node)) return false;
+    return /^(DIV|P|LI|PRE|BLOCKQUOTE)$/.test(node.tagName || "");
+  }
+
+  function readEditableNodeText(node) {
+    if (!node) return "";
+    if (isTextNode(node)) return normalizeComposerText(node.nodeValue || "");
+    if (isBreakElement(node)) return "\n";
+    if (!node.childNodes?.length) {
+      return normalizeComposerText(node.textContent || "");
+    }
+
+    let output = "";
+    for (const child of Array.from(node.childNodes || [])) {
+      output += readEditableNodeText(child);
+    }
+    return output;
+  }
+
+  function serializeContentEditableRoot(root) {
+    if (!root?.childNodes?.length) {
+      return normalizeEditorInnerText(root?.innerText || "");
+    }
+
+    const lines = [];
+    let inlineBuffer = "";
+
+    const flushInlineBuffer = () => {
+      if (!inlineBuffer && lines.length === 0) return;
+      lines.push(inlineBuffer);
+      inlineBuffer = "";
+    };
+
+    for (const child of Array.from(root.childNodes || [])) {
+      if (isTextNode(child)) {
+        inlineBuffer += normalizeComposerText(child.nodeValue || "");
+        continue;
+      }
+
+      if (isBreakElement(child)) {
+        flushInlineBuffer();
+        continue;
+      }
+
+      if (isBlockElement(child)) {
+        if (inlineBuffer) {
+          flushInlineBuffer();
+        }
+        lines.push(readEditableNodeText(child));
+        continue;
+      }
+
+      inlineBuffer += readEditableNodeText(child);
+    }
+
+    if (inlineBuffer || !lines.length) {
+      flushInlineBuffer();
+    }
+
+    return normalizeEditorInnerText(lines.join("\n"));
+  }
+
   function readContentEditableText(el) {
-    return normalizeEditorInnerText(el?.innerText || "");
+    return serializeContentEditableRoot(el);
   }
 
   function getInputText(el) {
@@ -299,6 +374,7 @@
   root.PWM.ComposerHelpers = {
     normalizeComposerText,
     normalizeEditorInnerText,
+    serializeContentEditableRoot,
     isTextArea,
     isContentEditable,
     getInputText,
