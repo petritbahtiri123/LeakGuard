@@ -46,6 +46,21 @@
   function inferPlaceholderTypeFromKey(key) {
     const value = String(key || "").toLowerCase();
 
+    if (
+      /\b(?:database|db|mysql|postgres(?:ql)?|mariadb|mongodb|mongo|redis|amqp|rabbitmq|mssql|sqlserver)[_-]?(?:url|uri)\b/.test(
+        value
+      )
+    ) {
+      return "DB_URI";
+    }
+    if (
+      value === "azurewebjobsstorage" ||
+      value.includes("connection_string") ||
+      value.includes("connectionstring") ||
+      value.includes("conn_string")
+    ) {
+      return "CONNECTION_STRING";
+    }
     if (value.includes("aws_secret_access_key")) return "AWS_SECRET_KEY";
     if (value.includes("private_key") || value.includes("private-key")) return "PRIVATE_KEY";
     if (value.includes("password") || value.endsWith("pwd") || value.includes("passwd")) {
@@ -154,6 +169,64 @@
     }
 
     return score;
+  }
+
+  function normalizeAssignmentKey(key) {
+    return String(key || "").toLowerCase().replace(/[.-]/g, "_");
+  }
+
+  function isDbUriAssignmentKey(key) {
+    const normalized = normalizeAssignmentKey(key);
+    return /\b(?:database|db|mysql|postgres(?:ql)?|mariadb|mongodb|mongo|redis|amqp|rabbitmq|mssql|sqlserver)_(?:url|uri)\b/.test(
+      normalized
+    );
+  }
+
+  function isConnectionStringAssignmentKey(key) {
+    const normalized = normalizeAssignmentKey(key);
+    return (
+      normalized === "azurewebjobsstorage" ||
+      normalized.includes("connection_string") ||
+      normalized.includes("connectionstring") ||
+      normalized.includes("conn_string")
+    );
+  }
+
+  function extractDbUriAssignmentValue(value) {
+    const match = /^(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis|amqp|mssql):\/\/[^\s'"`<>]+/i.exec(
+      String(value || "")
+    );
+
+    return match ? match[0] : "";
+  }
+
+  function extractConnectionStringAssignmentValue(value) {
+    const input = String(value || "");
+    const patterns = [
+      /^DefaultEndpointsProtocol=https;AccountName=[^;\r\n]+;AccountKey=[^;\r\n]+;EndpointSuffix=[^\s;]+/i,
+      /^Endpoint=sb:\/\/[^\s;]+;SharedAccessKeyName=[^;\s]+;SharedAccessKey=[^;\s]+(?:;EntityPath=[^;\s]+)?/i,
+      /^[^=\s;]+=[^;\r\n]+(?:;[^=\s;]+=[^;\r\n]+){2,}/
+    ];
+
+    for (const pattern of patterns) {
+      const match = pattern.exec(input);
+      if (match) {
+        return match[0];
+      }
+    }
+
+    return "";
+  }
+
+  function shouldSuppressStructuredAssignment(raw) {
+    const normalized = String(raw || "").toLowerCase();
+
+    if (!normalized) return true;
+    if (hasExampleHost(raw)) return true;
+
+    return ["example", "replace_me", "replace-me", "changeme", "placeholder"].some((marker) =>
+      normalized.includes(marker)
+    );
   }
 
   function extractPatternValue(match, pattern) {
@@ -314,6 +387,86 @@
       return findings;
     }
 
+    scanStructuredAssignments(text) {
+      const findings = [];
+      const regex =
+        /([A-Za-z_][A-Za-z0-9_.-]{0,80})\s*[:=]\s*(?:"([^"\r\n]+)"|'([^'\r\n]+)'|`([^`\r\n]+)`|([^\r\n]+))/gim;
+      let match;
+
+      while ((match = regex.exec(text)) !== null) {
+        const key = match[1];
+        const rawCandidate = [match[2], match[3], match[4], match[5]].find(
+          (candidate) => typeof candidate === "string"
+        );
+
+        if (!rawCandidate) continue;
+
+        let raw = "";
+        let placeholderType = "";
+        let score = 0;
+
+        if (isDbUriAssignmentKey(key)) {
+          raw = extractDbUriAssignmentValue(rawCandidate);
+          placeholderType = "DB_URI";
+          score = 98;
+        } else if (isConnectionStringAssignmentKey(key)) {
+          raw = extractConnectionStringAssignmentValue(rawCandidate);
+          placeholderType = "CONNECTION_STRING";
+          score = 99;
+        } else {
+          continue;
+        }
+
+        if (!raw || raw.length < 8) continue;
+
+        const candidateIndex = match[0].indexOf(rawCandidate);
+        if (candidateIndex < 0) continue;
+
+        const rawOffset = rawCandidate.indexOf(raw);
+        if (rawOffset < 0) continue;
+
+        const start = match.index + candidateIndex + rawOffset;
+        const end = start + raw.length;
+
+        if (this.isAllowlisted(raw)) continue;
+        if (isCleanPlaceholder(raw)) continue;
+        if (containsPlaceholder(raw) && !isCleanPlaceholder(raw)) {
+          findings.push(
+            this.buildFinding({
+              category: "connection_string",
+              placeholderType,
+              raw,
+              start,
+              end,
+              score: 100,
+              methods: ["assignment", "full-value", "placeholder-composite"]
+            })
+          );
+          continue;
+        }
+        if (shouldSuppressStructuredAssignment(raw)) continue;
+
+        const entropy = calculateEntropy(raw);
+        const ctx = contextScore(text, start, end);
+
+        findings.push(
+          this.buildFinding({
+            category: "connection_string",
+            placeholderType,
+            raw,
+            start,
+            end,
+            score: score + (entropy >= 3.8 ? 2 : 0) + Math.max(0, ctx),
+            methods: ["assignment", "full-value", entropy >= 3.8 ? "entropy" : null].filter(
+              Boolean
+            )
+          })
+        );
+      }
+
+      return findings;
+    }
+
     scanAssignments(text) {
       const findings = [];
       const regex = cloneRegex(ASSIGNMENT_REGEX);
@@ -465,6 +618,10 @@
       const sorted = [...findings].sort((a, b) => {
         if (b.score !== a.score) return b.score - a.score;
 
+        const aHasFullValue = a.method?.includes("full-value") ? 1 : 0;
+        const bHasFullValue = b.method?.includes("full-value") ? 1 : 0;
+        if (bHasFullValue !== aHasFullValue) return bHasFullValue - aHasFullValue;
+
         const lenA = a.end - a.start;
         const lenB = b.end - b.start;
 
@@ -494,6 +651,7 @@
       if (!input.trim()) return [];
 
       const findings = [
+        ...this.scanStructuredAssignments(input),
         ...this.scanPatterns(input),
         ...this.scanAssignments(input),
         ...this.scanEntropyFallback(input)

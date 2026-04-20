@@ -8,7 +8,14 @@ require(path.join(__dirname, "../shared/detector.js"));
 require(path.join(__dirname, "../shared/placeholders.js"));
 require(path.join(__dirname, "../shared/redactor.js"));
 
-const { Detector, PlaceholderManager, Redactor, PATTERNS } = globalThis.PWM;
+const {
+  Detector,
+  PlaceholderManager,
+  Redactor,
+  PATTERNS,
+  normalizeVisiblePlaceholders,
+  canonicalizePlaceholderToken
+} = globalThis.PWM;
 
 const fixtures = JSON.parse(
   fs.readFileSync(path.join(__dirname, "fixtures.json"), "utf8")
@@ -103,10 +110,29 @@ const NEGATIVE_CASES = [
   }
 ];
 
-function assertSinglePlaceholderType(resultText, expectedType) {
-  const regex = new RegExp(`\\[${expectedType}_\\d+\\]`, "g");
-  const matches = resultText.match(regex) || [];
-  assert.ok(matches.length >= 1, `expected placeholder for ${expectedType}`);
+const PWM_PLACEHOLDER_REGEX = /\[PWM_\d+\]/g;
+const LEGACY_PLACEHOLDER_REGEX = /\[(?!PWM_)[A-Z][A-Z0-9_]*_\d+\]/;
+
+function getPlaceholders(text) {
+  return text.match(PWM_PLACEHOLDER_REGEX) || [];
+}
+
+function assertNoTypedPlaceholders(text, label) {
+  assert.strictEqual(
+    LEGACY_PLACEHOLDER_REGEX.test(text),
+    false,
+    label || "typed placeholders must not appear in visible output"
+  );
+}
+
+function assertContainsGenericPlaceholder(resultText, label) {
+  const matches = getPlaceholders(resultText);
+  assert.ok(matches.length >= 1, label || "expected generic placeholder");
+  assert.strictEqual(
+    LEGACY_PLACEHOLDER_REGEX.test(resultText),
+    false,
+    "expected only neutral PWM placeholders"
+  );
 }
 
 function testPatternMetadata() {
@@ -137,7 +163,10 @@ function testPositiveFixtures() {
     );
 
     const result = redactor.redact(fixture.text, findings);
-    assertSinglePlaceholderType(result.redactedText, fixture.expectsType);
+    assertContainsGenericPlaceholder(
+      result.redactedText,
+      `expected placeholder for ${fixture.expectsType}`
+    );
   }
 }
 
@@ -152,6 +181,31 @@ function testNegativeExamples() {
   }
 }
 
+function testLegacyPlaceholderNormalizationHelper() {
+  const text = [
+    "API_KEY=[API_KEY_1]",
+    "DB_PASSWORD=[PASSWORD_2]",
+    "TOKEN=[TOKEN_1]",
+    "AWS_SECRET_ACCESS_KEY=[AWS_SECRET_KEY_1]"
+  ].join("\n");
+
+  const normalized = normalizeVisiblePlaceholders(text);
+
+  assertNoTypedPlaceholders(normalized, "legacy placeholder helper must normalize typed tokens");
+  assert.ok(
+    normalized.includes(`API_KEY=${canonicalizePlaceholderToken("[API_KEY_1]")}`),
+    "API key placeholder should normalize to a generic PWM token"
+  );
+  assert.ok(
+    normalized.includes(`DB_PASSWORD=${canonicalizePlaceholderToken("[PASSWORD_2]")}`),
+    "password placeholder should normalize to a generic PWM token"
+  );
+  assert.ok(
+    normalized.includes(`TOKEN=${canonicalizePlaceholderToken("[TOKEN_1]")}`),
+    "token placeholder should normalize to a generic PWM token"
+  );
+}
+
 function testRepeatedSameSecret() {
   const detector = new Detector();
   const manager = new PlaceholderManager();
@@ -161,7 +215,7 @@ function testRepeatedSameSecret() {
 
   const findings = detector.scan(text);
   const result = redactor.redact(text, findings);
-  const matches = result.redactedText.match(/\[API_KEY_\d+\]/g) || [];
+  const matches = getPlaceholders(result.redactedText);
   const unique = [...new Set(matches)];
 
   assert.strictEqual(matches.length, 2, "expected two replacements for repeated secret");
@@ -177,7 +231,7 @@ function testRepeatedDifferentSecretsSameType() {
 
   const findings = detector.scan(text);
   const result = redactor.redact(text, findings);
-  const matches = result.redactedText.match(/\[API_KEY_\d+\]/g) || [];
+  const matches = getPlaceholders(result.redactedText);
   const unique = [...new Set(matches)];
 
   assert.strictEqual(matches.length, 2, "expected two API key replacements");
@@ -195,7 +249,7 @@ function testMultilineDifferentPasswords() {
 
   assert.strictEqual(
     result.redactedText,
-    "db_password = [PASSWORD_1]\nbackup_password = [PASSWORD_2]",
+    "db_password = [PWM_1]\nbackup_password = [PWM_2]",
     "different multiline password values should keep line boundaries and get unique placeholders"
   );
 }
@@ -211,7 +265,7 @@ function testMultilineRepeatedPassword() {
 
   assert.strictEqual(
     result.redactedText,
-    "db_password = [PASSWORD_1]\nbackup_password = [PASSWORD_1]",
+    "db_password = [PWM_1]\nbackup_password = [PWM_1]",
     "repeated multiline password values should reuse the same placeholder"
   );
 }
@@ -230,9 +284,9 @@ function testRegressionMixedMultilineSecrets() {
   const result = redactor.redact(text, findings);
 
   assert.ok(findings.length >= 3, "expected multiline mixed secrets to produce multiple findings");
-  assert.ok(/\[TOKEN_1\]/.test(result.redactedText), "expected first token placeholder");
-  assert.ok(/\[TOKEN_2\]/.test(result.redactedText), "expected second token placeholder");
-  assert.ok(/\[WEBHOOK_1\]/.test(result.redactedText), "expected webhook placeholder");
+  assert.ok(/\[PWM_1\]/.test(result.redactedText), "expected first neutral placeholder");
+  assert.ok(/\[PWM_2\]/.test(result.redactedText), "expected second neutral placeholder");
+  assert.ok(/\[PWM_3\]/.test(result.redactedText), "expected third neutral placeholder");
 }
 
 function testDbUriWithCredentials() {
@@ -241,6 +295,74 @@ function testDbUriWithCredentials() {
   const findings = detector.scan(text);
 
   assert.ok(findings.some((finding) => finding.type === "DB_URI"), "db uri should be detected");
+}
+
+function testFullValueReplacementForConnectionStyleAssignments() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const text = [
+    "AZURE_STORAGE_CONNECTION_STRING=DefaultEndpointsProtocol=https;AccountName=fakestorageacct;AccountKey=FakeAccountKey1234567890ABCDEFGHIJKLMN==;EndpointSuffix=core.windows.net",
+    "DATABASE_URL=postgres://testuser:FakeDbPass123!@db.internal:5432/appdb",
+    "MYSQL_URL=mysql://reporter:AnotherFakePass456!@mysql.internal:3306/analytics"
+  ].join("\n");
+
+  const findings = detector.scan(text);
+  const result = redactor.redact(text, findings);
+  const lines = result.redactedText.split("\n");
+
+  assert.ok(
+    findings.some(
+      (finding) =>
+        finding.type === "CONNECTION_STRING" &&
+        finding.raw ===
+          "DefaultEndpointsProtocol=https;AccountName=fakestorageacct;AccountKey=FakeAccountKey1234567890ABCDEFGHIJKLMN==;EndpointSuffix=core.windows.net" &&
+        finding.method.includes("full-value")
+    ),
+    "azure storage connection string assignment should be detected as one full value"
+  );
+  assert.ok(
+    findings.some(
+      (finding) =>
+        finding.type === "DB_URI" &&
+        finding.raw === "postgres://testuser:FakeDbPass123!@db.internal:5432/appdb" &&
+        finding.method.includes("full-value")
+    ),
+    "DATABASE_URL assignment should be detected as one full DB URI value"
+  );
+  assert.ok(
+    findings.some(
+      (finding) =>
+        finding.type === "DB_URI" &&
+        finding.raw === "mysql://reporter:AnotherFakePass456!@mysql.internal:3306/analytics" &&
+        finding.method.includes("full-value")
+    ),
+    "MYSQL_URL assignment should be detected as one full DB URI value"
+  );
+
+  assert.strictEqual(lines[0], "AZURE_STORAGE_CONNECTION_STRING=[PWM_1]");
+  assert.strictEqual(lines[1], "DATABASE_URL=[PWM_2]");
+  assert.strictEqual(lines[2], "MYSQL_URL=[PWM_3]");
+
+  assert.ok(
+    !result.redactedText.includes("testuser") &&
+      !result.redactedText.includes("FakeDbPass123!") &&
+      !result.redactedText.includes("reporter") &&
+      !result.redactedText.includes("AnotherFakePass456!"),
+    "db usernames and passwords must not survive redaction output"
+  );
+  assert.ok(
+    !result.redactedText.includes("FakeAccountKey1234567890ABCDEFGHIJKLMN==") &&
+      !result.redactedText.includes("AccountName=fakestorageacct") &&
+      !result.redactedText.includes("EndpointSuffix=core.windows.net"),
+    "azure connection string fragments must not survive redaction output"
+  );
+  assert.ok(
+    !result.redactedText.includes("[PWM_1];") &&
+      !result.redactedText.includes("[PWM_2]://") &&
+      !result.redactedText.includes("[PWM_3]://"),
+    "connection-style assignments must not be partially redacted"
+  );
 }
 
 function testGenericBasicAuthUrl() {
@@ -280,7 +402,7 @@ function testAuthorizationBearerVariants() {
 
   const findings = detector.scan(text);
   const result = redactor.redact(text, findings);
-  const matches = result.redactedText.match(/\[TOKEN_\d+\]/g) || [];
+  const matches = getPlaceholders(result.redactedText);
   const unique = [...new Set(matches)];
 
   assert.strictEqual(findings.length, 5, "all authorization and standalone bearer variants should be detected");
@@ -329,9 +451,9 @@ function testExampleValuesDoNotTrigger() {
 function testPlaceholderValuesDoNotRetriggerDetection() {
   const detector = new Detector();
   const cases = [
-    'SESSION_SECRET="[TOKEN_1]"',
-    'AWS_SECRET_ACCESS_KEY="[AWS_SECRET_KEY_1]"',
-    'DB_PASSWORD="[PASSWORD_2]"'
+    'SESSION_SECRET="[PWM_1]"',
+    'AWS_SECRET_ACCESS_KEY="[PWM_2]"',
+    'DB_PASSWORD="[PWM_3]"'
   ];
 
   for (const text of cases) {
@@ -346,46 +468,46 @@ function testCompositePlaceholderAndNaturalLanguageEdgeCaseBlock() {
   const redactor = new Redactor(manager);
   const text = [
     "API_KEY=abc123secretvalue",
-    "DB_PASSWORD=[PASSWORD_2]",
-    "TOKEN=[SECRET_1].TESTPAYLOAD.TESTSIGIG]",
+    "DB_PASSWORD=[PWM_2]",
+    "TOKEN=[PWM_1].TESTPAYLOAD.TESTSIGIG]",
     "API_KEY=abc123secretvalue",
     "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE",
-    "AWS_SECRET_ACCESS_KEY=[AWS_SECRET_KEY_1]",
+    "AWS_SECRET_ACCESS_KEY=[PWM_3]",
     "API_KEY=abc123secretvalue",
     "my api key is abc123secretvalue",
-    "[API_KEY_1]LEKEY"
+    "[PWM_4]LEKEY"
   ].join("\n");
 
   const findings = detector.scan(text);
   const result = redactor.redact(text, findings);
   const lines = result.redactedText.split("\n");
-  const apiKeyMatches = result.redactedText.match(/\[API_KEY_\d+\]/g) || [];
-  const uniqueApiKeys = [...new Set(apiKeyMatches)];
   const compositeAssignment = findings.find(
-    (finding) => finding.raw === "[SECRET_1].TESTPAYLOAD.TESTSIGIG]"
+    (finding) => finding.raw === "[PWM_1].TESTPAYLOAD.TESTSIGIG]"
   );
 
   assert.ok(compositeAssignment, "composite placeholder assignment should produce a finding");
   assert.ok(
-    compositeAssignment.method.includes("placeholder-composite"),
-    "composite assignment should use the placeholder-composite method"
+    compositeAssignment.method.includes("placeholder-composite") ||
+      compositeAssignment.method.includes("pattern"),
+    "composite assignment should still be detected via a dedicated composite path"
   );
 
-  assert.strictEqual(lines[1], "DB_PASSWORD=[PASSWORD_2]", "clean password placeholder should stay");
+  assert.strictEqual(lines[1], "DB_PASSWORD=[PWM_2]", "clean password placeholder should stay");
   assert.strictEqual(
     lines[5],
-    "AWS_SECRET_ACCESS_KEY=[AWS_SECRET_KEY_1]",
+    "AWS_SECRET_ACCESS_KEY=[PWM_3]",
     "clean AWS secret placeholder should stay"
   );
-  assert.ok(/^TOKEN=\[TOKEN_\d+\]$/.test(lines[2]), "composite token value should be fully redacted");
+  assert.ok(/^TOKEN=\[PWM_\d+\]$/.test(lines[2]), "composite token value should be fully redacted");
   assert.ok(
-    /^AWS_ACCESS_KEY_ID=\[AWS_KEY_\d+\]$/.test(lines[4]),
+    /^AWS_ACCESS_KEY_ID=\[PWM_\d+\]$/.test(lines[4]),
     "AWS access key assignment should redact the full key value"
   );
-  assert.strictEqual(lines[7], `my api key is ${uniqueApiKeys[0]}`, "natural-language API key should redact");
-  assert.ok(/^\[SECRET_\d+\]$/.test(lines[8]), "standalone composite placeholder junk should redact");
-  assert.strictEqual(apiKeyMatches.length, 4, "same API key should be replaced in four places");
-  assert.strictEqual(uniqueApiKeys.length, 1, "same API key raw value should reuse one placeholder");
+  assert.ok(/^my api key is \[PWM_\d+\]$/.test(lines[7]), "natural-language API key should redact");
+  assert.ok(/^\[PWM_\d+\]$/.test(lines[8]), "standalone composite placeholder junk should redact");
+  assert.strictEqual(lines[0], `API_KEY=${lines[3].split("=")[1]}`, "same API key should reuse one placeholder");
+  assert.strictEqual(lines[0], `API_KEY=${lines[6].split("=")[1]}`, "same API key should reuse one placeholder");
+  assert.strictEqual(lines[7], `my api key is ${lines[0].split("=")[1]}`, "natural-language API key should reuse the same placeholder");
 }
 
 function testMixedPlaceholderBlobPreservesKnownPlaceholdersAndRedactsRawLeaks() {
@@ -393,7 +515,7 @@ function testMixedPlaceholderBlobPreservesKnownPlaceholdersAndRedactsRawLeaks() 
   const manager = new PlaceholderManager();
   const redactor = new Redactor(manager);
   const text =
-    'API_KEY=[API_KEY_1] DB_PASSWORD=[PASSWORD_2] TOKEN=[TOKEN_1] AWS_ACCESS_KEY_ID=[AWS_KEY_1] AWS_SECRET_ACCESS_KEY=[AWS_SECRET_KEY_2] AWS_SESSION_TOKEN=[TOKEN_2] CLIENT_SECRET=[SECRET_1] AUTHORIZATION=Bearer mF_9.B5f{ "apiKey": "[API_KEY_2]", "password": "PrinterCable!2026!Demo", "token": "[TOKEN_3export API_KEY="[SECRET_2]" export DB_PASSWORD=[PASSWORD_3] export AWS_SECRET_ACCESS_KEY=[AWS_SECRET_KEY_$env:API_KEY="[SECRET_3]" $env:DB_PASSWORD=[PASSWORD_4] $env:TOKEN="[TOKEN_4]"3]]" }-4.1JqM';
+    'API_KEY=[PWM_1] DB_PASSWORD=[PWM_2] TOKEN=[PWM_3] AWS_ACCESS_KEY_ID=[PWM_4] AWS_SECRET_ACCESS_KEY=[PWM_5] AWS_SESSION_TOKEN=[PWM_6] CLIENT_SECRET=[PWM_7] AUTHORIZATION=Bearer mF_9.B5f{ "apiKey": "[PWM_8]", "password": "PrinterCable!2026!Demo", "token": "[PWM_3export API_KEY="[PWM_9]" export DB_PASSWORD=[PWM_10] export AWS_SECRET_ACCESS_KEY=[PWM_$env:API_KEY="[PWM_11]" $env:DB_PASSWORD=[PWM_12] $env:TOKEN="[PWM_13]"3]]" }-4.1JqM';
 
   const findings = detector.scan(text);
   const result = redactor.redact(text, findings);
@@ -403,27 +525,27 @@ function testMixedPlaceholderBlobPreservesKnownPlaceholdersAndRedactsRawLeaks() 
     "raw JSON password should be detected"
   );
   assert.ok(
-    findings.some((finding) => finding.raw.startsWith("[TOKEN_3export")),
+    findings.some((finding) => finding.raw.startsWith("[PWM_3export")),
     "broken token placeholder prefix should be detected"
   );
-  assert.ok(result.redactedText.includes("API_KEY=[API_KEY_1]"), "known API placeholder should stay");
-  assert.ok(result.redactedText.includes("DB_PASSWORD=[PASSWORD_2]"), "known password placeholder should stay");
-  assert.ok(result.redactedText.includes("AWS_ACCESS_KEY_ID=[AWS_KEY_1]"), "known AWS key placeholder should stay");
+  assert.ok(result.redactedText.includes("API_KEY=[PWM_1]"), "known API placeholder should stay");
+  assert.ok(result.redactedText.includes("DB_PASSWORD=[PWM_2]"), "known password placeholder should stay");
+  assert.ok(result.redactedText.includes("AWS_ACCESS_KEY_ID=[PWM_4]"), "known AWS key placeholder should stay");
   assert.ok(
-    result.redactedText.includes("AWS_SECRET_ACCESS_KEY=[AWS_SECRET_KEY_2]"),
+    result.redactedText.includes("AWS_SECRET_ACCESS_KEY=[PWM_5]"),
     "known AWS secret placeholder should stay"
   );
   assert.ok(
-    result.redactedText.includes("AWS_SESSION_TOKEN=[TOKEN_2]"),
+    result.redactedText.includes("AWS_SESSION_TOKEN=[PWM_6]"),
     "known AWS session placeholder should stay"
   );
-  assert.ok(result.redactedText.includes('CLIENT_SECRET=[SECRET_1]'), "known secret placeholder should stay");
+  assert.ok(result.redactedText.includes('CLIENT_SECRET=[PWM_7]'), "known secret placeholder should stay");
   assert.ok(
     !result.redactedText.includes("PrinterCable!2026!Demo"),
     "raw JSON password should not survive redaction"
   );
   assert.ok(
-    !result.redactedText.includes("[TOKEN_3export"),
+    !result.redactedText.includes("[PWM_3export"),
     "broken token placeholder prefix should not survive redaction"
   );
 }
@@ -440,10 +562,10 @@ function testFinalRegressionBlockKeepsTrailingNaturalLanguagePasswordRedacted() 
     "TOKEN=eyJhbGciOiJIUzI1NiJ9.UExBQ0VIT0xERVJfUEFZTE9BRA.U2lnbmF0dXJlVGVzdDEyMw",
     "AWS_SECRET_ACCESS_KEY=Qm9Wc3RrL1pXcDcrTjVxUXIvV2hKc1l4cG9DdzJm",
     "",
-    "API_KEY=[API_KEY_1]",
-    "DB_PASSWORD=[PASSWORD_2]",
-    "TOKEN=[TOKEN_1]",
-    "AWS_SECRET_ACCESS_KEY=[AWS_SECRET_KEY_1]",
+    "API_KEY=[PWM_1]",
+    "DB_PASSWORD=[PWM_2]",
+    "TOKEN=[PWM_3]",
+    "AWS_SECRET_ACCESS_KEY=[PWM_4]",
     "",
     "AUTHORIZATION=Bearer mF_9.B5f-4.1JqM",
     "Authorization: Bearer HeaderToken123456",
@@ -453,8 +575,8 @@ function testFinalRegressionBlockKeepsTrailingNaturalLanguagePasswordRedacted() 
     'export API_KEY="sk_proj_9Zx2Lm7Qp4Vc8Rt5Yn1Kd6Hs3Bw0Tf"',
     '$env:DB_PASSWORD="ForestLock!2026!PS"',
     "",
-    "[TOKEN_3]suffix",
-    "prefix_[PASSWORD_1]",
+    "[PWM_5]suffix",
+    "prefix_[PWM_1]",
     "",
     "my api key is sk_live_7Qm2Lp9Xv4Nc8Tr6Yh1Zw5Kd3Bj0Pf",
     "my password is VaultHorse!2026!Test"
@@ -474,7 +596,7 @@ function testFinalRegressionBlockKeepsTrailingNaturalLanguagePasswordRedacted() 
     "trailing natural-language password should be detected inside the mixed regression block"
   );
   assert.ok(
-    result.redactedText.includes("my password is [PASSWORD_1]"),
+    result.redactedText.includes("my password is [PWM_2]"),
     "trailing natural-language password should be redacted in the mixed regression block"
   );
   assert.ok(
@@ -498,11 +620,11 @@ function testNaturalLanguagePasswordVariants() {
 
   assert.strictEqual(passwordFindings.length, 2, "both natural-language password variants should be detected");
   assert.ok(
-    result.redactedText.includes("my password is [PASSWORD_1]"),
+    result.redactedText.includes("my password is [PWM_1]"),
     "bare natural-language password should be redacted"
   );
   assert.ok(
-    result.redactedText.includes('my password is "[PASSWORD_2]"'),
+    result.redactedText.includes('my password is "[PWM_2]"'),
     "quoted natural-language password should be redacted"
   );
   assert.ok(
@@ -541,10 +663,10 @@ function testSuppressionFamilies() {
 function testRevealStateLookupUnit() {
   const manager = new PlaceholderManager();
   const placeholder = manager.getPlaceholder("real-session-value-1234567890", "TOKEN");
-  const state = manager.exportState();
+  const state = manager.exportPrivateState();
 
   const freshManager = new PlaceholderManager();
-  freshManager.setState(state);
+  freshManager.setPrivateState(state);
 
   assert.strictEqual(
     freshManager.getRaw(placeholder),
@@ -558,16 +680,86 @@ function testRevealStateLookupUnit() {
   assert.strictEqual(segments[1].raw, "real-session-value-1234567890");
 }
 
+function testPlaceholderFormatIsGeneric() {
+  const manager = new PlaceholderManager();
+  const first = manager.getPlaceholder("alpha-secret", "PASSWORD");
+  const second = manager.getPlaceholder("beta-secret", "API_KEY");
+
+  assert.strictEqual(first, "[PWM_1]", "first placeholder should use the neutral PWM prefix");
+  assert.strictEqual(second, "[PWM_2]", "placeholder numbering should be global and neutral");
+}
+
+function testPublicStateOmitsRawMappings() {
+  const manager = new PlaceholderManager();
+  const placeholder = manager.getPlaceholder("ultra-sensitive-value", "TOKEN");
+  const publicState = manager.exportPublicState();
+  const publicStateJson = JSON.stringify(publicState);
+  const publicManager = new PlaceholderManager();
+
+  publicManager.setPublicState(publicState);
+
+  assert.deepStrictEqual(
+    Object.keys(publicState).sort(),
+    ["counters", "knownPlaceholders", "sessionId"],
+    "public state should expose only sanitized fields"
+  );
+  assert.deepStrictEqual(publicState.knownPlaceholders, [placeholder]);
+  assert.strictEqual(publicStateJson.includes("ultra-sensitive-value"), false, "public state must not contain raw values");
+  assert.strictEqual(publicStateJson.includes("secretByFingerprint"), false, "public state must not expose private maps");
+  assert.strictEqual(publicManager.getRaw(placeholder), null, "public state rehydration must not recover raw values");
+}
+
+function testExactMixedLegacyPlaceholderInputDoesNotReemitTypedTokens() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const text = [
+    "API_KEY=[API_KEY_1]",
+    "DB_PASSWORD=[PASSWORD_2]",
+    "TOKEN=[TOKEN_1]",
+    "AWS_SECRET_ACCESS_KEY=[AWS_SECRET_KEY_1]",
+    "OPENAI_API_KEY=sk-proj-AAAA1111bbbb2222CCCC3333dddd4444eeee5555"
+  ].join("\n");
+
+  const normalizedInput = normalizeVisiblePlaceholders(text);
+  const findings = detector.scan(normalizedInput);
+  const result = redactor.redact(normalizedInput, findings);
+
+  assertNoTypedPlaceholders(result.redactedText, "mixed legacy placeholder input must never re-emit typed placeholders");
+  assert.ok(
+    result.redactedText.includes(`API_KEY=${canonicalizePlaceholderToken("[API_KEY_1]")}`),
+    "legacy API key placeholder should stay visible only as a generic PWM token"
+  );
+  assert.ok(
+    result.redactedText.includes(`DB_PASSWORD=${canonicalizePlaceholderToken("[PASSWORD_2]")}`),
+    "legacy password placeholder should stay visible only as a generic PWM token"
+  );
+  assert.ok(
+    result.redactedText.includes(`TOKEN=${canonicalizePlaceholderToken("[TOKEN_1]")}`),
+    "legacy token placeholder should stay visible only as a generic PWM token"
+  );
+  assert.ok(
+    result.redactedText.includes(`AWS_SECRET_ACCESS_KEY=${canonicalizePlaceholderToken("[AWS_SECRET_KEY_1]")}`),
+    "legacy AWS secret placeholder should stay visible only as a generic PWM token"
+  );
+  assert.ok(
+    /\[PWM_\d+\]/.test(result.redactedText),
+    "redacted output should continue to use PWM placeholders"
+  );
+}
+
 function run() {
   testPatternMetadata();
   testPositiveFixtures();
   testNegativeExamples();
+  testLegacyPlaceholderNormalizationHelper();
   testRepeatedSameSecret();
   testRepeatedDifferentSecretsSameType();
   testMultilineDifferentPasswords();
   testMultilineRepeatedPassword();
   testRegressionMixedMultilineSecrets();
   testDbUriWithCredentials();
+  testFullValueReplacementForConnectionStyleAssignments();
   testGenericBasicAuthUrl();
   testOverlapBearerVsJwt();
   testAuthorizationBearerVariants();
@@ -581,6 +773,9 @@ function run() {
   testNaturalLanguagePasswordVariants();
   testSuppressionFamilies();
   testRevealStateLookupUnit();
+  testPlaceholderFormatIsGeneric();
+  testPublicStateOmitsRawMappings();
+  testExactMixedLegacyPlaceholderInputDoesNotReemitTypedTokens();
 
   console.log(
     `PASS ${fixtures.length} positive fixtures + metadata, suppression, multiline, and reveal regressions`

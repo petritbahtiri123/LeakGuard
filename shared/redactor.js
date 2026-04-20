@@ -1,6 +1,7 @@
 (function () {
   const root = typeof globalThis !== "undefined" ? globalThis : window;
   root.PWM = root.PWM || {};
+  const { normalizeVisiblePlaceholders } = root.PWM;
 
   class Redactor {
     constructor(manager) {
@@ -41,7 +42,7 @@
       }
 
       return {
-        redactedText: output,
+        redactedText: normalizeVisiblePlaceholders ? normalizeVisiblePlaceholders(output) : output,
         replacements,
         findings: replacements
       };

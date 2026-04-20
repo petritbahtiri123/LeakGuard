@@ -32,10 +32,10 @@
       "TOKEN=eyJhbGciOiJIUzI1NiJ9.UExBQ0VIT0xERVJfUEFZTE9BRA.U2lnbmF0dXJlVGVzdDEyMw",
       "AWS_SECRET_ACCESS_KEY=Qm9Wc3RrL1pXcDcrTjVxUXIvV2hKc1l4cG9DdzJm",
       "",
-      "API_KEY=[API_KEY_1]",
-      "DB_PASSWORD=[PASSWORD_2]",
-      "TOKEN=[TOKEN_1]",
-      "AWS_SECRET_ACCESS_KEY=[AWS_SECRET_KEY_1]",
+      "API_KEY=[PWM_1]",
+      "DB_PASSWORD=[PWM_2]",
+      "TOKEN=[PWM_3]",
+      "AWS_SECRET_ACCESS_KEY=[PWM_4]",
       "",
       "AUTHORIZATION=Bearer mF_9.B5f-4.1JqM",
       "Authorization: Bearer HeaderToken123456",
@@ -45,8 +45,8 @@
       'export API_KEY="sk_proj_9Zx2Lm7Qp4Vc8Rt5Yn1Kd6Hs3Bw0Tf"',
       '$env:DB_PASSWORD="ForestLock!2026!PS"',
       "",
-      "[TOKEN_3]suffix",
-      "prefix_[PASSWORD_1]",
+      "[PWM_5]suffix",
+      "prefix_[PWM_1]",
       "",
       "my api key is sk_live_7Qm2Lp9Xv4Nc8Tr6Yh1Zw5Kd3Bj0Pf",
       "my password is VaultHorse!2026!Test"
@@ -106,36 +106,19 @@
     revealStatus.textContent = message;
   }
 
-  function getPlaceholderType(placeholder) {
-    const match = /^\[([A-Z0-9_]+)_\d+\]$/.exec(String(placeholder || ""));
-    return match ? match[1] : "SECRET";
-  }
-
   function buildRevealSpan(segment) {
     const span = document.createElement("span");
-    let hideTimer = 0;
     span.className = "pwm-secret";
-    span.dataset.placeholder = segment.placeholder;
-    span.dataset.secretType = getPlaceholderType(segment.placeholder);
     span.textContent = segment.placeholder;
-    span.title = "Click to reveal locally";
+    span.title = "Secure reveal is extension-only";
     span.addEventListener("click", () => {
-      const raw = revealManager.getRaw(segment.placeholder);
-      if (!raw) {
-        span.title = "Placeholder is not available in this local session";
-        renderRevealStatus(`Unknown placeholder lookup: ${segment.placeholder}`, false);
-        return;
-      }
-
-      window.clearTimeout(hideTimer);
-      span.textContent = raw;
-      span.classList.add("is-revealed");
-      renderRevealStatus(`Known placeholder lookup: ${segment.placeholder}`, true);
-      hideTimer = window.setTimeout(() => {
-        if (!span.isConnected) return;
-        span.textContent = segment.placeholder;
-        span.classList.remove("is-revealed");
-      }, 3000);
+      const known = Boolean(revealManager.getRaw(segment.placeholder));
+      renderRevealStatus(
+        known
+          ? `Known placeholder: ${segment.placeholder}. Secure reveal stays inside the extension UI.`
+          : `Unknown placeholder: ${segment.placeholder}. Secure reveal would be unavailable.`,
+        known
+      );
     });
     return span;
   }
@@ -161,21 +144,21 @@
 
   function loadUnknownReveal() {
     revealManager.reset();
-    renderRevealText("Assistant echoed [TOKEN_404] without local state.");
+    renderRevealText("Assistant echoed [PWM_404] without local state.");
     renderRevealStatus("Loaded unknown placeholder fixture", false);
   }
 
   function rerenderKnownReveal() {
-    const state = revealManager.exportState();
-    const placeholder = Object.keys(state.placeholderToRaw || {})[0];
+    const state = revealManager.exportPrivateState();
+    const placeholder = Object.keys(state.placeholderToFingerprint || {})[0];
     if (!placeholder) {
       renderRevealStatus("Load a known placeholder first.", false);
       return;
     }
 
     const nextManager = new PlaceholderManager();
-    nextManager.setState(state);
-    revealManager.setState(nextManager.exportState());
+    nextManager.setPrivateState(state);
+    revealManager.setPrivateState(nextManager.exportPrivateState());
     renderRevealText(`Assistant echoed ${placeholder} again after navigation.`);
     renderRevealStatus(`Re-rendered placeholder from saved state: ${placeholder}`, true);
   }
