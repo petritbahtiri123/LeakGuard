@@ -428,6 +428,90 @@ function testMixedPlaceholderBlobPreservesKnownPlaceholdersAndRedactsRawLeaks() 
   );
 }
 
+function testFinalRegressionBlockKeepsTrailingNaturalLanguagePasswordRedacted() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const text = [
+    "FINAL REGRESSION TEST",
+    "",
+    "API_KEY=sk_live_7Qm2Lp9Xv4Nc8Tr6Yh1Zw5Kd3Bj0Pf",
+    "DB_PASSWORD=VaultHorse!2026!Test",
+    "TOKEN=eyJhbGciOiJIUzI1NiJ9.UExBQ0VIT0xERVJfUEFZTE9BRA.U2lnbmF0dXJlVGVzdDEyMw",
+    "AWS_SECRET_ACCESS_KEY=Qm9Wc3RrL1pXcDcrTjVxUXIvV2hKc1l4cG9DdzJm",
+    "",
+    "API_KEY=[API_KEY_1]",
+    "DB_PASSWORD=[PASSWORD_2]",
+    "TOKEN=[TOKEN_1]",
+    "AWS_SECRET_ACCESS_KEY=[AWS_SECRET_KEY_1]",
+    "",
+    "AUTHORIZATION=Bearer mF_9.B5f-4.1JqM",
+    "Authorization: Bearer HeaderToken123456",
+    "",
+    '{"password":"PrinterCable!2026!Demo","token":"eyJhbGciOiJIUzI1NiJ9.TESTPAYLOAD.TESTSIG"}',
+    "",
+    'export API_KEY="sk_proj_9Zx2Lm7Qp4Vc8Rt5Yn1Kd6Hs3Bw0Tf"',
+    '$env:DB_PASSWORD="ForestLock!2026!PS"',
+    "",
+    "[TOKEN_3]suffix",
+    "prefix_[PASSWORD_1]",
+    "",
+    "my api key is sk_live_7Qm2Lp9Xv4Nc8Tr6Yh1Zw5Kd3Bj0Pf",
+    "my password is VaultHorse!2026!Test"
+  ].join("\n");
+
+  const findings = detector.scan(text);
+  const result = redactor.redact(text, findings);
+  const trailingPasswordStart = text.lastIndexOf("VaultHorse!2026!Test");
+
+  assert.ok(
+    findings.some(
+      (finding) =>
+        finding.type === "PASSWORD" &&
+        finding.raw === "VaultHorse!2026!Test" &&
+        finding.start === trailingPasswordStart
+    ),
+    "trailing natural-language password should be detected inside the mixed regression block"
+  );
+  assert.ok(
+    result.redactedText.includes("my password is [PASSWORD_1]"),
+    "trailing natural-language password should be redacted in the mixed regression block"
+  );
+  assert.ok(
+    !result.redactedText.includes("my password is VaultHorse!2026!Test"),
+    "trailing natural-language password should not survive redaction in the mixed regression block"
+  );
+}
+
+function testNaturalLanguagePasswordVariants() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const text = [
+    "my password is VaultHorse!2026!Test",
+    'my password is "ForestLock!2026!PS"'
+  ].join("\n");
+
+  const findings = detector.scan(text);
+  const result = redactor.redact(text, findings);
+  const passwordFindings = findings.filter((finding) => finding.type === "PASSWORD");
+
+  assert.strictEqual(passwordFindings.length, 2, "both natural-language password variants should be detected");
+  assert.ok(
+    result.redactedText.includes("my password is [PASSWORD_1]"),
+    "bare natural-language password should be redacted"
+  );
+  assert.ok(
+    result.redactedText.includes('my password is "[PASSWORD_2]"'),
+    "quoted natural-language password should be redacted"
+  );
+  assert.ok(
+    !result.redactedText.includes("VaultHorse!2026!Test") &&
+      !result.redactedText.includes("ForestLock!2026!PS"),
+    "natural-language password raws should not survive redaction"
+  );
+}
+
 function testSuppressionFamilies() {
   const detector = new Detector();
   const cases = [
@@ -493,6 +577,8 @@ function run() {
   testPlaceholderValuesDoNotRetriggerDetection();
   testCompositePlaceholderAndNaturalLanguageEdgeCaseBlock();
   testMixedPlaceholderBlobPreservesKnownPlaceholdersAndRedactsRawLeaks();
+  testFinalRegressionBlockKeepsTrailingNaturalLanguagePasswordRedacted();
+  testNaturalLanguagePasswordVariants();
   testSuppressionFamilies();
   testRevealStateLookupUnit();
 

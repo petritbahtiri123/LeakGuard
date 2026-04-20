@@ -123,6 +123,80 @@
       .status-fail {
         color: var(--warn);
       }
+
+      .pwm-secret {
+        --pwm-secret-accent: #38bdf8;
+        --pwm-secret-soft: rgba(56, 189, 248, 0.14);
+        --pwm-secret-glow: rgba(56, 189, 248, 0.3);
+        --pwm-secret-ink: #0f172a;
+        --pwm-secret-revealed-ink: #06141d;
+        display: inline-flex;
+        align-items: center;
+        border: 1px dashed var(--pwm-secret-accent);
+        border-radius: 8px;
+        padding: 1px 6px;
+        margin: 0 2px;
+        color: var(--pwm-secret-ink);
+        background: linear-gradient(135deg, var(--pwm-secret-soft), rgba(255, 255, 255, 0.9));
+        cursor: pointer;
+        user-select: none;
+        transition:
+          transform 140ms ease,
+          border-color 180ms ease,
+          color 180ms ease,
+          background 180ms ease,
+          box-shadow 220ms ease;
+      }
+
+      .pwm-secret:hover {
+        transform: translateY(-1px);
+      }
+
+      .pwm-secret[data-secret-type="API_KEY"] {
+        --pwm-secret-accent: #34d399;
+        --pwm-secret-soft: rgba(52, 211, 153, 0.16);
+        --pwm-secret-glow: rgba(16, 185, 129, 0.32);
+        --pwm-secret-revealed-ink: #052e24;
+      }
+
+      .pwm-secret[data-secret-type="PASSWORD"] {
+        --pwm-secret-accent: #fb7185;
+        --pwm-secret-soft: rgba(251, 113, 133, 0.16);
+        --pwm-secret-glow: rgba(244, 63, 94, 0.3);
+        --pwm-secret-revealed-ink: #3b0a16;
+      }
+
+      .pwm-secret[data-secret-type="TOKEN"],
+      .pwm-secret[data-secret-type="SECRET"] {
+        --pwm-secret-accent: #22d3ee;
+        --pwm-secret-soft: rgba(34, 211, 238, 0.14);
+        --pwm-secret-glow: rgba(6, 182, 212, 0.28);
+        --pwm-secret-revealed-ink: #083344;
+      }
+
+      .pwm-secret.is-revealed {
+        color: var(--pwm-secret-revealed-ink);
+        border-style: solid;
+        background: linear-gradient(135deg, rgba(255, 255, 255, 0.9), var(--pwm-secret-soft));
+        box-shadow:
+          0 0 0 1px var(--pwm-secret-glow),
+          0 10px 24px -18px var(--pwm-secret-glow);
+        animation: pwm-secret-reveal 260ms ease-out;
+      }
+
+      @keyframes pwm-secret-reveal {
+        0% {
+          transform: scale(0.98);
+        }
+
+        65% {
+          transform: scale(1.02);
+        }
+
+        100% {
+          transform: scale(1);
+        }
+      }
     </style>
   </head>
   <body>
@@ -146,6 +220,8 @@
           <button data-scenario="webhook">Webhook Payload</button>
           <button data-scenario="same-value">Same Value Twice</button>
           <button data-scenario="different-values">Different Values Same Type</button>
+          <button data-scenario="natural-language-password">Natural Language Password</button>
+          <button data-scenario="final-regression">Final Regression Block</button>
           <button data-scenario="mixed-multiline">Mixed Multiline Secrets</button>
           <button data-scenario="safe-text">Normal Non-Secret Text</button>
         </div>
@@ -176,7 +252,7 @@
         <article class="panel stack">
           <div>
             <h2>Contenteditable Composer</h2>
-            <p>Same helper layer, BR-first rewrite with block fallback available.</p>
+            <p>Same helper layer, native text insertion with HTML and block fallback available.</p>
           </div>
           <div
             id="harness-editable"

@@ -6,6 +6,7 @@
     isTextArea,
     isContentEditable,
     getInputText,
+    setInputTextPlain,
     getSelectionOffsets,
     spliceSelectionText,
     setInputText,
@@ -490,8 +491,27 @@
   }
 
   async function settleComposer() {
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
     await new Promise((resolve) => window.requestAnimationFrame(resolve));
     await new Promise((resolve) => window.requestAnimationFrame(resolve));
+    await new Promise((resolve) => window.requestAnimationFrame(resolve));
+  }
+
+  async function readStableComposerText(input, maxPasses = 4) {
+    let previous = getInputText(input);
+
+    for (let pass = 0; pass < maxPasses; pass += 1) {
+      await settleComposer();
+      const current = getInputText(input);
+
+      if (current === previous) {
+        return current;
+      }
+
+      previous = current;
+    }
+
+    return previous;
   }
 
   function verifyPlaceholderConsistency(result) {
@@ -577,22 +597,32 @@
     const expected = plan.canonical;
     const writeText = plan.writeText;
 
-    setInputText(input, writeText, {
+    setInputTextPlain(input, writeText, {
       caretOffset: options.caretOffset
     });
-    await settleComposer();
-    debugLogSnapshot("rewrite:block-rewrite", input, expected, writeText);
+    const actualAfterNative = await readStableComposerText(input);
+    debugLogSnapshot("rewrite:native-rewrite", input, expected, writeText);
 
-    let actual = getInputText(input);
+    let actual = actualAfterNative;
     if (plan.acceptableTexts.includes(actual)) {
-      return { ok: true, actual, strategy: "block-rewrite" };
+      return { ok: true, actual, strategy: "native-rewrite" };
+    }
+
+    forceRewriteInputText(input, writeText, {
+      caretOffset: options.caretOffset
+    });
+    actual = await readStableComposerText(input);
+    debugLogSnapshot("rewrite:html-fallback", input, expected, writeText);
+
+    if (plan.acceptableTexts.includes(actual)) {
+      return { ok: true, actual, strategy: "html-fallback" };
     }
 
     if (typeof options.restoreText === "string") {
       forceRewriteInputText(input, options.restoreText, {
         caretOffset: options.restoreCaretOffset
       });
-      await settleComposer();
+      await readStableComposerText(input, 2);
     }
 
     return {
@@ -601,9 +631,9 @@
     };
   }
 
-  function ensureExactComposerState(input, expectedText) {
+  async function ensureExactComposerState(input, expectedText) {
     const plan = buildComposerWritePlan(input, expectedText);
-    const actual = getInputText(input);
+    const actual = await readStableComposerText(input, 2);
     debugLogSnapshot("pre-submit-check", input, plan.canonical, plan.writeText);
     return plan.acceptableTexts.includes(actual);
   }
@@ -776,7 +806,7 @@
     hideBadgeSoon();
     refreshBadgeFromCurrentInput();
 
-    if (!ensureExactComposerState(input, result.redactedText)) {
+    if (!(await ensureExactComposerState(input, result.redactedText))) {
       await showRewriteFailure(
         "submit",
         collectFailureDetails(input, result.redactedText, getInputText(input), "submit")
@@ -854,16 +884,22 @@
     refreshBadgeFromCurrentInput();
 
     queueMicrotask(() => {
-      if (!ensureExactComposerState(input, result.redactedText)) {
-        showRewriteFailure(
-          "submit",
-          collectFailureDetails(input, result.redactedText, getInputText(input), "submit")
-        ).catch(console.error);
-        refreshBadgeFromCurrentInput();
-        return;
-      }
-      const button = findSendButton(input);
-      if (button) button.click();
+      ensureExactComposerState(input, result.redactedText)
+        .then((isExact) => {
+          if (!isExact) {
+            return showRewriteFailure(
+              "submit",
+              collectFailureDetails(input, result.redactedText, getInputText(input), "submit")
+            ).then(() => {
+              refreshBadgeFromCurrentInput();
+            });
+          }
+
+          const button = findSendButton(input);
+          if (button) button.click();
+          return null;
+        })
+        .catch(console.error);
     });
   }
 
@@ -997,10 +1033,17 @@
     return raw;
   }
 
+  function getPlaceholderType(placeholder) {
+    const match = /^\[([A-Z0-9_]+)_\d+\]$/.exec(String(placeholder || ""));
+    return match ? match[1] : "SECRET";
+  }
+
   function createSecretSpan(placeholder) {
     const span = document.createElement("span");
+    let hideTimer = 0;
     span.className = "pwm-secret";
     span.dataset.placeholder = placeholder;
+    span.dataset.secretType = getPlaceholderType(placeholder);
     span.textContent = placeholder;
     span.title = "Click to reveal locally for 8 seconds";
 
@@ -1011,6 +1054,7 @@
       });
 
       if (span.classList.contains("is-revealed")) {
+        window.clearTimeout(hideTimer);
         span.classList.remove("is-revealed");
         span.textContent = placeholder;
         return;
@@ -1028,7 +1072,8 @@
       span.classList.add("is-revealed");
       span.textContent = raw;
 
-      window.setTimeout(() => {
+      window.clearTimeout(hideTimer);
+      hideTimer = window.setTimeout(() => {
         if (span.isConnected) {
           span.classList.remove("is-revealed");
           span.textContent = placeholder;
