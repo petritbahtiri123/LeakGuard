@@ -55,6 +55,30 @@
     return output;
   }
 
+  function trimTrailingEmptyLines(lines) {
+    const next = [...lines];
+
+    while (next.length > 1 && next[next.length - 1] === "") {
+      next.pop();
+    }
+
+    if (next.length === 1 && next[0] === "") {
+      return [];
+    }
+
+    return next;
+  }
+
+  function normalizeBlockText(value) {
+    const normalized = normalizeComposerText(value);
+
+    if (/^\n+$/.test(normalized)) {
+      return "";
+    }
+
+    return normalized.replace(/\n+$/g, "");
+  }
+
   function serializeContentEditableRoot(root) {
     if (!root?.childNodes?.length) {
       return normalizeEditorInnerText(root?.innerText || "");
@@ -84,7 +108,7 @@
         if (inlineBuffer) {
           flushInlineBuffer();
         }
-        lines.push(readEditableNodeText(child));
+        lines.push(normalizeBlockText(readEditableNodeText(child)));
         continue;
       }
 
@@ -95,7 +119,7 @@
       flushInlineBuffer();
     }
 
-    return normalizeEditorInnerText(lines.join("\n"));
+    return normalizeEditorInnerText(trimTrailingEmptyLines(lines).join("\n"));
   }
 
   function readContentEditableText(el) {

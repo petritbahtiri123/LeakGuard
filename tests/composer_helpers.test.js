@@ -71,10 +71,32 @@ function testSerializesBlockTreeWithBlankLines() {
   );
 }
 
+function testTrimsEditorGeneratedTrailingBlankLines() {
+  const root = {
+    childNodes: [
+      elementNode("DIV", [textNode("Heading")]),
+      elementNode("DIV", [brNode()]),
+      elementNode("DIV", [textNode("Body")]),
+      elementNode("DIV", [brNode()]),
+      elementNode("DIV", [brNode()])
+    ],
+    innerText: "Heading\nBody\n\n"
+  };
+
+  const actual = serializeContentEditableRoot(root);
+
+  assert.strictEqual(
+    actual,
+    "Heading\n\nBody",
+    "contenteditable tree serialization should ignore trailing empty editor blocks"
+  );
+}
+
 function run() {
   testPreservesSingleIntentionalBlankLine();
   testCollapsesExcessBlankRunsToOneEmptyLine();
   testSerializesBlockTreeWithBlankLines();
+  testTrimsEditorGeneratedTrailingBlankLines();
   console.log("PASS composer helper multiline normalization regressions");
 }
 
