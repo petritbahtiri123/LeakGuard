@@ -101,22 +101,22 @@ function testSerializesTopLevelBreakRunsAsBlankLines() {
       textNode("FINAL REGRESSION TEST"),
       brNode(),
       brNode(),
-      textNode("API_KEY=[API_KEY_1]"),
+      textNode("API_KEY=[PWM_1]"),
       brNode(),
-      textNode("DB_PASSWORD=[PASSWORD_1]"),
+      textNode("DB_PASSWORD=[PWM_2]"),
       brNode(),
       brNode(),
       textNode("AUTHORIZATION=Bearer mF_9.B5f-4.1JqM")
     ],
     innerText:
-      "FINAL REGRESSION TEST\nAPI_KEY=[API_KEY_1]\nDB_PASSWORD=[PASSWORD_1]\nAUTHORIZATION=Bearer mF_9.B5f-4.1JqM"
+      "FINAL REGRESSION TEST\nAPI_KEY=[PWM_1]\nDB_PASSWORD=[PWM_2]\nAUTHORIZATION=Bearer mF_9.B5f-4.1JqM"
   };
 
   const actual = serializeContentEditableRoot(root);
 
   assert.strictEqual(
     actual,
-    "FINAL REGRESSION TEST\n\nAPI_KEY=[API_KEY_1]\nDB_PASSWORD=[PASSWORD_1]\n\nAUTHORIZATION=Bearer mF_9.B5f-4.1JqM",
+    "FINAL REGRESSION TEST\n\nAPI_KEY=[PWM_1]\nDB_PASSWORD=[PWM_2]\n\nAUTHORIZATION=Bearer mF_9.B5f-4.1JqM",
     "contenteditable tree serialization should preserve blank lines from top-level BR runs"
   );
 }

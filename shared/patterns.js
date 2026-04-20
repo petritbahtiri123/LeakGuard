@@ -37,7 +37,7 @@
       suppressionNotes:
         "Treat placeholder tokens with attached prefix/suffix junk as suspicious whole values while leaving clean placeholders alone.",
       regex:
-        /(?:^|[^A-Za-z0-9_:=<>"'`])(\[[A-Z][A-Z0-9_]*_\d+\](?:(?:\.[A-Za-z0-9._-]+)+|[A-Za-z0-9._-]+)|[A-Za-z0-9._-]+\[[A-Z][A-Z0-9_]*_\d+\](?:[A-Za-z0-9._-]+|(?:\.[A-Za-z0-9._-]+))*)/g,
+        /(?:^|[^A-Za-z0-9_:=<>"'`])(\[(?:PWM|[A-Z][A-Z0-9_]*)_\d+\](?:(?:\.[A-Za-z0-9._-]+)+|[A-Za-z0-9._-]+)|[A-Za-z0-9._-]+\[(?:PWM|[A-Z][A-Z0-9_]*)_\d+\](?:[A-Za-z0-9._-]+|(?:\.[A-Za-z0-9._-]+))*)/g,
       captureGroups: [1]
     },
     {
@@ -395,14 +395,14 @@
   const ASSIGNMENT_REGEX =
     /((?:[A-Za-z_][A-Za-z0-9_.-]{0,80})?(?:aws[_-]?secret[_-]?access[_-]?key|aws[_-]?session[_-]?token|pass(?:word)?|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|private[_-]?key|account[_-]?key|cookie|session(?:[_-]?id|[_-]?secret)?|auth(?:orization)?|connection(?:string|_string)?|webhook))\s*[:=]\s*((?:"[^"\n\r]*")|(?:'[^'\n\r]*')|(?:`[^`\n\r]*`)|(?:[^\s,;]+))/gim;
 
-  const CLEAN_PLACEHOLDER_REGEX = /^\[[A-Z][A-Z0-9_]*_\d+\]$/;
+  const CLEAN_PLACEHOLDER_REGEX = /^\[PWM_\d+\]$/;
 
-  const CONTAINS_PLACEHOLDER_REGEX = /\[[A-Z][A-Z0-9_]*_\d+\]/;
+  const CONTAINS_PLACEHOLDER_REGEX = /\[(?:PWM|[A-Z][A-Z0-9_]*)_\d+\]/;
 
   const SUPPRESSED_VALUE_REGEX = [
     /^\$\{[^}]+\}$/,
     /^<[^>]+>$/,
-    /^\[[A-Z0-9_ -]+\]$/,
+    /^\[(?!PWM_\d+\]$)(?![A-Z][A-Z0-9_]*_\d+\]$)[A-Z0-9_ -]+\]$/,
     /^REDACTED$/i,
     /^MASKED$/i,
     /^changeme$/i,
