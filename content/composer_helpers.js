@@ -209,6 +209,26 @@
     return fragment;
   }
 
+  function escapeHtmlText(value) {
+    return String(value || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  function textToBlockHtml(text) {
+    const normalized = normalizeComposerText(text);
+    const lines = normalized.split("\n");
+
+    if (!lines.length) {
+      return "<div><br></div>";
+    }
+
+    return lines
+      .map((line) => `<div>${line ? escapeHtmlText(line) : "<br>"}</div>`)
+      .join("");
+  }
+
   function placeCaretAtEnd(el) {
     if (!isContentEditable(el)) return;
 
@@ -287,7 +307,42 @@
     placeCaretAtEnd(el);
   }
 
-  function rewriteContentEditable(el, value, options = {}) {
+  function selectContentEditableContents(el) {
+    if (
+      !isContentEditable(el) ||
+      typeof window === "undefined" ||
+      typeof document === "undefined" ||
+      typeof document.createRange !== "function"
+    ) {
+      return null;
+    }
+
+    const selection = window.getSelection();
+    if (!selection) return null;
+
+    const range = document.createRange();
+    range.selectNodeContents(el);
+
+    el.focus();
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    return selection;
+  }
+
+  function runEditableCommand(command, value) {
+    if (typeof document === "undefined" || typeof document.execCommand !== "function") {
+      return false;
+    }
+
+    try {
+      return !!document.execCommand(command, false, value);
+    } catch {
+      return false;
+    }
+  }
+
+  function rewriteContentEditableBlocks(el, value, options = {}) {
     const normalized = normalizeComposerText(value);
     const fragment = textToBlockFragment(normalized);
 
@@ -304,6 +359,65 @@
     dispatchInput(el, normalized, "insertReplacementText");
   }
 
+  function rewriteContentEditableNative(el, value, options = {}) {
+    const normalized = normalizeComposerText(value);
+    const selection = selectContentEditableContents(el);
+    if (!selection) return false;
+
+    const inserted = normalized
+      ? runEditableCommand("insertText", normalized)
+      : runEditableCommand("delete", null);
+
+    if (!inserted) {
+      return false;
+    }
+
+    if (Number.isFinite(options.caretOffset)) {
+      placeCaretAtOffset(el, options.caretOffset);
+    } else {
+      placeCaretAtEnd(el);
+    }
+
+    return true;
+  }
+
+  function rewriteContentEditableHtml(el, value, options = {}) {
+    const normalized = normalizeComposerText(value);
+    const selection = selectContentEditableContents(el);
+    if (!selection) return false;
+
+    const inserted = normalized
+      ? runEditableCommand("insertHTML", textToBlockHtml(normalized))
+      : runEditableCommand("delete", null);
+
+    if (!inserted) {
+      return false;
+    }
+
+    if (Number.isFinite(options.caretOffset)) {
+      placeCaretAtOffset(el, options.caretOffset);
+    } else {
+      placeCaretAtEnd(el);
+    }
+
+    return true;
+  }
+
+  function setInputTextPlain(el, value, options = {}) {
+    if (!el) return false;
+
+    if (isTextArea(el)) {
+      setTextareaValue(el, value, options);
+      return true;
+    }
+
+    if (isContentEditable(el)) {
+      return rewriteContentEditableNative(el, value, options);
+    }
+
+    return false;
+  }
+
   function setInputText(el, value, options = {}) {
     if (!el) return;
 
@@ -313,7 +427,11 @@
     }
 
     if (isContentEditable(el)) {
-      rewriteContentEditable(el, value, options);
+      if (!rewriteContentEditableNative(el, value, options)) {
+        if (!rewriteContentEditableHtml(el, value, options)) {
+          rewriteContentEditableBlocks(el, value, options);
+        }
+      }
     }
   }
 
@@ -326,7 +444,9 @@
     }
 
     if (isContentEditable(el)) {
-      rewriteContentEditable(el, value, options);
+      if (!rewriteContentEditableHtml(el, value, options)) {
+        rewriteContentEditableBlocks(el, value, options);
+      }
     }
   }
 
@@ -402,6 +522,7 @@
     isTextArea,
     isContentEditable,
     getInputText,
+    setInputTextPlain,
     getSelectionOffsets,
     spliceSelectionText,
     textToBlockFragment,

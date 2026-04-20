@@ -3,7 +3,10 @@ const path = require("path");
 
 require(path.join(__dirname, "../content/composer_helpers.js"));
 
-const { normalizeEditorInnerText, serializeContentEditableRoot } = globalThis.PWM.ComposerHelpers;
+const {
+  normalizeEditorInnerText,
+  serializeContentEditableRoot
+} = globalThis.PWM.ComposerHelpers;
 
 function textNode(value) {
   return {
@@ -92,11 +95,38 @@ function testTrimsEditorGeneratedTrailingBlankLines() {
   );
 }
 
+function testSerializesTopLevelBreakRunsAsBlankLines() {
+  const root = {
+    childNodes: [
+      textNode("FINAL REGRESSION TEST"),
+      brNode(),
+      brNode(),
+      textNode("API_KEY=[API_KEY_1]"),
+      brNode(),
+      textNode("DB_PASSWORD=[PASSWORD_1]"),
+      brNode(),
+      brNode(),
+      textNode("AUTHORIZATION=Bearer mF_9.B5f-4.1JqM")
+    ],
+    innerText:
+      "FINAL REGRESSION TEST\nAPI_KEY=[API_KEY_1]\nDB_PASSWORD=[PASSWORD_1]\nAUTHORIZATION=Bearer mF_9.B5f-4.1JqM"
+  };
+
+  const actual = serializeContentEditableRoot(root);
+
+  assert.strictEqual(
+    actual,
+    "FINAL REGRESSION TEST\n\nAPI_KEY=[API_KEY_1]\nDB_PASSWORD=[PASSWORD_1]\n\nAUTHORIZATION=Bearer mF_9.B5f-4.1JqM",
+    "contenteditable tree serialization should preserve blank lines from top-level BR runs"
+  );
+}
+
 function run() {
   testPreservesSingleIntentionalBlankLine();
   testCollapsesExcessBlankRunsToOneEmptyLine();
   testSerializesBlockTreeWithBlankLines();
   testTrimsEditorGeneratedTrailingBlankLines();
+  testSerializesTopLevelBreakRunsAsBlankLines();
   console.log("PASS composer helper multiline normalization regressions");
 }
 
