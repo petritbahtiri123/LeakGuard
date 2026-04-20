@@ -41,7 +41,6 @@
   ];
   const PLACEHOLDER_TOKEN_REGEX = /\[[A-Z0-9_]+_\d+\]/g;
 
-  const detector = new Detector();
   const manager = new PlaceholderManager();
   const redactor = new Redactor(manager);
 
@@ -53,6 +52,7 @@
   let inputScanTimer = 0;
   let rehydrateObserver = null;
   let modalOpen = false;
+  let lastTypedPromptText = "";
 
   function isDebugEnabled() {
     try {
@@ -296,6 +296,7 @@
 
   function getFindings(text) {
     if (!text || !text.trim()) return [];
+    const detector = new Detector();
     return detector.scan(text).filter((finding) => finding.severity !== "low");
   }
 
@@ -368,6 +369,8 @@
       desc.textContent =
         mode === "paste"
           ? "This pasted content appears to contain credentials or secrets. Redact before it reaches the chat input."
+          : mode === "input"
+            ? "This typed content appears to contain credentials or secrets. Redact it before it sits in the chat input."
           : "This message appears to contain credentials or secrets. Redact before sending it.";
 
       const findingsWrap = document.createElement("div");
@@ -864,6 +867,83 @@
     });
   }
 
+  async function maybeHandleTypedSecrets() {
+    if (modalOpen) return;
+
+    const input = findComposer();
+    if (!input) return;
+
+    const text = getInputText(input);
+    if (!text || !text.trim()) {
+      lastTypedPromptText = "";
+      return;
+    }
+
+    const findings = getFindings(text);
+    if (!findings.length) {
+      lastTypedPromptText = "";
+      return;
+    }
+
+    if (PLACEHOLDER_TOKEN_REGEX.test(text)) {
+      PLACEHOLDER_TOKEN_REGEX.lastIndex = 0;
+      return;
+    }
+    PLACEHOLDER_TOKEN_REGEX.lastIndex = 0;
+
+    if (text === lastTypedPromptText) {
+      return;
+    }
+
+    lastTypedPromptText = text;
+
+    const decision = await showDecisionModal(findings, "input");
+    if (decision.action !== "redact") {
+      refreshBadgeFromCurrentInput();
+      return;
+    }
+
+    const latestInput = findComposer(input);
+    if (!latestInput) return;
+
+    const latestText = getInputText(latestInput);
+    if (latestText !== text) {
+      refreshBadgeFromCurrentInput();
+      return;
+    }
+
+    const result = redactor.redact(latestText, findings);
+    const placeholderCheck = verifyPlaceholderConsistency(result);
+
+    if (!placeholderCheck.ok) {
+      await showMessageModal("Redaction blocked", placeholderCheck.error);
+      refreshBadgeFromCurrentInput();
+      return;
+    }
+
+    const applied = await applyComposerText(latestInput, result.redactedText, {
+      caretOffset: result.redactedText.length,
+      restoreText: latestText,
+      restoreCaretOffset: latestText.length
+    });
+
+    if (!applied.ok) {
+      await showRewriteFailure(
+        "input",
+        collectFailureDetails(latestInput, result.redactedText, applied.actual, "input")
+      );
+      refreshBadgeFromCurrentInput();
+      return;
+    }
+
+    await persistState();
+
+    lastTypedPromptText = result.redactedText;
+    setBadge(`Redacted ${findings.length} item(s)`);
+    hideBadgeSoon();
+    refreshBadgeFromCurrentInput();
+  }
+
   function refreshBadgeFromCurrentInput() {
     const input = findComposer();
     if (!input) return;
@@ -885,7 +965,10 @@
 
   function scheduleInputScan() {
     window.clearTimeout(inputScanTimer);
-    inputScanTimer = window.setTimeout(refreshBadgeFromCurrentInput, 220);
+    inputScanTimer = window.setTimeout(() => {
+      refreshBadgeFromCurrentInput();
+      maybeHandleTypedSecrets().catch(console.error);
+    }, 220);
   }
 
   async function lookupRawByPlaceholder(placeholder) {

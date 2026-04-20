@@ -300,6 +300,108 @@ function testExampleValuesDoNotTrigger() {
   }
 }
 
+function testPlaceholderValuesDoNotRetriggerDetection() {
+  const detector = new Detector();
+  const cases = [
+    'SESSION_SECRET="[TOKEN_1]"',
+    'AWS_SECRET_ACCESS_KEY="[AWS_SECRET_KEY_1]"',
+    'DB_PASSWORD="[PASSWORD_2]"'
+  ];
+
+  for (const text of cases) {
+    const findings = detector.scan(text);
+    assert.strictEqual(findings.length, 0, `placeholder value should suppress: ${text}`);
+  }
+}
+
+function testCompositePlaceholderAndNaturalLanguageEdgeCaseBlock() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const text = [
+    "API_KEY=abc123secretvalue",
+    "DB_PASSWORD=[PASSWORD_2]",
+    "TOKEN=[SECRET_1].TESTPAYLOAD.TESTSIGIG]",
+    "API_KEY=abc123secretvalue",
+    "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE",
+    "AWS_SECRET_ACCESS_KEY=[AWS_SECRET_KEY_1]",
+    "API_KEY=abc123secretvalue",
+    "my api key is abc123secretvalue",
+    "[API_KEY_1]LEKEY"
+  ].join("\n");
+
+  const findings = detector.scan(text);
+  const result = redactor.redact(text, findings);
+  const lines = result.redactedText.split("\n");
+  const apiKeyMatches = result.redactedText.match(/\[API_KEY_\d+\]/g) || [];
+  const uniqueApiKeys = [...new Set(apiKeyMatches)];
+  const compositeAssignment = findings.find(
+    (finding) => finding.raw === "[SECRET_1].TESTPAYLOAD.TESTSIGIG]"
+  );
+
+  assert.ok(compositeAssignment, "composite placeholder assignment should produce a finding");
+  assert.ok(
+    compositeAssignment.method.includes("placeholder-composite"),
+    "composite assignment should use the placeholder-composite method"
+  );
+
+  assert.strictEqual(lines[1], "DB_PASSWORD=[PASSWORD_2]", "clean password placeholder should stay");
+  assert.strictEqual(
+    lines[5],
+    "AWS_SECRET_ACCESS_KEY=[AWS_SECRET_KEY_1]",
+    "clean AWS secret placeholder should stay"
+  );
+  assert.ok(/^TOKEN=\[TOKEN_\d+\]$/.test(lines[2]), "composite token value should be fully redacted");
+  assert.ok(
+    /^AWS_ACCESS_KEY_ID=\[AWS_KEY_\d+\]$/.test(lines[4]),
+    "AWS access key assignment should redact the full key value"
+  );
+  assert.strictEqual(lines[7], `my api key is ${uniqueApiKeys[0]}`, "natural-language API key should redact");
+  assert.ok(/^\[SECRET_\d+\]$/.test(lines[8]), "standalone composite placeholder junk should redact");
+  assert.strictEqual(apiKeyMatches.length, 4, "same API key should be replaced in four places");
+  assert.strictEqual(uniqueApiKeys.length, 1, "same API key raw value should reuse one placeholder");
+}
+
+function testMixedPlaceholderBlobPreservesKnownPlaceholdersAndRedactsRawLeaks() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const text =
+    'API_KEY=[API_KEY_1] DB_PASSWORD=[PASSWORD_2] TOKEN=[TOKEN_1] AWS_ACCESS_KEY_ID=[AWS_KEY_1] AWS_SECRET_ACCESS_KEY=[AWS_SECRET_KEY_2] AWS_SESSION_TOKEN=[TOKEN_2] CLIENT_SECRET=[SECRET_1] AUTHORIZATION=Bearer mF_9.B5f{ "apiKey": "[API_KEY_2]", "password": "PrinterCable!2026!Demo", "token": "[TOKEN_3export API_KEY="[SECRET_2]" export DB_PASSWORD=[PASSWORD_3] export AWS_SECRET_ACCESS_KEY=[AWS_SECRET_KEY_$env:API_KEY="[SECRET_3]" $env:DB_PASSWORD=[PASSWORD_4] $env:TOKEN="[TOKEN_4]"3]]" }-4.1JqM';
+
+  const findings = detector.scan(text);
+  const result = redactor.redact(text, findings);
+
+  assert.ok(
+    findings.some((finding) => finding.type === "PASSWORD" && finding.raw === "PrinterCable!2026!Demo"),
+    "raw JSON password should be detected"
+  );
+  assert.ok(
+    findings.some((finding) => finding.raw.startsWith("[TOKEN_3export")),
+    "broken token placeholder prefix should be detected"
+  );
+  assert.ok(result.redactedText.includes("API_KEY=[API_KEY_1]"), "known API placeholder should stay");
+  assert.ok(result.redactedText.includes("DB_PASSWORD=[PASSWORD_2]"), "known password placeholder should stay");
+  assert.ok(result.redactedText.includes("AWS_ACCESS_KEY_ID=[AWS_KEY_1]"), "known AWS key placeholder should stay");
+  assert.ok(
+    result.redactedText.includes("AWS_SECRET_ACCESS_KEY=[AWS_SECRET_KEY_2]"),
+    "known AWS secret placeholder should stay"
+  );
+  assert.ok(
+    result.redactedText.includes("AWS_SESSION_TOKEN=[TOKEN_2]"),
+    "known AWS session placeholder should stay"
+  );
+  assert.ok(result.redactedText.includes('CLIENT_SECRET=[SECRET_1]'), "known secret placeholder should stay");
+  assert.ok(
+    !result.redactedText.includes("PrinterCable!2026!Demo"),
+    "raw JSON password should not survive redaction"
+  );
+  assert.ok(
+    !result.redactedText.includes("[TOKEN_3export"),
+    "broken token placeholder prefix should not survive redaction"
+  );
+}
+
 function testSuppressionFamilies() {
   const detector = new Detector();
   const cases = [
@@ -361,6 +463,9 @@ function run() {
   testOverlappingMatchesPreferSinglePemBlock();
   testAllowlist();
   testExampleValuesDoNotTrigger();
+  testPlaceholderValuesDoNotRetriggerDetection();
+  testCompositePlaceholderAndNaturalLanguageEdgeCaseBlock();
+  testMixedPlaceholderBlobPreservesKnownPlaceholdersAndRedactsRawLeaks();
   testSuppressionFamilies();
   testRevealStateLookupUnit();
 

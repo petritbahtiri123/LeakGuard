@@ -7,6 +7,8 @@
     KEYWORDS,
     NEGATIVE_CONTEXT_WORDS,
     ASSIGNMENT_REGEX,
+    CLEAN_PLACEHOLDER_REGEX,
+    CONTAINS_PLACEHOLDER_REGEX,
     SUPPRESSED_VALUE_REGEX,
     EXAMPLE_VALUE_MARKERS,
     EXAMPLE_HOSTS,
@@ -99,9 +101,26 @@
     return SUPPRESSED_VALUE_REGEX.some((regex) => regex.test(value));
   }
 
+  function isCleanPlaceholder(value) {
+    return CLEAN_PLACEHOLDER_REGEX.test(String(value || "").trim());
+  }
+
+  function containsPlaceholder(value) {
+    return CONTAINS_PLACEHOLDER_REGEX.test(String(value || ""));
+  }
+
   function looksExampleLike(value) {
     const normalized = String(value || "").toLowerCase();
-    return EXAMPLE_VALUE_MARKERS.some((marker) => normalized.includes(marker));
+    return EXAMPLE_VALUE_MARKERS.some(
+      (marker) =>
+        normalized.startsWith(marker) ||
+        normalized.includes(`/${marker}`) ||
+        normalized.includes(`${marker}.`) ||
+        normalized.includes(`-${marker}`) ||
+        normalized.includes(`${marker}-`) ||
+        normalized.includes(`_${marker}`) ||
+        normalized.includes(`${marker}_`)
+    );
   }
 
   function hasExampleHost(value) {
@@ -209,11 +228,13 @@
       return this.allowlistRegex.some((regex) => regex.test(raw) || regex.test(normalized));
     }
 
-    shouldSuppress({ raw, text, start, end }) {
+    shouldSuppress({ raw, text, start, end, patternName }) {
       if (!raw) return true;
       if (this.isAllowlisted(raw)) return true;
       if (likelyTemplateValue(raw)) return true;
-      if (looksExampleLike(raw)) return true;
+      if (isCleanPlaceholder(raw)) return true;
+
+      if (looksExampleLike(raw) && patternName !== "aws_access_key") return true;
       if (hasExampleHost(raw)) return true;
 
       const ctx = contextScore(text, start, end);
@@ -260,7 +281,7 @@
           const end = start + raw.length;
 
           if (!raw) continue;
-          if (this.shouldSuppress({ raw, text, start, end })) continue;
+          if (this.shouldSuppress({ raw, text, start, end, patternName: pattern.name })) continue;
 
           let score = pattern.baseScore;
           const entropy = calculateEntropy(raw);
@@ -303,6 +324,8 @@
         const key = match[1];
         const token = match[2];
         const normalized = normalizeCandidate(token);
+        const placeholderType = inferPlaceholderTypeFromKey(key);
+        const normalizedKey = String(key || "").toLowerCase();
 
         if (!normalized || normalized.length < 8) continue;
 
@@ -312,13 +335,39 @@
         const start = match.index + valueIndex;
         const end = start + token.length;
 
+        if (isCleanPlaceholder(normalized)) continue;
+
+        if (containsPlaceholder(normalized) && !isCleanPlaceholder(normalized)) {
+          findings.push(
+            this.buildFinding({
+              category: "credential",
+              placeholderType,
+              raw: normalized,
+              start,
+              end,
+              score: 98,
+              methods: ["assignment", "placeholder-composite"]
+            })
+          );
+          continue;
+        }
+
         if (this.shouldSuppress({ raw: normalized, text, start, end })) continue;
 
         let score = 60;
         const entropy = calculateEntropy(normalized);
         const variety = countClassVariety(normalized);
-        const placeholderType = inferPlaceholderTypeFromKey(key);
         const ctx = contextScore(text, start, end);
+
+        if (
+          placeholderType === "TOKEN" &&
+          /cookie|session|auth|token/.test(normalizedKey) &&
+          normalized.length < 16 &&
+          !looksStructuredLikeSecret(normalized) &&
+          !/^[A-Za-z0-9%._~-]{16,}$/.test(normalized)
+        ) {
+          continue;
+        }
 
         if (entropy >= 3.8) score += 10;
         if (variety >= 3) score += 8;
@@ -393,14 +442,23 @@
     }
 
     dedupe(findings) {
-      const seen = new Set();
+      const seen = new Map();
 
-      return findings.filter((finding) => {
+      for (const finding of findings) {
         const key = `${finding.start}:${finding.end}:${finding.raw}`;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
+        const existing = seen.get(key);
+
+        if (
+          !existing ||
+          finding.score > existing.score ||
+          (finding.score === existing.score &&
+            (finding.method?.length || 0) > (existing.method?.length || 0))
+        ) {
+          seen.set(key, finding);
+        }
+      }
+
+      return [...seen.values()];
     }
 
     resolveOverlaps(findings) {
