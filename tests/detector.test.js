@@ -23,8 +23,8 @@ const NEW_PATTERN_NAMES = [
   "gitlab_pat",
   "stripe_secret_key",
   "google_service_account_private_key",
-  "authorization_bearer_assignment",
-  "authorization_bearer_header",
+  "authorization_bearer_value",
+  "bearer_token",
   "basic_auth_header",
   "azure_servicebus_connection_string",
   "npm_token",
@@ -265,13 +265,17 @@ function testOverlapBearerVsJwt() {
   assert.strictEqual(findings[0].type, "TOKEN", "overlap should still report a token");
 }
 
-function testAuthorizationBearerAssignmentAndHeader() {
+function testAuthorizationBearerVariants() {
   const detector = new Detector();
   const manager = new PlaceholderManager();
   const redactor = new Redactor(manager);
   const text = [
     "AUTHORIZATION=Bearer mF_9.B5f-4.1JqM",
+    "authorization=Bearer mF_9.B5f-4.1JqM",
+    "Authorization=Bearer mF_9.B5f-4.1JqM",
     "Authorization: Bearer mF_9.B5f-4.1JqM"
+    ,
+    "Bearer mF_9.B5f-4.1JqM"
   ].join("\n");
 
   const findings = detector.scan(text);
@@ -279,9 +283,9 @@ function testAuthorizationBearerAssignmentAndHeader() {
   const matches = result.redactedText.match(/\[TOKEN_\d+\]/g) || [];
   const unique = [...new Set(matches)];
 
-  assert.strictEqual(findings.length, 2, "both assignment and header bearer values should be detected");
+  assert.strictEqual(findings.length, 5, "all authorization and standalone bearer variants should be detected");
   assert.ok(findings.every((finding) => finding.type === "TOKEN"), "bearer values should map to TOKEN");
-  assert.strictEqual(matches.length, 2, "both bearer values should be redacted");
+  assert.strictEqual(matches.length, 5, "all bearer values should be redacted");
   assert.strictEqual(unique.length, 1, "same bearer token should reuse one placeholder");
 }
 
@@ -482,7 +486,7 @@ function run() {
   testDbUriWithCredentials();
   testGenericBasicAuthUrl();
   testOverlapBearerVsJwt();
-  testAuthorizationBearerAssignmentAndHeader();
+  testAuthorizationBearerVariants();
   testOverlappingMatchesPreferSinglePemBlock();
   testAllowlist();
   testExampleValuesDoNotTrigger();
