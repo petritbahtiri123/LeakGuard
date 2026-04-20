@@ -30,6 +30,17 @@
         /-----BEGIN [A-Z0-9][A-Z0-9 ]+-----[\s\S]+?-----END [A-Z0-9][A-Z0-9 ]+-----/g
     },
     {
+      name: "placeholder_composite_value",
+      type: "SECRET",
+      category: "credential",
+      baseScore: 86,
+      suppressionNotes:
+        "Treat placeholder tokens with attached prefix/suffix junk as suspicious whole values while leaving clean placeholders alone.",
+      regex:
+        /(?:^|[^A-Za-z0-9_:=<>"'`])(\[[A-Z][A-Z0-9_]*_\d+\](?:(?:\.[A-Za-z0-9._-]+)+|[A-Za-z0-9._-]+)|[A-Za-z0-9._-]+\[[A-Z][A-Z0-9_]*_\d+\](?:[A-Za-z0-9._-]+|(?:\.[A-Za-z0-9._-]+))*)/g,
+      captureGroups: [1]
+    },
+    {
       name: "aws_secret_access_key_assignment",
       type: "AWS_SECRET_KEY",
       category: "credential",
@@ -150,6 +161,70 @@
       regex: /\bAIza[0-9A-Za-z\-_]{35}\b/g
     },
     {
+      name: "json_api_key_field",
+      type: "API_KEY",
+      category: "credential",
+      baseScore: 76,
+      suppressionNotes:
+        "Catch JSON-style apiKey fields, including malformed quoted blobs, while clean placeholders are still suppressed centrally.",
+      regex: /"(?:apiKey|api_key)"\s*:\s*"([^"\r\n]{8,})"/gi,
+      captureGroups: [1]
+    },
+    {
+      name: "json_password_field",
+      type: "PASSWORD",
+      category: "credential",
+      baseScore: 78,
+      suppressionNotes:
+        "Catch JSON-style password fields so raw passwords inside config blobs are redacted even when assignment heuristics do not apply.",
+      regex: /"(?:password|dbPassword|db_password)"\s*:\s*"([^"\r\n]{8,})"/gi,
+      captureGroups: [1]
+    },
+    {
+      name: "json_token_field",
+      type: "TOKEN",
+      category: "credential",
+      baseScore: 76,
+      suppressionNotes:
+        "Catch JSON-style token fields, including broken placeholder prefixes before the next quote boundary.",
+      regex: /"(?:token|accessToken|access_token|sessionToken|session_token)"\s*:\s*"([^"\r\n]{8,})"/gi,
+      captureGroups: [1]
+    },
+    {
+      name: "json_client_secret_field",
+      type: "SECRET",
+      category: "credential",
+      baseScore: 78,
+      suppressionNotes:
+        "Catch JSON-style client secret fields while letting clean placeholders fall through suppression unchanged.",
+      regex: /"(?:clientSecret|client_secret|secret)"\s*:\s*"([^"\r\n]{8,})"/gi,
+      captureGroups: [1]
+    },
+    {
+      name: "natural_language_api_key",
+      type: "API_KEY",
+      category: "credential",
+      baseScore: 74,
+      regex: /\b(?:my|the|our)?\s*api\s*key\s*(?:is|=|:)\s*([^\s,;]{8,})/gi,
+      captureGroups: [1]
+    },
+    {
+      name: "natural_language_password",
+      type: "PASSWORD",
+      category: "credential",
+      baseScore: 72,
+      regex: /\b(?:my|the|our)?\s*password\s*(?:is|=|:)\s*([^\s,;]{8,})/gi,
+      captureGroups: [1]
+    },
+    {
+      name: "natural_language_token",
+      type: "TOKEN",
+      category: "credential",
+      baseScore: 72,
+      regex: /\b(?:my|the|our)?\s*token\s*(?:is|=|:)\s*([^\s,;]{8,})/gi,
+      captureGroups: [1]
+    },
+    {
       name: "google_service_account_private_key",
       type: "PRIVATE_KEY",
       category: "private_key",
@@ -161,11 +236,25 @@
       captureGroups: [1]
     },
     {
+      name: "authorization_bearer_value",
+      type: "TOKEN",
+      category: "credential",
+      baseScore: 90,
+      suppressionNotes:
+        "Catch Authorization key/value forms case-insensitively across both ':' and '=' separators while redacting only the Bearer token value.",
+      regex:
+        /\bauthorization\b\s*[:=]\s*(?:"\s*bearer\s+([^"\r\n]{8,})\s*"|'\s*bearer\s+([^'\r\n]{8,})\s*'|bearer\s+([^\s,;]{8,}))/gi,
+      captureGroups: [1, 2, 3]
+    },
+    {
       name: "bearer_token",
       type: "TOKEN",
       category: "credential",
       baseScore: 78,
-      regex: /\bBearer\s+[A-Za-z0-9._~+\/=-]{20,}\b/g
+      suppressionNotes:
+        "Catch standalone Bearer tokens, including shorter OAuth-style values that are not JWT-shaped.",
+      regex: /\bbearer\s+([A-Za-z0-9._~+\/=-]{8,})\b/gi,
+      captureGroups: [1]
     },
     {
       name: "basic_auth_header",
@@ -298,10 +387,14 @@
   ];
 
   const ASSIGNMENT_KEY_REGEX =
-    /([A-Za-z_][A-Za-z0-9_.-]{0,80}(?:aws[_-]?secret[_-]?access[_-]?key|aws[_-]?session[_-]?token|pass(?:word)?|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|private[_-]?key|account[_-]?key|cookie|session(?:[_-]?id|[_-]?secret)?|auth(?:orization)?|connection(?:string|_string)?|webhook))/i;
+    /((?:[A-Za-z_][A-Za-z0-9_.-]{0,80})?(?:aws[_-]?secret[_-]?access[_-]?key|aws[_-]?session[_-]?token|pass(?:word)?|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|private[_-]?key|account[_-]?key|cookie|session(?:[_-]?id|[_-]?secret)?|auth(?:orization)?|connection(?:string|_string)?|webhook))/i;
 
   const ASSIGNMENT_REGEX =
-    /([A-Za-z_][A-Za-z0-9_.-]{0,80}(?:aws[_-]?secret[_-]?access[_-]?key|aws[_-]?session[_-]?token|pass(?:word)?|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|private[_-]?key|account[_-]?key|cookie|session(?:[_-]?id|[_-]?secret)?|auth(?:orization)?|connection(?:string|_string)?|webhook))\s*[:=]\s*((?:"[^"\n\r]*")|(?:'[^'\n\r]*')|(?:`[^`\n\r]*`)|(?:[^\s,;]+))/gim;
+    /((?:[A-Za-z_][A-Za-z0-9_.-]{0,80})?(?:aws[_-]?secret[_-]?access[_-]?key|aws[_-]?session[_-]?token|pass(?:word)?|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|private[_-]?key|account[_-]?key|cookie|session(?:[_-]?id|[_-]?secret)?|auth(?:orization)?|connection(?:string|_string)?|webhook))\s*[:=]\s*((?:"[^"\n\r]*")|(?:'[^'\n\r]*')|(?:`[^`\n\r]*`)|(?:[^\s,;]+))/gim;
+
+  const CLEAN_PLACEHOLDER_REGEX = /^\[[A-Z][A-Z0-9_]*_\d+\]$/;
+
+  const CONTAINS_PLACEHOLDER_REGEX = /\[[A-Z][A-Z0-9_]*_\d+\]/;
 
   const SUPPRESSED_VALUE_REGEX = [
     /^\$\{[^}]+\}$/,
@@ -344,11 +437,16 @@
     pem_private_key_block: "PRIVATE_KEY",
     openssh_private_key_block: "PRIVATE_KEY",
     pem_block: "PEM_BLOCK",
+    placeholder_composite_value: "SECRET",
     aws_secret_access_key_assignment: "AWS_SECRET_KEY",
     aws_session_token_assignment: "TOKEN",
     aws_access_key: "AWS_KEY",
     azure_storage_account_key_assignment: "SECRET",
     openai_api_key: "API_KEY",
+    json_api_key_field: "API_KEY",
+    json_password_field: "PASSWORD",
+    json_token_field: "TOKEN",
+    json_client_secret_field: "SECRET",
     github_token: "TOKEN",
     github_pat: "TOKEN",
     slack_token: "TOKEN",
@@ -357,9 +455,13 @@
     gitlab_pat: "TOKEN",
     jwt_token: "TOKEN",
     stripe_secret_key: "API_KEY",
+    natural_language_api_key: "API_KEY",
+    natural_language_password: "PASSWORD",
+    natural_language_token: "TOKEN",
     bearer_token: "TOKEN",
     google_api_key: "API_KEY",
     google_service_account_private_key: "PRIVATE_KEY",
+    authorization_bearer_value: "TOKEN",
     basic_auth_header: "TOKEN",
     db_uri: "DB_URI",
     generic_uri_credentials: "CONNECTION_STRING",
@@ -377,6 +479,8 @@
   root.PWM.NEGATIVE_CONTEXT_WORDS = NEGATIVE_CONTEXT_WORDS;
   root.PWM.ASSIGNMENT_KEY_REGEX = ASSIGNMENT_KEY_REGEX;
   root.PWM.ASSIGNMENT_REGEX = ASSIGNMENT_REGEX;
+  root.PWM.CLEAN_PLACEHOLDER_REGEX = CLEAN_PLACEHOLDER_REGEX;
+  root.PWM.CONTAINS_PLACEHOLDER_REGEX = CONTAINS_PLACEHOLDER_REGEX;
   root.PWM.SUPPRESSED_VALUE_REGEX = SUPPRESSED_VALUE_REGEX;
   root.PWM.EXAMPLE_VALUE_MARKERS = EXAMPLE_VALUE_MARKERS;
   root.PWM.EXAMPLE_HOSTS = EXAMPLE_HOSTS;
@@ -389,6 +493,8 @@
       NEGATIVE_CONTEXT_WORDS,
       ASSIGNMENT_KEY_REGEX,
       ASSIGNMENT_REGEX,
+      CLEAN_PLACEHOLDER_REGEX,
+      CONTAINS_PLACEHOLDER_REGEX,
       SUPPRESSED_VALUE_REGEX,
       EXAMPLE_VALUE_MARKERS,
       EXAMPLE_HOSTS,
