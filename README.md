@@ -34,7 +34,7 @@ The project is split into engine logic and browser delivery logic.
 - `shared/detector.js`
   Detects likely secrets using deterministic patterns, assignment scanning, entropy fallback, overlap resolution, allowlists, and negative-context suppression.
 - `shared/placeholders.js`
-  Owns neutral `[PWM_n]` placeholder assignment plus the split between sanitized public state and private reveal state.
+  Owns neutral `[PWM_n]` placeholder assignment plus the split between minimized public state and private reveal state.
 - `shared/redactor.js`
   Applies placeholders to findings and produces `redactedText`.
 - `shared/ipClassification.js`, `shared/ipDetection.js`, `shared/networkHierarchy.js`, `shared/placeholderAllocator.js`, `shared/transformOutboundPrompt.js`
@@ -64,7 +64,7 @@ Current design assumptions:
 - browser submission should be blocked if the rewritten composer content cannot be verified exactly
 - placeholder reveal should happen only inside extension-owned UI
 
-For this MVP, raw secret values are stored only in background-owned `chrome.storage.session`, not persistent extension storage or page-visible state.
+For this MVP, raw secret values are stored only in background-owned `chrome.storage.session`, not persistent extension storage or page-visible state. The content script gets only minimal public state needed for runtime behavior, not the session placeholder registry.
 
 ## What This Does Not Protect Against
 

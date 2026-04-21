@@ -96,11 +96,8 @@ function toPublicState(state) {
   const publicState = manager.exportPublicState();
 
   return {
-    sessionId: state?.sessionId || null,
-    urlKey: state?.urlKey || "",
     transformMode: normalizeTransformMode(state?.transformMode || DEFAULT_TRANSFORM_MODE),
-    placeholderCount: publicState.knownPlaceholders.length,
-    knownPlaceholders: publicState.knownPlaceholders
+    placeholderCount: publicState.knownPlaceholders.length
   };
 }
 

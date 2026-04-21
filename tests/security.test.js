@@ -26,6 +26,12 @@ function assertNotIncludes(source, needle, message) {
   assert.strictEqual(source.includes(needle), false, message);
 }
 
+function extractFunctionSource(source, name) {
+  const match = source.match(new RegExp(`function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n\\}`));
+  assert.ok(match, `expected to find function ${name}`);
+  return match[0];
+}
+
 function testUnsafeContentRevealPathRemoved() {
   assertNotIncludes(
     contentSource,
@@ -73,6 +79,30 @@ function testSafeRevealUiExists() {
   assert.ok(
     revealUiSource.includes("secretValueEl.textContent = response.raw"),
     "raw secret rendering should be confined to the extension-owned reveal UI"
+  );
+}
+
+function testContentPublicStateIsMinimized() {
+  const toPublicStateSource = extractFunctionSource(backgroundSource, "toPublicState");
+
+  assertNotIncludes(
+    toPublicStateSource,
+    "knownPlaceholders: publicState.knownPlaceholders",
+    "background should not expose the placeholder list to the content script"
+  );
+  assertNotIncludes(
+    toPublicStateSource,
+    "sessionId: state?.sessionId",
+    "background should not expose session ids to the content script"
+  );
+  assertNotIncludes(
+    toPublicStateSource,
+    "urlKey: state?.urlKey",
+    "background should not expose url keys to the content script"
+  );
+  assert.ok(
+    toPublicStateSource.includes("placeholderCount: publicState.knownPlaceholders.length"),
+    "background should expose only the safe placeholder count for content-side UI/debug needs"
   );
 }
 
@@ -166,6 +196,7 @@ function testOnlyPwmPlaceholdersRemainCanonical() {
 function run() {
   testUnsafeContentRevealPathRemoved();
   testSafeRevealUiExists();
+  testContentPublicStateIsMinimized();
   testRevealNeverInjectsHostDomContainers();
   testManifestExposeOnlyRevealUiAssets();
   testPageUiNoLongerLeaksClassificationsOrMaskedFragments();
