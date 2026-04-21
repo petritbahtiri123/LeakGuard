@@ -51,11 +51,8 @@
   ];
   let currentUrl = location.href;
   let currentPublicState = {
-    sessionId: null,
-    urlKey: "",
     transformMode: "hide_public",
-    placeholderCount: 0,
-    knownPlaceholders: []
+    placeholderCount: 0
   };
   let badgeEl = null;
   let lastBadgeText = "";
@@ -1380,7 +1377,7 @@
     debugReveal("reveal:window-open", {
       placeholder,
       requestId,
-      knownPlaceholderCount: currentPublicState.knownPlaceholders.length
+      placeholderCount: currentPublicState.placeholderCount
     });
   }
 
