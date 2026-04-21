@@ -57,8 +57,8 @@ The audit covered:
 
 1. The content script leaves inert `[PWM_n]` placeholders in the page DOM.
 2. Clicking a placeholder asks the background to create an opaque reveal request id.
-3. The content script opens a separate extension popup window using only that opaque request id.
-4. The extension page calls the background directly from `chrome-extension://` origin.
+3. The extension popup switches into its secure reveal view using only that opaque request id.
+4. The popup calls the background directly from `chrome-extension://` origin.
 5. The background verifies the sender is extension UI before returning raw secret data.
 6. Raw secret text renders only inside the extension popup document, never in the website DOM.
 
@@ -106,5 +106,5 @@ Repository scan and low-risk remediation covered:
 - `npm test`
 - `node --check content/content.js`
 - `node --check background/service_worker.js`
-- `node --check ui/reveal_panel.js`
+- `node --check popup/popup.js`
 - `node --check sandbox/composer-harness.js`

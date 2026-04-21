@@ -117,6 +117,15 @@ It does not protect against:
 7. Click the LeakGuard toolbar icon to open the popup.
 8. Use `Protect This Site` on eligible tabs or open `Manage Protected Sites` to add exact user-managed rules.
 
+## Publish Readiness
+
+Store-facing and release docs live here:
+
+- [Chrome Web Store Listing](docs/CHROME_WEB_STORE_LISTING.md)
+- [Privacy Policy](docs/PRIVACY_POLICY.md)
+- [Release QA Checklist](docs/RELEASE_QA_CHECKLIST.md)
+- [Manual Smoke Block](tests/manual_detection_paste_block.txt)
+
 ## Protected Site Management
 
 LeakGuard ships with these built-in protected AI sites:
@@ -132,7 +141,7 @@ You can also add extra protected sites yourself.
 
 - The popup shows whether the current tab is already protected.
 - `Protect This Site` requests host access only for the current site rule, then activates the same content script stack used on the built-in AI hosts.
-- The options page lets you add, enable, disable, and remove user-managed protected sites.
+- The popup management view lets you add, enable, disable, and remove user-managed protected sites.
 - User-managed rules are normalized to exact scheme + hostname patterns such as `https://app.example.com/*`.
 - Paths, query strings, fragments, and ports are not stored as separate rules.
 - Wildcards, malformed URLs, and credential-bearing URLs are rejected.
