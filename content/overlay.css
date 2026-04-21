@@ -131,22 +131,3 @@
   outline: 2px solid #67e8f9;
   outline-offset: 2px;
 }
-
-.pwm-reveal-host {
-  position: absolute;
-  z-index: 2147483646;
-  width: 360px;
-  height: 248px;
-  border: 1px solid rgba(15, 23, 42, 0.32);
-  border-radius: 18px;
-  overflow: hidden;
-  background: rgba(15, 23, 42, 0.95);
-  box-shadow: 0 30px 80px rgba(2, 6, 23, 0.42);
-}
-
-.pwm-reveal-frame {
-  display: block;
-  width: 100%;
-  height: 100%;
-  border: 0;
-}

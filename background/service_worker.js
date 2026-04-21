@@ -76,6 +76,10 @@ function isExtensionUiSender(sender) {
   return sender?.id === chrome.runtime.id && senderUrl.startsWith(chrome.runtime.getURL("ui/"));
 }
 
+function requestMatchesState(request, state) {
+  return Boolean(request?.sessionId && state?.sessionId && request.sessionId === state.sessionId);
+}
+
 function toPublicState(state) {
   const manager = new PlaceholderManager();
   manager.setPrivateState(state || {});
@@ -202,6 +206,10 @@ async function redactForTab(tabId, url, text, findings) {
 
 async function createRevealRequest(tabId, placeholder) {
   const state = await getState(tabId);
+  if (!state?.sessionId) {
+    throw new Error("Secret reveal is unavailable for this tab session.");
+  }
+
   const requestId = crypto.randomUUID();
   const canonicalPlaceholder = canonicalizePlaceholderToken(placeholder);
 
@@ -245,7 +253,7 @@ async function getRevealContext(requestId) {
   return {
     requestId,
     placeholder: request.placeholder,
-    available: manager.knowsPlaceholder(request.placeholder)
+    available: requestMatchesState(request, state) && manager.knowsPlaceholder(request.placeholder)
   };
 }
 
@@ -256,6 +264,10 @@ async function revealSecret(requestId) {
   }
 
   const state = await getState(request.tabId);
+  if (!requestMatchesState(request, state)) {
+    return null;
+  }
+
   const manager = new PlaceholderManager();
   manager.setPrivateState(state || {});
 

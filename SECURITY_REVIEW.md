@@ -32,7 +32,7 @@ The audit covered:
 - Split state into:
   - public state: `sessionId`, `counters`, `knownPlaceholders`
   - private state: `fingerprintToPlaceholder`, `placeholderToFingerprint`, `secretByFingerprint`
-- Added a secure extension-owned reveal surface under `ui/reveal_panel.html` rendered inside a `chrome-extension://` iframe.
+- Added a secure extension-owned reveal surface under `ui/reveal_panel.html` opened in a separate `chrome-extension://` popup window.
 - Switched reveal launching to opaque request ids created by the background.
 - Restricted raw reveal responses to extension UI senders only.
 - Removed masked raw previews and secret-type labels from page badge/modal UI.
@@ -57,10 +57,10 @@ The audit covered:
 
 1. The content script leaves inert `[PWM_n]` placeholders in the page DOM.
 2. Clicking a placeholder asks the background to create an opaque reveal request id.
-3. The content script opens an extension-owned iframe using only that opaque request id.
-4. The iframe page calls the background directly from `chrome-extension://` origin.
+3. The content script opens a separate extension popup window using only that opaque request id.
+4. The extension page calls the background directly from `chrome-extension://` origin.
 5. The background verifies the sender is extension UI before returning raw secret data.
-6. Raw secret text renders only inside the iframe document, never in the website DOM.
+6. Raw secret text renders only inside the extension popup document, never in the website DOM.
 
 ## Private vs Public State
 
@@ -89,7 +89,7 @@ Repository scan and low-risk remediation covered:
 - messaging: reviewed runtime message types and removed raw-returning content-script path
 - storage: verified raw secrets remain scoped to background `chrome.storage.session`
 - logs: sanitized debug paths in the content script
-- URL leakage: reveal iframe uses opaque request ids only; no raw values in URL parts
+- URL leakage: reveal popup uses opaque request ids only; no raw values in URL parts
 - CSS/UI leakage: removed classified placeholder styling and page-visible masked previews
 - tests/utilities/docs: updated harness/tests/docs to match the secure model
 
@@ -98,7 +98,7 @@ Repository scan and low-risk remediation covered:
 - Raw secrets still pass through the content script transiently while reading the composer for detection/redaction. That is inherent to local browser-side interception.
 - Raw secrets remain in background `chrome.storage.session` for the active tab session so secure reveal can work after service worker restarts.
 - The session fingerprint is scoped and non-reversible in practice for this MVP design, but it is still an in-extension implementation detail rather than a hardened cryptographic vault.
-- A hostile page can observe that a placeholder was clicked and that a generic extension iframe appeared, but it cannot read the iframe DOM or any revealed raw text.
+- A hostile page can observe that a placeholder was clicked and that a generic extension popup opened, but it cannot read that popup DOM or any revealed raw text.
 
 ## Verification
 
