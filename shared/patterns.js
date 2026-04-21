@@ -176,7 +176,9 @@
       type: "API_KEY",
       category: "credential",
       baseScore: 82,
-      regex: /\bAIza[0-9A-Za-z\-_]{35}\b/g
+      suppressionNotes:
+        "Google API keys have a stable AIza prefix; allow a slightly wider suffix length band so realistic variants and service-key fixtures still match cleanly.",
+      regex: /\bAIza[0-9A-Za-z\-_]{35,40}\b/g
     },
     {
       name: "google_oauth_client_secret",
