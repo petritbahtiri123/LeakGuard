@@ -10,6 +10,11 @@
     "expectsType": "API_KEY"
   },
   {
+    "name": "anthropic api key",
+    "text": "ANTHROPIC_API_KEY=sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWXyz0123456789_abcd",
+    "expectsType": "API_KEY"
+  },
+  {
     "name": "slack token",
     "text": "The bot token is xoxb-123456789012-123456789012-abcdefghijklmnopqrstuvwx",
     "expectsType": "TOKEN"
@@ -70,6 +75,11 @@
     "expectsType": "API_KEY"
   },
   {
+    "name": "stripe webhook secret",
+    "text": "STRIPE_WEBHOOK_SECRET=whsec_1234567890abcdefABCDEF1234567890",
+    "expectsType": "SECRET"
+  },
+  {
     "name": "slack webhook",
     "text": "POST to https://hooks.slack.com/services/T12345678/B12345678/abcdefghijklmnopqrstuvwxyzABCD for alerts.",
     "expectsType": "WEBHOOK"
@@ -87,6 +97,11 @@
   {
     "name": "npm token",
     "text": "NPM_TOKEN=npm_1234567890abcdefghijklmnopqrstuvwxyz",
+    "expectsType": "TOKEN"
+  },
+  {
+    "name": "pypi token",
+    "text": "PYPI_TOKEN=pypi-AgEIcHlwaS5vcmcCJDEyMzQ1Njc4OTBhYmNkZWYxMjM0NTY3ODlhYmNkZWY",
     "expectsType": "TOKEN"
   },
   {
@@ -108,6 +123,21 @@
     "name": "session secret assignment",
     "text": "SESSION_SECRET=\"ProdSessionSecretValue_Alpha987654321\"",
     "expectsType": "TOKEN"
+  },
+  {
+    "name": "google oauth client secret",
+    "text": "GOOGLE_CLIENT_SECRET=GOCSPX-abcdefghijklmnopqrstuvwxyz1234567890AB",
+    "expectsType": "SECRET"
+  },
+  {
+    "name": "google refresh token assignment",
+    "text": "refresh_token=1//0gLExampleRefreshTokenValueAbCdEfGhIjKlMnOpQrStUv",
+    "expectsType": "TOKEN"
+  },
+  {
+    "name": "sendgrid api key",
+    "text": "SENDGRID_API_KEY=SG.ZXhhbXBsZVNlbmRncmQxMjM0NTY3.EHl6QWJjRGVmR2hpSktMbU5vcFFSU1RVVldY",
+    "expectsType": "API_KEY"
   },
   {
     "name": "entropy fallback",
