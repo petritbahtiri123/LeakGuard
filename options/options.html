@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>LeakGuard Settings</title>
+    <link rel="stylesheet" href="options.css">
+  </head>
+  <body>
+    <main class="page">
+      <section class="hero">
+        <p class="eyebrow">LeakGuard</p>
+        <h1>Protected sites stay local and explicit.</h1>
+        <p class="intro">
+          Add exact sites that should reuse LeakGuard’s existing prompt interception, redaction,
+          and secure reveal flow.
+        </p>
+      </section>
+
+      <section class="panel">
+        <h2>Add a protected site</h2>
+        <form id="add-site-form" novalidate>
+          <label class="field">
+            <span>URL or origin</span>
+            <input id="site-input" name="site-input" type="text" placeholder="https://app.example.com" autocomplete="off">
+          </label>
+          <button class="btn btn-primary" type="submit">Add Protected Site</button>
+        </form>
+        <p class="feedback" id="form-feedback" aria-live="polite"></p>
+      </section>
+
+      <section class="panel">
+        <div class="section-head">
+          <h2>User-managed sites</h2>
+          <p>Stored in <code>chrome.storage.local</code> as normalized site rules only.</p>
+        </div>
+        <div class="site-list" id="user-site-list"></div>
+      </section>
+
+      <section class="panel">
+        <div class="section-head">
+          <h2>Built-in protected AI sites</h2>
+          <p>These stay enabled and use the same MV3 content-script path as today.</p>
+        </div>
+        <div class="site-list" id="builtin-site-list"></div>
+      </section>
+    </main>
+    <script src="../shared/protected_sites.js"></script>
+    <script src="options.js"></script>
+  </body>
+</html>

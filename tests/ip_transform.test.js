@@ -4,6 +4,9 @@ const path = require("path");
 const repoRoot = path.join(__dirname, "..");
 
 require(path.join(repoRoot, "shared/placeholders.js"));
+require(path.join(repoRoot, "shared/entropy.js"));
+require(path.join(repoRoot, "shared/patterns.js"));
+require(path.join(repoRoot, "shared/detector.js"));
 require(path.join(repoRoot, "shared/ipClassification.js"));
 require(path.join(repoRoot, "shared/ipDetection.js"));
 require(path.join(repoRoot, "shared/networkHierarchy.js"));
@@ -12,6 +15,7 @@ require(path.join(repoRoot, "shared/sessionMapStore.js"));
 require(path.join(repoRoot, "shared/transformOutboundPrompt.js"));
 
 const {
+  Detector,
   PlaceholderManager,
   buildNetworkUiFindings,
   classifyNetworkToken,
@@ -200,12 +204,43 @@ function testLeakageRegression() {
   }
 }
 
+function testMixedSecretAndIpBlockStillRedactsOnFirstPass() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const text = [
+    "AWS_ACCESS_KEY_ID=[PWM_1]",
+    "AWS_SECRET_ACCESS_KEY=[PWM_2]",
+    "OPENAI_API_KEY=sk-test-example-1234567890abcdef",
+    "DB_PASSWORD=SuperSecret123!",
+    "resolver=8.8.8.8",
+    "LAN=192.168.1.10"
+  ].join("\n");
+
+  const findings = detector.scan(text);
+  const output = transform(text, {
+    manager,
+    findings
+  }).result.redactedText;
+  const lines = output.split("\n");
+
+  assert.strictEqual(lines[0], "AWS_ACCESS_KEY_ID=[PWM_1]");
+  assert.strictEqual(lines[1], "AWS_SECRET_ACCESS_KEY=[PWM_2]");
+  assert.ok(/^OPENAI_API_KEY=\[PWM_\d+\]$/.test(lines[2]));
+  assert.ok(/^DB_PASSWORD=\[PWM_\d+\]$/.test(lines[3]));
+  assert.ok(/^resolver=\[PUB_HOST_\d+(?:_DNS)?\]$/.test(lines[4]));
+  assert.strictEqual(lines[5], "LAN=192.168.1.10");
+  assert.strictEqual(output.includes("sk-test-example-1234567890abcdef"), false);
+  assert.strictEqual(output.includes("SuperSecret123!"), false);
+  assert.strictEqual(output.includes("8.8.8.8"), false);
+}
+
 function run() {
   testClassificationDefaults();
   testDeterministicMapping();
   testHierarchyPreservation();
   testModes();
   testMixedTextCases();
+  testMixedSecretAndIpBlockStillRedactsOnFirstPass();
   testNoFalseCorruption();
   testSessionResetBehavior();
   testLeakageRegression();

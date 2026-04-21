@@ -1,8 +1,12 @@
 # Portable Work Memory
 
-Portable Work Memory is a local-only Chrome extension MVP that reduces the chance of pasting or sending secrets or sensitive public IPv4 network details into ChatGPT by mistake.
+This repository keeps the internal codename and repo name `portable-work-memory`, but the public product name is LeakGuard.
+
+LeakGuard is a local-only Chrome extension MVP that reduces the chance of pasting or sending secrets or sensitive public IPv4 network details into AI chat sites by mistake.
 
 It detects likely secrets and public IPv4 hosts/CIDRs in the browser, offers the same `Allow once` / `Redact` decision flow before send, replaces raw values with stable placeholders like `[PWM_1]`, `[PUB_HOST_1]`, and `[NET_1]`, and keeps the private reveal map in `chrome.storage.session` for the active browser session only.
+
+User-managed protected sites are stored separately in `chrome.storage.local` as normalized site rules only. Raw secrets and raw network values are never persisted there.
 
 This project is **risk reduction**, not a perfect privacy guarantee.
 
@@ -10,13 +14,16 @@ This project is **risk reduction**, not a perfect privacy guarantee.
 
 The current MVP focuses on:
 
-- ChatGPT, Claude, Grok, X Grok, and Gemini web UIs
+- built-in protection for ChatGPT, OpenAI Chat, Claude, Gemini, Grok, and X
+- user-managed exact-site protection for additional `http://` or `https://` sites
 - Manifest V3
 - local-only detection and redaction
 - background service worker state in `chrome.storage.session`
 - deterministic placeholder mapping per tab/session
 - browser-side interception for paste and submit
 - browser-side `Allow once` / `Redact` decision flow for secrets and public IPv4/CIDR values
+- popup and options UI for site protection management
+- right-side in-page status panel on protected pages
 - local placeholder rehydration for assistant responses in the same session
 
 The MVP intentionally does not add:
@@ -40,11 +47,15 @@ The project is split into engine logic and browser delivery logic.
 - `shared/ipClassification.js`, `shared/ipDetection.js`, `shared/networkHierarchy.js`, `shared/placeholderAllocator.js`, `shared/transformOutboundPrompt.js`
   Detect, classify, and pseudonymize public IPv4 hosts/CIDRs while preserving readable subnet relationships.
 - `background/service_worker.js`
-  Stores per-tab private session state in `chrome.storage.session`, performs placeholder assignment, and serves secure reveal requests only to extension-owned UI.
+  Stores per-tab private session state in `chrome.storage.session`, stores normalized user site rules in `chrome.storage.local`, performs placeholder assignment, dynamically activates protected user sites, and serves secure reveal requests only to extension-owned UI.
 - `content/composer_helpers.js`
   Shared textarea/contenteditable read-write helpers used for deterministic browser insertion and the local harness.
 - `content/content.js`
-  ChatGPT integration layer for composer detection, paste interception, submit interception, rewrite verification, badge/modal UI, and placeholder rehydration.
+  Protected-page integration layer for composer detection, paste interception, submit interception, rewrite verification, badge/modal UI, right-side status panel, and placeholder rehydration.
+- `shared/protected_sites.js`
+  Normalizes exact-site rules, defines built-in protected AI sites, and keeps matching deterministic and explainable.
+- `popup/*`, `options/*`
+  Plain HTML/CSS/JS extension UI for current-tab protection and user-managed site rules.
 - `sandbox/composer-harness.html`
   Local manual harness for isolating textarea/contenteditable insertion behavior outside ChatGPT.
 
@@ -66,6 +77,8 @@ Current design assumptions:
 
 For this MVP, raw secret values are stored only in background-owned `chrome.storage.session`, not persistent extension storage or page-visible state. The content script gets only minimal public state needed for runtime behavior, not the session placeholder registry.
 
+Persistent extension storage is limited to normalized protected-site rules such as `https://app.example.com/*`. LeakGuard does not persist raw secrets, raw prompts, or raw network values.
+
 ## What This Does Not Protect Against
 
 This extension does not provide complete privacy or guaranteed secrecy.
@@ -77,7 +90,7 @@ It does not protect against:
 - ChatGPT DOM changes that break heuristics or event interception
 - secrets inside files, screenshots, drag/drop payloads, or other unsupported upload flows
 - raw values revealed intentionally by the user via the secure extension reveal UI
-- copy/paste of raw secrets into sites outside the configured ChatGPT hosts
+- copy/paste of raw secrets into sites outside the built-in or user-managed protected site list
 
 ## Known Limitations
 
@@ -101,6 +114,39 @@ It does not protect against:
    - `https://grok.com/`
    - `https://x.com/`
    - `https://gemini.google.com/`
+7. Click the LeakGuard toolbar icon to open the popup.
+8. Use `Protect This Site` on eligible tabs or open `Manage Protected Sites` to add exact user-managed rules.
+
+## Protected Site Management
+
+LeakGuard ships with these built-in protected AI sites:
+
+- `https://chatgpt.com/*`
+- `https://chat.openai.com/*`
+- `https://claude.ai/*`
+- `https://gemini.google.com/*`
+- `https://grok.com/*`
+- `https://x.com/*`
+
+You can also add extra protected sites yourself.
+
+- The popup shows whether the current tab is already protected.
+- `Protect This Site` requests host access only for the current site rule, then activates the same content script stack used on the built-in AI hosts.
+- The options page lets you add, enable, disable, and remove user-managed protected sites.
+- User-managed rules are normalized to exact scheme + hostname patterns such as `https://app.example.com/*`.
+- Paths, query strings, fragments, and ports are not stored as separate rules.
+- Wildcards, malformed URLs, and credential-bearing URLs are rejected.
+
+## Right-side Status Panel
+
+Protected pages now include a compact right-side LeakGuard panel.
+
+- It shows that protection is active on the current site.
+- It shows a generic count of sensitive items currently detected in the composer.
+- It shows the current session placeholder count.
+- It can be collapsed.
+- It links to the extension settings.
+- It never renders raw secret values into the page DOM.
 
 ## Detector Tests
 
