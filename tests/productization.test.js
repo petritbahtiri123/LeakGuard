@@ -15,6 +15,15 @@ const backgroundSource = fs.readFileSync(
   path.join(repoRoot, "background/service_worker.js"),
   "utf8"
 );
+const storeListing = fs.readFileSync(
+  path.join(repoRoot, "docs/CHROME_WEB_STORE_LISTING.md"),
+  "utf8"
+);
+const privacyPolicy = fs.readFileSync(path.join(repoRoot, "docs/PRIVACY_POLICY.md"), "utf8");
+const releaseChecklist = fs.readFileSync(
+  path.join(repoRoot, "docs/RELEASE_QA_CHECKLIST.md"),
+  "utf8"
+);
 const { BUILTIN_PROTECTED_SITES } = require(path.join(repoRoot, "shared/protected_sites.js"));
 
 function fileExists(relativePath) {
@@ -36,6 +45,9 @@ function testManifestBrandingAndProductPagesExist() {
   assert.ok(fileExists("options/options.html"), "expected options HTML to exist");
   assert.ok(fileExists("options/options.js"), "expected options JS to exist");
   assert.ok(fileExists("options/options.css"), "expected options CSS to exist");
+  assert.ok(fileExists("docs/CHROME_WEB_STORE_LISTING.md"), "expected store listing doc to exist");
+  assert.ok(fileExists("docs/PRIVACY_POLICY.md"), "expected privacy policy doc to exist");
+  assert.ok(fileExists("docs/RELEASE_QA_CHECKLIST.md"), "expected release QA checklist doc to exist");
 }
 
 function testLeakGuardBrandingShowsUpInUiAndDocs() {
@@ -52,6 +64,10 @@ function testLeakGuardBrandingShowsUpInUiAndDocs() {
     popupHtml.includes("Manage protected sites"),
     "popup HTML should include protected-site management"
   );
+  assert.ok(readme.includes("Publish Readiness"), "README should link publish assets");
+  assert.ok(storeListing.includes("LeakGuard"), "store listing should use LeakGuard branding");
+  assert.ok(privacyPolicy.includes("LeakGuard"), "privacy policy should use LeakGuard branding");
+  assert.ok(releaseChecklist.includes("LeakGuard"), "QA checklist should use LeakGuard branding");
 }
 
 function testBuiltInProtectedSitesRemainStaticAndAligned() {
@@ -100,12 +116,30 @@ function testDynamicSiteSupportIsDeclaredMinimally() {
   );
 }
 
+function testPublishReadinessDocsCoverStorePrivacyAndQa() {
+  assert.ok(
+    storeListing.includes("Chrome Web Store") && storeListing.includes("Permission Justification"),
+    "store listing doc should include reviewer-facing store copy and permission notes"
+  );
+  assert.ok(
+    privacyPolicy.includes("does not use a backend service") &&
+      privacyPolicy.includes("chrome.storage.session"),
+    "privacy policy should describe local-only handling and session storage use"
+  );
+  assert.ok(
+    releaseChecklist.includes("Manage Protected Sites") &&
+      releaseChecklist.includes("manual smoke block"),
+    "release checklist should cover popup flows and the manual smoke test"
+  );
+}
+
 function run() {
   testManifestBrandingAndProductPagesExist();
   testLeakGuardBrandingShowsUpInUiAndDocs();
   testBuiltInProtectedSitesRemainStaticAndAligned();
   testPanelAndManagementUiAreWired();
   testDynamicSiteSupportIsDeclaredMinimally();
+  testPublishReadinessDocsCoverStorePrivacyAndQa();
   console.log("PASS productization static regressions");
 }
 
