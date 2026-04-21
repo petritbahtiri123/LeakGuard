@@ -515,6 +515,45 @@
     };
   }
 
+  function shouldInterceptBeforeInput(event) {
+    const inputType = String(event?.inputType || "");
+
+    if (!inputType) return false;
+    if (event?.defaultPrevented) return false;
+    if (event?.isComposing) return false;
+
+    return inputType === "insertText" || inputType === "insertReplacementText";
+  }
+
+  function getBeforeInputData(event) {
+    return typeof event?.data === "string" ? event.data : "";
+  }
+
+  function selectFindingsOverlappingInsertion(findings, selection, insertedText) {
+    const start = Math.max(0, Number(selection?.start) || 0);
+    const insertedLength = normalizeComposerText(insertedText).length;
+    const end = start + insertedLength;
+
+    return (findings || []).filter((finding) => {
+      const findingStart = Math.max(0, Number(finding?.start) || 0);
+      const findingEnd = Math.max(findingStart, Number(finding?.end) || findingStart);
+
+      return findingStart < end && findingEnd > start;
+    });
+  }
+
+  function deriveRewriteCaretOffset(expectedText, originalSuffix) {
+    const normalizedText = normalizeComposerText(expectedText);
+    const suffix = normalizeComposerText(originalSuffix);
+
+    if (!suffix) {
+      return normalizedText.length;
+    }
+
+    const suffixIndex = normalizedText.lastIndexOf(suffix);
+    return suffixIndex >= 0 ? suffixIndex : normalizedText.length;
+  }
+
   root.PWM.ComposerHelpers = {
     normalizeComposerText,
     normalizeEditorInnerText,
@@ -525,6 +564,10 @@
     setInputTextPlain,
     getSelectionOffsets,
     spliceSelectionText,
+    shouldInterceptBeforeInput,
+    getBeforeInputData,
+    selectFindingsOverlappingInsertion,
+    deriveRewriteCaretOffset,
     textToBlockFragment,
     setInputText,
     forceRewriteInputText
