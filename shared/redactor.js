@@ -10,6 +10,9 @@
 
     redact(text, findings) {
       const input = String(text || "");
+      if (this.manager && typeof this.manager.trackKnownPlaceholdersFromText === "function") {
+        this.manager.trackKnownPlaceholdersFromText(input);
+      }
       const ordered = [...(findings || [])].sort((a, b) => a.start - b.start);
       const sorted = [...ordered].sort((a, b) => b.start - a.start);
       const replacements = [];
