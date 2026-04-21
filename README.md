@@ -1,7 +1,5 @@
 # LeakGuard
 
-This repository keeps the internal codename `LeakGuard`, but the public product name is LeakGuard.
-
 LeakGuard is a local-only Chrome extension that reduces accidental prompt leaks on protected sites. It inspects typed or pasted content in supported composers, detects likely secrets and sensitive public IPv4 data before send, and lets you choose `Allow once` or `Redact`.
 
 LeakGuard is a risk-reduction tool, not a guarantee of perfect privacy or complete data-loss prevention.
