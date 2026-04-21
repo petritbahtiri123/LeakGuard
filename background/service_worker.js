@@ -6,7 +6,8 @@ importScripts(
   "../shared/placeholderAllocator.js",
   "../shared/sessionMapStore.js",
   "../shared/transformOutboundPrompt.js",
-  "../shared/redactor.js"
+  "../shared/redactor.js",
+  "../shared/protected_sites.js"
 );
 
 const {
@@ -16,11 +17,34 @@ const {
   migrateSessionState,
   normalizeTransformMode,
   DEFAULT_TRANSFORM_MODE,
-  transformOutboundPrompt
+  transformOutboundPrompt,
+  BUILTIN_PROTECTED_SITES,
+  USER_PROTECTED_SITES_STORAGE_KEY,
+  normalizeProtectedSiteInput,
+  normalizeProtectedSiteList,
+  isBuiltinProtectedSiteRule
 } = globalThis.PWM;
 
 const STORAGE_PREFIX = "pwm:tab:";
 const REVEAL_PREFIX = "pwm:reveal:";
+const USER_SITE_SCRIPT_ID_PREFIX = "pwm_user_site_";
+const CONTENT_SCRIPT_FILES = [
+  "shared/entropy.js",
+  "shared/patterns.js",
+  "shared/detector.js",
+  "shared/placeholders.js",
+  "shared/ipClassification.js",
+  "shared/ipDetection.js",
+  "shared/networkHierarchy.js",
+  "shared/placeholderAllocator.js",
+  "shared/sessionMapStore.js",
+  "shared/transformOutboundPrompt.js",
+  "shared/redactor.js",
+  "shared/protected_sites.js",
+  "content/composer_helpers.js",
+  "content/content.js"
+];
+const CONTENT_STYLE_FILES = ["content/overlay.css"];
 
 function storageKey(tabId) {
   return `${STORAGE_PREFIX}${tabId}`;
@@ -88,6 +112,313 @@ function isExtensionUiSender(sender) {
 
 function requestMatchesState(request, state) {
   return Boolean(request?.sessionId && state?.sessionId && request.sessionId === state.sessionId);
+}
+
+function stableRuleHash(value) {
+  const input = String(value || "");
+  let hash = 2166136261;
+
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 16777619) >>> 0;
+  }
+
+  return hash.toString(16);
+}
+
+function userSiteScriptId(rule) {
+  return `${USER_SITE_SCRIPT_ID_PREFIX}${stableRuleHash(rule?.id)}`;
+}
+
+async function getStoredProtectedSites() {
+  const result = await chrome.storage.local.get(USER_PROTECTED_SITES_STORAGE_KEY);
+  return normalizeProtectedSiteList(result[USER_PROTECTED_SITES_STORAGE_KEY]);
+}
+
+async function setStoredProtectedSites(rules) {
+  const normalizedRules = normalizeProtectedSiteList(rules);
+
+  await chrome.storage.local.set({
+    [USER_PROTECTED_SITES_STORAGE_KEY]: normalizedRules
+  });
+
+  return normalizedRules;
+}
+
+async function enrichProtectedSites(rules) {
+  return Promise.all(
+    (rules || []).map(async (rule) => {
+      const hasPermission = await chrome.permissions.contains({
+        origins: [rule.matchPattern]
+      });
+
+      return {
+        ...rule,
+        hasPermission,
+        active: Boolean(rule.enabled && hasPermission)
+      };
+    })
+  );
+}
+
+async function getProtectedSiteOverview(url) {
+  const userSites = await enrichProtectedSites(await getStoredProtectedSites());
+  const normalized = normalizeProtectedSiteInput(url);
+
+  if (!normalized.ok) {
+    return {
+      builtInSites: BUILTIN_PROTECTED_SITES,
+      userSites,
+      currentSite: {
+        eligible: false,
+        protected: false,
+        source: null,
+        canProtect: false,
+        rule: null,
+        message: normalized.error
+      }
+    };
+  }
+
+  const targetRule = normalized.rule;
+  const builtInRule = BUILTIN_PROTECTED_SITES.find((rule) => rule.id === targetRule.id);
+  const storedRule = userSites.find((rule) => rule.id === targetRule.id) || null;
+
+  if (builtInRule) {
+    return {
+      builtInSites: BUILTIN_PROTECTED_SITES,
+      userSites,
+      currentSite: {
+        eligible: true,
+        protected: true,
+        source: "builtin",
+        canProtect: false,
+        rule: builtInRule,
+        message: "Built-in LeakGuard protection is active on this site."
+      }
+    };
+  }
+
+  if (storedRule?.active) {
+    return {
+      builtInSites: BUILTIN_PROTECTED_SITES,
+      userSites,
+      currentSite: {
+        eligible: true,
+        protected: true,
+        source: "user",
+        canProtect: false,
+        rule: storedRule,
+        message: "LeakGuard protection is active on this site."
+      }
+    };
+  }
+
+  if (storedRule && !storedRule.hasPermission) {
+    return {
+      builtInSites: BUILTIN_PROTECTED_SITES,
+      userSites,
+      currentSite: {
+        eligible: true,
+        protected: false,
+        source: null,
+        canProtect: true,
+        rule: storedRule,
+        message: "Site access is missing. Grant access again to re-enable protection."
+      }
+    };
+  }
+
+  if (storedRule && !storedRule.enabled) {
+    return {
+      builtInSites: BUILTIN_PROTECTED_SITES,
+      userSites,
+      currentSite: {
+        eligible: true,
+        protected: false,
+        source: null,
+        canProtect: true,
+        rule: storedRule,
+        message: "Protection is saved for this site but currently disabled."
+      }
+    };
+  }
+
+  return {
+    builtInSites: BUILTIN_PROTECTED_SITES,
+    userSites,
+    currentSite: {
+      eligible: true,
+      protected: false,
+      source: null,
+      canProtect: true,
+      rule: targetRule,
+      message: "LeakGuard is not protecting this site yet."
+    }
+  };
+}
+
+async function buildUserSiteRegistrations() {
+  const userSites = await getStoredProtectedSites();
+  const registrations = [];
+
+  for (const rule of userSites) {
+    if (!rule.enabled) continue;
+
+    const hasPermission = await chrome.permissions.contains({
+      origins: [rule.matchPattern]
+    });
+    if (!hasPermission) continue;
+
+    registrations.push({
+      id: userSiteScriptId(rule),
+      matches: [rule.matchPattern],
+      js: CONTENT_SCRIPT_FILES,
+      css: CONTENT_STYLE_FILES,
+      runAt: "document_idle",
+      persistAcrossSessions: true
+    });
+  }
+
+  return registrations;
+}
+
+async function syncDynamicContentScripts() {
+  const existing = await chrome.scripting.getRegisteredContentScripts();
+  const managedIds = existing
+    .filter((script) => script.id.startsWith(USER_SITE_SCRIPT_ID_PREFIX))
+    .map((script) => script.id);
+
+  if (managedIds.length) {
+    await chrome.scripting.removeContentScripts({ ids: managedIds });
+  }
+
+  const registrations = await buildUserSiteRegistrations();
+  if (!registrations.length) return;
+
+  await chrome.scripting.registerContentScripts(registrations);
+}
+
+async function ensureProtectedSitePermission(rule) {
+  if (isBuiltinProtectedSiteRule(rule)) {
+    return true;
+  }
+
+  const hasPermission = await chrome.permissions.contains({
+    origins: [rule.matchPattern]
+  });
+  if (!hasPermission) {
+    throw new Error("LeakGuard needs site access before it can protect this site.");
+  }
+
+  return true;
+}
+
+async function upsertProtectedSite(input) {
+  const normalized = normalizeProtectedSiteInput(input);
+  if (!normalized.ok) {
+    throw new Error(normalized.error);
+  }
+
+  if (isBuiltinProtectedSiteRule(normalized.rule)) {
+    return {
+      created: false,
+      updated: false,
+      rule: normalized.rule
+    };
+  }
+
+  await ensureProtectedSitePermission(normalized.rule);
+
+  const currentRules = await getStoredProtectedSites();
+  const existingRule = currentRules.find((rule) => rule.id === normalized.rule.id);
+  const createdAt = existingRule?.createdAt || Date.now();
+  const nextRule = {
+    ...normalized.rule,
+    createdAt,
+    enabled: true
+  };
+  const nextRules = existingRule
+    ? currentRules.map((rule) => (rule.id === nextRule.id ? nextRule : rule))
+    : [...currentRules, nextRule];
+
+  await setStoredProtectedSites(nextRules);
+  await syncDynamicContentScripts();
+
+  return {
+    created: !existingRule,
+    updated: Boolean(existingRule),
+    rule: nextRule
+  };
+}
+
+async function setProtectedSiteEnabled(siteId, enabled) {
+  const currentRules = await getStoredProtectedSites();
+  const existingRule = currentRules.find((rule) => rule.id === siteId);
+
+  if (!existingRule) {
+    throw new Error("Protected site rule not found.");
+  }
+
+  if (enabled) {
+    await ensureProtectedSitePermission(existingRule);
+  }
+
+  const nextRule = {
+    ...existingRule,
+    enabled: Boolean(enabled)
+  };
+  const nextRules = currentRules.map((rule) => (rule.id === siteId ? nextRule : rule));
+
+  await setStoredProtectedSites(nextRules);
+  await syncDynamicContentScripts();
+
+  return nextRule;
+}
+
+async function deleteProtectedSite(siteId) {
+  const currentRules = await getStoredProtectedSites();
+  const existingRule = currentRules.find((rule) => rule.id === siteId);
+
+  if (!existingRule) {
+    throw new Error("Protected site rule not found.");
+  }
+
+  const nextRules = currentRules.filter((rule) => rule.id !== siteId);
+  await setStoredProtectedSites(nextRules);
+
+  await chrome.permissions.remove({
+    origins: [existingRule.matchPattern]
+  }).catch(() => {});
+
+  await syncDynamicContentScripts();
+  return existingRule;
+}
+
+async function ensureProtectionInjected(tabId) {
+  if (typeof tabId !== "number") return;
+
+  try {
+    const response = await chrome.tabs.sendMessage(tabId, {
+      type: "PWM_CONTENT_PING"
+    });
+
+    if (response?.ok) {
+      return;
+    }
+  } catch {
+    // The content stack is not active in this tab yet.
+  }
+
+  await chrome.scripting.insertCSS({
+    target: { tabId },
+    files: CONTENT_STYLE_FILES
+  });
+
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: CONTENT_SCRIPT_FILES
+  });
 }
 
 function toPublicState(state) {
@@ -296,6 +627,28 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   removeRevealRequestsForTab(tabId).catch(() => {});
 });
 
+chrome.runtime.onInstalled.addListener(() => {
+  syncDynamicContentScripts().catch(() => {});
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  syncDynamicContentScripts().catch(() => {});
+});
+
+chrome.permissions.onAdded.addListener(() => {
+  syncDynamicContentScripts().catch(() => {});
+});
+
+chrome.permissions.onRemoved.addListener(() => {
+  syncDynamicContentScripts().catch(() => {});
+});
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === "local" && changes[USER_PROTECTED_SITES_STORAGE_KEY]) {
+    syncDynamicContentScripts().catch(() => {});
+  }
+});
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
     const tabId = sender?.tab?.id;
@@ -338,6 +691,44 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message?.type === "PWM_CREATE_REVEAL_REQUEST") {
       const requestId = await createRevealRequest(tabId, message.placeholder);
       sendResponse({ ok: true, requestId });
+      return;
+    }
+
+    if (message?.type === "PWM_GET_PROTECTED_SITE_OVERVIEW") {
+      const overview = await getProtectedSiteOverview(message.url);
+      sendResponse({ ok: true, ...overview });
+      return;
+    }
+
+    if (message?.type === "PWM_ADD_PROTECTED_SITE") {
+      const result = await upsertProtectedSite(message.input);
+
+      if (typeof message.tabId === "number") {
+        await ensureProtectionInjected(message.tabId);
+      }
+
+      const overview = await getProtectedSiteOverview(message.url || message.input);
+      sendResponse({ ok: true, ...result, overview });
+      return;
+    }
+
+    if (message?.type === "PWM_SET_PROTECTED_SITE_ENABLED") {
+      const rule = await setProtectedSiteEnabled(message.siteId, message.enabled);
+      const overview = await getProtectedSiteOverview(message.url || rule.origin);
+      sendResponse({ ok: true, rule, overview });
+      return;
+    }
+
+    if (message?.type === "PWM_DELETE_PROTECTED_SITE") {
+      const rule = await deleteProtectedSite(message.siteId);
+      const overview = await getProtectedSiteOverview(message.url || rule.origin);
+      sendResponse({ ok: true, rule, overview });
+      return;
+    }
+
+    if (message?.type === "PWM_OPEN_OPTIONS_PAGE") {
+      await chrome.runtime.openOptionsPage();
+      sendResponse({ ok: true });
       return;
     }
 
@@ -390,3 +781,5 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   return true;
 });
+
+syncDynamicContentScripts().catch(() => {});

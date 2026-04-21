@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>LeakGuard</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main class="popup-shell">
+      <p class="eyebrow">LeakGuard</p>
+      <h1>Protect prompts before they leave the page.</h1>
+      <section class="card">
+        <p class="label">Current site</p>
+        <p class="site" id="site-label">Checking active tab…</p>
+        <p class="status" id="status-copy">Loading protection status…</p>
+      </section>
+      <div class="actions">
+        <button class="btn btn-primary" id="protect-btn" type="button" disabled>Protect This Site</button>
+        <button class="btn" id="manage-btn" type="button">Manage Protected Sites</button>
+      </div>
+      <p class="feedback" id="feedback" aria-live="polite"></p>
+    </main>
+    <script src="../shared/protected_sites.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>

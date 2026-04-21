@@ -42,7 +42,12 @@ const NEW_PATTERN_NAMES = [
   "npm_token",
   "pypi_token",
   "docker_auth_config",
-  "cookie_session_token"
+  "cookie_session_token",
+  "natural_language_openai_key",
+  "labelled_password_value",
+  "labelled_openai_key_value",
+  "real_value_label",
+  "quoted_secret_label"
 ];
 
 const NEGATIVE_CASES = [
@@ -603,6 +608,260 @@ function testExampleValuesDoNotTrigger() {
   }
 }
 
+function testExplicitAssignmentsStillRedactWhenAdjacentLinesContainExampleLikeValues() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const text = [
+    "AWS_ACCESS_KEY_ID=[PWM_1]",
+    "AWS_SECRET_ACCESS_KEY=[PWM_2]",
+    "OPENAI_API_KEY=sk-test-example-1234567890abcdef",
+    "DB_PASSWORD=SuperSecret123!"
+  ].join("\n");
+
+  const findings = detector.scan(text);
+  const result = redactor.redact(text, findings);
+  const lines = result.redactedText.split("\n");
+
+  assert.ok(
+    findings.some(
+      (finding) =>
+        finding.type === "API_KEY" &&
+        finding.raw === "sk-test-example-1234567890abcdef"
+    ),
+    "explicit API key assignments should still be detected even when the value contains an example segment"
+  );
+  assert.ok(
+    findings.some(
+      (finding) => finding.type === "PASSWORD" && finding.raw === "SuperSecret123!"
+    ),
+    "a real password on the following line should not be suppressed by example-like text above it"
+  );
+  assert.strictEqual(lines[0], "AWS_ACCESS_KEY_ID=[PWM_1]");
+  assert.strictEqual(lines[1], "AWS_SECRET_ACCESS_KEY=[PWM_2]");
+  assert.ok(/^OPENAI_API_KEY=\[PWM_\d+\]$/.test(lines[2]));
+  assert.ok(/^DB_PASSWORD=\[PWM_\d+\]$/.test(lines[3]));
+  assert.strictEqual(
+    result.redactedText.includes("sk-test-example-1234567890abcdef"),
+    false,
+    "raw API key assignment should not survive redaction"
+  );
+  assert.strictEqual(
+    result.redactedText.includes("SuperSecret123!"),
+    false,
+    "raw password assignment should not survive redaction"
+  );
+}
+
+function testConcatenatedPlaceholderAssignmentsDoNotCreateCompositeFalsePositives() {
+  const detector = new Detector();
+  const text = [
+    "DB_PASSWORD=[PWM_4]OPENAI_API_KEY=[PWM_3]",
+    "AWS_SECRET_ACCESS_KEY=[PWM_2]AWS_SECRET_ACCESS_KEY=[PWM_9]",
+    "DB_PASSWORD=[PWM_17]OPENAI_API_KEY=[PWM_3]DB_PASSWORD=[PWM_18]AWS_ACCESS_KEY_ID=[PWM_1]"
+  ].join("\n");
+
+  const findings = detector.scan(text);
+
+  assert.strictEqual(
+    findings.length,
+    0,
+    "adjacent clean placeholder assignments should not be treated as raw secret composites"
+  );
+}
+
+function testUserStressEdgeCasesRedactSecretsButKeepSafeLiterals() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const text = [
+    'mirror_1=sk-test-example-1234567890abcdef',
+    'mirror_2="sk-test-example-1234567890abcdef"api_key=[PWM_5]',
+    'secret "abc123SECRETvalue"Authorization: Bearer [PWM_6].payloadsignature.example',
+    "DATABASE_URL=postgres://admin:MyUltraSecretPass@db.example.com:5432/appdb{",
+    '{"apiKey":"sk-test-example-1234567890abcdef","dbPassword":"[PWM_7]","accessToken":"ghp_exampletokentest123456789"}',
+    "my openai key is sk-test-example-1234567890abcdef",
+    "Now mask this real value: MyActualPassword123!",
+    "Password → SuperSecret123!",
+    "Key → “sk-test-example-1234567890abcdef”",
+    "```env",
+    "AWS_ACCESS_KEY_ID=[PWM_1]",
+    "AWS_SECRET_ACCESS_KEY=[PWM_2]",
+    "DB_PASSWORD=[PWM_4]",
+    "```",
+    "secrets:",
+    '  openai: "sk-test-example-1234567890abcdef"',
+    '  db_password: [PWM_4]',
+    "Please do not modify this literal text: [PWM_4256932165]",
+    "The region is eu-central-1.",
+    "CIDR=192.168.1.0/24",
+    "PUBLIC_URL=https://example.com",
+    "PASSWORD",
+    "Key"
+  ].join("\n");
+
+  const findings = detector.scan(text);
+  const result = redactor.redact(text, findings);
+
+  assert.ok(
+    findings.some((finding) => finding.raw === "sk-test-example-1234567890abcdef"),
+    "openai-style test key should still be detected across assignment, prose, and YAML-style contexts"
+  );
+  assert.ok(
+    findings.some(
+      (finding) =>
+        finding.type === "DB_URI" &&
+        finding.raw === "postgres://admin:MyUltraSecretPass@db.example.com:5432/appdb"
+    ),
+    "database URLs should still be detected even when the host uses an example-style domain"
+  );
+  assert.ok(
+    findings.some((finding) => finding.raw === "abc123SECRETvalue"),
+    "quoted secret labels should detect the raw secret"
+  );
+  assert.ok(
+    findings.some((finding) => finding.raw === "MyActualPassword123!"),
+    "real value labels should detect raw password-like secrets"
+  );
+  assert.ok(
+    findings.some((finding) => finding.raw === "SuperSecret123!"),
+    "arrow-labelled passwords should be detected"
+  );
+  assert.strictEqual(
+    result.redactedText.includes("sk-test-example-1234567890abcdef"),
+    false,
+    "openai-style test key should not survive redaction"
+  );
+  assert.strictEqual(
+    result.redactedText.includes("MyUltraSecretPass"),
+    false,
+    "database password should not survive redaction"
+  );
+  assert.strictEqual(
+    result.redactedText.includes("abc123SECRETvalue"),
+    false,
+    "quoted secret values should not survive redaction"
+  );
+  assert.strictEqual(
+    result.redactedText.includes("MyActualPassword123!"),
+    false,
+    "real value labels should not survive redaction"
+  );
+  assert.strictEqual(
+    result.redactedText.includes("SuperSecret123!"),
+    false,
+    "arrow-labelled passwords should not survive redaction"
+  );
+  assert.ok(
+    result.redactedText.includes("[PWM_4256932165]"),
+    "literal placeholder-looking text should stay unchanged"
+  );
+  assert.ok(result.redactedText.includes("The region is eu-central-1."), "region text should stay visible");
+  assert.ok(result.redactedText.includes("CIDR=192.168.1.0/24"), "private CIDRs should stay visible");
+  assert.ok(result.redactedText.includes("PUBLIC_URL=https://example.com"), "public URLs should stay visible");
+  assert.ok(/\bPASSWORD\b/.test(result.redactedText), "bare PASSWORD labels should stay visible");
+  assert.ok(/\bKey\b/.test(result.redactedText), "bare key labels should stay visible");
+}
+
+function testInlineStructuredAssignmentsStillMatchAfterEarlierInlineAssignments() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const text = [
+    "AWS_ACCESS_KEY_ID=[PWM_1] DATABASE_URL=postgres://admin:MyUltraSecretPass@db.example.com:5432/appdb{",
+    'AWS_SECRET_ACCESS_KEY=[PWM_2] DATABASE_URL=postgres://admin:VerySecretPass@db.example.com:5432/prod'
+  ].join("\n");
+
+  const findings = detector.scan(text);
+  const result = redactor.redact(text, findings);
+
+  assert.ok(
+    findings.some(
+      (finding) =>
+        finding.type === "DB_URI" &&
+        finding.raw === "postgres://admin:MyUltraSecretPass@db.example.com:5432/appdb"
+    ),
+    "DATABASE_URL should still be detected when it appears later on the same line after other assignments"
+  );
+  assert.ok(
+    findings.some(
+      (finding) =>
+        finding.type === "DB_URI" &&
+        finding.raw === "postgres://admin:VerySecretPass@db.example.com:5432/prod"
+    ),
+    "later inline DATABASE_URL values should keep matching instead of being swallowed by earlier assignments"
+  );
+  assert.strictEqual(
+    result.redactedText.includes("MyUltraSecretPass"),
+    false,
+    "first inline database password should not survive redaction"
+  );
+  assert.strictEqual(
+    result.redactedText.includes("VerySecretPass"),
+    false,
+    "second inline database password should not survive redaction"
+  );
+}
+
+function testPartiallyRedactedOutputDoesNotRetriggerBenignPlaceholderComposites() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const text = [
+    'AWS_ACCESS_KEY_ID=[PWM_1] AWS_SECRET_ACCESS_KEY=[PWM_2] OPENAI_API_KEY=[PWM_3] DB_PASSWORD=[PWM_4]OPENAI_API_KEY=[PWM_3] mirror_1=sk-test-example-1234567890abcdef mirror_2="[PWM_1]"api_key=[PWM_5] API_KEY=[PWM_5] token: [PWM_5] secret "[PWM_6]"Authorization: Bearer [PWM_6].payloadsignature.example DATABASE_URL=postgres://admin:MyUltraSecretPass@db.example.com:5432/appdb{ "apiKey": "[PWM_1]", "dbPassword": "[PWM_7]" }',
+    "AWS_DEFAULT_REGION = [PWM_7]eu-central-1",
+    "text secrets: openai: [PWM_1] db_password: [PWM_4] aws_secret: [PWM_8]://example.com/callback?token=[PWM_3] DB_PASSWORD=[PWM_17]OPENAI_API_KEY=[PWM_3]DB_PASSWORD=[PWM_18]AWS_ACCESS_KEY_ID=[PWM_1] AWS_SECRET_ACCESS_KEY=[PWM_2] DB_PASSWORD=[PWM_19] OPENAI_API_KEY=[PWM_3] GITHUB_TOKEN=[PWM_15] DATABASE_URL=postgres://admin:VerySecretPass@db.example.com:5432/prod"
+  ].join("\n");
+
+  const findings = detector.scan(text);
+  const result = redactor.redact(text, findings);
+
+  assert.ok(
+    findings.some(
+      (finding) =>
+        finding.type === "DB_URI" &&
+        finding.raw === "postgres://admin:MyUltraSecretPass@db.example.com:5432/appdb"
+    ),
+    "reruns over partially redacted blobs should still recover raw database URLs"
+  );
+  assert.ok(
+    findings.some(
+      (finding) =>
+        finding.type === "DB_URI" &&
+        finding.raw === "postgres://admin:VerySecretPass@db.example.com:5432/prod"
+    ),
+    "later raw database URLs in partially redacted blobs should still be found"
+  );
+  assert.strictEqual(
+    findings.some((finding) => finding.raw === "[PWM_7]eu-central-1"),
+    false,
+    "region suffixes attached to visible placeholders should not retrigger secret detection"
+  );
+  assert.strictEqual(
+    findings.some((finding) => finding.raw === "[PWM_8]://example.com/callback?token=[PWM_3]"),
+    false,
+    "URL tails attached to visible placeholders should not retrigger secret detection"
+  );
+  assert.strictEqual(
+    result.redactedText.includes("MyUltraSecretPass"),
+    false,
+    "reruns should not leave the first raw database password visible"
+  );
+  assert.strictEqual(
+    result.redactedText.includes("VerySecretPass"),
+    false,
+    "reruns should not leave the second raw database password visible"
+  );
+  assert.ok(
+    result.redactedText.includes("AWS_DEFAULT_REGION = [PWM_7]eu-central-1"),
+    "benign placeholder-adjacent region text should stay untouched on rerun"
+  );
+  assert.ok(
+    result.redactedText.includes("aws_secret: [PWM_8]://example.com/callback?token=[PWM_3]"),
+    "benign placeholder-adjacent URL tails should stay untouched on rerun"
+  );
+}
+
 function testPlaceholderValuesDoNotRetriggerDetection() {
   const detector = new Detector();
   const cases = [
@@ -1045,6 +1304,11 @@ function run() {
   testOverlappingMatchesPreferSinglePemBlock();
   testAllowlist();
   testExampleValuesDoNotTrigger();
+  testExplicitAssignmentsStillRedactWhenAdjacentLinesContainExampleLikeValues();
+  testConcatenatedPlaceholderAssignmentsDoNotCreateCompositeFalsePositives();
+  testUserStressEdgeCasesRedactSecretsButKeepSafeLiterals();
+  testInlineStructuredAssignmentsStillMatchAfterEarlierInlineAssignments();
+  testPartiallyRedactedOutputDoesNotRetriggerBenignPlaceholderComposites();
   testPlaceholderValuesDoNotRetriggerDetection();
   testExpandedDetectorFamiliesMixedBlob();
   testGoogleApiKeyJsonRegression();
