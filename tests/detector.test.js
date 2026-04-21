@@ -344,9 +344,78 @@ function testAwsSessionTokenStillRedactsAfterOtherAwsValuesAreAlreadyPlaceholder
   );
   assert.strictEqual(
     result.redactedText,
-    "AWS_ACCESS_KEY_ID=[PWM_1]\nAWS_SECRET_ACCESS_KEY=[PWM_2]\nAWS_SESSION_TOKEN=[PWM_1]",
-    "aws session token should be fully redacted while existing clean placeholders stay intact"
+    "AWS_ACCESS_KEY_ID=[PWM_1]\nAWS_SECRET_ACCESS_KEY=[PWM_2]\nAWS_SESSION_TOKEN=[PWM_3]",
+    "aws session token should be fully redacted without colliding with existing clean placeholders"
   );
+}
+
+function testExistingVisiblePlaceholdersDoNotCollideWithNewSecretAssignments() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const text = [
+    "KNOWN=[PWM_1]",
+    "NETWORK=[NET_1]",
+    "PUBLIC_HOST=[PUB_HOST_1]",
+    "OPENAI_API_KEY=sk-proj-AAAA1111bbbb2222CCCC3333dddd4444eeee5555"
+  ].join("\n");
+
+  const result = redactor.redact(text, detector.scan(text));
+  const lines = result.redactedText.split("\n");
+
+  assert.strictEqual(lines[0], "KNOWN=[PWM_1]", "existing PWM placeholder should stay intact");
+  assert.strictEqual(lines[1], "NETWORK=[NET_1]", "existing network placeholder should stay intact");
+  assert.strictEqual(
+    lines[2],
+    "PUBLIC_HOST=[PUB_HOST_1]",
+    "existing public host placeholder should stay intact"
+  );
+  assert.strictEqual(
+    lines[3],
+    "OPENAI_API_KEY=[PWM_2]",
+    "new secret should advance past existing visible PWM placeholders"
+  );
+}
+
+function testPositiveCredentialFixturesStillRedactWithExistingPlaceholdersInText() {
+  const detector = new Detector();
+  const fixtureTypes = new Set([
+    "API_KEY",
+    "TOKEN",
+    "SECRET",
+    "PASSWORD",
+    "AWS_KEY",
+    "AWS_SECRET_KEY",
+    "PRIVATE_KEY",
+    "DB_URI",
+    "CONNECTION_STRING",
+    "WEBHOOK"
+  ]);
+
+  for (const fixture of fixtures) {
+    if (!fixtureTypes.has(fixture.expectsType)) continue;
+
+    const manager = new PlaceholderManager();
+    const redactor = new Redactor(manager);
+    const text = [
+      "KNOWN=[PWM_1]",
+      "NET=[NET_1]",
+      fixture.text
+    ].join("\n");
+    const findings = detector.scan(text);
+    const result = redactor.redact(text, findings);
+
+    assert.ok(findings.length > 0, `${fixture.name}: expected finding with existing placeholders present`);
+    for (const finding of findings) {
+      assert.strictEqual(
+        result.redactedText.includes(finding.raw),
+        false,
+        `${fixture.name}: raw finding survived redaction with existing placeholders present`
+      );
+    }
+    assert.ok(result.redactedText.includes("KNOWN=[PWM_1]"), `${fixture.name}: existing PWM placeholder changed`);
+    assert.ok(result.redactedText.includes("NET=[NET_1]"), `${fixture.name}: existing NET placeholder changed`);
+  }
 }
 
 function testDbUriWithCredentials() {
@@ -727,6 +796,7 @@ function testFinalRegressionBlockKeepsTrailingNaturalLanguagePasswordRedacted() 
   const findings = detector.scan(text);
   const result = redactor.redact(text, findings);
   const trailingPasswordStart = text.lastIndexOf("VaultHorse!2026!Test");
+  const dbPasswordPlaceholderMatch = /DB_PASSWORD=(\[PWM_\d+\])/.exec(result.redactedText);
 
   assert.ok(
     findings.some(
@@ -738,8 +808,12 @@ function testFinalRegressionBlockKeepsTrailingNaturalLanguagePasswordRedacted() 
     "trailing natural-language password should be detected inside the mixed regression block"
   );
   assert.ok(
-    result.redactedText.includes("my password is [PWM_2]"),
-    "trailing natural-language password should be redacted in the mixed regression block"
+    dbPasswordPlaceholderMatch,
+    "db password placeholder should still be present in the mixed regression block"
+  );
+  assert.ok(
+    result.redactedText.includes(`my password is ${dbPasswordPlaceholderMatch[1]}`),
+    "trailing natural-language password should reuse the same placeholder in the mixed regression block"
   );
   assert.ok(
     !result.redactedText.includes("my password is VaultHorse!2026!Test"),
@@ -934,6 +1008,8 @@ function run() {
   testMultilineRepeatedPassword();
   testRegressionMixedMultilineSecrets();
   testAwsSessionTokenStillRedactsAfterOtherAwsValuesAreAlreadyPlaceholderized();
+  testExistingVisiblePlaceholdersDoNotCollideWithNewSecretAssignments();
+  testPositiveCredentialFixturesStillRedactWithExistingPlaceholdersInText();
   testDbUriWithCredentials();
   testFullValueReplacementForConnectionStyleAssignments();
   testGenericBasicAuthUrl();

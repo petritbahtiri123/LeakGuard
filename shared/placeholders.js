@@ -127,6 +127,12 @@
     return input.replace(ANY_PLACEHOLDER_TOKEN_REGEX, (token) => canonicalizePlaceholderToken(token));
   }
 
+  function extractPlaceholderTokens(text) {
+    const input = normalizeVisiblePlaceholders(text);
+    const matches = input.match(ANY_PLACEHOLDER_TOKEN_REGEX) || [];
+    return matches.map((token) => canonicalizePlaceholderToken(token));
+  }
+
   function sortPlaceholders(placeholders) {
     return [...new Set((placeholders || []).filter(Boolean).map(canonicalizePlaceholderToken))].sort(
       (left, right) => {
@@ -360,6 +366,12 @@
       };
     }
 
+    trackKnownPlaceholdersFromText(text) {
+      for (const token of extractPlaceholderTokens(text)) {
+        this.trackKnownPlaceholder(token);
+      }
+    }
+
     getPlaceholder(rawValue) {
       const raw = String(rawValue);
       const fingerprint = sessionFingerprint(this.ensureSessionId(), raw);
@@ -368,7 +380,10 @@
         return this.placeholderByFingerprint.get(fingerprint);
       }
 
-      const placeholder = `[PWM_${this.incrementCounter("PWM")}]`;
+      let placeholder = `[PWM_${this.incrementCounter("PWM")}]`;
+      while (this.knownPlaceholders.has(placeholder) || this.fingerprintByPlaceholder.has(placeholder)) {
+        placeholder = `[PWM_${this.incrementCounter("PWM")}]`;
+      }
 
       this.placeholderByFingerprint.set(fingerprint, placeholder);
       this.fingerprintByPlaceholder.set(placeholder, fingerprint);
@@ -473,6 +488,7 @@
   root.PWM.isLegacyTypedPlaceholder = isLegacyTypedPlaceholder;
   root.PWM.canonicalizePlaceholderToken = canonicalizePlaceholderToken;
   root.PWM.normalizeVisiblePlaceholders = normalizeVisiblePlaceholders;
+  root.PWM.extractPlaceholderTokens = extractPlaceholderTokens;
   root.PWM.containsLegacyTypedPlaceholder = containsLegacyTypedPlaceholder;
   root.PWM.sessionFingerprint = sessionFingerprint;
 
@@ -488,6 +504,7 @@
     module.exports.isLegacyTypedPlaceholder = isLegacyTypedPlaceholder;
     module.exports.canonicalizePlaceholderToken = canonicalizePlaceholderToken;
     module.exports.normalizeVisiblePlaceholders = normalizeVisiblePlaceholders;
+    module.exports.extractPlaceholderTokens = extractPlaceholderTokens;
     module.exports.containsLegacyTypedPlaceholder = containsLegacyTypedPlaceholder;
     module.exports.sessionFingerprint = sessionFingerprint;
   }
