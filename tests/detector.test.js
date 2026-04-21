@@ -546,6 +546,35 @@ function testExpandedDetectorFamiliesMixedBlob() {
   );
 }
 
+function testGoogleApiKeyJsonRegression() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const text =
+    '{"apiKey":"AIzaSyA-PLACEHOLDER-LOOKING-KEY1234567890","clientSecret":"GOCSPX-abcdefghijklmnopqrstuvwxyz1234567890AB"}';
+
+  const findings = detector.scan(text);
+  const result = redactor.redact(text, findings);
+
+  assert.ok(
+    findings.some(
+      (finding) =>
+        finding.type === "API_KEY" &&
+        finding.raw === "AIzaSyA-PLACEHOLDER-LOOKING-KEY1234567890"
+    ),
+    "google API key fixture should be detected inside JSON config"
+  );
+  assert.ok(
+    result.redactedText.includes('"apiKey":"[PWM_1]"') ||
+      result.redactedText.includes('"apiKey":"[PWM_2]"'),
+    "google API key should be redacted inside JSON config"
+  );
+  assert.ok(
+    !result.redactedText.includes("AIzaSyA-PLACEHOLDER-LOOKING-KEY1234567890"),
+    "raw google API key fixture should not survive redaction"
+  );
+}
+
 function testCompositePlaceholderAndNaturalLanguageEdgeCaseBlock() {
   const detector = new Detector();
   const manager = new PlaceholderManager();
@@ -885,6 +914,7 @@ function run() {
   testExampleValuesDoNotTrigger();
   testPlaceholderValuesDoNotRetriggerDetection();
   testExpandedDetectorFamiliesMixedBlob();
+  testGoogleApiKeyJsonRegression();
   testCompositePlaceholderAndNaturalLanguageEdgeCaseBlock();
   testMixedPlaceholderBlobPreservesKnownPlaceholdersAndRedactsRawLeaks();
   testFinalRegressionBlockKeepsTrailingNaturalLanguagePasswordRedacted();
