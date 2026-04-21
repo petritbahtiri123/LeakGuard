@@ -1,6 +1,6 @@
 {
-  "name": "portable-work-memory",
-  "version": "0.1.0",
+  "name": "leakguard",
+  "version": "1.0.0",
   "private": true,
   "description": "Local-first secret redaction engine for LLM chat UIs",
   "scripts": {
