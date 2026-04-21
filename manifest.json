@@ -1,9 +1,10 @@
 {
   "manifest_version": 3,
-  "name": "Portable Work Memory",
+  "name": "LeakGuard",
   "version": "0.1.0",
-  "description": "Local-only secret redaction layer for ChatGPT prompts.",
-  "permissions": ["storage"],
+  "description": "Local-only prompt protection for secrets and sensitive network data before they reach AI chat sites.",
+  "permissions": ["storage", "scripting", "activeTab"],
+  "optional_host_permissions": ["https://*/*", "http://*/*"],
   "host_permissions": [
     "https://chatgpt.com/*",
     "https://chat.openai.com/*",
@@ -15,6 +16,11 @@
   "background": {
     "service_worker": "background/service_worker.js"
   },
+  "action": {
+    "default_title": "LeakGuard",
+    "default_popup": "popup/popup.html"
+  },
+  "options_page": "options/options.html",
   "content_scripts": [
     {
       "matches": [
@@ -37,6 +43,7 @@
         "shared/sessionMapStore.js",
         "shared/transformOutboundPrompt.js",
         "shared/redactor.js",
+        "shared/protected_sites.js",
         "content/composer_helpers.js",
         "content/content.js"
       ],
@@ -51,14 +58,7 @@
         "ui/reveal_panel.css",
         "ui/reveal_panel.js"
       ],
-      "matches": [
-        "https://chatgpt.com/*",
-        "https://chat.openai.com/*",
-        "https://gemini.google.com/*",
-        "https://claude.ai/*",
-        "https://grok.com/*",
-        "https://x.com/*"
-      ]
+      "matches": ["https://*/*", "http://*/*"]
     }
   ],
   "icons": {

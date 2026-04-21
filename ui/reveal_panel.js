@@ -39,7 +39,7 @@
 
     if (!requestId) {
       placeholderEl.textContent = "[PWM]";
-      setStatus("Secure reveal is unavailable because the request id is missing.");
+      setStatus("LeakGuard secure reveal is unavailable because the request id is missing.");
       showBtn.disabled = true;
       return;
     }
@@ -51,7 +51,7 @@
 
     if (!response?.ok || !response?.context) {
       placeholderEl.textContent = "[PWM]";
-      setStatus(response?.error || "Secure reveal is unavailable for this item.");
+      setStatus(response?.error || "LeakGuard secure reveal is unavailable for this item.");
       showBtn.disabled = true;
       return;
     }
@@ -75,7 +75,7 @@
     }
 
     showBtn.disabled = true;
-    setStatus("Revealing in secure extension UI…");
+    setStatus("Revealing inside LeakGuard’s secure extension UI…");
 
     const response = await chrome.runtime.sendMessage({
       type: "PWM_EXTENSION_REVEAL_SECRET",
@@ -85,7 +85,7 @@
     if (!response?.ok || typeof response?.raw !== "string") {
       hideSecret();
       showBtn.disabled = true;
-      setStatus(response?.error || "Secure reveal is unavailable for this item.");
+      setStatus(response?.error || "LeakGuard secure reveal is unavailable for this item.");
       return;
     }
 
@@ -100,7 +100,7 @@
     showSecret().catch((error) => {
       hideSecret();
       showBtn.disabled = true;
-      setStatus(error?.message || "Secure reveal failed.");
+      setStatus(error?.message || "LeakGuard secure reveal failed.");
     });
   });
 
@@ -116,6 +116,6 @@
   loadContext().catch((error) => {
     placeholderEl.textContent = "[PWM]";
     showBtn.disabled = true;
-    setStatus(error?.message || "Secure reveal could not initialize.");
+    setStatus(error?.message || "LeakGuard secure reveal could not initialize.");
   });
 })();

@@ -258,6 +258,17 @@
       captureGroups: [1]
     },
     {
+      name: "natural_language_openai_key",
+      type: "API_KEY",
+      category: "credential",
+      baseScore: 76,
+      suppressionNotes:
+        "Catch phrases like 'my openai key is ...' while still letting explicit example placeholders fall through shared suppression.",
+      regex:
+        /\b(?:my|the|our)?\s*openai\s*(?:api\s*)?key\s*(?:is|=|:)\s*(?:"([^"\r\n]{8,})"|“([^”\r\n]{8,})”|'([^'\r\n]{8,})'|`([^`\r\n]{8,})`|([^\s,;]{8,}))/gi,
+      captureGroups: [1, 2, 3, 4, 5]
+    },
+    {
       name: "natural_language_password",
       type: "PASSWORD",
       category: "credential",
@@ -266,6 +277,49 @@
         "Catch bare or quoted natural-language password disclosures such as 'my password is ...' without consuming trailing punctuation or line breaks.",
       regex:
         /\b(?:my|the|our)?\s*password\s*(?:is|=|:)\s*(?:"([^"\r\n]{8,})"|'([^'\r\n]{8,})'|`([^`\r\n]{8,})`|([^\s,;]{8,}))/gi,
+      captureGroups: [1, 2, 3, 4]
+    },
+    {
+      name: "labelled_password_value",
+      type: "PASSWORD",
+      category: "credential",
+      baseScore: 78,
+      suppressionNotes:
+        "Catch arrow-labelled password disclosures such as 'Password -> ...' or 'Password → ...', including smart quotes.",
+      regex:
+        /\bpassword\s*(?:is|=|:|->|→)\s*(?:"([^"\r\n]{8,})"|“([^”\r\n]{8,})”|'([^'\r\n]{8,})'|`([^`\r\n]{8,})`|([^\s,;]{8,}))/gi,
+      captureGroups: [1, 2, 3, 4, 5]
+    },
+    {
+      name: "labelled_openai_key_value",
+      type: "API_KEY",
+      category: "credential",
+      baseScore: 78,
+      suppressionNotes:
+        "Catch labelled vendor keys such as 'Key -> sk-...' while keeping the value requirement strict to OpenAI-style key shapes.",
+      regex:
+        /\bkey\s*(?:is|=|:|->|→)\s*(?:"(sk-(?:proj|live|test|org|svcacct)-[A-Za-z0-9_-]{16,}|sk-[A-Za-z0-9]{32,})"|“(sk-(?:proj|live|test|org|svcacct)-[A-Za-z0-9_-]{16,}|sk-[A-Za-z0-9]{32,})”|'(sk-(?:proj|live|test|org|svcacct)-[A-Za-z0-9_-]{16,}|sk-[A-Za-z0-9]{32,})'|`(sk-(?:proj|live|test|org|svcacct)-[A-Za-z0-9_-]{16,}|sk-[A-Za-z0-9]{32,})`|(sk-(?:proj|live|test|org|svcacct)-[A-Za-z0-9_-]{16,}|sk-[A-Za-z0-9]{32,}))/gi,
+      captureGroups: [1, 2, 3, 4, 5]
+    },
+    {
+      name: "real_value_label",
+      type: "SECRET",
+      category: "credential",
+      baseScore: 72,
+      suppressionNotes:
+        "Catch phrases such as 'real value: ...' when they are immediately followed by a secret-like token.",
+      regex:
+        /\breal\s+value\s*(?:is|=|:)\s*(?:"([^"\r\n]{8,})"|“([^”\r\n]{8,})”|'([^'\r\n]{8,})'|`([^`\r\n]{8,})`|([^\s,;]{8,}))/gi,
+      captureGroups: [1, 2, 3, 4, 5]
+    },
+    {
+      name: "quoted_secret_label",
+      type: "SECRET",
+      category: "credential",
+      baseScore: 74,
+      suppressionNotes:
+        "Catch explicit secret labels immediately followed by quoted values without swallowing surrounding prose.",
+      regex: /\bsecret\s*(?:"([^"\r\n]{8,})"|“([^”\r\n]{8,})”|'([^'\r\n]{8,})'|`([^`\r\n]{8,})`)/gi,
       captureGroups: [1, 2, 3, 4]
     },
     {
@@ -324,7 +378,7 @@
       category: "connection_string",
       baseScore: 75,
       regex:
-        /\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis|amqp|mssql):\/\/[^\s'"`<>]+/gi
+        /\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis|amqp|mssql):\/\/[^\s'"`<>{}\[\]]+/gi
     },
     {
       name: "generic_uri_credentials",
@@ -455,10 +509,10 @@
   ];
 
   const ASSIGNMENT_KEY_REGEX =
-    /((?:[A-Za-z_][A-Za-z0-9_.-]{0,80})?(?:aws[_-]?secret[_-]?access[_-]?key|aws[_-]?session[_-]?token|pass(?:word)?|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|private[_-]?key|account[_-]?key|cookie|session(?:[_-]?id|[_-]?secret)?|auth(?:orization)?|connection(?:string|_string)?|webhook))/i;
+    /((?:[A-Za-z_][A-Za-z0-9_.-]{0,80})?(?:aws[_-]?secret[_-]?access[_-]?key|aws[_-]?session[_-]?token|pass(?:word)?|pwd|secret|token|api[_-]?key|openai(?:[_-]?api)?(?:[_-]?key)?|jwt|access[_-]?key|client[_-]?secret|private[_-]?key|account[_-]?key|cookie|session(?:[_-]?id|[_-]?secret)?|auth(?:orization)?|connection(?:string|_string)?|webhook))/i;
 
   const ASSIGNMENT_REGEX =
-    /((?:[A-Za-z_][A-Za-z0-9_.-]{0,80})?(?:aws[_-]?secret[_-]?access[_-]?key|aws[_-]?session[_-]?token|pass(?:word)?|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|private[_-]?key|account[_-]?key|cookie|session(?:[_-]?id|[_-]?secret)?|auth(?:orization)?|connection(?:string|_string)?|webhook))\s*[:=]\s*((?:"[^"\n\r]*")|(?:'[^'\n\r]*')|(?:`[^`\n\r]*`)|(?:[^\s,;]+))/gim;
+    /((?:[A-Za-z_][A-Za-z0-9_.-]{0,80})?(?:aws[_-]?secret[_-]?access[_-]?key|aws[_-]?session[_-]?token|pass(?:word)?|pwd|secret|token|api[_-]?key|openai(?:[_-]?api)?(?:[_-]?key)?|jwt|access[_-]?key|client[_-]?secret|private[_-]?key|account[_-]?key|cookie|session(?:[_-]?id|[_-]?secret)?|auth(?:orization)?|connection(?:string|_string)?|webhook))\s*[:=]\s*((?:"[^"\n\r]*")|(?:'[^'\n\r]*')|(?:`[^`\n\r]*`)|(?:[^\s,;]+))/gim;
 
   const CLEAN_PLACEHOLDER_REGEX =
     /^\[(?:PWM_\d+|NET_\d+(?:_SUB_\d+)*(?:_(?:HOST_\d+|GW|VIP|DNS))?|PUB_HOST_\d+(?:_(?:GW|VIP|DNS))?)\]$/;
@@ -528,7 +582,12 @@
     stripe_secret_key: "API_KEY",
     stripe_webhook_secret: "SECRET",
     natural_language_api_key: "API_KEY",
+    natural_language_openai_key: "API_KEY",
     natural_language_password: "PASSWORD",
+    labelled_password_value: "PASSWORD",
+    labelled_openai_key_value: "API_KEY",
+    real_value_label: "SECRET",
+    quoted_secret_label: "SECRET",
     natural_language_token: "TOKEN",
     bearer_token: "TOKEN",
     google_api_key: "API_KEY",

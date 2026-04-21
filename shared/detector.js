@@ -70,8 +70,10 @@
     if (value.includes("password") || value.endsWith("pwd") || value.includes("passwd")) {
       return "PASSWORD";
     }
+    if (value === "openai" || value.includes("openai")) return "API_KEY";
     if (value.includes("webhook") && value.includes("secret")) return "SECRET";
     if (value.includes("webhook")) return "WEBHOOK";
+    if (value.includes("jwt")) return "TOKEN";
     if (value.includes("cookie") || value.includes("session")) return "TOKEN";
     if (value.includes("token") || value.includes("auth")) return "TOKEN";
     if (value.includes("secret")) return "SECRET";
@@ -89,10 +91,14 @@
   }
 
   function getContextWindow(text, start, end, radius = 64) {
-    const left = Math.max(0, start - radius);
-    const right = Math.min(text.length, end + radius);
-    const before = text.slice(left, start);
-    const after = text.slice(end, right);
+    const input = String(text || "");
+    const lineStart = input.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
+    const nextLineBreak = input.indexOf("\n", Math.max(0, end));
+    const lineEnd = nextLineBreak >= 0 ? nextLineBreak : input.length;
+    const left = Math.max(lineStart, start - radius);
+    const right = Math.min(lineEnd, end + radius);
+    const before = input.slice(left, start);
+    const after = input.slice(end, right);
     return `${before} ${after}`.toLowerCase();
   }
 
@@ -142,6 +148,19 @@
     });
   }
 
+  function containsTemplateMarker(value) {
+    const normalized = String(value || "").toLowerCase();
+    if (!normalized) return false;
+
+    if (/^(?:example|sample|dummy)/i.test(normalized)) {
+      return true;
+    }
+
+    return ["placeholder", "replace_me", "replace-me", "changeme"].some((marker) =>
+      normalized.includes(marker)
+    );
+  }
+
   function hasExampleHost(value) {
     try {
       const parsed = new URL(value);
@@ -155,6 +174,37 @@
     return /:\/\/[^\/\s:@]+:[^@\s]+@/.test(value);
   }
 
+  function hasBroadExampleSegment(value) {
+    return /(?:^|[;=:/_.-])(?:example|sample|dummy)(?:[A-Za-z0-9_-]*)?(?=$|[;=:/_.-])/i.test(
+      String(value || "")
+    );
+  }
+
+  function isExplicitSensitiveAssignment(key, placeholderType) {
+    const normalizedKey = String(key || "").toLowerCase();
+
+    if (
+      /(password|passwd|pwd|secret|api[_-]?key|token|auth|session|cookie|access[_-]?key|private[_-]?key|client[_-]?secret|connection(?:string|_string)?|webhook)/.test(
+        normalizedKey
+      )
+    ) {
+      return true;
+    }
+
+    return new Set([
+      "PASSWORD",
+      "API_KEY",
+      "TOKEN",
+      "SECRET",
+      "AWS_KEY",
+      "AWS_SECRET_KEY",
+      "PRIVATE_KEY",
+      "CONNECTION_STRING",
+      "DB_URI",
+      "WEBHOOK"
+    ]).has(String(placeholderType || ""));
+  }
+
   function assignmentKeyScoreBoost(key, value) {
     const normalizedKey = String(key || "").toLowerCase();
     const normalizedValue = String(value || "");
@@ -166,6 +216,8 @@
     }
     if (/webhook/.test(normalizedKey)) score += 10;
     if (/azure|storage/.test(normalizedKey)) score += 8;
+    if (/openai/.test(normalizedKey) && /^sk-/.test(normalizedValue)) score += 12;
+    if (/\bjwt\b/.test(normalizedKey) && /^eyJ/.test(normalizedValue)) score += 10;
     if (/stripe/.test(normalizedKey) && /^sk_(?:live|test)_/.test(normalizedValue)) score += 12;
     if (/npm/.test(normalizedKey) && /^npm_[A-Za-z0-9]{36}$/.test(normalizedValue)) score += 12;
     if (/account[_-]?key/.test(normalizedKey) && /^[A-Za-z0-9+/]{40,}={0,2}$/.test(normalizedValue)) {
@@ -197,7 +249,7 @@
   }
 
   function extractDbUriAssignmentValue(value) {
-    const match = /^(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis|amqp|mssql):\/\/[^\s'"`<>]+/i.exec(
+    const match = /^(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis|amqp|mssql):\/\/[^\s'"`<>{}\[\]]+/i.exec(
       String(value || "")
     );
 
@@ -222,15 +274,95 @@
     return "";
   }
 
-  function shouldSuppressStructuredAssignment(raw) {
+  function hasGenericDbCredentials(raw) {
+    try {
+      const parsed = new URL(String(raw || ""));
+      const username = decodeURIComponent(parsed.username || "").toLowerCase();
+      const password = decodeURIComponent(parsed.password || "").toLowerCase();
+
+      if (!password) {
+        return true;
+      }
+
+      if (containsTemplateMarker(password)) return true;
+      if (/^(?:password|secret|token|test|demo|example|sample|dummy|fake)$/i.test(password)) {
+        return true;
+      }
+      if (
+        /^(?:demo|example|sample|dummy|fake|test|user|username)$/i.test(username) &&
+        hasExampleHost(raw)
+      ) {
+        return true;
+      }
+
+      return false;
+    } catch {
+      return containsTemplateMarker(raw);
+    }
+  }
+
+  function findEmbeddedAssignmentBoundary(value) {
+    const input = String(value || "");
+    const regex = /[A-Za-z_][A-Za-z0-9_.-]{1,80}\s*[:=]/g;
+    let match;
+
+    while ((match = regex.exec(input)) !== null) {
+      if (match.index <= 0) continue;
+
+      const previous = input[match.index - 1];
+      if (/[?&/:]/.test(previous)) {
+        continue;
+      }
+
+      return match.index;
+    }
+
+    return -1;
+  }
+
+  function truncateEmbeddedAssignmentValue(value) {
+    const input = String(value || "");
+    const boundary = findEmbeddedAssignmentBoundary(input);
+    if (boundary <= 0) return input;
+    return input.slice(0, boundary);
+  }
+
+  function isRegionLikeSegment(value) {
+    return /^(?:[a-z]{2}|us-gov|global|cn)(?:-[a-z0-9]+){1,4}$/i.test(String(value || "").trim());
+  }
+
+  function isBenignPlaceholderComposite(value) {
+    const input = String(value || "");
+    if (!containsPlaceholder(input)) return false;
+
+    const segments = input.split(new RegExp(CONTAINS_PLACEHOLDER_REGEX.source, "g"));
+    if (!segments.length) return false;
+
+    return segments.every((segment) => {
+      const trimmed = String(segment || "").trim();
+      if (!trimmed) return true;
+      if (/^[A-Za-z_][A-Za-z0-9_.-]{0,80}\s*[:=]$/.test(trimmed)) return true;
+      if (/^https?:\/\/[^\s]+$/i.test(trimmed)) return true;
+      if (/^:\/\/[^\s]+$/i.test(trimmed)) return true;
+      if (/^(?:\.[A-Za-z0-9._-]+)+$/.test(trimmed)) return true;
+      if (isRegionLikeSegment(trimmed)) return true;
+      return false;
+    });
+  }
+
+  function shouldSuppressStructuredAssignment(raw, placeholderType) {
     const normalized = String(raw || "").toLowerCase();
 
     if (!normalized) return true;
-    if (hasExampleHost(raw)) return true;
 
-    return ["example", "replace_me", "replace-me", "changeme", "placeholder"].some((marker) =>
-      normalized.includes(marker)
-    );
+    if (placeholderType === "DB_URI") {
+      return hasGenericDbCredentials(raw);
+    }
+
+    if (hasExampleHost(raw)) return true;
+    if (containsTemplateMarker(raw)) return true;
+
+    return hasBroadExampleSegment(raw);
   }
 
   function getSurroundingPathToken(text, start, end) {
@@ -360,16 +492,43 @@
       return this.allowlistRegex.some((regex) => regex.test(raw) || regex.test(normalized));
     }
 
-    shouldSuppress({ raw, text, start, end, patternName }) {
+    shouldSuppress({ raw, text, start, end, patternName, key, placeholderType, source }) {
       if (!raw) return true;
       if (this.isAllowlisted(raw)) return true;
       if (likelyTemplateValue(raw)) return true;
       if (isCleanPlaceholder(raw)) return true;
-
-      if (looksExampleLike(raw) && !["aws_access_key", "google_api_key"].includes(patternName)) {
+      if (patternName === "placeholder_composite_value" && isBenignPlaceholderComposite(raw)) {
         return true;
       }
-      if (hasExampleHost(raw)) return true;
+
+      if (looksExampleLike(raw) && !["aws_access_key", "google_api_key"].includes(patternName)) {
+        if (
+          ((source === "assignment" && isExplicitSensitiveAssignment(key, placeholderType)) ||
+            new Set([
+              "openai_api_key",
+              "natural_language_api_key",
+              "natural_language_openai_key",
+              "json_api_key_field",
+              "labelled_openai_key_value"
+            ]).has(String(patternName || ""))) &&
+          !containsTemplateMarker(raw)
+        ) {
+          // Keep explicit secret-style assignments fail-closed even if a vendor test key
+          // contains an "example" segment in the middle of the value.
+        } else {
+          return true;
+        }
+      }
+      if (
+        hasExampleHost(raw) &&
+        !(
+          source === "assignment" &&
+          isExplicitSensitiveAssignment(key, placeholderType) &&
+          !containsTemplateMarker(raw)
+        )
+      ) {
+        return true;
+      }
 
       const ctx = contextScore(text, start, end);
       if (ctx <= -14) return true;
@@ -415,7 +574,19 @@
           const end = start + raw.length;
 
           if (!raw) continue;
-          if (this.shouldSuppress({ raw, text, start, end, patternName: pattern.name })) continue;
+          if (
+            this.shouldSuppress({
+              raw,
+              text,
+              start,
+              end,
+              patternName: pattern.name,
+              placeholderType: PLACEHOLDER_TYPE_MAP[pattern.name] || pattern.type || "SECRET",
+              source: "pattern"
+            })
+          ) {
+            continue;
+          }
 
           let score = pattern.baseScore;
           const entropy = calculateEntropy(raw);
@@ -451,7 +622,7 @@
     scanStructuredAssignments(text) {
       const findings = [];
       const regex =
-        /([A-Za-z_][A-Za-z0-9_.-]{0,80})\s*[:=]\s*(?:"([^"\r\n]+)"|'([^'\r\n]+)'|`([^`\r\n]+)`|([^\r\n]+))/gim;
+        /([A-Za-z_][A-Za-z0-9_.-]{0,80})\s*[:=]\s*(?:"([^"\r\n]+)"|'([^'\r\n]+)'|`([^`\r\n]+)`|([^\s\r\n]+))/gim;
       let match;
 
       while ((match = regex.exec(text)) !== null) {
@@ -491,7 +662,7 @@
 
         if (this.isAllowlisted(raw)) continue;
         if (isCleanPlaceholder(raw)) continue;
-        if (containsPlaceholder(raw) && !isCleanPlaceholder(raw)) {
+        if (containsPlaceholder(raw) && !isCleanPlaceholder(raw) && !isBenignPlaceholderComposite(raw)) {
           findings.push(
             this.buildFinding({
               category: "connection_string",
@@ -505,7 +676,20 @@
           );
           continue;
         }
-        if (shouldSuppressStructuredAssignment(raw)) continue;
+        if (
+          this.shouldSuppress({
+            raw,
+            text,
+            start,
+            end,
+            key,
+            placeholderType,
+            source: "assignment"
+          })
+        ) {
+          continue;
+        }
+        if (shouldSuppressStructuredAssignment(raw, placeholderType)) continue;
 
         const entropy = calculateEntropy(raw);
         const ctx = contextScore(text, start, end);
@@ -536,7 +720,7 @@
       while ((match = regex.exec(text)) !== null) {
         const full = match[0];
         const key = match[1];
-        const token = match[2];
+        const token = truncateEmbeddedAssignmentValue(match[2]);
         const normalized = normalizeCandidate(token);
         const placeholderType = inferPlaceholderTypeFromKey(key);
         const normalizedKey = String(key || "").toLowerCase();
@@ -552,6 +736,10 @@
         if (isCleanPlaceholder(normalized)) continue;
 
         if (containsPlaceholder(normalized) && !isCleanPlaceholder(normalized)) {
+          if (isBenignPlaceholderComposite(normalized)) {
+            continue;
+          }
+
           findings.push(
             this.buildFinding({
               category: "credential",
@@ -570,7 +758,19 @@
           continue;
         }
 
-        if (this.shouldSuppress({ raw: normalized, text, start, end })) continue;
+        if (
+          this.shouldSuppress({
+            raw: normalized,
+            text,
+            start,
+            end,
+            key,
+            placeholderType,
+            source: "assignment"
+          })
+        ) {
+          continue;
+        }
 
         let score = 60;
         const entropy = calculateEntropy(normalized);
