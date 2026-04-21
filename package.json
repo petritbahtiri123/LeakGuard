@@ -4,6 +4,6 @@
   "private": true,
   "description": "Local-first secret redaction engine for LLM chat UIs",
   "scripts": {
-    "test": "node tests/detector.test.js && node tests/composer_helpers.test.js && node tests/typed_interception.test.js && node tests/security.test.js"
+    "test": "node tests/detector.test.js && node tests/ip_transform.test.js && node tests/composer_helpers.test.js && node tests/typed_interception.test.js && node tests/security.test.js"
   }
 }
