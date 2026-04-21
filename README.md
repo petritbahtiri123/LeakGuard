@@ -1,8 +1,8 @@
 # Portable Work Memory
 
-Portable Work Memory is a local-only Chrome extension MVP that reduces the chance of pasting or sending secrets into ChatGPT by mistake.
+Portable Work Memory is a local-only Chrome extension MVP that reduces the chance of pasting or sending secrets or sensitive public IPv4 network details into ChatGPT by mistake.
 
-It detects likely secrets in the browser, offers redaction before send, replaces raw values with stable placeholders like `[PWM_1]`, and keeps the private reveal map in `chrome.storage.session` for the active browser session only.
+It detects likely secrets and public IPv4 hosts/CIDRs in the browser, offers the same `Allow once` / `Redact` decision flow before send, replaces raw values with stable placeholders like `[PWM_1]`, `[PUB_HOST_1]`, and `[NET_1]`, and keeps the private reveal map in `chrome.storage.session` for the active browser session only.
 
 This project is **risk reduction**, not a perfect privacy guarantee.
 
@@ -16,6 +16,7 @@ The current MVP focuses on:
 - background service worker state in `chrome.storage.session`
 - deterministic placeholder mapping per tab/session
 - browser-side interception for paste and submit
+- browser-side `Allow once` / `Redact` decision flow for secrets and public IPv4/CIDR values
 - local placeholder rehydration for assistant responses in the same session
 
 The MVP intentionally does not add:
@@ -36,6 +37,8 @@ The project is split into engine logic and browser delivery logic.
   Owns neutral `[PWM_n]` placeholder assignment plus the split between sanitized public state and private reveal state.
 - `shared/redactor.js`
   Applies placeholders to findings and produces `redactedText`.
+- `shared/ipClassification.js`, `shared/ipDetection.js`, `shared/networkHierarchy.js`, `shared/placeholderAllocator.js`, `shared/transformOutboundPrompt.js`
+  Detect, classify, and pseudonymize public IPv4 hosts/CIDRs while preserving readable subnet relationships.
 - `background/service_worker.js`
   Stores per-tab private session state in `chrome.storage.session`, performs placeholder assignment, and serves secure reveal requests only to extension-owned UI.
 - `content/composer_helpers.js`
@@ -116,6 +119,7 @@ This currently covers:
 - allowlists
 - example/sample values that should not trigger
 - placeholder-state rehydration for reveal lookup
+- public IPv4/CIDR classification, modal UI findings, deterministic mapping, and hierarchy-aware pseudonymization
 
 ## Local Harness
 
@@ -151,13 +155,16 @@ Run these in Chrome after loading the unpacked extension.
 7. Confirm webhook input redacts the webhook URL rather than surrounding text.
 8. Confirm different password values become different placeholders.
 9. Confirm repeated identical values reuse the same placeholder.
-10. Press Enter to send and confirm the extension does not submit if rewrite verification fails.
-11. Click Send instead of pressing Enter and confirm the same behavior.
-12. Start a new chat and confirm the tab/session mapping resets.
-13. Let the assistant echo a known placeholder and confirm the secure reveal window can show it only when the current tab session knows that placeholder.
-14. Let the assistant echo an unknown placeholder and confirm the secure reveal window reports that it is unavailable without replacing page text.
-15. Trigger a route change or response re-render and confirm known placeholders remain revealable only from current session state.
-16. Paste a multiline block with empty lines between sections and confirm rewrite verification no longer collapses those blank lines in the ChatGPT composer.
+10. Type or paste `Allow 8.8.8.8 and 1.1.1.1` and confirm the same `Allow once` / `Redact` modal appears for IPs.
+11. Choose `Allow once` for that IP test and confirm the raw IPs remain visible in the composer for that action only.
+12. Retry the same IP test and choose `Redact`, then confirm public IPs become placeholders while private/local IPs stay visible in default mode.
+13. Press Enter to send and confirm the extension does not submit if rewrite verification fails.
+14. Click Send instead of pressing Enter and confirm the same behavior.
+15. Start a new chat and confirm the tab/session mapping resets.
+16. Let the assistant echo a known placeholder and confirm the secure reveal window can show it only when the current tab session knows that placeholder.
+17. Let the assistant echo an unknown placeholder and confirm the secure reveal window reports that it is unavailable without replacing page text.
+18. Trigger a route change or response re-render and confirm known placeholders remain revealable only from current session state.
+19. Paste a multiline block with empty lines between sections and confirm rewrite verification no longer collapses those blank lines in the ChatGPT composer.
 
 Use these exact regression cases when testing multiline correctness:
 
@@ -189,7 +196,7 @@ backup_password = [PWM_1]
 
 ## Manual Payload Verification
 
-The privacy claim for this MVP is that, once redaction is accepted and rewrite verification passes, the outbound request payload should contain placeholders instead of raw secrets.
+The privacy claim for this MVP is that, once redaction is accepted and rewrite verification passes, the outbound request payload should contain placeholders instead of raw secrets or raw public IPv4/CIDR values.
 
 Verify that manually:
 
@@ -197,11 +204,11 @@ Verify that manually:
 2. Open DevTools.
 3. Go to the `Network` tab.
 4. Clear previous traffic.
-5. Paste a prompt containing a test secret and choose `Redact`.
+5. Paste a prompt containing a test secret or a public IPv4/CIDR value and choose `Redact`.
 6. Send the prompt.
 7. Find the outbound ChatGPT request in `Network`.
 8. Inspect the request payload/body.
-9. Confirm the payload contains placeholders such as `[PWM_1]` instead of the raw secret.
+9. Confirm the payload contains placeholders such as `[PWM_1]`, `[PUB_HOST_1]`, or `[NET_1]` instead of the raw secret or raw public IP/CIDR.
 
 If the request payload contains the raw value, treat that as a blocker.
 
