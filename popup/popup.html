@@ -9,17 +9,74 @@
   <body>
     <main class="popup-shell">
       <p class="eyebrow">LeakGuard</p>
-      <h1>Protect prompts before they leave the page.</h1>
-      <section class="card">
-        <p class="label">Current site</p>
-        <p class="site" id="site-label">Checking active tab…</p>
-        <p class="status" id="status-copy">Loading protection status…</p>
+
+      <section class="view" id="home-view">
+        <h1>Protect prompts before they leave the page.</h1>
+        <section class="card">
+          <p class="label">Current site</p>
+          <p class="site" id="site-label">Checking active tab...</p>
+          <p class="status" id="status-copy">Loading protection status...</p>
+        </section>
+        <div class="actions">
+          <button class="btn btn-primary" id="protect-btn" type="button" disabled>Protect This Site</button>
+          <button class="btn" id="manage-btn" type="button">Manage Protected Sites</button>
+        </div>
+        <p class="feedback" id="feedback" aria-live="polite"></p>
       </section>
-      <div class="actions">
-        <button class="btn btn-primary" id="protect-btn" type="button" disabled>Protect This Site</button>
-        <button class="btn" id="manage-btn" type="button">Manage Protected Sites</button>
-      </div>
-      <p class="feedback" id="feedback" aria-live="polite"></p>
+
+      <section class="view view-panel" id="sites-view" hidden>
+        <div class="view-head">
+          <button class="back-link" id="sites-back-btn" type="button">Back</button>
+          <p class="view-kicker">Protected Sites</p>
+        </div>
+        <h2>Manage protected sites</h2>
+        <p class="view-copy">
+          Add, enable, disable, or remove exact origins without leaving LeakGuard.
+        </p>
+
+        <form class="card card-form" id="add-site-form" novalidate>
+          <label class="field">
+            <span>URL or origin</span>
+            <input id="site-input" name="site-input" type="text" placeholder="https://app.example.com" autocomplete="off">
+          </label>
+          <button class="btn btn-primary" type="submit">Add Protected Site</button>
+        </form>
+        <p class="feedback" id="form-feedback" aria-live="polite"></p>
+
+        <section class="card card-section">
+          <div class="section-head">
+            <h3>User-managed sites</h3>
+            <p>Stored locally as exact normalized origins.</p>
+          </div>
+          <div class="site-list" id="user-site-list"></div>
+        </section>
+
+        <section class="card card-section">
+          <div class="section-head">
+            <h3>Built-in AI sites</h3>
+            <p>These remain protected by default.</p>
+          </div>
+          <div class="site-list" id="builtin-site-list"></div>
+        </section>
+      </section>
+
+      <section class="view view-panel" id="reveal-view" hidden>
+        <div class="view-head">
+          <button class="back-link" id="reveal-back-btn" type="button">Back</button>
+          <p class="view-kicker">Secure Reveal</p>
+        </div>
+        <h2>Inspect redacted content</h2>
+        <p class="status" id="reveal-status">Loading secure context...</p>
+        <div class="placeholder" id="reveal-placeholder">[PWM]</div>
+        <div class="secret-shell">
+          <p class="hidden-copy" id="hidden-copy">Hidden until you choose Show.</p>
+          <pre class="secret-value" id="secret-value" hidden></pre>
+        </div>
+        <div class="actions">
+          <button class="btn btn-primary" id="show-btn" type="button">Show</button>
+          <button class="btn" id="hide-btn" type="button" disabled>Hide</button>
+        </div>
+      </section>
     </main>
     <script src="../shared/protected_sites.js"></script>
     <script src="popup.js"></script>

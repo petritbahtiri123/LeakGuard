@@ -74,7 +74,6 @@
   let statusPanelSiteValueEl = null;
   let statusPanelComposerValueEl = null;
   let statusPanelSessionValueEl = null;
-  const REVEAL_WINDOW_NAME = "pwm-secure-reveal";
   const PROGRAMMATIC_INPUT_SUPPRESS_MS = 500;
 
   function isDebugEnabled() {
@@ -198,6 +197,18 @@
     return badgeEl;
   }
 
+  async function openProtectedSitesUi() {
+    const response = await chrome.runtime.sendMessage({
+      type: "PWM_OPEN_POPUP_SITE_MANAGER"
+    });
+
+    if (!response?.ok) {
+      throw new Error(response?.error || "LeakGuard could not open protected site controls.");
+    }
+
+    return response;
+  }
+
   function openOptionsPage() {
     return chrome.runtime.sendMessage({
       type: "PWM_OPEN_OPTIONS_PAGE"
@@ -281,10 +292,19 @@
     manageBtn.type = "button";
     manageBtn.textContent = "Manage Sites";
     manageBtn.addEventListener("click", () => {
-      openOptionsPage().catch(() => {
-        setBadge("LeakGuard settings unavailable");
-        hideBadgeSoon(2200);
-      });
+      openProtectedSitesUi()
+        .then((response) => {
+          if (!response?.opened) {
+            setBadge("Open LeakGuard from the toolbar to manage sites");
+            hideBadgeSoon(2800);
+          }
+        })
+        .catch(() => {
+          openOptionsPage().catch(() => {
+            setBadge("LeakGuard settings unavailable");
+            hideBadgeSoon(2200);
+          });
+        });
     });
 
     actions.appendChild(manageBtn);
@@ -378,17 +398,17 @@
     return response.result;
   }
 
-  async function createRevealRequest(placeholder) {
+  async function openPopupReveal(placeholder) {
     const response = await chrome.runtime.sendMessage({
-      type: "PWM_CREATE_REVEAL_REQUEST",
+      type: "PWM_OPEN_POPUP_REVEAL",
       placeholder
     });
 
     if (!response?.ok || !response?.requestId) {
-      throw new Error(response?.error || "LeakGuard could not open the secure reveal window.");
+      throw new Error(response?.error || "LeakGuard could not open secure reveal.");
     }
 
-    return response.requestId;
+    return response;
   }
 
   function isVisible(el) {
@@ -1477,64 +1497,20 @@
     }, 220);
   }
 
-  function buildRevealWindowFeatures(anchorRect) {
-    const width = 420;
-    const height = 340;
-    const margin = 12;
-    const hostLeft = Number(window.screenX || window.screenLeft || 0);
-    const hostTop = Number(window.screenY || window.screenTop || 0);
-    const hostWidth = Number(window.outerWidth || window.innerWidth || width);
-    const hostHeight = Number(window.outerHeight || window.innerHeight || height);
-    const rectLeft = Number(anchorRect?.left || 0);
-    const rectTop = Number(anchorRect?.top || 0);
-    const rectBottom = Number(anchorRect?.bottom || rectTop);
+  async function openRevealInExtensionUi(placeholder) {
+    const response = await openPopupReveal(placeholder);
 
-    let left = hostLeft + rectLeft;
-    let top = hostTop + rectBottom + 20;
-
-    const maxLeft = hostLeft + hostWidth - width - margin;
-    const maxTop = hostTop + hostHeight - height - margin;
-
-    left = Math.max(hostLeft + margin, Math.min(left, maxLeft));
-    top = Math.max(hostTop + margin, Math.min(top, maxTop));
-
-    return [
-      "popup=yes",
-      "noopener=yes",
-      "noreferrer=yes",
-      `width=${width}`,
-      `height=${height}`,
-      `left=${Math.round(left)}`,
-      `top=${Math.round(top)}`
-    ].join(",");
-  }
-
-  async function openRevealPanel(placeholder, anchorRect) {
-    const requestId = await createRevealRequest(placeholder);
-    const revealUrl = chrome.runtime.getURL(
-      `ui/reveal_panel.html#request=${encodeURIComponent(requestId)}`
-    );
-    const revealWindow = window.open(
-      revealUrl,
-      REVEAL_WINDOW_NAME,
-      buildRevealWindowFeatures(anchorRect)
-    );
-
-    if (!revealWindow) {
-      throw new Error("LeakGuard could not open the secure reveal window.");
-    }
-
-    try {
-      revealWindow.focus();
-    } catch {
-      // Ignore focus failures for blocked or backgrounded popup windows.
-    }
-
-    debugReveal("reveal:window-open", {
+    debugReveal("reveal:popup-open", {
       placeholder,
-      requestId,
+      requestId: response.requestId,
+      opened: response.opened,
       placeholderCount: currentPublicState.placeholderCount
     });
+
+    if (!response.opened) {
+      setBadge("Open LeakGuard from the toolbar to inspect this placeholder");
+      hideBadgeSoon(3200);
+    }
   }
 
   function createSecretSpan(placeholder) {
@@ -1543,13 +1519,13 @@
     span.textContent = placeholder;
     span.tabIndex = 0;
     span.setAttribute("role", "button");
-    span.setAttribute("aria-label", "LeakGuard redacted sensitive content. Open secure reveal window.");
+    span.setAttribute("aria-label", "LeakGuard redacted sensitive content. Open secure reveal in LeakGuard.");
 
     const activate = (event) => {
       event.preventDefault();
       event.stopPropagation();
 
-      openRevealPanel(placeholder, span.getBoundingClientRect()).catch((error) => {
+      openRevealInExtensionUi(placeholder).catch((error) => {
         debugReveal("reveal:panel-error", {
           placeholder,
           error: error?.message || String(error)

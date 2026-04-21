@@ -485,31 +485,33 @@ function testFullValueReplacementForConnectionStyleAssignments() {
     findings.some(
       (finding) =>
         finding.type === "DB_URI" &&
-        finding.raw === "postgres://testuser:FakeDbPass123!@db.internal:5432/appdb" &&
-        finding.method.includes("full-value")
+        finding.raw === "FakeDbPass123!" &&
+        finding.method.includes("db-uri-password")
     ),
-    "DATABASE_URL assignment should be detected as one full DB URI value"
+    "DATABASE_URL assignment should detect the password segment directly"
   );
   assert.ok(
     findings.some(
       (finding) =>
         finding.type === "DB_URI" &&
-        finding.raw === "mysql://reporter:AnotherFakePass456!@mysql.internal:3306/analytics" &&
-        finding.method.includes("full-value")
+        finding.raw === "AnotherFakePass456!" &&
+        finding.method.includes("db-uri-password")
     ),
-    "MYSQL_URL assignment should be detected as one full DB URI value"
+    "MYSQL_URL assignment should detect the password segment directly"
   );
 
   assert.strictEqual(lines[0], "AZURE_STORAGE_CONNECTION_STRING=[PWM_1]");
-  assert.strictEqual(lines[1], "DATABASE_URL=[PWM_2]");
-  assert.strictEqual(lines[2], "MYSQL_URL=[PWM_3]");
+  assert.strictEqual(lines[1], "DATABASE_URL=postgres://testuser:[PWM_2]@db.internal:5432/appdb");
+  assert.strictEqual(lines[2], "MYSQL_URL=mysql://reporter:[PWM_3]@mysql.internal:3306/analytics");
 
   assert.ok(
-    !result.redactedText.includes("testuser") &&
-      !result.redactedText.includes("FakeDbPass123!") &&
-      !result.redactedText.includes("reporter") &&
+    !result.redactedText.includes("FakeDbPass123!") &&
       !result.redactedText.includes("AnotherFakePass456!"),
-    "db usernames and passwords must not survive redaction output"
+    "db passwords must not survive redaction output"
+  );
+  assert.ok(
+    result.redactedText.includes("testuser") && result.redactedText.includes("reporter"),
+    "db usernames should remain visible so connection structure stays intact"
   );
   assert.ok(
     !result.redactedText.includes("FakeAccountKey1234567890ABCDEFGHIJKLMN==") &&
@@ -521,7 +523,7 @@ function testFullValueReplacementForConnectionStyleAssignments() {
     !result.redactedText.includes("[PWM_1];") &&
       !result.redactedText.includes("[PWM_2]://") &&
       !result.redactedText.includes("[PWM_3]://"),
-    "connection-style assignments must not be partially redacted"
+    "connection-style assignment placeholders should not break URI prefixes"
   );
 }
 
@@ -711,9 +713,10 @@ function testUserStressEdgeCasesRedactSecretsButKeepSafeLiterals() {
     findings.some(
       (finding) =>
         finding.type === "DB_URI" &&
-        finding.raw === "postgres://admin:MyUltraSecretPass@db.example.com:5432/appdb"
+        finding.raw === "MyUltraSecretPass" &&
+        finding.method.includes("db-uri-password")
     ),
-    "database URLs should still be detected even when the host uses an example-style domain"
+    "database URL assignments should still detect the password segment even with example-style hosts"
   );
   assert.ok(
     findings.some((finding) => finding.raw === "abc123SECRETvalue"),
@@ -779,7 +782,8 @@ function testInlineStructuredAssignmentsStillMatchAfterEarlierInlineAssignments(
     findings.some(
       (finding) =>
         finding.type === "DB_URI" &&
-        finding.raw === "postgres://admin:MyUltraSecretPass@db.example.com:5432/appdb"
+        finding.raw === "MyUltraSecretPass" &&
+        finding.method.includes("db-uri-password")
     ),
     "DATABASE_URL should still be detected when it appears later on the same line after other assignments"
   );
@@ -787,7 +791,8 @@ function testInlineStructuredAssignmentsStillMatchAfterEarlierInlineAssignments(
     findings.some(
       (finding) =>
         finding.type === "DB_URI" &&
-        finding.raw === "postgres://admin:VerySecretPass@db.example.com:5432/prod"
+        finding.raw === "VerySecretPass" &&
+        finding.method.includes("db-uri-password")
     ),
     "later inline DATABASE_URL values should keep matching instead of being swallowed by earlier assignments"
   );
@@ -820,17 +825,19 @@ function testPartiallyRedactedOutputDoesNotRetriggerBenignPlaceholderComposites(
     findings.some(
       (finding) =>
         finding.type === "DB_URI" &&
-        finding.raw === "postgres://admin:MyUltraSecretPass@db.example.com:5432/appdb"
+        finding.raw === "MyUltraSecretPass" &&
+        finding.method.includes("db-uri-password")
     ),
-    "reruns over partially redacted blobs should still recover raw database URLs"
+    "reruns over partially redacted blobs should still recover raw database passwords inside URLs"
   );
   assert.ok(
     findings.some(
       (finding) =>
         finding.type === "DB_URI" &&
-        finding.raw === "postgres://admin:VerySecretPass@db.example.com:5432/prod"
+        finding.raw === "VerySecretPass" &&
+        finding.method.includes("db-uri-password")
     ),
-    "later raw database URLs in partially redacted blobs should still be found"
+    "later raw database passwords in partially redacted blobs should still be found"
   );
   assert.strictEqual(
     findings.some((finding) => finding.raw === "[PWM_7]eu-central-1"),
@@ -1135,6 +1142,205 @@ function testNaturalLanguagePasswordVariants() {
   );
 }
 
+function testDatabaseUrlAssignmentKeepsUriButMasksOnlyPassword() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const text = 'storage: {\n  databaseUrl: "postgres://admin:MyUltraSecretPass@db.example.com:5432/appdb"\n}';
+
+  const findings = detector.scan(text);
+  const result = redactor.redact(text, findings);
+
+  assert.ok(
+    findings.some(
+      (finding) =>
+        finding.type === "DB_URI" &&
+        finding.raw === "MyUltraSecretPass" &&
+        finding.method.includes("db-uri-password")
+    ),
+    "databaseUrl assignment should detect only the DB password segment"
+  );
+  assert.ok(
+    result.redactedText.includes('databaseUrl: "postgres://admin:[PWM_1]@db.example.com:5432/appdb"'),
+    "databaseUrl should keep the URI shape while masking only the password"
+  );
+  assert.ok(
+    !result.redactedText.includes("MyUltraSecretPass"),
+    "raw database password must not survive redaction"
+  );
+}
+
+function testGithubJsonAccessTokenWithExampleSegmentStillRedacts() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const text = [
+    '{ "accessToken": "ghp_exampletokentest123456789" }',
+    '{ "sessionToken": "gho_exampleoauthvalue123456789" }',
+    '{ "token": "github_pat_exampletokentest123456789ABCDE" }'
+  ].join("\n");
+
+  const findings = detector.scan(text);
+  const result = redactor.redact(text, findings);
+
+  assert.ok(
+    findings.some(
+      (finding) => finding.type === "TOKEN" && finding.raw === "ghp_exampletokentest123456789"
+    ),
+    "json accessToken should detect ghp tokens even when they contain an example segment"
+  );
+  assert.ok(
+    findings.some(
+      (finding) => finding.type === "TOKEN" && finding.raw === "gho_exampleoauthvalue123456789"
+    ),
+    "json sessionToken should detect gho tokens even when they contain an example segment"
+  );
+  assert.ok(
+    findings.some(
+      (finding) =>
+        finding.type === "TOKEN" &&
+        finding.raw === "github_pat_exampletokentest123456789ABCDE"
+    ),
+    "json token should detect github_pat values even when they contain an example segment"
+  );
+  assert.ok(
+    !result.redactedText.includes("ghp_exampletokentest123456789") &&
+      !result.redactedText.includes("gho_exampleoauthvalue123456789") &&
+      !result.redactedText.includes("github_pat_exampletokentest123456789ABCDE"),
+    "github token raws should not survive redaction in json fields"
+  );
+  assert.ok(
+    result.redactedText.includes('"accessToken": "[PWM_1]"') ||
+      result.redactedText.includes('"accessToken":"[PWM_1]"'),
+    "accessToken should be replaced with a PWM placeholder"
+  );
+}
+
+function testGithubExampleDocsTokensStillSuppressWhenObviouslyFake() {
+  const detector = new Detector();
+  const text = [
+    '{ "accessToken": "example-token-for-docs-only" }',
+    '{ "token": "ghp_placeholder_value" }',
+    '{ "sessionToken": "changeme" }'
+  ].join("\n");
+
+  const findings = detector.scan(text);
+
+  assert.strictEqual(
+    findings.length,
+    0,
+    "obvious docs placeholders in json token fields should still suppress"
+  );
+}
+
+function testSyntheticCredentialHardeningBlock() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const text = [
+    "OPENAI_API_KEY=sk-proj-A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0",
+    "ANTHROPIC_API_KEY=sk-ant-api03-AlphaBetaGammaDelta1234567890uvwx",
+    "STRIPE_SECRET_KEY=sk_live_51NqR7ZaBcDeFgHiJkLmNoPqRsTuVwXy123456",
+    "STRIPE_WEBHOOK_SECRET=whsec_AbCdEfGhIjKlMnOpQrStUvWxYz123456",
+    "GITHUB_TOKEN=ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3",
+    "GITHUB_PAT=github_pat_AbCdEfGhIjKlMnOpQrStUvWxYz1234567890",
+    "GITLAB_TOKEN=glpat-1Ab2Cd3Ef4Gh5Ij6Kl7Mn8Op",
+    "SLACK_BOT_TOKEN=xoxb-123456789012-123456789012-AbCdEfGhIjKlMnOpQr",
+    "SLACK_WEBHOOK_URL=https://hooks.slack.com/services/T8NQ7M2LP/B8NQ7M2LP/AbCdEfGhIjKlMnOpQrStUvWx",
+    "DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/123456789012345678/AbCdEfGhIjKlMnOpQrStUvWxYz0123456789",
+    "SENDGRID_API_KEY=SG.QWxwaGFCZXRhR2FtbWExMjM0NTY3ODkw.QmV0YUdhbW1hRGVsdGFFcHNpbG9uMTIzNDU2Nzg5MEFCQ0RFRg",
+    "GOOGLE_API_KEY=AIzaSyD4nQ7Lp2Vm5Xc8Rt1Bg4Hj7Km0Np3Qs6Tu9W",
+    "GOOGLE_CLIENT_SECRET=GOCSPX-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789",
+    "refresh_token=1//0xA1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6",
+    "Authorization: Bearer mF_9.B5f-4.1JqM2LmNoP3QrStUvWx",
+    "Authorization: Basic bGVha2d1YXJkLXVuaXQ6U3VwZXJTZWNyZXQxMjMh",
+    "JWT=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJsZWFrZ3VhcmQiLCJzdWIiOiJzeW50aGV0aWMtdGVzdCIsInJvbGUiOiJhZG1pbiJ9.c2lnbmF0dXJlLXN5bnRoZXRpYy12YWx1ZS0xMjM0NTY3ODkw",
+    "NPM_TOKEN=npm_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8",
+    "PYPI_TOKEN=pypi-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-TOKENBLOCK",
+    'docker={"auths":{"https://index.docker.io/v1/":{"auth":"bGVha2d1YXJkLXVuaXQ6U3VwZXJTZWNyZXQxMjMh"}}}',
+    "Cookie: sessionid=ZXlKaGJHY2lPaUpJVXpJMU5pSjkuYWJjMTIzZGVmNDU2Z2hpNzg5amtsbW5vcA",
+    'config={"apiKey":"sk-proj-Z9y8X7w6V5u4T3s2R1q0P9o8N7m6L5k4J3h2G1f0","dbPassword":"VaultHorse!2026!Unit","accessToken":"ghu_AbCdEfGhIjKlMnOpQrStUv","clientSecret":"TopSecretValue9988!"}',
+    'databaseUrl="postgres://admin:UltraDbPass7788!@db.prod.internal:5432/app"',
+    "MYSQL_URL=mysql://reporter:RoutePass8899!@mysql.ops.internal:3306/analytics",
+    "AzureWebJobsStorage=DefaultEndpointsProtocol=https;AccountName=vaultstorage001;AccountKey=MDEyMzQ1Njc4OUFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaYWJjZGVmZ2hpamtsbW4=;EndpointSuffix=core.windows.net",
+    "Endpoint=sb://prod-ingest.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=QWxwaGFCZXRhR2FtbWExMjM0NTY3ODkwQUJDREVGR0g=;EntityPath=events",
+    "my password is HarborLock4455!",
+    "my token is ghr_AbCdEfGhIjKlMnOpQrStUvWx",
+    'Password → "QuotedLock5566!"',
+    'Key → "sk-proj-Q1w2E3r4T5y6U7i8O9p0A1s2D3f4G5h6J7k8L9m0"',
+    'secret "VaultAlias9988!"',
+    "PUBLIC_URL=https://openai.com",
+    "REGION=eu-central-1",
+    "PLACEHOLDER_DOC=[PWM_42]",
+    "DOCS_TOKEN=replace_me"
+  ].join("\n");
+
+  const findings = detector.scan(text);
+  const result = redactor.redact(text, findings);
+
+  const expectedFindings = [
+    ["API_KEY", "sk-proj-A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0"],
+    ["API_KEY", "sk-ant-api03-AlphaBetaGammaDelta1234567890uvwx"],
+    ["API_KEY", "sk_live_51NqR7ZaBcDeFgHiJkLmNoPqRsTuVwXy123456"],
+    ["SECRET", "whsec_AbCdEfGhIjKlMnOpQrStUvWxYz123456"],
+    ["TOKEN", "ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3"],
+    ["TOKEN", "github_pat_AbCdEfGhIjKlMnOpQrStUvWxYz1234567890"],
+    ["TOKEN", "glpat-1Ab2Cd3Ef4Gh5Ij6Kl7Mn8Op"],
+    ["TOKEN", "xoxb-123456789012-123456789012-AbCdEfGhIjKlMnOpQr"],
+    ["WEBHOOK", "https://hooks.slack.com/services/T8NQ7M2LP/B8NQ7M2LP/AbCdEfGhIjKlMnOpQrStUvWx"],
+    ["WEBHOOK", "https://discord.com/api/webhooks/123456789012345678/AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"],
+    ["API_KEY", "SG.QWxwaGFCZXRhR2FtbWExMjM0NTY3ODkw.QmV0YUdhbW1hRGVsdGFFcHNpbG9uMTIzNDU2Nzg5MEFCQ0RFRg"],
+    ["API_KEY", "AIzaSyD4nQ7Lp2Vm5Xc8Rt1Bg4Hj7Km0Np3Qs6Tu9W"],
+    ["SECRET", "GOCSPX-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"],
+    ["TOKEN", "1//0xA1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6"],
+    ["TOKEN", "mF_9.B5f-4.1JqM2LmNoP3QrStUvWx"],
+    ["TOKEN", "bGVha2d1YXJkLXVuaXQ6U3VwZXJTZWNyZXQxMjMh"],
+    ["TOKEN", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJsZWFrZ3VhcmQiLCJzdWIiOiJzeW50aGV0aWMtdGVzdCIsInJvbGUiOiJhZG1pbiJ9.c2lnbmF0dXJlLXN5bnRoZXRpYy12YWx1ZS0xMjM0NTY3ODkw"],
+    ["TOKEN", "npm_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"],
+    ["TOKEN", "pypi-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-TOKENBLOCK"],
+    ["TOKEN", "sessionid=ZXlKaGJHY2lPaUpJVXpJMU5pSjkuYWJjMTIzZGVmNDU2Z2hpNzg5amtsbW5vcA"],
+    ["PASSWORD", "VaultHorse!2026!Unit"],
+    ["TOKEN", "ghu_AbCdEfGhIjKlMnOpQrStUv"],
+    ["SECRET", "TopSecretValue9988!"],
+    ["DB_URI", "UltraDbPass7788!"],
+    ["DB_URI", "RoutePass8899!"],
+    ["CONNECTION_STRING", "DefaultEndpointsProtocol=https;AccountName=vaultstorage001;AccountKey=MDEyMzQ1Njc4OUFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaYWJjZGVmZ2hpamtsbW4=;EndpointSuffix=core.windows.net"],
+    ["CONNECTION_STRING", "Endpoint=sb://prod-ingest.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=QWxwaGFCZXRhR2FtbWExMjM0NTY3ODkwQUJDREVGR0g=;EntityPath=events"],
+    ["PASSWORD", "HarborLock4455!"],
+    ["TOKEN", "ghr_AbCdEfGhIjKlMnOpQrStUvWx"],
+    ["PASSWORD", "QuotedLock5566!"],
+    ["API_KEY", "sk-proj-Q1w2E3r4T5y6U7i8O9p0A1s2D3f4G5h6J7k8L9m0"],
+    ["SECRET", "VaultAlias9988!"]
+  ];
+
+  for (const [type, raw] of expectedFindings) {
+    assert.ok(
+      findings.some((finding) => finding.type === type && finding.raw === raw),
+      `synthetic hardening block should detect ${type} value: ${raw}`
+    );
+    assert.strictEqual(
+      result.redactedText.includes(raw),
+      false,
+      `synthetic hardening block should redact raw value: ${raw}`
+    );
+  }
+
+  assert.ok(
+    /databaseUrl="postgres:\/\/admin:\[PWM_\d+\]@db\.prod\.internal:5432\/app"/.test(result.redactedText),
+    "databaseUrl should keep its URI structure while masking only the password"
+  );
+  assert.ok(
+    /MYSQL_URL=mysql:\/\/reporter:\[PWM_\d+\]@mysql\.ops\.internal:3306\/analytics/.test(
+      result.redactedText
+    ),
+    "MYSQL_URL should keep its URI structure while masking only the password"
+  );
+  assert.ok(result.redactedText.includes("PUBLIC_URL=https://openai.com"), "safe public URLs should stay visible");
+  assert.ok(result.redactedText.includes("REGION=eu-central-1"), "regions should stay visible");
+  assert.ok(result.redactedText.includes("PLACEHOLDER_DOC=[PWM_42]"), "visible placeholders should stay visible");
+  assert.ok(result.redactedText.includes("DOCS_TOKEN=replace_me"), "obvious docs placeholders should stay visible");
+}
+
 function testSuppressionFamilies() {
   const detector = new Detector();
   const cases = [
@@ -1316,6 +1522,10 @@ function run() {
   testMixedPlaceholderBlobPreservesKnownPlaceholdersAndRedactsRawLeaks();
   testFinalRegressionBlockKeepsTrailingNaturalLanguagePasswordRedacted();
   testNaturalLanguagePasswordVariants();
+  testDatabaseUrlAssignmentKeepsUriButMasksOnlyPassword();
+  testGithubJsonAccessTokenWithExampleSegmentStillRedacts();
+  testGithubExampleDocsTokensStillSuppressWhenObviouslyFake();
+  testSyntheticCredentialHardeningBlock();
   testSuppressionFamilies();
   testTechnicalPathAndProseFalsePositivesStayVisible();
   testUnsupportedVendorPlainHexAssignmentsStayVisible();

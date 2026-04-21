@@ -180,6 +180,29 @@
     );
   }
 
+  function shouldFailClosedDespiteExample(raw, { patternName, key, placeholderType, source } = {}) {
+    if (containsTemplateMarker(raw)) {
+      return false;
+    }
+
+    if (source === "assignment" && isExplicitSensitiveAssignment(key, placeholderType)) {
+      return true;
+    }
+
+    return new Set([
+      "openai_api_key",
+      "github_token",
+      "github_pat",
+      "natural_language_api_key",
+      "natural_language_openai_key",
+      "json_api_key_field",
+      "json_password_field",
+      "json_token_field",
+      "json_client_secret_field",
+      "labelled_openai_key_value"
+    ]).has(String(patternName || ""));
+  }
+
   function isExplicitSensitiveAssignment(key, placeholderType) {
     const normalizedKey = String(key || "").toLowerCase();
 
@@ -233,18 +256,27 @@
 
   function isDbUriAssignmentKey(key) {
     const normalized = normalizeAssignmentKey(key);
-    return /\b(?:database|db|mysql|postgres(?:ql)?|mariadb|mongodb|mongo|redis|amqp|rabbitmq|mssql|sqlserver)_(?:url|uri)\b/.test(
-      normalized
+    const compact = String(key || "").toLowerCase().replace(/[._-]/g, "");
+    return (
+      /\b(?:database|db|mysql|postgres(?:ql)?|mariadb|mongodb|mongo|redis|amqp|rabbitmq|mssql|sqlserver)_(?:url|uri)\b/.test(
+        normalized
+      ) ||
+      /(?:database|db|mysql|postgres(?:ql)?|mariadb|mongodb|mongo|redis|amqp|rabbitmq|mssql|sqlserver)(?:url|uri)\b/.test(
+        compact
+      )
     );
   }
 
   function isConnectionStringAssignmentKey(key) {
     const normalized = normalizeAssignmentKey(key);
+    const compact = String(key || "").toLowerCase().replace(/[._-]/g, "");
     return (
       normalized === "azurewebjobsstorage" ||
       normalized.includes("connection_string") ||
       normalized.includes("connectionstring") ||
-      normalized.includes("conn_string")
+      normalized.includes("conn_string") ||
+      compact.includes("connectionstring") ||
+      compact.includes("connstring")
     );
   }
 
@@ -254,6 +286,44 @@
     );
 
     return match ? match[0] : "";
+  }
+
+  function extractDbUriPasswordSegment(value) {
+    const raw = extractDbUriAssignmentValue(value);
+    if (!raw) {
+      return null;
+    }
+
+    try {
+      const parsed = new URL(raw);
+      const username = parsed.username || "";
+      const password = parsed.password || "";
+
+      if (!username || !password) {
+        return null;
+      }
+
+      const credentialPrefix = `${parsed.protocol}//${username}:`;
+      const start = raw.indexOf(credentialPrefix);
+      if (start < 0) {
+        return null;
+      }
+
+      const passwordStart = start + credentialPrefix.length;
+      const passwordEnd = raw.indexOf("@", passwordStart);
+      if (passwordEnd <= passwordStart) {
+        return null;
+      }
+
+      const rawPassword = raw.slice(passwordStart, passwordEnd);
+      return {
+        raw,
+        password: rawPassword,
+        offset: passwordStart
+      };
+    } catch {
+      return null;
+    }
   }
 
   function extractConnectionStringAssignmentValue(value) {
@@ -497,22 +567,18 @@
       if (this.isAllowlisted(raw)) return true;
       if (likelyTemplateValue(raw)) return true;
       if (isCleanPlaceholder(raw)) return true;
+      const failClosedForExample = shouldFailClosedDespiteExample(raw, {
+        patternName,
+        key,
+        placeholderType,
+        source
+      });
       if (patternName === "placeholder_composite_value" && isBenignPlaceholderComposite(raw)) {
         return true;
       }
 
       if (looksExampleLike(raw) && !["aws_access_key", "google_api_key"].includes(patternName)) {
-        if (
-          ((source === "assignment" && isExplicitSensitiveAssignment(key, placeholderType)) ||
-            new Set([
-              "openai_api_key",
-              "natural_language_api_key",
-              "natural_language_openai_key",
-              "json_api_key_field",
-              "labelled_openai_key_value"
-            ]).has(String(patternName || ""))) &&
-          !containsTemplateMarker(raw)
-        ) {
+        if (failClosedForExample) {
           // Keep explicit secret-style assignments fail-closed even if a vendor test key
           // contains an "example" segment in the middle of the value.
         } else {
@@ -531,7 +597,7 @@
       }
 
       const ctx = contextScore(text, start, end);
-      if (ctx <= -14) return true;
+      if (ctx <= -14 && !failClosedForExample) return true;
 
       return false;
     }
@@ -638,9 +704,66 @@
         let score = 0;
 
         if (isDbUriAssignmentKey(key)) {
-          raw = extractDbUriAssignmentValue(rawCandidate);
+          const extractedPassword = extractDbUriPasswordSegment(rawCandidate);
+          raw = extractedPassword?.password || "";
           placeholderType = "DB_URI";
-          score = 98;
+          score = 99;
+
+          if (!raw || raw.length < 8) continue;
+
+          const candidateIndex = match[0].indexOf(rawCandidate);
+          if (candidateIndex < 0) continue;
+
+          const start = match.index + candidateIndex + (extractedPassword?.offset || 0);
+          const end = start + raw.length;
+
+          if (this.isAllowlisted(raw)) continue;
+          if (isCleanPlaceholder(raw)) continue;
+          if (containsPlaceholder(raw) && !isCleanPlaceholder(raw) && !isBenignPlaceholderComposite(raw)) {
+            findings.push(
+              this.buildFinding({
+                category: "credential",
+                placeholderType,
+                raw,
+                start,
+                end,
+                score: 100,
+                methods: ["assignment", "db-uri-password", "placeholder-composite"]
+              })
+            );
+            continue;
+          }
+          if (
+            this.shouldSuppress({
+              raw,
+              text,
+              start,
+              end,
+              key,
+              placeholderType,
+              source: "assignment"
+            })
+          ) {
+            continue;
+          }
+
+          const entropy = calculateEntropy(raw);
+          const ctx = contextScore(text, start, end);
+
+          findings.push(
+            this.buildFinding({
+              category: "credential",
+              placeholderType,
+              raw,
+              start,
+              end,
+              score: score + (entropy >= 3.8 ? 2 : 0) + Math.max(0, ctx),
+              methods: ["assignment", "db-uri-password", entropy >= 3.8 ? "entropy" : null].filter(
+                Boolean
+              )
+            })
+          );
+          continue;
         } else if (isConnectionStringAssignmentKey(key)) {
           raw = extractConnectionStringAssignmentValue(rawCandidate);
           placeholderType = "CONNECTION_STRING";

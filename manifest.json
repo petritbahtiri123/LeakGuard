@@ -51,16 +51,6 @@
       "run_at": "document_idle"
     }
   ],
-  "web_accessible_resources": [
-    {
-      "resources": [
-        "ui/reveal_panel.html",
-        "ui/reveal_panel.css",
-        "ui/reveal_panel.js"
-      ],
-      "matches": ["https://*/*", "http://*/*"]
-    }
-  ],
   "icons": {
     "16": "icons/icon16.png",
     "32": "icons/icon32.png",

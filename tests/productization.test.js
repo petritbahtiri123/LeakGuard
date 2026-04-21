@@ -11,7 +11,10 @@ const popupHtml = fs.readFileSync(path.join(repoRoot, "popup/popup.html"), "utf8
 const popupJs = fs.readFileSync(path.join(repoRoot, "popup/popup.js"), "utf8");
 const optionsHtml = fs.readFileSync(path.join(repoRoot, "options/options.html"), "utf8");
 const optionsJs = fs.readFileSync(path.join(repoRoot, "options/options.js"), "utf8");
-const revealHtml = fs.readFileSync(path.join(repoRoot, "ui/reveal_panel.html"), "utf8");
+const backgroundSource = fs.readFileSync(
+  path.join(repoRoot, "background/service_worker.js"),
+  "utf8"
+);
 const { BUILTIN_PROTECTED_SITES } = require(path.join(repoRoot, "shared/protected_sites.js"));
 
 function fileExists(relativePath) {
@@ -41,7 +44,14 @@ function testLeakGuardBrandingShowsUpInUiAndDocs() {
   assert.ok(popupJs.includes("LeakGuard"), "popup JS should use LeakGuard copy");
   assert.ok(optionsHtml.includes("LeakGuard"), "options HTML should use LeakGuard branding");
   assert.ok(optionsJs.includes("LeakGuard"), "options JS should use LeakGuard copy");
-  assert.ok(revealHtml.includes("LeakGuard"), "reveal UI should use LeakGuard branding");
+  assert.ok(
+    popupHtml.includes("Inspect redacted content"),
+    "popup HTML should include the secure reveal view"
+  );
+  assert.ok(
+    popupHtml.includes("Manage protected sites"),
+    "popup HTML should include protected-site management"
+  );
 }
 
 function testBuiltInProtectedSitesRemainStaticAndAligned() {
@@ -67,8 +77,9 @@ function testPanelAndManagementUiAreWired() {
   assert.ok(overlaySource.includes(".pwm-panel"), "panel styles should live in overlay.css");
   assert.ok(
     popupJs.includes("PWM_GET_PROTECTED_SITE_OVERVIEW") &&
+      popupJs.includes("PWM_EXTENSION_REVEAL_SECRET") &&
       optionsJs.includes("PWM_SET_PROTECTED_SITE_ENABLED"),
-    "popup and options should use the protected-site management flow"
+    "popup and options should use the protected-site and secure-reveal flows"
   );
 }
 
@@ -81,6 +92,11 @@ function testDynamicSiteSupportIsDeclaredMinimally() {
     [...manifest.optional_host_permissions].sort(),
     ["http://*/*", "https://*/*"].sort(),
     "dynamic protected sites should use optional host permissions rather than broad default access"
+  );
+  assert.ok(
+    backgroundSource.includes("unregisterContentScripts") &&
+      !backgroundSource.includes("removeContentScripts"),
+    "dynamic site sync should use the supported MV3 unregisterContentScripts API"
   );
 }
 
