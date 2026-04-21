@@ -9,7 +9,7 @@ const backgroundSource = fs.readFileSync(
   path.join(repoRoot, "background/service_worker.js"),
   "utf8"
 );
-const revealUiSource = fs.readFileSync(path.join(repoRoot, "ui/reveal_panel.js"), "utf8");
+const popupSource = fs.readFileSync(path.join(repoRoot, "popup/popup.js"), "utf8");
 const harnessSource = fs.readFileSync(
   path.join(repoRoot, "sandbox/composer-harness.js"),
   "utf8"
@@ -57,19 +57,19 @@ function testUnsafeContentRevealPathRemoved() {
 
 function testSafeRevealUiExists() {
   assert.ok(
-    contentSource.includes("PWM_CREATE_REVEAL_REQUEST"),
-    "content script should create opaque reveal requests"
+    contentSource.includes("PWM_OPEN_POPUP_REVEAL"),
+    "content script should stage opaque reveal requests for the popup"
   );
   assert.ok(
-    contentSource.includes("window.open(") && contentSource.includes("ui/reveal_panel.html"),
-    "content script should open the secure reveal surface in a separate extension window"
+    !contentSource.includes("window.open("),
+    "content script should no longer open a separate reveal window"
   );
   assert.ok(
     backgroundSource.includes("PWM_EXTENSION_REVEAL_SECRET"),
     "background should expose a reveal handler for extension UI"
   );
   assert.ok(
-    backgroundSource.includes("isExtensionUiSender"),
+    backgroundSource.includes("isRuntimeUiSender"),
     "background reveal handler should verify extension UI sender context"
   );
   assert.ok(
@@ -77,8 +77,8 @@ function testSafeRevealUiExists() {
     "background reveal handler should bind reveal requests to the active tab session"
   );
   assert.ok(
-    revealUiSource.includes("secretValueEl.textContent = response.raw"),
-    "raw secret rendering should be confined to the extension-owned reveal UI"
+    popupSource.includes("secretValueEl.textContent = response.raw"),
+    "raw secret rendering should be confined to the extension-owned popup UI"
   );
 }
 
@@ -155,16 +155,10 @@ function testHostPageHydrationRequiresPlausibleSessionPlaceholders() {
   );
 }
 
-function testManifestExposeOnlyRevealUiAssets() {
-  const resourceBlock = manifest.web_accessible_resources.find((entry) =>
-    (entry.resources || []).includes("ui/reveal_panel.html")
-  );
-
-  assert.ok(resourceBlock, "manifest must expose the secure reveal UI to the content script");
+function testManifestNoLongerExposesRevealUiToWebPages() {
   assert.ok(
-    resourceBlock.resources.includes("ui/reveal_panel.css") &&
-      resourceBlock.resources.includes("ui/reveal_panel.js"),
-    "manifest should expose the reveal UI assets together"
+    !Array.isArray(manifest.web_accessible_resources) || manifest.web_accessible_resources.length === 0,
+    "manifest should not expose popup-only reveal assets to web pages"
   );
 }
 
@@ -225,7 +219,7 @@ function run() {
   testContentPublicStateIsMinimized();
   testRevealNeverInjectsHostDomContainers();
   testHostPageHydrationRequiresPlausibleSessionPlaceholders();
-  testManifestExposeOnlyRevealUiAssets();
+  testManifestNoLongerExposesRevealUiToWebPages();
   testPageUiNoLongerLeaksClassificationsOrMaskedFragments();
   testOnlyPwmPlaceholdersRemainCanonical();
   console.log("PASS security hardening static regressions");

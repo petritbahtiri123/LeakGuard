@@ -234,6 +234,57 @@ function testMixedSecretAndIpBlockStillRedactsOnFirstPass() {
   assert.strictEqual(output.includes("8.8.8.8"), false);
 }
 
+function testSyntheticMixedNetworkAndSecretBlock() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const text = [
+    "GITHUB_TOKEN=ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3",
+    "DB_PASSWORD=HarborLock4455!",
+    "WAN_CIDR=45.67.89.0/24",
+    "WAN_CANARY=45.67.89.128/25",
+    "PUBLIC_HOST=45.67.89.10",
+    "PUBLIC_GW=45.67.89.1",
+    "DNS_RESOLVER=9.9.9.9",
+    "PRIVATE_HOST=192.168.1.10",
+    "PRIVATE_CIDR=10.0.0.0/8",
+    "LOOPBACK=127.0.0.1",
+    "LINK_LOCAL=169.254.10.20",
+    "DEFAULT_ROUTE=0.0.0.0/0",
+    "WILDCARD_MASK=0.0.0.255",
+    "INVALID_HOST=999.999.999.999",
+    "BUILD=v1.2.3-beta"
+  ].join("\n");
+
+  const findings = detector.scan(text);
+  const output = transform(text, {
+    manager,
+    findings
+  }).result.redactedText;
+
+  assert.strictEqual(output.includes("ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3"), false);
+  assert.strictEqual(output.includes("HarborLock4455!"), false);
+  assert.strictEqual(output.includes("45.67.89.0/24"), false);
+  assert.strictEqual(output.includes("45.67.89.128/25"), false);
+  assert.strictEqual(output.includes("45.67.89.10"), false);
+  assert.strictEqual(output.includes("45.67.89.1"), false);
+  assert.strictEqual(output.includes("9.9.9.9"), false);
+
+  assert.ok(output.includes("PRIVATE_HOST=192.168.1.10"));
+  assert.ok(output.includes("PRIVATE_CIDR=10.0.0.0/8"));
+  assert.ok(output.includes("LOOPBACK=127.0.0.1"));
+  assert.ok(output.includes("LINK_LOCAL=169.254.10.20"));
+  assert.ok(output.includes("DEFAULT_ROUTE=0.0.0.0/0"));
+  assert.ok(output.includes("WILDCARD_MASK=0.0.0.255"));
+  assert.ok(output.includes("INVALID_HOST=999.999.999.999"));
+  assert.ok(output.includes("BUILD=v1.2.3-beta"));
+
+  assert.ok(/WAN_CIDR=\[NET_1\]/.test(output));
+  assert.ok(/WAN_CANARY=\[(?:NET_1_SUB_1|NET_1_SUB_2)\]/.test(output));
+  assert.ok(/PUBLIC_HOST=\[NET_1_HOST_1\]/.test(output));
+  assert.ok(/PUBLIC_GW=\[NET_1_HOST_\d+\]/.test(output));
+  assert.ok(/DNS_RESOLVER=\[PUB_HOST_\d+(?:_DNS)?\]/.test(output));
+}
+
 function run() {
   testClassificationDefaults();
   testDeterministicMapping();
@@ -241,6 +292,7 @@ function run() {
   testModes();
   testMixedTextCases();
   testMixedSecretAndIpBlockStillRedactsOnFirstPass();
+  testSyntheticMixedNetworkAndSecretBlock();
   testNoFalseCorruption();
   testSessionResetBehavior();
   testLeakageRegression();

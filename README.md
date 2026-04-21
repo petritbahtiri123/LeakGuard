@@ -213,8 +213,8 @@ Run these in Chrome after loading the unpacked extension.
 13. Press Enter to send and confirm the extension does not submit if rewrite verification fails.
 14. Click Send instead of pressing Enter and confirm the same behavior.
 15. Start a new chat and confirm the tab/session mapping resets.
-16. Let the assistant echo a known placeholder and confirm the secure reveal window can show it only when the current tab session knows that placeholder.
-17. Let the assistant echo an unknown placeholder and confirm the secure reveal window reports that it is unavailable without replacing page text.
+16. Let the assistant echo a known placeholder and confirm the LeakGuard popup can show it only when the current tab session knows that placeholder.
+17. Let the assistant echo an unknown placeholder and confirm the LeakGuard popup reports that it is unavailable without replacing page text.
 18. Trigger a route change or response re-render and confirm known placeholders remain revealable only from current session state.
 19. Paste a multiline block with empty lines between sections and confirm rewrite verification no longer collapses those blank lines in the ChatGPT composer.
 
@@ -281,7 +281,7 @@ Then reload the ChatGPT tab and retry the redaction flow. The extension will log
 It will also log reveal-side events:
 
 - whether response-side hydration ran
-- whether the secure reveal window opened
+- whether the secure reveal popup opened
 - whether the secure reveal request was available in the current session
 - whether ChatGPT re-rendered a hydrated node
 

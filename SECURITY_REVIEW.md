@@ -32,7 +32,7 @@ The audit covered:
 - Split state into:
   - public state: `transformMode`, `placeholderCount`
   - private state: `sessionId`, `urlKey`, `fingerprintToPlaceholder`, `placeholderToFingerprint`, `secretByFingerprint`
-- Added a secure extension-owned reveal surface under `ui/reveal_panel.html` opened in a separate `chrome-extension://` popup window.
+- Added a secure extension-owned reveal flow that renders raw values only inside the LeakGuard popup.
 - Switched reveal launching to opaque request ids created by the background.
 - Restricted raw reveal responses to extension UI senders only.
 - Removed masked raw previews and secret-type labels from page badge/modal UI.
