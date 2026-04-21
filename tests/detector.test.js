@@ -253,6 +253,32 @@ function testRepeatedSameSecret() {
   assert.strictEqual(unique.length, 1, "repeated same secret should map to one placeholder");
 }
 
+function testRepeatedAwsAccessKeyWithExampleSubstringStillRedactsAndReusesPlaceholder() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const text = "AWS_ACCESS_KEY_ID=AKIAQ4EXAMPLE7K9M2P1\nmirror=AKIAQ4EXAMPLE7K9M2P1";
+
+  const findings = detector.scan(text);
+  const result = redactor.redact(text, findings);
+  const matches = getPlaceholders(result.redactedText);
+  const unique = [...new Set(matches)];
+
+  assert.ok(
+    findings.some(
+      (finding) => finding.type === "AWS_KEY" && finding.raw === "AKIAQ4EXAMPLE7K9M2P1"
+    ),
+    "aws access key containing EXAMPLE should still be detected when the keyword is inside the value"
+  );
+  assert.strictEqual(matches.length, 2, "expected both repeated AWS key occurrences to be replaced");
+  assert.strictEqual(unique.length, 1, "repeated AWS key should reuse the same placeholder");
+  assert.strictEqual(
+    result.redactedText,
+    "AWS_ACCESS_KEY_ID=[PWM_1]\nmirror=[PWM_1]",
+    "repeated AWS key should redact both occurrences consistently"
+  );
+}
+
 function testRepeatedDifferentSecretsSameType() {
   const detector = new Detector();
   const manager = new PlaceholderManager();
@@ -1003,6 +1029,7 @@ function run() {
   testNegativeExamples();
   testLegacyPlaceholderNormalizationHelper();
   testRepeatedSameSecret();
+  testRepeatedAwsAccessKeyWithExampleSubstringStillRedactsAndReusesPlaceholder();
   testRepeatedDifferentSecretsSameType();
   testMultilineDifferentPasswords();
   testMultilineRepeatedPassword();
