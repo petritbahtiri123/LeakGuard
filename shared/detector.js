@@ -362,7 +362,9 @@
       if (likelyTemplateValue(raw)) return true;
       if (isCleanPlaceholder(raw)) return true;
 
-      if (looksExampleLike(raw) && patternName !== "aws_access_key") return true;
+      if (looksExampleLike(raw) && !["aws_access_key", "google_api_key"].includes(patternName)) {
+        return true;
+      }
       if (hasExampleHost(raw)) return true;
 
       const ctx = contextScore(text, start, end);
