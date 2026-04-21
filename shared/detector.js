@@ -22,6 +22,10 @@
     return new RegExp(re.source, re.flags);
   }
 
+  function escapeRegex(text) {
+    return String(text || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
   function stripWrappingQuotes(value) {
     if (!value || value.length < 2) return value;
 
@@ -66,13 +70,14 @@
     if (value.includes("password") || value.endsWith("pwd") || value.includes("passwd")) {
       return "PASSWORD";
     }
+    if (value.includes("webhook") && value.includes("secret")) return "SECRET";
     if (value.includes("webhook")) return "WEBHOOK";
     if (value.includes("cookie") || value.includes("session")) return "TOKEN";
     if (value.includes("token") || value.includes("auth")) return "TOKEN";
+    if (value.includes("secret")) return "SECRET";
     if (value.includes("access_key") || value.includes("access-key")) return "AWS_KEY";
     if (value.includes("api") && value.includes("key")) return "API_KEY";
     if (value.includes("connection")) return "CONNECTION_STRING";
-    if (value.includes("secret")) return "SECRET";
 
     return "SECRET";
   }
@@ -86,7 +91,9 @@
   function getContextWindow(text, start, end, radius = 64) {
     const left = Math.max(0, start - radius);
     const right = Math.min(text.length, end + radius);
-    return text.slice(left, right).toLowerCase();
+    const before = text.slice(left, start);
+    const after = text.slice(end, right);
+    return `${before} ${after}`.toLowerCase();
   }
 
   function contextScore(text, start, end) {
@@ -94,11 +101,11 @@
     let score = 0;
 
     for (const keyword of KEYWORDS) {
-      if (windowText.includes(keyword)) score += 6;
+      if (new RegExp(`\\b${escapeRegex(keyword)}\\b`, "i").test(windowText)) score += 6;
     }
 
     for (const keyword of NEGATIVE_CONTEXT_WORDS) {
-      if (windowText.includes(keyword)) score -= 14;
+      if (new RegExp(`\\b${escapeRegex(keyword)}\\b`, "i").test(windowText)) score -= 14;
     }
 
     if (/\bauthorization\b/.test(windowText) && /\bbearer\b/.test(windowText)) {
@@ -126,16 +133,13 @@
 
   function looksExampleLike(value) {
     const normalized = String(value || "").toLowerCase();
-    return EXAMPLE_VALUE_MARKERS.some(
-      (marker) =>
+    return EXAMPLE_VALUE_MARKERS.some((marker) => {
+      const escaped = escapeRegex(marker);
+      return (
         normalized.startsWith(marker) ||
-        normalized.includes(`/${marker}`) ||
-        normalized.includes(`${marker}.`) ||
-        normalized.includes(`-${marker}`) ||
-        normalized.includes(`${marker}-`) ||
-        normalized.includes(`_${marker}`) ||
-        normalized.includes(`${marker}_`)
-    );
+        new RegExp(`(?:^|[._\\-/])${escaped}`, "i").test(normalized)
+      );
+    });
   }
 
   function hasExampleHost(value) {
@@ -620,6 +624,7 @@
         const start = match.index;
         const end = start + raw.length;
 
+        if (/^pk_(?:live|test)_[0-9A-Za-z]{16,}$/i.test(raw)) continue;
         if (/^[A-Z]{2,10}[a-z]+$/.test(raw)) continue;
         if (/^(https?|wss?):\/\//i.test(raw)) continue;
         if (/^\d+$/.test(raw)) continue;
