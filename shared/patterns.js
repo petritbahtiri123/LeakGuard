@@ -135,7 +135,9 @@
       type: "TOKEN",
       category: "credential",
       baseScore: 88,
-      regex: /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,255}\b/g
+      suppressionNotes:
+        "GitHub classic and scoped token prefixes are distinctive enough to match with a shorter minimum body while shared suppression still drops obvious docs placeholders.",
+      regex: /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,255}\b/g
     },
     {
       name: "gitlab_pat",

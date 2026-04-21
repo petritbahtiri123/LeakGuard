@@ -27,7 +27,9 @@ const {
 
 const STORAGE_PREFIX = "pwm:tab:";
 const REVEAL_PREFIX = "pwm:reveal:";
+const POPUP_STATE_KEY = "pwm:popupState";
 const USER_SITE_SCRIPT_ID_PREFIX = "pwm_user_site_";
+let syncDynamicContentScriptsPromise = Promise.resolve();
 const CONTENT_SCRIPT_FILES = [
   "shared/entropy.js",
   "shared/patterns.js",
@@ -105,9 +107,9 @@ function needsPlaceholderMigration(state) {
   });
 }
 
-function isExtensionUiSender(sender) {
+function isRuntimeUiSender(sender) {
   const senderUrl = String(sender?.url || sender?.documentUrl || "");
-  return sender?.id === chrome.runtime.id && senderUrl.startsWith(chrome.runtime.getURL("ui/"));
+  return sender?.id === chrome.runtime.id && senderUrl.startsWith(chrome.runtime.getURL(""));
 }
 
 function requestMatchesState(request, state) {
@@ -283,20 +285,28 @@ async function buildUserSiteRegistrations() {
   return registrations;
 }
 
-async function syncDynamicContentScripts() {
+async function performDynamicContentScriptSync() {
   const existing = await chrome.scripting.getRegisteredContentScripts();
   const managedIds = existing
     .filter((script) => script.id.startsWith(USER_SITE_SCRIPT_ID_PREFIX))
     .map((script) => script.id);
 
   if (managedIds.length) {
-    await chrome.scripting.removeContentScripts({ ids: managedIds });
+    await chrome.scripting.unregisterContentScripts({ ids: managedIds });
   }
 
   const registrations = await buildUserSiteRegistrations();
   if (!registrations.length) return;
 
   await chrome.scripting.registerContentScripts(registrations);
+}
+
+function syncDynamicContentScripts() {
+  syncDynamicContentScriptsPromise = syncDynamicContentScriptsPromise
+    .catch(() => {})
+    .then(() => performDynamicContentScriptSync());
+
+  return syncDynamicContentScriptsPromise;
 }
 
 async function ensureProtectedSitePermission(rule) {
@@ -439,6 +449,36 @@ async function getState(tabId) {
   return result[key] || null;
 }
 
+async function getPopupState() {
+  const result = await chrome.storage.session.get(POPUP_STATE_KEY);
+  return result[POPUP_STATE_KEY] || null;
+}
+
+async function setPopupState(state) {
+  const nextState = {
+    view: state?.view || "home",
+    requestId: state?.requestId || null,
+    updatedAt: Date.now()
+  };
+
+  await chrome.storage.session.set({
+    [POPUP_STATE_KEY]: nextState
+  });
+
+  return nextState;
+}
+
+async function clearPopupState(requestId) {
+  const current = await getPopupState();
+  if (!current) return;
+
+  if (requestId && current.requestId && current.requestId !== requestId) {
+    return;
+  }
+
+  await chrome.storage.session.remove(POPUP_STATE_KEY);
+}
+
 async function setState(tabId, state) {
   if (typeof tabId !== "number") return null;
 
@@ -461,14 +501,23 @@ async function removeState(tabId) {
 
 async function removeRevealRequestsForTab(tabId) {
   const all = await chrome.storage.session.get(null);
-  const keysToRemove = Object.entries(all)
-    .filter(
-      ([key, value]) => key.startsWith(REVEAL_PREFIX) && Number(value?.tabId) === Number(tabId)
-    )
-    .map(([key]) => key);
+  const requestsToRemove = Object.entries(all).filter(
+    ([key, value]) => key.startsWith(REVEAL_PREFIX) && Number(value?.tabId) === Number(tabId)
+  );
+  const keysToRemove = requestsToRemove.map(([key]) => key);
+  const requestIds = requestsToRemove
+    .map(([, value]) => value?.requestId)
+    .filter((requestId) => typeof requestId === "string" && requestId);
 
   if (keysToRemove.length) {
     await chrome.storage.session.remove(keysToRemove);
+  }
+
+  if (requestIds.length) {
+    const popupState = await getPopupState();
+    if (popupState?.requestId && requestIds.includes(popupState.requestId)) {
+      await clearPopupState(popupState.requestId);
+    }
   }
 }
 
@@ -582,6 +631,7 @@ async function getRevealRequest(requestId) {
 
 async function removeRevealRequest(requestId) {
   await chrome.storage.session.remove(revealKey(requestId));
+  await clearPopupState(requestId);
 }
 
 async function getRevealContext(requestId) {
@@ -620,6 +670,25 @@ async function revealSecret(requestId) {
   manager.setPrivateState(state || {});
 
   return manager.getRaw(request.placeholder);
+}
+
+async function openPopupView(state) {
+  const popupState = await setPopupState(state);
+  let opened = false;
+
+  if (chrome.action && typeof chrome.action.openPopup === "function") {
+    try {
+      await chrome.action.openPopup();
+      opened = true;
+    } catch {
+      opened = false;
+    }
+  }
+
+  return {
+    opened,
+    popupState
+  };
 }
 
 chrome.tabs.onRemoved.addListener((tabId) => {
@@ -688,9 +757,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
 
-    if (message?.type === "PWM_CREATE_REVEAL_REQUEST") {
+    if (message?.type === "PWM_OPEN_POPUP_REVEAL") {
       const requestId = await createRevealRequest(tabId, message.placeholder);
-      sendResponse({ ok: true, requestId });
+      const popup = await openPopupView({
+        view: "reveal",
+        requestId
+      });
+      sendResponse({ ok: true, requestId, opened: popup.opened });
       return;
     }
 
@@ -732,8 +805,33 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
 
+    if (message?.type === "PWM_OPEN_POPUP_SITE_MANAGER") {
+      const popup = await openPopupView({
+        view: "sites"
+      });
+      sendResponse({ ok: true, opened: popup.opened });
+      return;
+    }
+
+    if (message?.type === "PWM_GET_POPUP_STATE") {
+      const popupState = await getPopupState();
+      const revealContext =
+        popupState?.view === "reveal" && popupState?.requestId
+          ? await getRevealContext(popupState.requestId)
+          : null;
+
+      sendResponse({ ok: true, popupState, revealContext });
+      return;
+    }
+
+    if (message?.type === "PWM_CLEAR_POPUP_STATE") {
+      await clearPopupState(message.requestId);
+      sendResponse({ ok: true });
+      return;
+    }
+
     if (message?.type === "PWM_EXTENSION_GET_REVEAL_CONTEXT") {
-      if (!isExtensionUiSender(sender)) {
+      if (!isRuntimeUiSender(sender)) {
         sendResponse({ ok: false, error: "Reveal context is restricted to extension UI." });
         return;
       }
@@ -744,7 +842,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     if (message?.type === "PWM_EXTENSION_REVEAL_SECRET") {
-      if (!isExtensionUiSender(sender)) {
+      if (!isRuntimeUiSender(sender)) {
         sendResponse({ ok: false, error: "Secret reveal is restricted to extension UI." });
         return;
       }
@@ -761,7 +859,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     if (message?.type === "PWM_EXTENSION_RELEASE_REVEAL_REQUEST") {
-      if (!isExtensionUiSender(sender)) {
+      if (!isRuntimeUiSender(sender)) {
         sendResponse({ ok: false, error: "Reveal release is restricted to extension UI." });
         return;
       }
