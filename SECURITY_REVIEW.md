@@ -30,8 +30,8 @@ The audit covered:
 - Replaced classified placeholders with neutral `[PWM_n]` placeholders.
 - Moved stable placeholder assignment into the background so the content script no longer owns session raw mappings.
 - Split state into:
-  - public state: `sessionId`, `counters`, `knownPlaceholders`
-  - private state: `fingerprintToPlaceholder`, `placeholderToFingerprint`, `secretByFingerprint`
+  - public state: `transformMode`, `placeholderCount`
+  - private state: `sessionId`, `urlKey`, `fingerprintToPlaceholder`, `placeholderToFingerprint`, `secretByFingerprint`
 - Added a secure extension-owned reveal surface under `ui/reveal_panel.html` opened in a separate `chrome-extension://` popup window.
 - Switched reveal launching to opaque request ids created by the background.
 - Restricted raw reveal responses to extension UI senders only.
@@ -66,12 +66,13 @@ The audit covered:
 
 ### Public state exposed to the content script
 
-- `sessionId`
-- `counters`
-- `knownPlaceholders`
+- `transformMode`
+- `placeholderCount`
 
 ### Private state kept in the background
 
+- `sessionId`
+- `urlKey`
 - `fingerprintToPlaceholder`
 - `placeholderToFingerprint`
 - `secretByFingerprint`
