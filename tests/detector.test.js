@@ -320,6 +320,35 @@ function testRegressionMixedMultilineSecrets() {
   assert.ok(/\[PWM_3\]/.test(result.redactedText), "expected third neutral placeholder");
 }
 
+function testAwsSessionTokenStillRedactsAfterOtherAwsValuesAreAlreadyPlaceholderized() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const text = [
+    "AWS_ACCESS_KEY_ID=[PWM_1]",
+    "AWS_SECRET_ACCESS_KEY=[PWM_2]",
+    "AWS_SESSION_TOKEN=IQoJb3JpZ2luX2VjEJr//////////wEaCXVzLWVhc3QtMSJHMEUCIFakeSessionTokenValue1234567890abcdefghijklmnop"
+  ].join("\n");
+
+  const findings = detector.scan(text);
+  const result = redactor.redact(text, findings);
+
+  assert.ok(
+    findings.some(
+      (finding) =>
+        finding.type === "TOKEN" &&
+        finding.raw ===
+          "IQoJb3JpZ2luX2VjEJr//////////wEaCXVzLWVhc3QtMSJHMEUCIFakeSessionTokenValue1234567890abcdefghijklmnop"
+    ),
+    "aws session token should still be detected when sibling AWS values are already placeholderized"
+  );
+  assert.strictEqual(
+    result.redactedText,
+    "AWS_ACCESS_KEY_ID=[PWM_1]\nAWS_SECRET_ACCESS_KEY=[PWM_2]\nAWS_SESSION_TOKEN=[PWM_1]",
+    "aws session token should be fully redacted while existing clean placeholders stay intact"
+  );
+}
+
 function testDbUriWithCredentials() {
   const detector = new Detector();
   const text = "Use mysql://reporter:S3cure!Pass@db.internal:3306/analytics for local debug.";
@@ -904,6 +933,7 @@ function run() {
   testMultilineDifferentPasswords();
   testMultilineRepeatedPassword();
   testRegressionMixedMultilineSecrets();
+  testAwsSessionTokenStillRedactsAfterOtherAwsValuesAreAlreadyPlaceholderized();
   testDbUriWithCredentials();
   testFullValueReplacementForConnectionStyleAssignments();
   testGenericBasicAuthUrl();
