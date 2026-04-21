@@ -941,10 +941,16 @@
     const decision = await showDecisionModal(analysis.findings, "paste");
     if (decision.action === "cancel") return;
 
+    const latestInput = findComposer(input);
+    if (!latestInput) return;
+
+    const latestText = getInputText(latestInput);
+    const baseText = latestText === originalText ? latestText : originalText;
+
     if (decision.action === "allow") {
       const ok = await applyPasteDecision(
-        input,
-        originalText,
+        latestInput,
+        baseText,
         selection,
         analysis.normalizedText,
         "paste"
@@ -960,8 +966,8 @@
     const result = await requestRedaction(analysis.normalizedText, analysis.findings);
 
     const ok = await applyPasteDecision(
-      input,
-      originalText,
+      latestInput,
+      baseText,
       selection,
       result.redactedText,
       "paste"
