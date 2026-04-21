@@ -10,7 +10,7 @@ This project is **risk reduction**, not a perfect privacy guarantee.
 
 The current MVP focuses on:
 
-- ChatGPT web UI only
+- ChatGPT, Claude, Grok, X Grok, and Gemini web UIs
 - Manifest V3
 - local-only detection and redaction
 - background service worker state in `chrome.storage.session`
@@ -94,7 +94,13 @@ It does not protect against:
 3. Enable `Developer mode`.
 4. Click `Load unpacked`.
 5. Select this repository folder.
-6. Open `https://chatgpt.com/` or `https://chat.openai.com/`.
+6. Open one of:
+   - `https://chatgpt.com/`
+   - `https://chat.openai.com/`
+   - `https://claude.ai/`
+   - `https://grok.com/`
+   - `https://x.com/`
+   - `https://gemini.google.com/`
 
 ## Detector Tests
 
