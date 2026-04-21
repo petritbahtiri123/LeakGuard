@@ -129,6 +129,11 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
       contentSource.includes("matchesComposerPlan"),
     "composer rewrite verification should allow safe normalized-equivalent editor states"
   );
+  assert.ok(
+    contentSource.includes("const latestInput = findComposer(input);") &&
+      contentSource.includes("const latestText = getInputText(latestInput);"),
+    "paste rewrite flow should re-resolve the composer after modal decisions before applying redaction"
+  );
 }
 
 function run() {
