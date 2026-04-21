@@ -1,10 +1,12 @@
 # LeakGuard
 
-LeakGuard is a local-only Chrome extension that helps prevent accidental prompt leaks on AI chat sites.
+LeakGuard is a local-only Chrome extension for reducing accidental prompt leaks on AI chat sites.
 
-It detects likely secrets and sensitive public IPv4 data in typed or pasted prompts before send, then lets you choose to redact them or allow the submission once.
+It watches supported composers for typed or pasted content, detects likely secrets and sensitive public IPv4 data before submission, and lets you choose `Redact` or `Allow once`.
 
-LeakGuard is a risk-reduction tool, not a guarantee of perfect privacy or complete data-loss prevention.
+LeakGuard does not use a backend service or cloud processing. It is designed for practical risk reduction, not perfect privacy or full enterprise DLP.
+
+> Local-only. No backend. No telemetry. Secure reveal stays inside extension-owned UI..
 
 ## V1 Snapshot
 
