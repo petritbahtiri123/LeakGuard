@@ -24,6 +24,12 @@
         "shared/patterns.js",
         "shared/detector.js",
         "shared/placeholders.js",
+        "shared/ipClassification.js",
+        "shared/ipDetection.js",
+        "shared/networkHierarchy.js",
+        "shared/placeholderAllocator.js",
+        "shared/sessionMapStore.js",
+        "shared/transformOutboundPrompt.js",
         "shared/redactor.js",
         "content/composer_helpers.js",
         "content/content.js"

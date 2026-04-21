@@ -3,6 +3,7 @@
     Detector,
     PLACEHOLDER_TOKEN_REGEX,
     normalizeVisiblePlaceholders,
+    buildNetworkUiFindings,
     ComposerHelpers
   } = globalThis.PWM;
   const {
@@ -52,6 +53,7 @@
   let currentPublicState = {
     sessionId: null,
     urlKey: "",
+    transformMode: "hide_public",
     placeholderCount: 0,
     knownPlaceholders: []
   };
@@ -369,16 +371,25 @@
       return {
         originalText,
         normalizedText,
+        secretFindings: [],
+        networkFindings: [],
         findings: [],
         placeholderNormalized: normalizedText !== originalText
       };
     }
 
     const detector = new Detector();
+    const secretFindings = detector.scan(normalizedText).filter((finding) => finding.severity !== "low");
+    const networkFindings = buildNetworkUiFindings(normalizedText, {
+      mode: currentPublicState.transformMode
+    });
+
     return {
       originalText,
       normalizedText,
-      findings: detector.scan(normalizedText).filter((finding) => finding.severity !== "low"),
+      secretFindings,
+      networkFindings,
+      findings: [...secretFindings, ...networkFindings].sort((a, b) => a.start - b.start),
       placeholderNormalized: normalizedText !== originalText
     };
   }
@@ -828,6 +839,11 @@
       selection,
       insertedText
     );
+    const relevantSecretFindings = selectFindingsOverlappingInsertion(
+      nextAnalysis.secretFindings,
+      selection,
+      insertedText
+    );
     const placeholderNormalizationChanged =
       nextAnalysis.placeholderNormalized &&
       nextAnalysis.normalizedText !== next.text &&
@@ -883,7 +899,7 @@
       return;
     }
 
-    const result = await requestRedaction(nextAnalysis.normalizedText, relevantFindings);
+    const result = await requestRedaction(nextAnalysis.normalizedText, relevantSecretFindings);
     const ok = await applyTypedInterceptionRewrite(
       input,
       result.redactedText,
@@ -963,7 +979,7 @@
       return;
     }
 
-    const result = await requestRedaction(analysis.normalizedText, analysis.findings);
+    const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
 
     const ok = await applyPasteDecision(
       latestInput,
@@ -1031,13 +1047,20 @@
 
     if (decision.action === "allow") {
       if (analysis.placeholderNormalized) {
-        const normalized = await applyNormalizedComposerRewrite(input, text, "submit");
-        if (!normalized.ok) return;
-
-        if (!(await ensureExactComposerState(input, normalized.text))) {
+        const rewritten = await applyNormalizedComposerRewrite(input, text, "submit");
+        if (!rewritten.ok) {
           await showRewriteFailure(
             "submit",
-            collectFailureDetails(input, normalized.text, getInputText(input), "submit")
+            collectFailureDetails(input, rewritten.text, getInputText(input), "submit")
+          );
+          refreshBadgeFromCurrentInput();
+          return;
+        }
+
+        if (!(await ensureExactComposerState(input, rewritten.text))) {
+          await showRewriteFailure(
+            "submit",
+            collectFailureDetails(input, rewritten.text, getInputText(input), "submit")
           );
           refreshBadgeFromCurrentInput();
           return;
@@ -1049,7 +1072,7 @@
       return;
     }
 
-    const result = await requestRedaction(analysis.normalizedText, analysis.findings);
+    const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
 
     const applied = await applyComposerText(input, result.redactedText, {
       caretOffset: result.redactedText.length,
@@ -1139,8 +1162,8 @@
 
     if (decision.action === "allow") {
       if (analysis.placeholderNormalized) {
-        const normalized = await applyNormalizedComposerRewrite(input, text, "submit");
-        if (!normalized.ok) return;
+        const rewritten = await applyNormalizedComposerRewrite(input, text, "submit");
+        if (!rewritten.ok) return;
       }
 
       const button = findSendButton(input);
@@ -1148,7 +1171,7 @@
       return;
     }
 
-    const result = await requestRedaction(analysis.normalizedText, analysis.findings);
+    const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
 
     const applied = await applyComposerText(input, result.redactedText, {
       caretOffset: result.redactedText.length,
@@ -1244,7 +1267,7 @@
       return;
     }
 
-    const result = await requestRedaction(analysis.normalizedText, analysis.findings);
+    const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
 
     const applied = await applyComposerText(latestInput, result.redactedText, {
       caretOffset: result.redactedText.length,

@@ -1,6 +1,23 @@
-importScripts("../shared/placeholders.js", "../shared/redactor.js");
+importScripts(
+  "../shared/placeholders.js",
+  "../shared/ipClassification.js",
+  "../shared/ipDetection.js",
+  "../shared/networkHierarchy.js",
+  "../shared/placeholderAllocator.js",
+  "../shared/sessionMapStore.js",
+  "../shared/transformOutboundPrompt.js",
+  "../shared/redactor.js"
+);
 
-const { PlaceholderManager, Redactor, canonicalizePlaceholderToken } = globalThis.PWM;
+const {
+  PlaceholderManager,
+  canonicalizePlaceholderToken,
+  createSessionState,
+  migrateSessionState,
+  normalizeTransformMode,
+  DEFAULT_TRANSFORM_MODE,
+  transformOutboundPrompt
+} = globalThis.PWM;
 
 const STORAGE_PREFIX = "pwm:tab:";
 const REVEAL_PREFIX = "pwm:reveal:";
@@ -23,16 +40,7 @@ function urlKeyFrom(url) {
 }
 
 function newState(urlKey) {
-  return {
-    sessionId: crypto.randomUUID(),
-    urlKey,
-    counters: { PWM: 0 },
-    fingerprintToPlaceholder: {},
-    placeholderToFingerprint: {},
-    secretByFingerprint: {},
-    createdAt: Date.now(),
-    updatedAt: Date.now()
-  };
+  return createSessionState(urlKey);
 }
 
 function isLegacyState(state) {
@@ -41,9 +49,9 @@ function isLegacyState(state) {
 
 function migratePrivateState(state) {
   const manager = new PlaceholderManager();
-  manager.setPrivateState(state || {});
+  manager.setPrivateState(migrateSessionState(state || {}));
   return {
-    ...state,
+    ...migrateSessionState(state || {}),
     ...manager.exportPrivateState()
   };
 }
@@ -64,10 +72,12 @@ function needsPlaceholderMigration(state) {
   const migrated = manager.exportPrivateState();
 
   return JSON.stringify(migrated) !== JSON.stringify({
+    sessionId: state.sessionId || null,
     counters: state.counters || {},
     fingerprintToPlaceholder: state.fingerprintToPlaceholder || {},
     placeholderToFingerprint: state.placeholderToFingerprint || {},
-    secretByFingerprint: state.secretByFingerprint || {}
+    secretByFingerprint: state.secretByFingerprint || {},
+    objects: Array.isArray(state.objects) ? state.objects : []
   });
 }
 
@@ -83,12 +93,14 @@ function requestMatchesState(request, state) {
 function toPublicState(state) {
   const manager = new PlaceholderManager();
   manager.setPrivateState(state || {});
+  const publicState = manager.exportPublicState();
 
   return {
     sessionId: state?.sessionId || null,
     urlKey: state?.urlKey || "",
-    placeholderCount: manager.exportPublicState().knownPlaceholders.length,
-    knownPlaceholders: manager.exportPublicState().knownPlaceholders
+    transformMode: normalizeTransformMode(state?.transformMode || DEFAULT_TRANSFORM_MODE),
+    placeholderCount: publicState.knownPlaceholders.length,
+    knownPlaceholders: publicState.knownPlaceholders
   };
 }
 
@@ -149,12 +161,16 @@ async function initState(tabId, url) {
     state = await setState(tabId, migratePrivateState(state));
   }
 
+  state = migrateSessionState(state, nextUrlKey);
+
   if (state.urlKey !== nextUrlKey) {
     state = newState(nextUrlKey);
     await setState(tabId, state);
     await removeRevealRequestsForTab(tabId);
+    return state;
   }
 
+  await setState(tabId, state);
   return state;
 }
 
@@ -190,11 +206,15 @@ async function redactForTab(tabId, url, text, findings) {
   const manager = new PlaceholderManager();
   manager.setPrivateState(current || {});
 
-  const redactor = new Redactor(manager);
   const normalizedFindings = (findings || []).map(normalizeFinding).filter((finding) => finding.raw);
-  const result = redactor.redact(text, normalizedFindings);
+  const result = transformOutboundPrompt(text, {
+    manager,
+    findings: normalizedFindings,
+    mode: current?.transformMode || DEFAULT_TRANSFORM_MODE
+  });
   const state = await setState(tabId, {
     ...current,
+    transformMode: normalizeTransformMode(current?.transformMode || DEFAULT_TRANSFORM_MODE),
     ...manager.exportPrivateState()
   });
 
@@ -299,6 +319,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const state = await setState(tabId, newState(urlKeyFrom(message.url)));
       await removeRevealRequestsForTab(tabId);
       sendResponse({ ok: true, state: toPublicState(state) });
+      return;
+    }
+
+    if (message?.type === "PWM_SET_TRANSFORM_MODE") {
+      const current = (await getState(tabId)) || newState(urlKeyFrom(message.url));
+      const nextState = await setState(tabId, {
+        ...migrateSessionState(current, urlKeyFrom(message.url)),
+        transformMode: normalizeTransformMode(message.transformMode)
+      });
+      sendResponse({ ok: true, state: toPublicState(nextState) });
       return;
     }
 

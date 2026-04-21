@@ -18,7 +18,8 @@ const manifest = JSON.parse(fs.readFileSync(path.join(repoRoot, "manifest.json")
 const {
   PLACEHOLDER_TOKEN_REGEX,
   normalizeVisiblePlaceholders,
-  canonicalizePlaceholderToken
+  canonicalizePlaceholderToken,
+  containsLegacyTypedPlaceholder
 } = globalThis.PWM;
 
 function assertNotIncludes(source, needle, message) {
@@ -152,8 +153,14 @@ function testOnlyPwmPlaceholdersRemainCanonical() {
     "API_KEY=[API_KEY_1] PASSWORD=[PASSWORD_2] TOKEN=[TOKEN_1]"
   );
 
-  assert.strictEqual(/\[(?!PWM_)[A-Z][A-Z0-9_]*_\d+\]/.test(normalized), false);
+  assert.strictEqual(containsLegacyTypedPlaceholder(normalized), false);
   assert.ok(normalized.includes(`API_KEY=${canonicalizePlaceholderToken("[API_KEY_1]")}`));
+  assert.strictEqual(
+    PLACEHOLDER_TOKEN_REGEX.test("[NET_1_SUB_2]"),
+    true,
+    "semantic network placeholders should also be treated as canonical placeholders"
+  );
+  PLACEHOLDER_TOKEN_REGEX.lastIndex = 0;
 }
 
 function run() {
