@@ -25,16 +25,22 @@ const NEW_PATTERN_NAMES = [
   "openssh_private_key_block",
   "aws_session_token_assignment",
   "azure_storage_account_key_assignment",
+  "anthropic_api_key",
   "slack_webhook",
   "discord_webhook",
   "gitlab_pat",
   "stripe_secret_key",
+  "stripe_webhook_secret",
   "google_service_account_private_key",
+  "google_oauth_client_secret",
+  "google_refresh_token_assignment",
+  "sendgrid_api_key",
   "authorization_bearer_value",
   "bearer_token",
   "basic_auth_header",
   "azure_servicebus_connection_string",
   "npm_token",
+  "pypi_token",
   "docker_auth_config",
   "cookie_session_token"
 ];
@@ -77,9 +83,29 @@ const NEGATIVE_CASES = [
     expectsNoFindings: true
   },
   {
+    name: "stripe webhook example secret",
+    text: "STRIPE_WEBHOOK_SECRET=whsec_example_placeholder_value",
+    expectsNoFindings: true
+  },
+  {
     name: "google service account private key example block",
     text:
       '{"private_key":"-----BEGIN PRIVATE KEY-----\\nexample-placeholder\\n-----END PRIVATE KEY-----\\n"}',
+    expectsNoFindings: true
+  },
+  {
+    name: "google oauth client secret example",
+    text: "GOOGLE_CLIENT_SECRET=GOCSPX-example-placeholder-secret-value",
+    expectsNoFindings: true
+  },
+  {
+    name: "google refresh token example",
+    text: "refresh_token=1//example-placeholder-refresh-token",
+    expectsNoFindings: true
+  },
+  {
+    name: "sendgrid docs sample",
+    text: "Use SG.examplePlaceholderValue1234.exampleTokenValue5678 in docs only.",
     expectsNoFindings: true
   },
   {
@@ -96,6 +122,11 @@ const NEGATIVE_CASES = [
   {
     name: "npm token placeholder",
     text: "NPM_TOKEN=replace_me",
+    expectsNoFindings: true
+  },
+  {
+    name: "pypi token placeholder",
+    text: "PYPI_TOKEN=replace_me",
     expectsNoFindings: true
   },
   {
@@ -453,13 +484,66 @@ function testPlaceholderValuesDoNotRetriggerDetection() {
   const cases = [
     'SESSION_SECRET="[PWM_1]"',
     'AWS_SECRET_ACCESS_KEY="[PWM_2]"',
-    'DB_PASSWORD="[PWM_3]"'
+    'DB_PASSWORD="[PWM_3]"',
+    'ANTHROPIC_API_KEY="[PWM_4]"',
+    'STRIPE_WEBHOOK_SECRET="[PWM_5]"',
+    'GOOGLE_CLIENT_SECRET="[PWM_6]"',
+    'refresh_token="[PWM_7]"',
+    'SENDGRID_API_KEY="[PWM_8]"',
+    'PYPI_TOKEN="[PWM_9]"'
   ];
 
   for (const text of cases) {
     const findings = detector.scan(text);
     assert.strictEqual(findings.length, 0, `placeholder value should suppress: ${text}`);
   }
+}
+
+function testExpandedDetectorFamiliesMixedBlob() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const text = [
+    "ANTHROPIC_API_KEY=sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWXyz0123456789_abcd",
+    "SENDGRID_API_KEY=SG.ZXhhbXBsZVNlbmRncmQxMjM0NTY3.EHl6QWJjRGVmR2hpSktMbU5vcFFSU1RVVldY",
+    "STRIPE_WEBHOOK_SECRET=whsec_1234567890abcdefABCDEF1234567890",
+    "GOOGLE_CLIENT_SECRET=GOCSPX-abcdefghijklmnopqrstuvwxyz1234567890AB",
+    "refresh_token=1//0gLExampleRefreshTokenValueAbCdEfGhIjKlMnOpQrStUv",
+    "PYPI_TOKEN=[PWM_1]",
+    "Use pypi-AgEIcHlwaS5vcmcCJDEyMzQ1Njc4OTBhYmNkZWYxMjM0NTY3ODlhYmNkZWY for release automation."
+  ].join("\n");
+
+  const findings = detector.scan(text);
+  const result = redactor.redact(text, findings);
+
+  assert.ok(findings.some((finding) => finding.raw.startsWith("sk-ant-")), "anthropic key should be detected");
+  assert.ok(findings.some((finding) => finding.raw.startsWith("SG.")), "sendgrid key should be detected");
+  assert.ok(
+    findings.some((finding) => finding.raw.startsWith("whsec_")),
+    "stripe webhook secret should be detected"
+  );
+  assert.ok(
+    findings.some((finding) => finding.raw.startsWith("GOCSPX-")),
+    "google oauth client secret should be detected"
+  );
+  assert.ok(
+    findings.some((finding) => finding.raw.startsWith("1//")),
+    "google refresh token assignment should be detected"
+  );
+  assert.ok(
+    findings.some((finding) => finding.raw.startsWith("pypi-")),
+    "raw PyPI token should be detected"
+  );
+  assert.ok(result.redactedText.includes("PYPI_TOKEN=[PWM_1]"), "clean placeholder should stay unchanged");
+  assert.ok(
+    !result.redactedText.includes("sk-ant-api03-") &&
+      !result.redactedText.includes("SG.ZXhhbXBs") &&
+      !result.redactedText.includes("whsec_123456") &&
+      !result.redactedText.includes("GOCSPX-") &&
+      !result.redactedText.includes("1//0gL") &&
+      !result.redactedText.includes("pypi-AgEI"),
+    "raw expanded-family secrets should not survive redaction"
+  );
 }
 
 function testCompositePlaceholderAndNaturalLanguageEdgeCaseBlock() {
@@ -660,6 +744,39 @@ function testSuppressionFamilies() {
   }
 }
 
+function testTechnicalPathAndProseFalsePositivesStayVisible() {
+  const detector = new Detector();
+  const cases = [
+    "Path: /home/wayland/Desktop/Development/portable-work-memory/tests/fixtures.json",
+    "See [patterns.js](/home/user/project/shared/patterns.js) and [content.js](/home/user/project/content/content.js).",
+    "Normal changelog: updated package.json, tests/fixtures.json, and typed_interception.test.js",
+    "Use typed_interception.test.js and tests/fixtures.json when reviewing detector coverage.",
+    "Twilio/Mailchimp-style plain hex assignment guesses should stay visible in prose."
+  ];
+
+  for (const text of cases) {
+    const findings = detector.scan(text);
+    assert.strictEqual(findings.length, 0, `technical text should stay visible: ${text}`);
+  }
+}
+
+function testUnsupportedVendorPlainHexAssignmentsStayVisible() {
+  const detector = new Detector();
+  const cases = [
+    "TWILIO_AUTH_TOKEN=abcdef1234567890abcdef1234567890",
+    "MAILCHIMP_API_KEY=0123456789abcdef0123456789abcdef-us1"
+  ];
+
+  for (const text of cases) {
+    const findings = detector.scan(text);
+    assert.strictEqual(
+      findings.length,
+      0,
+      `unsupported vendor plain-hex assignment should not trigger generic detection: ${text}`
+    );
+  }
+}
+
 function testRevealStateLookupUnit() {
   const manager = new PlaceholderManager();
   const placeholder = manager.getPlaceholder("real-session-value-1234567890", "TOKEN");
@@ -767,11 +884,14 @@ function run() {
   testAllowlist();
   testExampleValuesDoNotTrigger();
   testPlaceholderValuesDoNotRetriggerDetection();
+  testExpandedDetectorFamiliesMixedBlob();
   testCompositePlaceholderAndNaturalLanguageEdgeCaseBlock();
   testMixedPlaceholderBlobPreservesKnownPlaceholdersAndRedactsRawLeaks();
   testFinalRegressionBlockKeepsTrailingNaturalLanguagePasswordRedacted();
   testNaturalLanguagePasswordVariants();
   testSuppressionFamilies();
+  testTechnicalPathAndProseFalsePositivesStayVisible();
+  testUnsupportedVendorPlainHexAssignmentsStayVisible();
   testRevealStateLookupUnit();
   testPlaceholderFormatIsGeneric();
   testPublicStateOmitsRawMappings();
