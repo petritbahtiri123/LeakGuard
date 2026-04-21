@@ -21,6 +21,106 @@
   transform: translateY(0);
 }
 
+.pwm-panel {
+  position: fixed;
+  top: 92px;
+  right: 16px;
+  z-index: 2147483639;
+  width: min(292px, calc(100vw - 32px));
+  border: 1px solid rgba(125, 211, 252, 0.24);
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(8, 47, 73, 0.95), rgba(15, 23, 42, 0.96)),
+    rgba(15, 23, 42, 0.96);
+  color: #e0f2fe;
+  box-shadow: 0 24px 48px -26px rgba(2, 6, 23, 0.75);
+  backdrop-filter: blur(14px);
+  font: 13px/1.45 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.pwm-panel.is-collapsed {
+  width: auto;
+}
+
+.pwm-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 14px 10px;
+}
+
+.pwm-panel-brand {
+  min-width: 0;
+}
+
+.pwm-panel-eyebrow {
+  margin: 0 0 4px;
+  color: #7dd3fc;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.pwm-panel-title {
+  margin: 0;
+  color: #f0fdfa;
+  font-size: 17px;
+  line-height: 1.1;
+}
+
+.pwm-panel-toggle {
+  appearance: none;
+  border: 1px solid rgba(125, 211, 252, 0.28);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.52);
+  color: #bae6fd;
+  cursor: pointer;
+  font: inherit;
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+
+.pwm-panel-body {
+  padding: 0 14px 14px;
+}
+
+.pwm-panel-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 0;
+  border-top: 1px solid rgba(125, 211, 252, 0.12);
+}
+
+.pwm-panel-label {
+  color: #7dd3fc;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.pwm-panel-value {
+  color: #ecfeff;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: right;
+}
+
+.pwm-panel-actions {
+  margin-top: 10px;
+}
+
+.pwm-panel-manage {
+  display: block;
+  width: 100%;
+  border-color: rgba(125, 211, 252, 0.28);
+  background: linear-gradient(135deg, rgba(14, 116, 144, 0.88), rgba(8, 145, 178, 0.74));
+}
+
 .pwm-modal-backdrop {
   position: fixed;
   inset: 0;
@@ -130,4 +230,13 @@
 .pwm-secret:focus-visible {
   outline: 2px solid #67e8f9;
   outline-offset: 2px;
+}
+
+@media (max-width: 720px) {
+  .pwm-panel {
+    top: auto;
+    right: 12px;
+    bottom: 74px;
+    width: min(272px, calc(100vw - 24px));
+  }
 }

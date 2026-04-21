@@ -1,4 +1,9 @@
 (function () {
+  if (globalThis.__PWM_CONTENT_BOOTSTRAPPED__) {
+    return;
+  }
+  globalThis.__PWM_CONTENT_BOOTSTRAPPED__ = true;
+
   const {
     Detector,
     PLACEHOLDER_TOKEN_REGEX,
@@ -63,6 +68,12 @@
   let modalOpen = false;
   let lastTypedPromptText = "";
   let suppressInputScanUntil = 0;
+  let statusPanelEl = null;
+  let statusPanelCollapsed = false;
+  let statusPanelProtectionValueEl = null;
+  let statusPanelSiteValueEl = null;
+  let statusPanelComposerValueEl = null;
+  let statusPanelSessionValueEl = null;
   const REVEAL_WINDOW_NAME = "pwm-secure-reveal";
   const PROGRAMMATIC_INPUT_SUPPRESS_MS = 500;
 
@@ -187,6 +198,129 @@
     return badgeEl;
   }
 
+  function openOptionsPage() {
+    return chrome.runtime.sendMessage({
+      type: "PWM_OPEN_OPTIONS_PAGE"
+    });
+  }
+
+  function setStatusPanelCollapsed(collapsed) {
+    const panel = ensureStatusPanel();
+    const toggle = panel.querySelector(".pwm-panel-toggle");
+    const body = panel.querySelector(".pwm-panel-body");
+
+    statusPanelCollapsed = Boolean(collapsed);
+    panel.classList.toggle("is-collapsed", statusPanelCollapsed);
+    body.hidden = statusPanelCollapsed;
+    toggle.setAttribute("aria-expanded", String(!statusPanelCollapsed));
+    toggle.textContent = statusPanelCollapsed ? "Expand" : "Collapse";
+  }
+
+  function ensureStatusPanel() {
+    if (statusPanelEl?.isConnected) {
+      return statusPanelEl;
+    }
+
+    statusPanelEl = document.createElement("aside");
+    statusPanelEl.className = "pwm-panel";
+    statusPanelEl.setAttribute("aria-live", "polite");
+
+    const header = document.createElement("div");
+    header.className = "pwm-panel-header";
+
+    const brandWrap = document.createElement("div");
+    brandWrap.className = "pwm-panel-brand";
+
+    const eyebrow = document.createElement("p");
+    eyebrow.className = "pwm-panel-eyebrow";
+    eyebrow.textContent = "Local-only protection";
+
+    const title = document.createElement("h2");
+    title.className = "pwm-panel-title";
+    title.textContent = "LeakGuard";
+
+    const toggle = document.createElement("button");
+    toggle.className = "pwm-panel-toggle";
+    toggle.type = "button";
+    toggle.addEventListener("click", () => {
+      setStatusPanelCollapsed(!statusPanelCollapsed);
+    });
+
+    brandWrap.append(eyebrow, title);
+    header.append(brandWrap, toggle);
+
+    const body = document.createElement("div");
+    body.className = "pwm-panel-body";
+
+    const makeRow = (labelText) => {
+      const row = document.createElement("div");
+      row.className = "pwm-panel-row";
+
+      const label = document.createElement("span");
+      label.className = "pwm-panel-label";
+      label.textContent = labelText;
+
+      const value = document.createElement("strong");
+      value.className = "pwm-panel-value";
+
+      row.append(label, value);
+      body.appendChild(row);
+      return value;
+    };
+
+    statusPanelProtectionValueEl = makeRow("Protection");
+    statusPanelSiteValueEl = makeRow("Site");
+    statusPanelComposerValueEl = makeRow("Composer");
+    statusPanelSessionValueEl = makeRow("Session");
+
+    const actions = document.createElement("div");
+    actions.className = "pwm-panel-actions";
+
+    const manageBtn = document.createElement("button");
+    manageBtn.className = "pwm-btn pwm-panel-manage";
+    manageBtn.type = "button";
+    manageBtn.textContent = "Manage Sites";
+    manageBtn.addEventListener("click", () => {
+      openOptionsPage().catch(() => {
+        setBadge("LeakGuard settings unavailable");
+        hideBadgeSoon(2200);
+      });
+    });
+
+    actions.appendChild(manageBtn);
+    body.appendChild(actions);
+
+    statusPanelEl.append(header, body);
+    document.documentElement.appendChild(statusPanelEl);
+    setStatusPanelCollapsed(statusPanelCollapsed);
+
+    return statusPanelEl;
+  }
+
+  function updateStatusPanel(snapshot = {}) {
+    ensureStatusPanel();
+
+    statusPanelProtectionValueEl.textContent = "Active";
+    statusPanelSiteValueEl.textContent = location.host || "Protected site";
+
+    if (!snapshot.hasComposer) {
+      statusPanelComposerValueEl.textContent = "Waiting for composer";
+    } else if (snapshot.detectedCount > 0) {
+      statusPanelComposerValueEl.textContent = `${snapshot.detectedCount} sensitive item${
+        snapshot.detectedCount === 1 ? "" : "s"
+      } detected`;
+    } else if (snapshot.placeholderNormalized) {
+      statusPanelComposerValueEl.textContent = "Canonical placeholders ready";
+    } else {
+      statusPanelComposerValueEl.textContent = "No sensitive items detected";
+    }
+
+    const placeholderCount = Number(currentPublicState.placeholderCount || 0);
+    statusPanelSessionValueEl.textContent = `${placeholderCount} placeholder${
+      placeholderCount === 1 ? "" : "s"
+    } active`;
+  }
+
   function setBadge(text) {
     const el = ensureBadge();
 
@@ -234,7 +368,7 @@
     });
 
     if (!response?.ok || !response?.result) {
-      throw new Error(response?.error || "Portable Work Memory could not redact this content.");
+      throw new Error(response?.error || "LeakGuard could not redact this content.");
     }
 
     if (response.state) {
@@ -251,7 +385,7 @@
     });
 
     if (!response?.ok || !response?.requestId) {
-      throw new Error(response?.error || "Portable Work Memory could not open the secure reveal window.");
+      throw new Error(response?.error || "LeakGuard could not open the secure reveal window.");
     }
 
     return response.requestId;
@@ -472,7 +606,7 @@
       modal.tabIndex = -1;
 
       const title = document.createElement("h2");
-      title.textContent = "Sensitive content detected";
+      title.textContent = "LeakGuard detected sensitive content";
 
       const desc = document.createElement("p");
       desc.textContent =
@@ -671,8 +805,8 @@
   async function showRewriteFailure(context, details) {
     const message =
       context === "submit"
-        ? "Portable Work Memory blocked send because it could not verify the rewritten composer content safely."
-        : "Portable Work Memory blocked the action because it could not verify the rewritten composer content safely.";
+        ? "LeakGuard blocked send because it could not verify the rewritten composer content safely."
+        : "LeakGuard blocked the action because it could not verify the rewritten composer content safely.";
 
     setBadge("Rewrite mismatch blocked");
     hideBadgeSoon(3200);
@@ -1289,21 +1423,43 @@
 
   function refreshBadgeFromCurrentInput() {
     const input = findComposer();
-    if (!input) return;
+    if (!input) {
+      updateStatusPanel({
+        hasComposer: false,
+        detectedCount: 0,
+        placeholderNormalized: false
+      });
+      return;
+    }
 
     const text = getInputText(input);
     if (!text || !text.trim()) {
       setBadge("");
+      updateStatusPanel({
+        hasComposer: true,
+        detectedCount: 0,
+        placeholderNormalized: false
+      });
       return;
     }
 
     const analysis = analyzeText(text);
     if (!analysis.findings.length) {
       setBadge("");
+      updateStatusPanel({
+        hasComposer: true,
+        detectedCount: 0,
+        placeholderNormalized: analysis.placeholderNormalized
+      });
       return;
     }
 
     setBadge("Sensitive content detected");
+    updateStatusPanel({
+      hasComposer: true,
+      detectedCount: analysis.findings.length,
+      placeholderNormalized: analysis.placeholderNormalized
+    });
   }
 
   function scheduleInputScan() {
@@ -1365,7 +1521,7 @@
     );
 
     if (!revealWindow) {
-      throw new Error("Portable Work Memory could not open the secure reveal window.");
+      throw new Error("LeakGuard could not open the secure reveal window.");
     }
 
     try {
@@ -1387,7 +1543,7 @@
     span.textContent = placeholder;
     span.tabIndex = 0;
     span.setAttribute("role", "button");
-    span.setAttribute("aria-label", "Redacted sensitive content. Open secure reveal window.");
+    span.setAttribute("aria-label", "LeakGuard redacted sensitive content. Open secure reveal window.");
 
     const activate = (event) => {
       event.preventDefault();
@@ -1439,10 +1595,17 @@
         });
       }
 
-      segments.push({
-        type: "secret",
-        placeholder
-      });
+      if (shouldHydratePlaceholder(placeholder)) {
+        segments.push({
+          type: "secret",
+          placeholder
+        });
+      } else {
+        segments.push({
+          type: "text",
+          value: placeholder
+        });
+      }
 
       lastIndex = match.index + placeholder.length;
     }
@@ -1455,6 +1618,34 @@
     }
 
     return segments.length ? segments : [{ type: "text", value: input }];
+  }
+
+  function placeholderSessionIndex(placeholder) {
+    const pwmMatch = /^\[PWM_(\d+)\]$/.exec(String(placeholder || ""));
+    if (pwmMatch) {
+      return Number(pwmMatch[1]);
+    }
+
+    const semanticMatch = /^\[(?:NET_(\d+)|PUB_HOST_(\d+))(?:_SUB_\d+)*(?:_(?:HOST_\d+|GW|VIP|DNS))?\]$/.exec(
+      String(placeholder || "")
+    );
+
+    if (!semanticMatch) {
+      return null;
+    }
+
+    return Number(semanticMatch[1] || semanticMatch[2] || 0);
+  }
+
+  function shouldHydratePlaceholder(placeholder) {
+    const count = Number(currentPublicState.placeholderCount || 0);
+    const index = placeholderSessionIndex(placeholder);
+
+    if (!count || !Number.isFinite(index)) {
+      return false;
+    }
+
+    return index >= 1 && index <= count;
   }
 
   function hydrateTextNode(node) {
@@ -1592,6 +1783,18 @@
   }
 
   function bindEvents() {
+    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+      if (message?.type === "PWM_CONTENT_PING") {
+        sendResponse({ ok: true });
+        return;
+      }
+
+      if (message?.type === "PWM_REFRESH_STATUS_PANEL") {
+        refreshBadgeFromCurrentInput();
+        sendResponse({ ok: true });
+      }
+    });
+
     document.addEventListener(
       "beforeinput",
       (event) => {
@@ -1629,6 +1832,7 @@
 
   async function boot() {
     await initState();
+    ensureStatusPanel();
     bindEvents();
     installNavigationWatchers();
     startRehydrationObserver();

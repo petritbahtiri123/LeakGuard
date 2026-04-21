@@ -104,6 +104,21 @@ function testContentPublicStateIsMinimized() {
     toPublicStateSource.includes("placeholderCount: publicState.knownPlaceholders.length"),
     "background should expose only the safe placeholder count for content-side UI/debug needs"
   );
+  assertNotIncludes(
+    contentSource,
+    "currentPublicState.sessionId",
+    "content script should not depend on session ids from background public state"
+  );
+  assertNotIncludes(
+    contentSource,
+    "currentPublicState.urlKey",
+    "content script should not depend on url keys from background public state"
+  );
+  assertNotIncludes(
+    contentSource,
+    "currentPublicState.knownPlaceholders",
+    "content script should not depend on placeholder registries from background public state"
+  );
 }
 
 function testRevealNeverInjectsHostDomContainers() {
@@ -126,6 +141,17 @@ function testRevealNeverInjectsHostDomContainers() {
     contentSource,
     "allow-same-origin",
     "host page reveal must not embed extension UI with same-origin iframe permissions"
+  );
+}
+
+function testHostPageHydrationRequiresPlausibleSessionPlaceholders() {
+  assert.ok(
+    contentSource.includes("function shouldHydratePlaceholder"),
+    "content script should gate placeholder hydration on plausible current-session state"
+  );
+  assert.ok(
+    contentSource.includes("currentPublicState.placeholderCount"),
+    "host-page hydration should rely only on safe public placeholder counts"
   );
 }
 
@@ -198,6 +224,7 @@ function run() {
   testSafeRevealUiExists();
   testContentPublicStateIsMinimized();
   testRevealNeverInjectsHostDomContainers();
+  testHostPageHydrationRequiresPlausibleSessionPlaceholders();
   testManifestExposeOnlyRevealUiAssets();
   testPageUiNoLongerLeaksClassificationsOrMaskedFragments();
   testOnlyPwmPlaceholdersRemainCanonical();
