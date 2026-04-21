@@ -8,9 +8,20 @@ require(path.join(repoRoot, "shared/entropy.js"));
 require(path.join(repoRoot, "shared/patterns.js"));
 require(path.join(repoRoot, "shared/detector.js"));
 require(path.join(repoRoot, "shared/placeholders.js"));
+require(path.join(repoRoot, "shared/ipClassification.js"));
+require(path.join(repoRoot, "shared/ipDetection.js"));
+require(path.join(repoRoot, "shared/networkHierarchy.js"));
+require(path.join(repoRoot, "shared/placeholderAllocator.js"));
+require(path.join(repoRoot, "shared/sessionMapStore.js"));
+require(path.join(repoRoot, "shared/transformOutboundPrompt.js"));
 require(path.join(repoRoot, "content/composer_helpers.js"));
 
-const { Detector, normalizeVisiblePlaceholders, ComposerHelpers } = globalThis.PWM;
+const {
+  Detector,
+  normalizeVisiblePlaceholders,
+  buildNetworkUiFindings,
+  ComposerHelpers
+} = globalThis.PWM;
 const {
   spliceSelectionText,
   shouldInterceptBeforeInput,
@@ -61,6 +72,18 @@ function testTypedAssignmentSecretIsCaughtBeforeCommit() {
     "abc123secretvalue",
     "the typed raw secret should be the finding targeted by beforeinput interception"
   );
+}
+
+function testTypedPublicIpUsesSameDecisionFlow() {
+  const currentText = "Allow ";
+  const selection = { start: currentText.length, end: currentText.length };
+  const next = spliceSelectionText(currentText, selection, "8.8.8.8");
+  const findings = buildNetworkUiFindings(next.text, { mode: "hide_public" });
+  const relevant = selectFindingsOverlappingInsertion(findings, selection, "8.8.8.8");
+
+  assert.ok(findings.length > 0, "typed public IP should produce UI findings");
+  assert.ok(relevant.length > 0, "typed public IP should feed the same allow-once/redact modal");
+  assert.strictEqual(relevant[0].raw, "8.8.8.8");
 }
 
 function testPlaceholderNormalizationCanHappenBeforeCommit() {
@@ -139,6 +162,7 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
 function run() {
   testBeforeInputGuardStaysConservative();
   testTypedAssignmentSecretIsCaughtBeforeCommit();
+  testTypedPublicIpUsesSameDecisionFlow();
   testPlaceholderNormalizationCanHappenBeforeCommit();
   testCaretDerivationPrefersOriginalSuffixAnchor();
   testContentScriptBindsBeforeInputAndKeepsFallbackGuard();
