@@ -87,6 +87,15 @@
         /\b(?:sk-(?:proj|live|test|org|svcacct)-[A-Za-z0-9_-]{16,}|sk-[A-Za-z0-9]{32,})\b/g
     },
     {
+      name: "anthropic_api_key",
+      type: "API_KEY",
+      category: "credential",
+      baseScore: 92,
+      suppressionNotes:
+        "Anthropic keys have a stable sk-ant prefix family, which keeps this browser-side detector high-signal without catching generic sk-* strings.",
+      regex: /\bsk-ant-(?:api03-)?[A-Za-z0-9_-]{24,}\b/g
+    },
+    {
       name: "github_pat",
       type: "TOKEN",
       category: "credential",
@@ -154,11 +163,49 @@
       regex: /\bsk_(?:live|test)_[0-9A-Za-z]{16,}\b/g
     },
     {
+      name: "stripe_webhook_secret",
+      type: "SECRET",
+      category: "credential",
+      baseScore: 90,
+      suppressionNotes:
+        "Stripe webhook signing secrets use a dedicated whsec_ prefix, which is much safer than trying to infer webhook secrets from generic assignment names.",
+      regex: /\bwhsec_[0-9A-Za-z]{16,}\b/g
+    },
+    {
       name: "google_api_key",
       type: "API_KEY",
       category: "credential",
       baseScore: 82,
       regex: /\bAIza[0-9A-Za-z\-_]{35}\b/g
+    },
+    {
+      name: "google_oauth_client_secret",
+      type: "SECRET",
+      category: "credential",
+      baseScore: 92,
+      suppressionNotes:
+        "Google OAuth client secrets have a recognizable GOCSPX- prefix, so this stays precise while still relying on shared example suppression.",
+      regex: /\bGOCSPX-[A-Za-z0-9_-]{20,}\b/g
+    },
+    {
+      name: "google_refresh_token_assignment",
+      type: "TOKEN",
+      category: "credential",
+      baseScore: 88,
+      suppressionNotes:
+        "Restrict Google-style refresh tokens to explicit refresh_token assignments so 1//-prefixed prose fragments do not create noise.",
+      regex:
+        /\brefresh[_-]?token\b\s*[:=]\s*(?:"(1\/\/[A-Za-z0-9._-]{16,})"|'(1\/\/[A-Za-z0-9._-]{16,})'|(1\/\/[A-Za-z0-9._-]{16,}))/gi,
+      captureGroups: [1, 2, 3]
+    },
+    {
+      name: "sendgrid_api_key",
+      type: "API_KEY",
+      category: "credential",
+      baseScore: 93,
+      suppressionNotes:
+        "SendGrid API keys use an SG.<segment>.<segment> structure, which is distinctive enough to be worth detecting directly.",
+      regex: /\bSG\.[A-Za-z0-9_-]{16,64}\.[A-Za-z0-9_-]{16,128}\b/g
     },
     {
       name: "json_api_key_field",
@@ -315,6 +362,15 @@
       regex: /\bnpm_[A-Za-z0-9]{36}\b/g
     },
     {
+      name: "pypi_token",
+      type: "TOKEN",
+      category: "credential",
+      baseScore: 91,
+      suppressionNotes:
+        "PyPI API tokens use a dedicated pypi- prefix and long encoded payload, which keeps this detector practical and low-noise.",
+      regex: /\bpypi-[A-Za-z0-9_-]{40,}\b/g
+    },
+    {
       name: "docker_auth_config",
       type: "TOKEN",
       category: "credential",
@@ -362,7 +418,14 @@
     "storage account key",
     "pem",
     "openai",
+    "anthropic",
     "slack",
+    "sendgrid",
+    "stripe webhook",
+    "whsec",
+    "refresh token",
+    "gocspx",
+    "pypi",
     "connection string",
     "conn string",
     "database url",
@@ -446,6 +509,7 @@
     aws_access_key: "AWS_KEY",
     azure_storage_account_key_assignment: "SECRET",
     openai_api_key: "API_KEY",
+    anthropic_api_key: "API_KEY",
     json_api_key_field: "API_KEY",
     json_password_field: "PASSWORD",
     json_token_field: "TOKEN",
@@ -458,12 +522,16 @@
     gitlab_pat: "TOKEN",
     jwt_token: "TOKEN",
     stripe_secret_key: "API_KEY",
+    stripe_webhook_secret: "SECRET",
     natural_language_api_key: "API_KEY",
     natural_language_password: "PASSWORD",
     natural_language_token: "TOKEN",
     bearer_token: "TOKEN",
     google_api_key: "API_KEY",
+    google_oauth_client_secret: "SECRET",
+    google_refresh_token_assignment: "TOKEN",
     google_service_account_private_key: "PRIVATE_KEY",
+    sendgrid_api_key: "API_KEY",
     authorization_bearer_value: "TOKEN",
     basic_auth_header: "TOKEN",
     db_uri: "DB_URI",
@@ -471,6 +539,7 @@
     azure_servicebus_connection_string: "CONNECTION_STRING",
     azure_storage_connection_string: "CONNECTION_STRING",
     npm_token: "TOKEN",
+    pypi_token: "TOKEN",
     docker_auth_config: "TOKEN",
     cookie_session_token: "TOKEN",
     generic_assignment_secret: "SECRET",

@@ -229,6 +229,61 @@
     );
   }
 
+  function getSurroundingPathToken(text, start, end) {
+    const input = String(text || "");
+    let left = Math.max(0, start);
+    let right = Math.max(left, end);
+
+    while (left > 0 && /[A-Za-z0-9._@%+\-~/\\:]/.test(input[left - 1])) {
+      left -= 1;
+    }
+
+    while (right < input.length && /[A-Za-z0-9._@%+\-~/\\:]/.test(input[right])) {
+      right += 1;
+    }
+
+    return input.slice(left, right);
+  }
+
+  function looksLikeFilesystemPath(text, start, end, raw) {
+    const value = String(raw || "");
+    if (!value) return false;
+
+    const token = getSurroundingPathToken(text, start, end) || value;
+    if (!token || /:\/\//.test(token)) return false;
+
+    return (
+      /^(?:\/|~\/|\.{1,2}\/|[A-Za-z]:[\\/])[A-Za-z0-9._@%+\-~\\/]+$/.test(token) ||
+      /^(?:\/)?[A-Za-z0-9._@%+\-~]+(?:\/[A-Za-z0-9._@%+\-~]+){2,}(?:\.[A-Za-z0-9_-]{1,8})?$/.test(
+        token
+      )
+    );
+  }
+
+  function looksLikeUnsupportedVendorHexAssignment(key, value) {
+    const normalizedKey = String(key || "").toLowerCase();
+    const normalizedValue = String(value || "");
+
+    if (!/(twilio|mailchimp)/.test(normalizedKey)) return false;
+
+    return /^(?:[a-f0-9]{24,}|[a-f0-9]{24,}-[a-z0-9]{2,6})$/i.test(normalizedValue);
+  }
+
+  function hasUnsupportedVendorHexAssignmentContext(text, start, raw) {
+    const input = String(text || "");
+    const value = String(raw || "");
+    const lineStart = input.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
+    const lineEndIndex = input.indexOf("\n", start);
+    const lineEnd = lineEndIndex >= 0 ? lineEndIndex : input.length;
+    const line = input.slice(lineStart, lineEnd);
+    const beforeRaw = line.slice(0, Math.max(0, start - lineStart));
+    const keyMatch = /([A-Za-z_][A-Za-z0-9_.-]{0,80})\s*[:=]\s*$/.exec(beforeRaw);
+
+    if (!keyMatch) return false;
+
+    return looksLikeUnsupportedVendorHexAssignment(keyMatch[1], value);
+  }
+
   function extractPatternValue(match, pattern) {
     if (!pattern.captureGroups || !pattern.captureGroups.length) {
       return {
@@ -505,6 +560,10 @@
           continue;
         }
 
+        if (looksLikeUnsupportedVendorHexAssignment(normalizedKey, normalized)) {
+          continue;
+        }
+
         if (this.shouldSuppress({ raw: normalized, text, start, end })) continue;
 
         let score = 60;
@@ -562,6 +621,8 @@
         if (/^[A-Z]{2,10}[a-z]+$/.test(raw)) continue;
         if (/^(https?|wss?):\/\//i.test(raw)) continue;
         if (/^\d+$/.test(raw)) continue;
+        if (looksLikeFilesystemPath(text, start, end, raw)) continue;
+        if (hasUnsupportedVendorHexAssignmentContext(text, start, raw)) continue;
         if (this.shouldSuppress({ raw, text, start, end })) continue;
 
         const entropy = calculateEntropy(raw);

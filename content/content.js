@@ -11,9 +11,12 @@
     isTextArea,
     isContentEditable,
     getInputText,
-    setInputTextPlain,
     getSelectionOffsets,
     spliceSelectionText,
+    shouldInterceptBeforeInput,
+    getBeforeInputData,
+    selectFindingsOverlappingInsertion,
+    deriveRewriteCaretOffset,
     setInputText,
     forceRewriteInputText
   } = ComposerHelpers;
@@ -60,7 +63,9 @@
   let rehydrateObserver = null;
   let modalOpen = false;
   let lastTypedPromptText = "";
+  let suppressInputScanUntil = 0;
   const REVEAL_WINDOW_NAME = "pwm-secure-reveal";
+  const PROGRAMMATIC_INPUT_SUPPRESS_MS = 500;
 
   function isDebugEnabled() {
     try {
@@ -137,6 +142,14 @@
     console.groupEnd();
   }
 
+  function consumeInterceptionEvent(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (typeof event.stopImmediatePropagation === "function") {
+      event.stopImmediatePropagation();
+    }
+  }
+
   function buildComposerWritePlan(input, text) {
     const canonical = normalizeComposerText(normalizeVisiblePlaceholders(text));
     return {
@@ -144,6 +157,24 @@
       writeText: canonical,
       acceptableTexts: [canonical]
     };
+  }
+
+  function normalizeVerificationText(text) {
+    return normalizeEditorInnerText(normalizeComposerText(normalizeVisiblePlaceholders(text))).replace(
+      /\n+$/g,
+      ""
+    );
+  }
+
+  function matchesComposerPlan(plan, actualText) {
+    if (plan.acceptableTexts.includes(actualText)) {
+      return true;
+    }
+
+    const normalizedActual = normalizeVerificationText(actualText);
+    return plan.acceptableTexts.some(
+      (candidate) => normalizeVerificationText(candidate) === normalizedActual
+    );
   }
 
   function ensureBadge() {
@@ -467,14 +498,45 @@
 
       const finish = (result) => {
         window.removeEventListener("keydown", onKeyDown, true);
+        window.removeEventListener("keypress", onKeyPassthrough, true);
+        window.removeEventListener("keyup", onKeyPassthrough, true);
         closeModal(backdrop);
         resolve(result);
       };
 
+      const getFocusedAction = () => {
+        const active = document.activeElement;
+        if (active === redactBtn) return "redact";
+        if (active === allowBtn) return "allow";
+        if (active === cancelBtn) return "cancel";
+        if (modal.contains(active)) return "redact";
+        return null;
+      };
+
+      const consumeModalKeyEvent = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (typeof event.stopImmediatePropagation === "function") {
+          event.stopImmediatePropagation();
+        }
+      };
+
       const onKeyDown = (event) => {
         if (event.key === "Escape") {
-          event.preventDefault();
+          consumeModalKeyEvent(event);
           finish({ action: "cancel" });
+          return;
+        }
+
+        if (event.key === "Enter" || event.key === " ") {
+          consumeModalKeyEvent(event);
+          finish({ action: getFocusedAction() || "redact" });
+        }
+      };
+
+      const onKeyPassthrough = (event) => {
+        if (event.key === "Escape" || event.key === "Enter" || event.key === " ") {
+          consumeModalKeyEvent(event);
         }
       };
 
@@ -494,6 +556,8 @@
       document.documentElement.appendChild(backdrop);
 
       window.addEventListener("keydown", onKeyDown, true);
+      window.addEventListener("keypress", onKeyPassthrough, true);
+      window.addEventListener("keyup", onKeyPassthrough, true);
       redactBtn.focus();
     });
   }
@@ -583,6 +647,19 @@
     return previous;
   }
 
+  function suppressFollowupInputScan() {
+    suppressInputScanUntil = Date.now() + PROGRAMMATIC_INPUT_SUPPRESS_MS;
+  }
+
+  function isProgrammaticInputScanSuppressed() {
+    if (Date.now() >= suppressInputScanUntil) {
+      suppressInputScanUntil = 0;
+      return false;
+    }
+
+    return true;
+  }
+
   async function showRewriteFailure(context, details) {
     const message =
       context === "submit"
@@ -606,15 +683,16 @@
     const expected = plan.canonical;
     const writeText = plan.writeText;
 
-    setInputTextPlain(input, writeText, {
+    suppressFollowupInputScan();
+    setInputText(input, writeText, {
       caretOffset: options.caretOffset
     });
-    const actualAfterNative = await readStableComposerText(input);
-    debugLogSnapshot("rewrite:native-rewrite", input, expected, writeText);
+    const actualAfterPrimary = await readStableComposerText(input);
+    debugLogSnapshot("rewrite:primary-rewrite", input, expected, writeText);
 
-    let actual = actualAfterNative;
-    if (plan.acceptableTexts.includes(actual)) {
-      return { ok: true, actual, strategy: "native-rewrite" };
+    let actual = actualAfterPrimary;
+    if (matchesComposerPlan(plan, actual)) {
+      return { ok: true, actual, strategy: "primary-rewrite" };
     }
 
     forceRewriteInputText(input, writeText, {
@@ -623,7 +701,7 @@
     actual = await readStableComposerText(input);
     debugLogSnapshot("rewrite:html-fallback", input, expected, writeText);
 
-    if (plan.acceptableTexts.includes(actual)) {
+    if (matchesComposerPlan(plan, actual)) {
       return { ok: true, actual, strategy: "html-fallback" };
     }
 
@@ -644,7 +722,7 @@
     const plan = buildComposerWritePlan(input, expectedText);
     const actual = await readStableComposerText(input, 2);
     debugLogSnapshot("pre-submit-check", input, plan.canonical, plan.writeText);
-    return plan.acceptableTexts.includes(actual);
+    return matchesComposerPlan(plan, actual);
   }
 
   function findSendButton(contextEl) {
@@ -692,6 +770,136 @@
     return true;
   }
 
+  async function applyTypedInterceptionRewrite(
+    input,
+    expectedText,
+    originalText,
+    selection,
+    context
+  ) {
+    const restoreCaretOffset = Math.max(0, Number(selection?.end) || 0);
+    const caretOffset = deriveRewriteCaretOffset(
+      expectedText,
+      normalizeComposerText(originalText).slice(restoreCaretOffset)
+    );
+    const applied = await applyComposerText(input, expectedText, {
+      caretOffset,
+      restoreText: originalText,
+      restoreCaretOffset
+    });
+
+    if (!applied.ok) {
+      await showRewriteFailure(
+        context,
+        collectFailureDetails(input, expectedText, applied.actual, context)
+      );
+      refreshBadgeFromCurrentInput();
+      return false;
+    }
+
+    if (!(await ensureExactComposerState(input, expectedText))) {
+      await showRewriteFailure(
+        context,
+        collectFailureDetails(input, expectedText, getInputText(input), context)
+      );
+      refreshBadgeFromCurrentInput();
+      return false;
+    }
+
+    return true;
+  }
+
+  async function maybeHandleBeforeInput(event) {
+    if (modalOpen || !shouldInterceptBeforeInput(event)) return;
+
+    const input = findComposer(event.target);
+    if (!input) return;
+
+    const insertedText = getBeforeInputData(event);
+    if (!insertedText) return;
+
+    const originalText = getInputText(input);
+    const selection = getSelectionOffsets(input);
+    const next = spliceSelectionText(originalText, selection, insertedText);
+    const currentAnalysis = analyzeText(originalText);
+    const nextAnalysis = analyzeText(next.text);
+    const relevantFindings = selectFindingsOverlappingInsertion(
+      nextAnalysis.findings,
+      selection,
+      insertedText
+    );
+    const placeholderNormalizationChanged =
+      nextAnalysis.placeholderNormalized &&
+      nextAnalysis.normalizedText !== next.text &&
+      (normalizeVisiblePlaceholders(insertedText) !== insertedText ||
+        nextAnalysis.normalizedText !== currentAnalysis.normalizedText);
+
+    if (!relevantFindings.length && !placeholderNormalizationChanged) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (!relevantFindings.length) {
+      const ok = await applyTypedInterceptionRewrite(
+        input,
+        nextAnalysis.normalizedText,
+        originalText,
+        selection,
+        "input"
+      );
+
+      if (!ok) return;
+
+      lastTypedPromptText = nextAnalysis.normalizedText;
+      setBadge("Placeholders normalized");
+      hideBadgeSoon();
+      refreshBadgeFromCurrentInput();
+      return;
+    }
+
+    const decision = await showDecisionModal(relevantFindings, "input");
+    if (decision.action === "cancel") {
+      refreshBadgeFromCurrentInput();
+      return;
+    }
+
+    if (decision.action === "allow") {
+      const ok = await applyTypedInterceptionRewrite(
+        input,
+        nextAnalysis.normalizedText,
+        originalText,
+        selection,
+        "input"
+      );
+
+      if (!ok) return;
+
+      lastTypedPromptText = nextAnalysis.normalizedText;
+      setBadge("Redaction skipped once");
+      hideBadgeSoon();
+      refreshBadgeFromCurrentInput();
+      return;
+    }
+
+    const result = await requestRedaction(nextAnalysis.normalizedText, relevantFindings);
+    const ok = await applyTypedInterceptionRewrite(
+      input,
+      result.redactedText,
+      originalText,
+      selection,
+      "input"
+    );
+
+    if (!ok) return;
+
+    lastTypedPromptText = result.redactedText;
+    setBadge("Content redacted");
+    hideBadgeSoon();
+    refreshBadgeFromCurrentInput();
+  }
+
   async function maybeHandlePaste(event) {
     if (modalOpen || event.defaultPrevented) return;
 
@@ -710,7 +918,7 @@
     const selection = getSelectionOffsets(input);
 
     if (!analysis.findings.length) {
-      event.preventDefault();
+      consumeInterceptionEvent(event);
 
       const ok = await applyPasteDecision(
         input,
@@ -728,7 +936,7 @@
       return;
     }
 
-    event.preventDefault();
+    consumeInterceptionEvent(event);
 
     const decision = await showDecisionModal(analysis.findings, "paste");
     if (decision.action === "cancel") return;
@@ -1073,8 +1281,15 @@
   }
 
   function scheduleInputScan() {
+    if (isProgrammaticInputScanSuppressed()) {
+      return;
+    }
+
     window.clearTimeout(inputScanTimer);
     inputScanTimer = window.setTimeout(() => {
+      if (isProgrammaticInputScanSuppressed()) {
+        return;
+      }
       refreshBadgeFromCurrentInput();
       maybeHandleTypedSecrets().catch(console.error);
     }, 220);
@@ -1351,6 +1566,14 @@
   }
 
   function bindEvents() {
+    document.addEventListener(
+      "beforeinput",
+      (event) => {
+        maybeHandleBeforeInput(event).catch(console.error);
+      },
+      true
+    );
+
     document.addEventListener(
       "paste",
       (event) => {
