@@ -1,0 +1,96 @@
+# LeakGuard manual smoke block
+# Paste this whole block into a protected composer.
+#
+# Expected redaction:
+# - tokens, API keys, passwords, connection strings, Docker auth, cookie auth, bearer/basic auth
+# - public IPs and public subnets
+#
+# Expected to stay visible:
+# - private IPs/subnets, loopback, link-local, default route, wildcard mask
+# - ordinary URLs, regions, versions, file paths, literal [PWM_n] placeholders
+# - obvious docs placeholders like replace_me
+
+const leakGuardManualSmokeBlock = {
+  secrets: {
+    openaiApiKey: "sk-proj-A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0",
+    anthropicApiKey: "sk-ant-api03-AlphaBetaGammaDelta1234567890uvwx",
+    stripeSecretKey: "sk_live_51NqR7ZaBcDeFgHiJkLmNoPqRsTuVwXy123456",
+    stripeWebhookSecret: "whsec_AbCdEfGhIjKlMnOpQrStUvWxYz123456",
+    githubToken: "ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3",
+    githubPat: "github_pat_AbCdEfGhIjKlMnOpQrStUvWxYz1234567890",
+    gitlabPat: "glpat-1Ab2Cd3Ef4Gh5Ij6Kl7Mn8Op",
+    slackBotToken: "xoxb-123456789012-123456789012-AbCdEfGhIjKlMnOpQr",
+    slackWebhook:
+      "https://hooks.slack.com/services/T8NQ7M2LP/B8NQ7M2LP/AbCdEfGhIjKlMnOpQrStUvWx",
+    discordWebhook:
+      "https://discord.com/api/webhooks/123456789012345678/AbCdEfGhIjKlMnOpQrStUvWxYz0123456789",
+    sendgridApiKey:
+      "SG.QWxwaGFCZXRhR2FtbWExMjM0NTY3ODkw.QmV0YUdhbW1hRGVsdGFFcHNpbG9uMTIzNDU2Nzg5MEFCQ0RFRg",
+    googleApiKey: "AIzaSyD4nQ7Lp2Vm5Xc8Rt1Bg4Hj7Km0Np3Qs6Tu9W",
+    googleClientSecret: "GOCSPX-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789",
+    googleRefreshToken: "1//0xA1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6",
+    npmToken: "npm_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8",
+    pypiToken: "pypi-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-TOKENBLOCK",
+    jwt:
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJsZWFrZ3VhcmQiLCJzdWIiOiJzeW50aGV0aWMtdGVzdCIsInJvbGUiOiJhZG1pbiJ9.c2lnbmF0dXJlLXN5bnRoZXRpYy12YWx1ZS0xMjM0NTY3ODkw",
+    bearerToken: "Bearer mF_9.B5f-4.1JqM2LmNoP3QrStUvWx",
+    basicAuth: "Authorization: Basic bGVha2d1YXJkLXVuaXQ6U3VwZXJTZWNyZXQxMjMh",
+    cookieAuth:
+      "Cookie: sessionid=ZXlKaGJHY2lPaUpJVXpJMU5pSjkuYWJjMTIzZGVmNDU2Z2hpNzg5amtsbW5vcA",
+    dockerAuth:
+      '{"auths":{"https://index.docker.io/v1/":{"auth":"bGVha2d1YXJkLXVuaXQ6U3VwZXJTZWNyZXQxMjMh"}}}'
+  },
+  config: {
+    databaseUrl: "postgres://admin:UltraDbPass7788!@db.prod.internal:5432/app",
+    mysqlUrl: "mysql://reporter:RoutePass8899!@mysql.ops.internal:3306/analytics",
+    azureWebJobsStorage:
+      "DefaultEndpointsProtocol=https;AccountName=vaultstorage001;AccountKey=MDEyMzQ1Njc4OUFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaYWJjZGVmZ2hpamtsbW4=;EndpointSuffix=core.windows.net",
+    azureServiceBus:
+      "Endpoint=sb://prod-ingest.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=QWxwaGFCZXRhR2FtbWExMjM0NTY3ODkwQUJDREVGR0g=;EntityPath=events",
+    jsonBlob:
+      '{"apiKey":"sk-proj-Z9y8X7w6V5u4T3s2R1q0P9o8N7m6L5k4J3h2G1f0","dbPassword":"VaultHorse!2026!Unit","accessToken":"ghu_AbCdEfGhIjKlMnOpQrStUv","clientSecret":"TopSecretValue9988!"}'
+  },
+  prose: [
+    "my password is HarborLock4455!",
+    "my token is ghr_AbCdEfGhIjKlMnOpQrStUvWx",
+    'Password → "QuotedLock5566!"',
+    'Key → "sk-proj-Q1w2E3r4T5y6U7i8O9p0A1s2D3f4G5h6J7k8L9m0"',
+    'secret "VaultAlias9988!"',
+    "Now mask this real value: PortBridge6677!"
+  ].join("\n"),
+  network: {
+    publicGateway: "45.67.89.1",
+    publicHost: "45.67.89.10",
+    publicDns: "9.9.9.9",
+    publicCidr: "45.67.89.0/24",
+    publicChildCidr: "45.67.89.128/25",
+    privateHost: "192.168.1.10",
+    privateCidr: "10.0.0.0/8",
+    loopback: "127.0.0.1",
+    linkLocal: "169.254.10.20",
+    defaultRoute: "0.0.0.0/0",
+    wildcardMask: "0.0.0.255",
+    invalidHost: "999.999.999.999"
+  },
+  safeValues: {
+    publicUrl: "https://openai.com",
+    region: "eu-central-1",
+    build: "v1.2.3-beta",
+    placeholderDoc: "[PWM_42]",
+    docsToken: "replace_me",
+    localPath: "/home/wayland/Desktop/Development/portable-work-memory/tests/fixtures.json"
+  },
+  shell: `
+OPENAI_API_KEY=sk-proj-A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0
+GITHUB_TOKEN=ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3
+DB_PASSWORD=HarborLock4455!
+DATABASE_URL=postgres://admin:UltraDbPass7788!@db.prod.internal:5432/app
+PUBLIC_RESOLVER=9.9.9.9
+WAN_CIDR=45.67.89.0/24
+LAN_HOST=192.168.1.10
+DEFAULT_ROUTE=0.0.0.0/0
+DOCS_TOKEN=replace_me
+  `
+};
+
+console.log(JSON.stringify(leakGuardManualSmokeBlock, null, 2));
