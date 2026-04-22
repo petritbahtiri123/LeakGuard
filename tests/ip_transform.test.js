@@ -234,6 +234,26 @@ function testMixedSecretAndIpBlockStillRedactsOnFirstPass() {
   assert.strictEqual(output.includes("8.8.8.8"), false);
 }
 
+function testKnownPlaceholderSecretReusesSameMappingAcrossMixedPrompt() {
+  const manager = new PlaceholderManager();
+  manager.getPlaceholder("abc123secret");
+
+  const text = ["API_KEY=[PWM_1]", "mirror=abc123secret"].join("\n");
+  const output = transform(text, { manager }).result.redactedText;
+
+  assert.strictEqual(output, ["API_KEY=[PWM_1]", "mirror=[PWM_1]"].join("\n"));
+}
+
+function testDetectedSecretAlsoRedactsLaterDuplicateOccurrences() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const text = ["API_KEY=abc123secret", "mirror=abc123secret"].join("\n");
+  const findings = detector.scan(text);
+  const output = transform(text, { manager, findings }).result.redactedText;
+
+  assert.strictEqual(output, ["API_KEY=[PWM_1]", "mirror=[PWM_1]"].join("\n"));
+}
+
 function testSyntheticMixedNetworkAndSecretBlock() {
   const detector = new Detector();
   const manager = new PlaceholderManager();
@@ -292,6 +312,8 @@ function run() {
   testModes();
   testMixedTextCases();
   testMixedSecretAndIpBlockStillRedactsOnFirstPass();
+  testKnownPlaceholderSecretReusesSameMappingAcrossMixedPrompt();
+  testDetectedSecretAlsoRedactsLaterDuplicateOccurrences();
   testSyntheticMixedNetworkAndSecretBlock();
   testNoFalseCorruption();
   testSessionResetBehavior();

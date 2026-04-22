@@ -405,6 +405,17 @@
       return this.secretByFingerprint.get(fingerprint) || null;
     }
 
+    getKnownSecretEntries() {
+      return [...this.secretByFingerprint.entries()]
+        .map(([fingerprint, raw]) => ({
+          fingerprint,
+          raw: String(raw || ""),
+          placeholder: this.placeholderByFingerprint.get(fingerprint) || null
+        }))
+        .filter((entry) => entry.raw && isPwmPlaceholder(entry.placeholder))
+        .sort((left, right) => right.raw.length - left.raw.length);
+    }
+
     getObjectByOriginal(original) {
       return this.objectByOriginal.get(String(original || "")) || null;
     }
