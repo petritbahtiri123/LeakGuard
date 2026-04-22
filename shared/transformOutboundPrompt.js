@@ -65,6 +65,62 @@
     return output;
   }
 
+  function overlapsAnyRange(candidate, ranges) {
+    return ranges.some((range) => candidate.start < range.end && candidate.end > range.start);
+  }
+
+  function collectKnownSecretReplacements(text, manager, occupiedRanges = []) {
+    const replacements = [];
+    const regex = new RegExp(root.PWM.PLACEHOLDER_TOKEN_REGEX.source, "g");
+    const knownEntries =
+      typeof manager?.getKnownSecretEntries === "function" ? manager.getKnownSecretEntries() : [];
+    let lastIndex = 0;
+    let match;
+
+    function scanPlainTextSegment(segmentText, offset) {
+      for (const entry of knownEntries) {
+        if (!entry.raw) continue;
+
+        let searchIndex = 0;
+        while (searchIndex < segmentText.length) {
+          const relativeIndex = segmentText.indexOf(entry.raw, searchIndex);
+          if (relativeIndex === -1) break;
+
+          const start = offset + relativeIndex;
+          const end = start + entry.raw.length;
+          const candidate = {
+            start,
+            end,
+            raw: entry.raw,
+            placeholder: entry.placeholder,
+            type: "SECRET",
+            category: "secret"
+          };
+
+          if (!overlapsAnyRange(candidate, occupiedRanges) && !overlapsAnyRange(candidate, replacements)) {
+            replacements.push(candidate);
+            occupiedRanges.push({ start, end });
+          }
+
+          searchIndex = relativeIndex + Math.max(1, entry.raw.length);
+        }
+      }
+    }
+
+    while ((match = regex.exec(text)) !== null) {
+      if (match.index > lastIndex) {
+        scanPlainTextSegment(text.slice(lastIndex, match.index), lastIndex);
+      }
+      lastIndex = match.index + match[0].length;
+    }
+
+    if (lastIndex < text.length) {
+      scanPlainTextSegment(text.slice(lastIndex), lastIndex);
+    }
+
+    return replacements;
+  }
+
   function buildNetworkReplacements(text, manager, mode) {
     const normalizedMode = normalizeTransformMode(mode);
     const detected = detectIpCandidates(text).filter((candidate) =>
@@ -125,19 +181,27 @@
     const secretFindings = [...(options.findings || [])];
     const mode = normalizeTransformMode(options.mode);
     const secretReplacements = [];
+    const occupiedRanges = [];
 
     for (const finding of secretFindings.sort((left, right) => left.start - right.start)) {
-      secretReplacements.push({
+      const replacement = {
         ...finding,
         placeholder: manager.getPlaceholder(
           finding.raw,
           finding.type || finding.placeholderType || "SECRET"
         )
-      });
+      };
+      secretReplacements.push(replacement);
+      occupiedRanges.push({ start: replacement.start, end: replacement.end });
     }
 
+    const reusedSecretReplacements = collectKnownSecretReplacements(
+      normalizedText,
+      manager,
+      occupiedRanges
+    );
     const networkReplacements = buildNetworkReplacements(normalizedText, manager, mode);
-    const replacements = [...secretReplacements, ...networkReplacements].sort(
+    const replacements = [...secretReplacements, ...reusedSecretReplacements, ...networkReplacements].sort(
       (left, right) => left.start - right.start
     );
 
