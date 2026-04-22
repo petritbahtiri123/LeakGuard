@@ -24,6 +24,7 @@ const fixtures = JSON.parse(
 const NEW_PATTERN_NAMES = [
   "openssh_private_key_block",
   "aws_session_token_assignment",
+  "aws_access_key_id_assignment",
   "azure_storage_account_key_assignment",
   "anthropic_api_key",
   "slack_webhook",
@@ -652,6 +653,54 @@ function testExplicitAssignmentsStillRedactWhenAdjacentLinesContainExampleLikeVa
     result.redactedText.includes("SuperSecret123!"),
     false,
     "raw password assignment should not survive redaction"
+  );
+}
+
+function testAwsSecretAssignmentWithExamplePrefixStillFailsClosedButDocsPlaceholderStaysVisible() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const text = [
+    "AWS_ACCESS_KEY_ID=AKIAEXAMPLE12345678",
+    "AWS_SECRET_ACCESS_KEY=exampleSecretValue123456789",
+    "mirror_secret=exampleSecretValue123456789",
+    "private_ip=10.0.0.5",
+    "url=https://example.com"
+  ].join("\n");
+
+  const findings = detector.scan(text);
+  const result = redactor.redact(text, findings);
+  const lines = result.redactedText.split("\n");
+  const placeholders = getPlaceholders(result.redactedText);
+  const unique = [...new Set(placeholders)];
+
+  assert.ok(
+    findings.some(
+      (finding) => finding.type === "AWS_KEY" && finding.raw === "AKIAEXAMPLE12345678"
+    ),
+    "explicit AWS access key id assignments should still detect key-shaped values"
+  );
+  assert.ok(
+    findings.some(
+      (finding) =>
+        finding.type === "AWS_SECRET_KEY" &&
+        finding.raw === "exampleSecretValue123456789"
+    ),
+    "explicit AWS secret access key assignments should still detect structured values with an example prefix"
+  );
+  assert.strictEqual(placeholders.length, 3, "expected all explicit AWS secrets and duplicate mirrors to be replaced");
+  assert.strictEqual(unique.length, 2, "AWS access key and AWS secret should map to distinct placeholders");
+  assert.ok(/^AWS_ACCESS_KEY_ID=\[PWM_\d+\]$/.test(lines[0]));
+  assert.ok(/^AWS_SECRET_ACCESS_KEY=\[PWM_\d+\]$/.test(lines[1]));
+  assert.strictEqual(lines[2], `mirror_secret=${lines[1].split("=")[1]}`);
+  assert.strictEqual(lines[3], "private_ip=10.0.0.5");
+  assert.strictEqual(lines[4], "url=https://example.com");
+
+  const docsFindings = detector.scan("AWS_SECRET_ACCESS_KEY=example-secret-placeholder-value");
+  assert.strictEqual(
+    docsFindings.length,
+    0,
+    "obvious docs placeholders for AWS secret access keys should stay suppressed"
   );
 }
 
@@ -1511,6 +1560,7 @@ function run() {
   testAllowlist();
   testExampleValuesDoNotTrigger();
   testExplicitAssignmentsStillRedactWhenAdjacentLinesContainExampleLikeValues();
+  testAwsSecretAssignmentWithExamplePrefixStillFailsClosedButDocsPlaceholderStaysVisible();
   testConcatenatedPlaceholderAssignmentsDoNotCreateCompositeFalsePositives();
   testUserStressEdgeCasesRedactSecretsButKeepSafeLiterals();
   testInlineStructuredAssignmentsStillMatchAfterEarlierInlineAssignments();

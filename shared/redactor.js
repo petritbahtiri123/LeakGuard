@@ -1,7 +1,64 @@
 (function () {
   const root = typeof globalThis !== "undefined" ? globalThis : window;
   root.PWM = root.PWM || {};
-  const { normalizeVisiblePlaceholders } = root.PWM;
+  const { normalizeVisiblePlaceholders, PLACEHOLDER_TOKEN_REGEX } = root.PWM;
+
+  function overlapsAnyRange(candidate, ranges) {
+    return ranges.some((range) => candidate.start < range.end && candidate.end > range.start);
+  }
+
+  function collectKnownSecretReplacements(text, manager, occupiedRanges = []) {
+    const replacements = [];
+    const regex = new RegExp(PLACEHOLDER_TOKEN_REGEX.source, "g");
+    const knownEntries =
+      typeof manager?.getKnownSecretEntries === "function" ? manager.getKnownSecretEntries() : [];
+    let lastIndex = 0;
+    let match;
+
+    function scanPlainTextSegment(segmentText, offset) {
+      for (const entry of knownEntries) {
+        if (!entry.raw) continue;
+
+        let searchIndex = 0;
+        while (searchIndex < segmentText.length) {
+          const relativeIndex = segmentText.indexOf(entry.raw, searchIndex);
+          if (relativeIndex === -1) break;
+
+          const start = offset + relativeIndex;
+          const end = start + entry.raw.length;
+          const candidate = {
+            id: `reuse_${start}_${end}`,
+            raw: entry.raw,
+            start,
+            end,
+            type: "SECRET",
+            category: "credential",
+            placeholder: entry.placeholder
+          };
+
+          if (!overlapsAnyRange(candidate, occupiedRanges) && !overlapsAnyRange(candidate, replacements)) {
+            replacements.push(candidate);
+            occupiedRanges.push({ start, end });
+          }
+
+          searchIndex = relativeIndex + Math.max(1, entry.raw.length);
+        }
+      }
+    }
+
+    while ((match = regex.exec(text)) !== null) {
+      if (match.index > lastIndex) {
+        scanPlainTextSegment(text.slice(lastIndex, match.index), lastIndex);
+      }
+      lastIndex = match.index + match[0].length;
+    }
+
+    if (lastIndex < text.length) {
+      scanPlainTextSegment(text.slice(lastIndex), lastIndex);
+    }
+
+    return replacements;
+  }
 
   class Redactor {
     constructor(manager) {
@@ -14,7 +71,6 @@
         this.manager.trackKnownPlaceholdersFromText(input);
       }
       const ordered = [...(findings || [])].sort((a, b) => a.start - b.start);
-      const sorted = [...ordered].sort((a, b) => b.start - a.start);
       const replacements = [];
       let output = input;
       const placeholderById = new Map();
@@ -28,9 +84,15 @@
         placeholderById.set(finding.id, placeholder);
       }
 
+      const occupiedRanges = ordered.map((finding) => ({ start: finding.start, end: finding.end }));
+      const reused = collectKnownSecretReplacements(input, this.manager, occupiedRanges);
+      const combined = [...ordered, ...reused];
+      const sorted = [...combined].sort((a, b) => b.start - a.start);
+
       for (const finding of sorted) {
         const placeholder =
           placeholderById.get(finding.id) ||
+          finding.placeholder ||
           this.manager.getPlaceholder(
             finding.raw,
             finding.type || finding.placeholderType || "SECRET"

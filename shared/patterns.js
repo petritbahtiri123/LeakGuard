@@ -61,6 +61,17 @@
       captureGroups: [1, 2, 3]
     },
     {
+      name: "aws_access_key_id_assignment",
+      type: "AWS_KEY",
+      category: "credential",
+      baseScore: 94,
+      suppressionNotes:
+        "Match explicit AWS_ACCESS_KEY_ID assignments so key-shaped values still redact even when they do not satisfy the standalone AKIA length heuristic.",
+      regex:
+        /\bAWS_ACCESS_KEY_ID\b\s*[:=]\s*(?:"([A-Z0-9]{12,32})"|'([A-Z0-9]{12,32})'|([A-Z0-9]{12,32}))\b/g,
+      captureGroups: [1, 2, 3]
+    },
+    {
       name: "aws_access_key",
       type: "AWS_KEY",
       category: "credential",
