@@ -44,6 +44,8 @@ const NEW_PATTERN_NAMES = [
   "pypi_token",
   "docker_auth_config",
   "cookie_session_token",
+  "query_param_api_key",
+  "query_param_token",
   "natural_language_openai_key",
   "labelled_password_value",
   "labelled_openai_key_value",
