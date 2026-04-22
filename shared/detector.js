@@ -181,7 +181,20 @@
   }
 
   function shouldFailClosedDespiteExample(raw, { patternName, key, placeholderType, source } = {}) {
+    const normalizedKey = String(key || "").toLowerCase();
+    const isAwsSecretAccessKeyAssignment =
+      source === "assignment" &&
+      /(?:^|[_\-.])aws[_-]?secret[_-]?access[_-]?key$/.test(normalizedKey);
+
     if (containsTemplateMarker(raw)) {
+      if (
+        isAwsSecretAccessKeyAssignment &&
+        /^(?:example|sample|dummy)[A-Z0-9]/.test(String(raw || "")) &&
+        /[A-Z]/.test(String(raw || "")) &&
+        /\d/.test(String(raw || ""))
+      ) {
+        return true;
+      }
       return false;
     }
 
