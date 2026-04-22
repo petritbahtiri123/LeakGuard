@@ -249,7 +249,8 @@
       baseScore: 76,
       suppressionNotes:
         "Catch JSON-style token fields, including broken placeholder prefixes before the next quote boundary.",
-      regex: /"(?:token|accessToken|access_token|sessionToken|session_token)"\s*:\s*"([^"\r\n]{8,})"/gi,
+      regex:
+        /"(?:token|accessToken|access_token|sessionToken|session_token|refreshToken|refresh_token|idToken|id_token)"\s*:\s*"([^"\r\n]{8,})"/gi,
       captureGroups: [1]
     },
     {
@@ -459,6 +460,27 @@
       regex:
         /\b(?:Set-Cookie|Cookie)\s*:\s*[^;\n\r]*(?:session(?:id|_id)?|connect\.sid|sid|auth(?:entication)?(?:[_-]?token)?|access(?:[_-]?token)?|refresh(?:[_-]?token)?)=([A-Za-z0-9%._~-]{16,})/gi,
       captureGroups: [1]
+    },
+    {
+      name: "query_param_api_key",
+      type: "API_KEY",
+      category: "credential",
+      baseScore: 80,
+      suppressionNotes:
+        "Catch long query-string api_key style values while stopping at '&' and '#' boundaries so adjacent safe params stay visible.",
+      regex: /(?:[?&](?:api(?:[_-]?key)|apikey)=)([^&#\s]{8,})/gi,
+      captureGroups: [1]
+    },
+    {
+      name: "query_param_token",
+      type: "TOKEN",
+      category: "credential",
+      baseScore: 80,
+      suppressionNotes:
+        "Catch long query-string token values without swallowing neighboring parameters or fragments.",
+      regex:
+        /(?:[?&](?:token|access_token|accessToken|auth_token|refresh_token|refreshToken)=)([^&#\s]{8,})/gi,
+      captureGroups: [1]
     }
   ];
 
@@ -618,6 +640,8 @@
     pypi_token: "TOKEN",
     docker_auth_config: "TOKEN",
     cookie_session_token: "TOKEN",
+    query_param_api_key: "API_KEY",
+    query_param_token: "TOKEN",
     generic_assignment_secret: "SECRET",
     entropy_secret: "SECRET"
   };
