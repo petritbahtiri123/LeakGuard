@@ -1,6 +1,6 @@
 # LeakGuard
 
-LeakGuard is a local-only Chrome extension for reducing accidental prompt leaks on AI chat sites.
+LeakGuard is a local-only browser extension for reducing accidental prompt leaks on AI chat sites.
 
 The public product name is LeakGuard.
 
@@ -89,16 +89,31 @@ Protected sites also show a compact right-side status panel.
 - Links into extension controls
 - Never renders raw secret values into the host page
 
-## Local Setup
+## Build And Load
 
 1. Clone this repository.
 2. Run `npm test`.
-3. Open `chrome://extensions`.
-4. Enable `Developer mode`.
-5. Click `Load unpacked`.
-6. Select this repository folder.
-7. Open a built-in protected site or any normal website you want to add from the popup.
-8. Click the LeakGuard toolbar icon to verify the popup renders and current-site state loads correctly.
+3. Build the target you want:
+
+```bash
+npm run build:chrome
+npm run build:firefox
+```
+
+### Chrome
+
+1. Open `chrome://extensions`.
+2. Enable `Developer mode`.
+3. Click `Load unpacked`.
+4. Select `dist/chrome/`.
+
+### Firefox
+
+1. Open `about:debugging#/runtime/this-firefox`.
+2. Click `Load Temporary Add-on...`.
+3. Select `dist/firefox/manifest.json`.
+
+Open a built-in protected site or any normal website you want to add from the popup, then click the LeakGuard toolbar icon to verify the popup renders and current-site state loads correctly.
 
 ## Testing
 
@@ -112,6 +127,13 @@ npm test
 
 This covers detector hardening, network transformations, composer helpers, typed interception, protected-site management, productization checks, and security regressions.
 
+The browser build outputs are created with:
+
+```bash
+npm run build:chrome
+npm run build:firefox
+```
+
 ### Manual
 
 Use these files for browser-side validation:
@@ -124,20 +146,26 @@ The manual smoke block contains synthetic secrets, passwords, tokens, connection
 
 ## Repository Layout
 
-- `manifest.json`
-  Manifest V3 extension definition, built-in protected hosts, and runtime permissions
-- `background/service_worker.js`
+- `src/background/service_worker.js`
   Session state, protected-site orchestration, secure reveal routing, and dynamic content-script sync
-- `content/content.js`
+- `src/content/content.js`
   Composer integration, decision flow, rewrite verification, placeholder click staging, and in-page status panel
-- `content/composer_helpers.js`
+- `src/content/composer_helpers.js`
   Shared textarea and contenteditable insertion helpers
-- `shared/*`
+- `src/shared/*`
   Detector, redaction, placeholders, public IPv4 classification, transform logic, and site normalization
-- `popup/*`
+- `src/popup/*`
   Popup home, protected-sites management, and secure reveal UI
-- `options/*`
+- `src/options/*`
   Secondary extension-managed settings surface
+- `src/compat/*`
+  Thin browser compatibility helpers for `browser` / `chrome`, storage-session fallback, and platform capability checks
+- `manifests/*`
+  Base, Chrome, and Firefox manifest definitions used to generate browser builds
+- `scripts/build-extension.js`
+  Copies shared source into `dist/chrome` and `dist/firefox` and writes the merged manifest for each target
+- `dist/chrome`, `dist/firefox`
+  Generated unpacked extension builds for Chrome and Firefox
 - `tests/*`
   Node-based regression coverage
 
@@ -151,6 +179,7 @@ The manual smoke block contains synthetic secrets, passwords, tokens, connection
 ## Documentation
 
 - [SECURITY_REVIEW.md](SECURITY_REVIEW.md)
+- [BROWSER_COMPAT.md](BROWSER_COMPAT.md)
 - [docs/CHROME_WEB_STORE_LISTING.md](docs/CHROME_WEB_STORE_LISTING.md)
 - [docs/PRIVACY_POLICY.md](docs/PRIVACY_POLICY.md)
 - [docs/RELEASE_QA_CHECKLIST.md](docs/RELEASE_QA_CHECKLIST.md)

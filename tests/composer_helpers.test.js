@@ -1,7 +1,7 @@
 const assert = require("assert");
 const path = require("path");
 
-require(path.join(__dirname, "../content/composer_helpers.js"));
+require(path.join(__dirname, "../src/content/composer_helpers.js"));
 
 const {
   normalizeEditorInnerText,

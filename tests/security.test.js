@@ -3,18 +3,19 @@ const fs = require("fs");
 const path = require("path");
 
 const repoRoot = path.join(__dirname, "..");
-require(path.join(repoRoot, "shared/placeholders.js"));
-const contentSource = fs.readFileSync(path.join(repoRoot, "content/content.js"), "utf8");
+const { buildManifest } = require(path.join(repoRoot, "scripts/build-extension.js"));
+require(path.join(repoRoot, "src/shared/placeholders.js"));
+const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
 const backgroundSource = fs.readFileSync(
-  path.join(repoRoot, "background/service_worker.js"),
+  path.join(repoRoot, "src/background/core.js"),
   "utf8"
 );
-const popupSource = fs.readFileSync(path.join(repoRoot, "popup/popup.js"), "utf8");
+const popupSource = fs.readFileSync(path.join(repoRoot, "src/popup/popup.js"), "utf8");
 const harnessSource = fs.readFileSync(
   path.join(repoRoot, "sandbox/composer-harness.js"),
   "utf8"
 );
-const manifest = JSON.parse(fs.readFileSync(path.join(repoRoot, "manifest.json"), "utf8"));
+const manifest = buildManifest("chrome");
 const {
   PLACEHOLDER_TOKEN_REGEX,
   normalizeVisiblePlaceholders,

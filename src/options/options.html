@@ -32,7 +32,7 @@
       <section class="panel">
         <div class="section-head">
           <h2>User-managed sites</h2>
-          <p>Stored in <code>chrome.storage.local</code> as normalized site rules only.</p>
+          <p>Stored in extension local storage as normalized site rules only.</p>
         </div>
         <div class="site-list" id="user-site-list"></div>
       </section>
@@ -45,6 +45,8 @@
         <div class="site-list" id="builtin-site-list"></div>
       </section>
     </main>
+    <script src="../compat/browser_api.js"></script>
+    <script src="../compat/platform.js"></script>
     <script src="../shared/protected_sites.js"></script>
     <script src="options.js"></script>
   </body>
