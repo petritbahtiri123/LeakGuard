@@ -6,7 +6,7 @@ const {
   normalizeProtectedSiteInput,
   normalizeProtectedSiteList,
   getProtectedSiteStatus
-} = require(path.join(__dirname, "../shared/protected_sites.js"));
+} = require(path.join(__dirname, "../src/shared/protected_sites.js"));
 
 function testNormalizesFullUrlToOriginRule() {
   const normalized = normalizeProtectedSiteInput("https://app.example.com/chat/new?model=gpt#composer");

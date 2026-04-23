@@ -1,0 +1,14 @@
+importScripts(
+  "../compat/browser_api.js",
+  "../compat/platform.js",
+  "../shared/placeholders.js",
+  "../shared/ipClassification.js",
+  "../shared/ipDetection.js",
+  "../shared/networkHierarchy.js",
+  "../shared/placeholderAllocator.js",
+  "../shared/sessionMapStore.js",
+  "../shared/transformOutboundPrompt.js",
+  "../shared/redactor.js",
+  "../shared/protected_sites.js",
+  "./core.js"
+);

@@ -4,17 +4,17 @@ const path = require("path");
 
 const repoRoot = path.join(__dirname, "..");
 
-require(path.join(repoRoot, "shared/entropy.js"));
-require(path.join(repoRoot, "shared/patterns.js"));
-require(path.join(repoRoot, "shared/detector.js"));
-require(path.join(repoRoot, "shared/placeholders.js"));
-require(path.join(repoRoot, "shared/ipClassification.js"));
-require(path.join(repoRoot, "shared/ipDetection.js"));
-require(path.join(repoRoot, "shared/networkHierarchy.js"));
-require(path.join(repoRoot, "shared/placeholderAllocator.js"));
-require(path.join(repoRoot, "shared/sessionMapStore.js"));
-require(path.join(repoRoot, "shared/transformOutboundPrompt.js"));
-require(path.join(repoRoot, "content/composer_helpers.js"));
+require(path.join(repoRoot, "src/shared/entropy.js"));
+require(path.join(repoRoot, "src/shared/patterns.js"));
+require(path.join(repoRoot, "src/shared/detector.js"));
+require(path.join(repoRoot, "src/shared/placeholders.js"));
+require(path.join(repoRoot, "src/shared/ipClassification.js"));
+require(path.join(repoRoot, "src/shared/ipDetection.js"));
+require(path.join(repoRoot, "src/shared/networkHierarchy.js"));
+require(path.join(repoRoot, "src/shared/placeholderAllocator.js"));
+require(path.join(repoRoot, "src/shared/sessionMapStore.js"));
+require(path.join(repoRoot, "src/shared/transformOutboundPrompt.js"));
+require(path.join(repoRoot, "src/content/composer_helpers.js"));
 
 const {
   Detector,
@@ -29,7 +29,7 @@ const {
   deriveRewriteCaretOffset
 } = ComposerHelpers;
 
-const contentSource = fs.readFileSync(path.join(repoRoot, "content/content.js"), "utf8");
+const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
 
 function analyze(text) {
   return new Detector().scan(text).filter((finding) => finding.severity !== "low");
