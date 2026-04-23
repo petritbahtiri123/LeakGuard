@@ -1,6 +1,7 @@
 importScripts(
   "../compat/browser_api.js",
   "../compat/platform.js",
+  "../shared/build_info.js",
   "../shared/placeholders.js",
   "../shared/ipClassification.js",
   "../shared/ipDetection.js",
@@ -10,5 +11,6 @@ importScripts(
   "../shared/transformOutboundPrompt.js",
   "../shared/redactor.js",
   "../shared/protected_sites.js",
+  "../shared/policy.js",
   "./core.js"
 );

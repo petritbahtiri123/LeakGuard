@@ -1,6 +1,6 @@
 # LeakGuard Privacy Policy
 
-Last updated: 2026-04-21
+Last updated: 2026-04-24
 
 ## Summary
 
@@ -43,9 +43,17 @@ LeakGuard includes built-in protection for supported AI/chat sites and can reque
 
 LeakGuard does not request optional access for every site unless you choose to protect that site.
 
+Enterprise deployments may override those defaults through managed policy, including disabling user-added protected sites.
+
 ## Secure Reveal
 
 When you reveal a placeholder, the raw value is shown only inside extension-owned UI. LeakGuard does not write the revealed raw value back into the website DOM for that reveal flow.
+
+Enterprise deployments may disable secure reveal by policy.
+
+## Extension Page Hardening
+
+LeakGuard extension pages use a restrictive Content Security Policy for extension-owned UI contexts. That policy allows packaged scripts only and disables plugin objects, base URL overrides, and third-party framing of extension pages.
 
 ## Limitations
 
