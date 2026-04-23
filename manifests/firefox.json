@@ -1,0 +1,25 @@
+{
+  "background": {
+    "service_worker": null,
+    "scripts": [
+      "compat/browser_api.js",
+      "compat/platform.js",
+      "shared/placeholders.js",
+      "shared/ipClassification.js",
+      "shared/ipDetection.js",
+      "shared/networkHierarchy.js",
+      "shared/placeholderAllocator.js",
+      "shared/sessionMapStore.js",
+      "shared/transformOutboundPrompt.js",
+      "shared/redactor.js",
+      "shared/protected_sites.js",
+      "background/core.js"
+    ]
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "leakguard@test.local",
+      "strict_min_version": "128.0"
+    }
+  }
+}

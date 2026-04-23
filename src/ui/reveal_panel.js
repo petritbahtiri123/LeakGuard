@@ -1,4 +1,5 @@
 (function () {
+  const ext = globalThis.PWM?.ext || globalThis.browser || globalThis.chrome;
   const statusEl = document.getElementById("status");
   const placeholderEl = document.getElementById("placeholder");
   const hiddenCopyEl = document.getElementById("hidden-copy");
@@ -25,7 +26,7 @@
     if (!requestId) return;
 
     try {
-      await chrome.runtime.sendMessage({
+      await ext.runtime.sendMessage({
         type: "PWM_EXTENSION_RELEASE_REVEAL_REQUEST",
         requestId
       });
@@ -44,7 +45,7 @@
       return;
     }
 
-    const response = await chrome.runtime.sendMessage({
+    const response = await ext.runtime.sendMessage({
       type: "PWM_EXTENSION_GET_REVEAL_CONTEXT",
       requestId
     });
@@ -77,7 +78,7 @@
     showBtn.disabled = true;
     setStatus("Revealing inside LeakGuard’s secure extension UI…");
 
-    const response = await chrome.runtime.sendMessage({
+    const response = await ext.runtime.sendMessage({
       type: "PWM_EXTENSION_REVEAL_SECRET",
       requestId
     });

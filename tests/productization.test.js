@@ -3,16 +3,17 @@ const fs = require("fs");
 const path = require("path");
 
 const repoRoot = path.join(__dirname, "..");
-const manifest = JSON.parse(fs.readFileSync(path.join(repoRoot, "manifest.json"), "utf8"));
+const { buildManifest } = require(path.join(repoRoot, "scripts/build-extension.js"));
+const manifest = buildManifest("chrome");
 const readme = fs.readFileSync(path.join(repoRoot, "README.md"), "utf8");
-const contentSource = fs.readFileSync(path.join(repoRoot, "content/content.js"), "utf8");
-const overlaySource = fs.readFileSync(path.join(repoRoot, "content/overlay.css"), "utf8");
-const popupHtml = fs.readFileSync(path.join(repoRoot, "popup/popup.html"), "utf8");
-const popupJs = fs.readFileSync(path.join(repoRoot, "popup/popup.js"), "utf8");
-const optionsHtml = fs.readFileSync(path.join(repoRoot, "options/options.html"), "utf8");
-const optionsJs = fs.readFileSync(path.join(repoRoot, "options/options.js"), "utf8");
+const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
+const overlaySource = fs.readFileSync(path.join(repoRoot, "src/content/overlay.css"), "utf8");
+const popupHtml = fs.readFileSync(path.join(repoRoot, "src/popup/popup.html"), "utf8");
+const popupJs = fs.readFileSync(path.join(repoRoot, "src/popup/popup.js"), "utf8");
+const optionsHtml = fs.readFileSync(path.join(repoRoot, "src/options/options.html"), "utf8");
+const optionsJs = fs.readFileSync(path.join(repoRoot, "src/options/options.js"), "utf8");
 const backgroundSource = fs.readFileSync(
-  path.join(repoRoot, "background/service_worker.js"),
+  path.join(repoRoot, "src/background/core.js"),
   "utf8"
 );
 const storeListing = fs.readFileSync(
@@ -24,7 +25,7 @@ const releaseChecklist = fs.readFileSync(
   path.join(repoRoot, "docs/RELEASE_QA_CHECKLIST.md"),
   "utf8"
 );
-const { BUILTIN_PROTECTED_SITES } = require(path.join(repoRoot, "shared/protected_sites.js"));
+const { BUILTIN_PROTECTED_SITES } = require(path.join(repoRoot, "src/shared/protected_sites.js"));
 
 function fileExists(relativePath) {
   return fs.existsSync(path.join(repoRoot, relativePath));
@@ -39,12 +40,12 @@ function testManifestBrandingAndProductPagesExist() {
   assert.strictEqual(manifest.action?.default_title, "LeakGuard");
   assert.strictEqual(manifest.action?.default_popup, "popup/popup.html");
   assert.strictEqual(manifest.options_page, "options/options.html");
-  assert.ok(fileExists("popup/popup.html"), "expected popup HTML to exist");
-  assert.ok(fileExists("popup/popup.js"), "expected popup JS to exist");
-  assert.ok(fileExists("popup/popup.css"), "expected popup CSS to exist");
-  assert.ok(fileExists("options/options.html"), "expected options HTML to exist");
-  assert.ok(fileExists("options/options.js"), "expected options JS to exist");
-  assert.ok(fileExists("options/options.css"), "expected options CSS to exist");
+  assert.ok(fileExists("src/popup/popup.html"), "expected popup HTML to exist");
+  assert.ok(fileExists("src/popup/popup.js"), "expected popup JS to exist");
+  assert.ok(fileExists("src/popup/popup.css"), "expected popup CSS to exist");
+  assert.ok(fileExists("src/options/options.html"), "expected options HTML to exist");
+  assert.ok(fileExists("src/options/options.js"), "expected options JS to exist");
+  assert.ok(fileExists("src/options/options.css"), "expected options CSS to exist");
   assert.ok(fileExists("docs/CHROME_WEB_STORE_LISTING.md"), "expected store listing doc to exist");
   assert.ok(fileExists("docs/PRIVACY_POLICY.md"), "expected privacy policy doc to exist");
   assert.ok(fileExists("docs/RELEASE_QA_CHECKLIST.md"), "expected release QA checklist doc to exist");
