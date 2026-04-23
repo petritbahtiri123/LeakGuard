@@ -1,15 +1,3 @@
-importScripts(
-  "../shared/placeholders.js",
-  "../shared/ipClassification.js",
-  "../shared/ipDetection.js",
-  "../shared/networkHierarchy.js",
-  "../shared/placeholderAllocator.js",
-  "../shared/sessionMapStore.js",
-  "../shared/transformOutboundPrompt.js",
-  "../shared/redactor.js",
-  "../shared/protected_sites.js"
-);
-
 const {
   PlaceholderManager,
   canonicalizePlaceholderToken,
@@ -22,15 +10,22 @@ const {
   USER_PROTECTED_SITES_STORAGE_KEY,
   normalizeProtectedSiteInput,
   normalizeProtectedSiteList,
-  isBuiltinProtectedSiteRule
+  isBuiltinProtectedSiteRule,
+  ext,
+  supportsDynamicContentScripts,
+  supportsStorageSession,
+  getSessionStorageArea
 } = globalThis.PWM;
 
 const STORAGE_PREFIX = "pwm:tab:";
 const REVEAL_PREFIX = "pwm:reveal:";
 const POPUP_STATE_KEY = "pwm:popupState";
 const USER_SITE_SCRIPT_ID_PREFIX = "pwm_user_site_";
+const SESSION_STORAGE_AREA = getSessionStorageArea();
 let syncDynamicContentScriptsPromise = Promise.resolve();
 const CONTENT_SCRIPT_FILES = [
+  "compat/browser_api.js",
+  "compat/platform.js",
   "shared/entropy.js",
   "shared/patterns.js",
   "shared/detector.js",
@@ -109,7 +104,7 @@ function needsPlaceholderMigration(state) {
 
 function isRuntimeUiSender(sender) {
   const senderUrl = String(sender?.url || sender?.documentUrl || "");
-  return sender?.id === chrome.runtime.id && senderUrl.startsWith(chrome.runtime.getURL(""));
+  return sender?.id === ext.runtime.id && senderUrl.startsWith(ext.runtime.getURL(""));
 }
 
 function requestMatchesState(request, state) {
@@ -133,14 +128,14 @@ function userSiteScriptId(rule) {
 }
 
 async function getStoredProtectedSites() {
-  const result = await chrome.storage.local.get(USER_PROTECTED_SITES_STORAGE_KEY);
+  const result = await ext.storage.local.get(USER_PROTECTED_SITES_STORAGE_KEY);
   return normalizeProtectedSiteList(result[USER_PROTECTED_SITES_STORAGE_KEY]);
 }
 
 async function setStoredProtectedSites(rules) {
   const normalizedRules = normalizeProtectedSiteList(rules);
 
-  await chrome.storage.local.set({
+  await ext.storage.local.set({
     [USER_PROTECTED_SITES_STORAGE_KEY]: normalizedRules
   });
 
@@ -150,7 +145,7 @@ async function setStoredProtectedSites(rules) {
 async function enrichProtectedSites(rules) {
   return Promise.all(
     (rules || []).map(async (rule) => {
-      const hasPermission = await chrome.permissions.contains({
+      const hasPermission = await ext.permissions.contains({
         origins: [rule.matchPattern]
       });
 
@@ -267,7 +262,7 @@ async function buildUserSiteRegistrations() {
   for (const rule of userSites) {
     if (!rule.enabled) continue;
 
-    const hasPermission = await chrome.permissions.contains({
+    const hasPermission = await ext.permissions.contains({
       origins: [rule.matchPattern]
     });
     if (!hasPermission) continue;
@@ -286,19 +281,23 @@ async function buildUserSiteRegistrations() {
 }
 
 async function performDynamicContentScriptSync() {
-  const existing = await chrome.scripting.getRegisteredContentScripts();
+  if (!supportsDynamicContentScripts) {
+    throw new Error("LeakGuard requires dynamic MV3 content script support on this browser.");
+  }
+
+  const existing = await ext.scripting.getRegisteredContentScripts();
   const managedIds = existing
     .filter((script) => script.id.startsWith(USER_SITE_SCRIPT_ID_PREFIX))
     .map((script) => script.id);
 
   if (managedIds.length) {
-    await chrome.scripting.unregisterContentScripts({ ids: managedIds });
+    await ext.scripting.unregisterContentScripts({ ids: managedIds });
   }
 
   const registrations = await buildUserSiteRegistrations();
   if (!registrations.length) return;
 
-  await chrome.scripting.registerContentScripts(registrations);
+  await ext.scripting.registerContentScripts(registrations);
 }
 
 function syncDynamicContentScripts() {
@@ -314,7 +313,7 @@ async function ensureProtectedSitePermission(rule) {
     return true;
   }
 
-  const hasPermission = await chrome.permissions.contains({
+  const hasPermission = await ext.permissions.contains({
     origins: [rule.matchPattern]
   });
   if (!hasPermission) {
@@ -397,7 +396,7 @@ async function deleteProtectedSite(siteId) {
   const nextRules = currentRules.filter((rule) => rule.id !== siteId);
   await setStoredProtectedSites(nextRules);
 
-  await chrome.permissions.remove({
+  await ext.permissions.remove({
     origins: [existingRule.matchPattern]
   }).catch(() => {});
 
@@ -409,7 +408,7 @@ async function ensureProtectionInjected(tabId) {
   if (typeof tabId !== "number") return;
 
   try {
-    const response = await chrome.tabs.sendMessage(tabId, {
+    const response = await ext.tabs.sendMessage(tabId, {
       type: "PWM_CONTENT_PING"
     });
 
@@ -420,12 +419,12 @@ async function ensureProtectionInjected(tabId) {
     // The content stack is not active in this tab yet.
   }
 
-  await chrome.scripting.insertCSS({
+  await ext.scripting.insertCSS({
     target: { tabId },
     files: CONTENT_STYLE_FILES
   });
 
-  await chrome.scripting.executeScript({
+  await ext.scripting.executeScript({
     target: { tabId },
     files: CONTENT_SCRIPT_FILES
   });
@@ -445,12 +444,12 @@ function toPublicState(state) {
 async function getState(tabId) {
   if (typeof tabId !== "number") return null;
   const key = storageKey(tabId);
-  const result = await chrome.storage.session.get(key);
+  const result = await SESSION_STORAGE_AREA.get(key);
   return result[key] || null;
 }
 
 async function getPopupState() {
-  const result = await chrome.storage.session.get(POPUP_STATE_KEY);
+  const result = await SESSION_STORAGE_AREA.get(POPUP_STATE_KEY);
   return result[POPUP_STATE_KEY] || null;
 }
 
@@ -461,7 +460,7 @@ async function setPopupState(state) {
     updatedAt: Date.now()
   };
 
-  await chrome.storage.session.set({
+  await SESSION_STORAGE_AREA.set({
     [POPUP_STATE_KEY]: nextState
   });
 
@@ -476,7 +475,7 @@ async function clearPopupState(requestId) {
     return;
   }
 
-  await chrome.storage.session.remove(POPUP_STATE_KEY);
+  await SESSION_STORAGE_AREA.remove(POPUP_STATE_KEY);
 }
 
 async function setState(tabId, state) {
@@ -487,7 +486,7 @@ async function setState(tabId, state) {
     updatedAt: Date.now()
   };
 
-  await chrome.storage.session.set({
+  await SESSION_STORAGE_AREA.set({
     [storageKey(tabId)]: next
   });
 
@@ -496,11 +495,11 @@ async function setState(tabId, state) {
 
 async function removeState(tabId) {
   if (typeof tabId !== "number") return;
-  await chrome.storage.session.remove(storageKey(tabId));
+  await SESSION_STORAGE_AREA.remove(storageKey(tabId));
 }
 
 async function removeRevealRequestsForTab(tabId) {
-  const all = await chrome.storage.session.get(null);
+  const all = await SESSION_STORAGE_AREA.get(null);
   const requestsToRemove = Object.entries(all).filter(
     ([key, value]) => key.startsWith(REVEAL_PREFIX) && Number(value?.tabId) === Number(tabId)
   );
@@ -510,7 +509,7 @@ async function removeRevealRequestsForTab(tabId) {
     .filter((requestId) => typeof requestId === "string" && requestId);
 
   if (keysToRemove.length) {
-    await chrome.storage.session.remove(keysToRemove);
+    await SESSION_STORAGE_AREA.remove(keysToRemove);
   }
 
   if (requestIds.length) {
@@ -610,7 +609,7 @@ async function createRevealRequest(tabId, placeholder) {
   const requestId = crypto.randomUUID();
   const canonicalPlaceholder = canonicalizePlaceholderToken(placeholder);
 
-  await chrome.storage.session.set({
+  await SESSION_STORAGE_AREA.set({
     [revealKey(requestId)]: {
       requestId,
       tabId,
@@ -625,12 +624,12 @@ async function createRevealRequest(tabId, placeholder) {
 
 async function getRevealRequest(requestId) {
   const key = revealKey(requestId);
-  const result = await chrome.storage.session.get(key);
+  const result = await SESSION_STORAGE_AREA.get(key);
   return result[key] || null;
 }
 
 async function removeRevealRequest(requestId) {
-  await chrome.storage.session.remove(revealKey(requestId));
+  await SESSION_STORAGE_AREA.remove(revealKey(requestId));
   await clearPopupState(requestId);
 }
 
@@ -676,9 +675,9 @@ async function openPopupView(state) {
   const popupState = await setPopupState(state);
   let opened = false;
 
-  if (chrome.action && typeof chrome.action.openPopup === "function") {
+  if (ext.action && typeof ext.action.openPopup === "function") {
     try {
-      await chrome.action.openPopup();
+      await ext.action.openPopup();
       opened = true;
     } catch {
       opened = false;
@@ -691,34 +690,34 @@ async function openPopupView(state) {
   };
 }
 
-chrome.tabs.onRemoved.addListener((tabId) => {
+ext.tabs?.onRemoved?.addListener((tabId) => {
   removeState(tabId).catch(() => {});
   removeRevealRequestsForTab(tabId).catch(() => {});
 });
 
-chrome.runtime.onInstalled.addListener(() => {
+ext.runtime?.onInstalled?.addListener(() => {
   syncDynamicContentScripts().catch(() => {});
 });
 
-chrome.runtime.onStartup.addListener(() => {
+ext.runtime?.onStartup?.addListener(() => {
   syncDynamicContentScripts().catch(() => {});
 });
 
-chrome.permissions.onAdded.addListener(() => {
+ext.permissions?.onAdded?.addListener(() => {
   syncDynamicContentScripts().catch(() => {});
 });
 
-chrome.permissions.onRemoved.addListener(() => {
+ext.permissions?.onRemoved?.addListener(() => {
   syncDynamicContentScripts().catch(() => {});
 });
 
-chrome.storage.onChanged.addListener((changes, areaName) => {
+ext.storage?.onChanged?.addListener((changes, areaName) => {
   if (areaName === "local" && changes[USER_PROTECTED_SITES_STORAGE_KEY]) {
     syncDynamicContentScripts().catch(() => {});
   }
 });
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+ext.runtime?.onMessage?.addListener((message, sender, sendResponse) => {
   (async () => {
     const tabId = sender?.tab?.id;
 
@@ -800,7 +799,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     if (message?.type === "PWM_OPEN_OPTIONS_PAGE") {
-      await chrome.runtime.openOptionsPage();
+      await ext.runtime.openOptionsPage();
       sendResponse({ ok: true });
       return;
     }

@@ -3,16 +3,16 @@ const path = require("path");
 
 const repoRoot = path.join(__dirname, "..");
 
-require(path.join(repoRoot, "shared/placeholders.js"));
-require(path.join(repoRoot, "shared/entropy.js"));
-require(path.join(repoRoot, "shared/patterns.js"));
-require(path.join(repoRoot, "shared/detector.js"));
-require(path.join(repoRoot, "shared/ipClassification.js"));
-require(path.join(repoRoot, "shared/ipDetection.js"));
-require(path.join(repoRoot, "shared/networkHierarchy.js"));
-require(path.join(repoRoot, "shared/placeholderAllocator.js"));
-require(path.join(repoRoot, "shared/sessionMapStore.js"));
-require(path.join(repoRoot, "shared/transformOutboundPrompt.js"));
+require(path.join(repoRoot, "src/shared/placeholders.js"));
+require(path.join(repoRoot, "src/shared/entropy.js"));
+require(path.join(repoRoot, "src/shared/patterns.js"));
+require(path.join(repoRoot, "src/shared/detector.js"));
+require(path.join(repoRoot, "src/shared/ipClassification.js"));
+require(path.join(repoRoot, "src/shared/ipDetection.js"));
+require(path.join(repoRoot, "src/shared/networkHierarchy.js"));
+require(path.join(repoRoot, "src/shared/placeholderAllocator.js"));
+require(path.join(repoRoot, "src/shared/sessionMapStore.js"));
+require(path.join(repoRoot, "src/shared/transformOutboundPrompt.js"));
 
 const {
   Detector,

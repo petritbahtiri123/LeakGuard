@@ -3,6 +3,7 @@
     return;
   }
   globalThis.__PWM_CONTENT_BOOTSTRAPPED__ = true;
+  const ext = globalThis.PWM?.ext || globalThis.browser || globalThis.chrome;
 
   const {
     Detector,
@@ -198,7 +199,7 @@
   }
 
   async function openProtectedSitesUi() {
-    const response = await chrome.runtime.sendMessage({
+    const response = await ext.runtime.sendMessage({
       type: "PWM_OPEN_POPUP_SITE_MANAGER"
     });
 
@@ -210,7 +211,7 @@
   }
 
   function openOptionsPage() {
-    return chrome.runtime.sendMessage({
+    return ext.runtime.sendMessage({
       type: "PWM_OPEN_OPTIONS_PAGE"
     });
   }
@@ -369,7 +370,7 @@
   }
 
   async function initState() {
-    const response = await chrome.runtime.sendMessage({
+    const response = await ext.runtime.sendMessage({
       type: "PWM_INIT_TAB",
       url: location.href
     });
@@ -380,7 +381,7 @@
   }
 
   async function requestRedaction(text, findings) {
-    const response = await chrome.runtime.sendMessage({
+    const response = await ext.runtime.sendMessage({
       type: "PWM_REDACT_TEXT",
       url: location.href,
       text,
@@ -399,7 +400,7 @@
   }
 
   async function openPopupReveal(placeholder) {
-    const response = await chrome.runtime.sendMessage({
+    const response = await ext.runtime.sendMessage({
       type: "PWM_OPEN_POPUP_REVEAL",
       placeholder
     });
@@ -1759,7 +1760,7 @@
   }
 
   function bindEvents() {
-    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    ext.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (message?.type === "PWM_CONTENT_PING") {
         sendResponse({ ok: true });
         return;

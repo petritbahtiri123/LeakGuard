@@ -32,6 +32,8 @@
         "https://x.com/*"
       ],
       "js": [
+        "compat/browser_api.js",
+        "compat/platform.js",
         "shared/entropy.js",
         "shared/patterns.js",
         "shared/detector.js",

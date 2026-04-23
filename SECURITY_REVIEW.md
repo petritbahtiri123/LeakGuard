@@ -17,7 +17,7 @@ The audit covered:
 
 ## Issues Found
 
-1. `content/content.js` could request raw secrets from the background with `PWM_GET_RAW_BY_PLACEHOLDER` and write them back into page-owned spans on click.
+1. `src/content/content.js` could request raw secrets from the background with `PWM_GET_RAW_BY_PLACEHOLDER` and write them back into page-owned spans on click.
 2. Page DOM leaked secret metadata through classified placeholders such as `[PASSWORD_1]`, type-colored spans, badge text, and modal rows with secret types and masked raw fragments.
 3. Public state crossing from background to content script included reversible raw mappings.
 4. Rewrite failure UI and debug snapshots could expose raw or near-raw composer content in page DOM or console output.
@@ -42,14 +42,14 @@ The audit covered:
 
 ## Exact Old Leak Paths Removed
 
-- `content/content.js`
+- `src/content/content.js`
   - removed `lookupRawByPlaceholder(...)`
   - removed `PWM_GET_RAW_BY_PLACEHOLDER` usage
   - removed click handlers that changed page span text from placeholder to raw secret
   - removed timer-based reveal/reset behavior tied to page DOM
-- `background/service_worker.js`
+- `src/background/service_worker.js`
   - removed the legacy raw lookup handler used by content scripts for page rendering
-- `content/content.js` UI
+- `src/content/content.js` UI
   - removed masked raw previews from the decision modal
   - removed type/classification text from badge and modal rows
 
@@ -104,7 +104,7 @@ Repository scan and low-risk remediation covered:
 ## Verification
 
 - `npm test`
-- `node --check content/content.js`
-- `node --check background/service_worker.js`
+- `node --check src/content/content.js`
+- `node --check src/background/service_worker.js`
 - `node --check popup/popup.js`
 - `node --check sandbox/composer-harness.js`

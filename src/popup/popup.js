@@ -1,4 +1,5 @@
 (function () {
+  const ext = globalThis.PWM?.ext || globalThis.browser || globalThis.chrome;
   const {
     BUILTIN_PROTECTED_SITES,
     isBuiltinProtectedSiteRule,
@@ -122,7 +123,7 @@
   }
 
   async function resolveActiveTab() {
-    const [tab] = await chrome.tabs.query({
+    const [tab] = await ext.tabs.query({
       active: true,
       currentWindow: true
     });
@@ -145,7 +146,7 @@
       return;
     }
 
-    const response = await chrome.runtime.sendMessage({
+    const response = await ext.runtime.sendMessage({
       type: "PWM_GET_PROTECTED_SITE_OVERVIEW",
       url: activeTab.url
     });
@@ -158,7 +159,7 @@
   }
 
   async function refreshSiteData() {
-    const response = await chrome.runtime.sendMessage({
+    const response = await ext.runtime.sendMessage({
       type: "PWM_GET_PROTECTED_SITE_OVERVIEW"
     });
 
@@ -193,7 +194,7 @@
     setFeedback("");
     protectBtn.disabled = true;
 
-    const granted = await chrome.permissions.request({
+    const granted = await ext.permissions.request({
       origins: [site.rule.matchPattern]
     });
 
@@ -203,7 +204,7 @@
       return;
     }
 
-    const response = await chrome.runtime.sendMessage({
+    const response = await ext.runtime.sendMessage({
       type: "PWM_ADD_PROTECTED_SITE",
       input: site.rule.origin,
       url: activeTab.url,
@@ -250,7 +251,7 @@
         rule.enabled ? "Disable" : "Enable",
         async () => {
           if (!rule.enabled) {
-            const granted = await chrome.permissions.request({
+            const granted = await ext.permissions.request({
               origins: [rule.matchPattern]
             });
 
@@ -260,7 +261,7 @@
             }
           }
 
-          const response = await chrome.runtime.sendMessage({
+          const response = await ext.runtime.sendMessage({
             type: "PWM_SET_PROTECTED_SITE_ENABLED",
             siteId: rule.id,
             enabled: !rule.enabled,
@@ -278,7 +279,7 @@
       );
 
       const removeButton = createButton("Remove", async () => {
-        const response = await chrome.runtime.sendMessage({
+        const response = await ext.runtime.sendMessage({
           type: "PWM_DELETE_PROTECTED_SITE",
           siteId: rule.id,
           url: rule.origin
@@ -316,7 +317,7 @@
       return;
     }
 
-    const granted = await chrome.permissions.request({
+    const granted = await ext.permissions.request({
       origins: [normalized.rule.matchPattern]
     });
 
@@ -325,7 +326,7 @@
       return;
     }
 
-    const response = await chrome.runtime.sendMessage({
+    const response = await ext.runtime.sendMessage({
       type: "PWM_ADD_PROTECTED_SITE",
       input: normalized.rule.origin,
       url: normalized.rule.origin
@@ -370,7 +371,7 @@
 
   async function clearPopupState(requestId) {
     try {
-      await chrome.runtime.sendMessage({
+      await ext.runtime.sendMessage({
         type: "PWM_CLEAR_POPUP_STATE",
         requestId
       });
@@ -386,7 +387,7 @@
     activeRevealRequestId = null;
 
     try {
-      await chrome.runtime.sendMessage({
+      await ext.runtime.sendMessage({
         type: "PWM_EXTENSION_RELEASE_REVEAL_REQUEST",
         requestId
       });
@@ -413,7 +414,7 @@
     showBtn.disabled = true;
     setRevealStatus("Revealing inside LeakGuard...");
 
-    const response = await chrome.runtime.sendMessage({
+    const response = await ext.runtime.sendMessage({
       type: "PWM_EXTENSION_REVEAL_SECRET",
       requestId: activeRevealRequestId
     });
@@ -433,7 +434,7 @@
   }
 
   async function loadPopupState() {
-    const response = await chrome.runtime.sendMessage({
+    const response = await ext.runtime.sendMessage({
       type: "PWM_GET_POPUP_STATE"
     });
 

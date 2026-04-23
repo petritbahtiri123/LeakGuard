@@ -22,7 +22,7 @@ LeakGuard may access text you type, paste, or submit in protected site composers
 
 LeakGuard stores only the following extension data:
 
-- normalized user-managed protected-site rules in `chrome.storage.local`
+- normalized user-managed protected-site rules in extension `storage.local`
 - session-scoped placeholder mappings and reveal state in `chrome.storage.session`
 
 LeakGuard does not intentionally persist raw prompts, raw secrets, or raw public IPv4 values in long-term extension storage.

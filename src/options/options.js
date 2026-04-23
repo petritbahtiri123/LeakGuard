@@ -1,4 +1,5 @@
 (function () {
+  const ext = globalThis.PWM?.ext || globalThis.browser || globalThis.chrome;
   const {
     BUILTIN_PROTECTED_SITES,
     isBuiltinProtectedSiteRule,
@@ -94,7 +95,7 @@
         rule.enabled ? "Disable" : "Enable",
         async () => {
           if (!rule.enabled) {
-            const granted = await chrome.permissions.request({
+            const granted = await ext.permissions.request({
               origins: [rule.matchPattern]
             });
 
@@ -104,7 +105,7 @@
             }
           }
 
-          const response = await chrome.runtime.sendMessage({
+          const response = await ext.runtime.sendMessage({
             type: "PWM_SET_PROTECTED_SITE_ENABLED",
             siteId: rule.id,
             enabled: !rule.enabled,
@@ -121,7 +122,7 @@
       );
 
       const removeButton = createButton("Remove", async () => {
-        const response = await chrome.runtime.sendMessage({
+        const response = await ext.runtime.sendMessage({
           type: "PWM_DELETE_PROTECTED_SITE",
           siteId: rule.id,
           url: rule.origin
@@ -144,7 +145,7 @@
   }
 
   async function refresh() {
-    const response = await chrome.runtime.sendMessage({
+    const response = await ext.runtime.sendMessage({
       type: "PWM_GET_PROTECTED_SITE_OVERVIEW"
     });
 
@@ -171,7 +172,7 @@
       return;
     }
 
-    const granted = await chrome.permissions.request({
+    const granted = await ext.permissions.request({
       origins: [normalized.rule.matchPattern]
     });
 
@@ -180,7 +181,7 @@
       return;
     }
 
-    const response = await chrome.runtime.sendMessage({
+    const response = await ext.runtime.sendMessage({
       type: "PWM_ADD_PROTECTED_SITE",
       input: normalized.rule.origin,
       url: normalized.rule.origin

@@ -2,11 +2,11 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 
-require(path.join(__dirname, "../shared/entropy.js"));
-require(path.join(__dirname, "../shared/patterns.js"));
-require(path.join(__dirname, "../shared/detector.js"));
-require(path.join(__dirname, "../shared/placeholders.js"));
-require(path.join(__dirname, "../shared/redactor.js"));
+require(path.join(__dirname, "../src/shared/entropy.js"));
+require(path.join(__dirname, "../src/shared/patterns.js"));
+require(path.join(__dirname, "../src/shared/detector.js"));
+require(path.join(__dirname, "../src/shared/placeholders.js"));
+require(path.join(__dirname, "../src/shared/redactor.js"));
 
 const {
   Detector,
@@ -1422,7 +1422,7 @@ function testTechnicalPathAndProseFalsePositivesStayVisible() {
   const detector = new Detector();
   const cases = [
     "Path: /home/wayland/Desktop/Development/portable-work-memory/tests/fixtures.json",
-    "See [patterns.js](/home/user/project/shared/patterns.js) and [content.js](/home/user/project/content/content.js).",
+    "See [patterns.js](/home/user/project/src/shared/patterns.js) and [content.js](/home/user/project/src/content/content.js).",
     "Normal changelog: updated package.json, tests/fixtures.json, and typed_interception.test.js",
     "Use typed_interception.test.js and tests/fixtures.json when reviewing detector coverage.",
     "Twilio/Mailchimp-style plain hex assignment guesses should stay visible in prose."
