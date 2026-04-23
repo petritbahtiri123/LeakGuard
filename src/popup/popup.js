@@ -35,6 +35,10 @@
   let currentOverview = null;
   let currentView = "home";
   let activeRevealRequestId = null;
+  let currentPolicy = {
+    allowReveal: true,
+    allowUserAddedSites: true
+  };
 
   function setFeedback(text) {
     feedbackEl.textContent = text || "";
@@ -46,6 +50,16 @@
 
   function setRevealStatus(text) {
     revealStatusEl.textContent = text || "";
+  }
+
+  function updatePolicy(policy) {
+    currentPolicy = {
+      ...currentPolicy,
+      ...(policy || {})
+    };
+
+    inputEl.disabled = !currentPolicy.allowUserAddedSites;
+    formEl.querySelector('button[type="submit"]').disabled = !currentPolicy.allowUserAddedSites;
   }
 
   function setView(view) {
@@ -105,6 +119,7 @@
 
   function renderOverview(overview) {
     currentOverview = overview || null;
+    updatePolicy(overview?.policy);
     const site = overview?.currentSite || null;
 
     if (!site) {
@@ -118,8 +133,13 @@
     siteLabelEl.textContent = site.rule?.origin || activeTab?.url || "Unsupported tab";
     statusCopyEl.textContent = site.message || "LeakGuard protection status is unavailable.";
     protectBtn.disabled = !site.eligible || !site.canProtect;
-    protectBtn.textContent =
-      site.eligible && site.canProtect ? "Protect This Site" : "Protection Active";
+    protectBtn.textContent = site.eligible && site.canProtect
+      ? "Protect This Site"
+      : site.protected
+        ? "Protection Active"
+        : currentPolicy.allowUserAddedSites
+          ? "Protection Unavailable"
+          : "Managed by Policy";
   }
 
   async function resolveActiveTab() {
@@ -167,6 +187,7 @@
       throw new Error(response?.error || "LeakGuard could not load site settings.");
     }
 
+    updatePolicy(response.policy);
     renderUserSites(response.userSites || []);
     renderBuiltinSites(response.builtInSites || BUILTIN_PROTECTED_SITES);
   }
@@ -185,9 +206,22 @@
     setView("sites");
   }
 
+  function activeTabContext() {
+    return {
+      tabId: activeTab?.id,
+      tabUrl: activeTab?.url
+    };
+  }
+
   async function protectCurrentSite() {
     const site = currentOverview?.currentSite;
     if (!site?.eligible || !site?.rule || !activeTab?.id || !activeTab?.url) {
+      return;
+    }
+
+    if (!currentPolicy.allowUserAddedSites) {
+      setFeedback("Managed policy disables user-added sites.");
+      protectBtn.disabled = true;
       return;
     }
 
@@ -250,6 +284,11 @@
       const toggleButton = createButton(
         rule.enabled ? "Disable" : "Enable",
         async () => {
+          if (!currentPolicy.allowUserAddedSites) {
+            setFormFeedback("Managed policy disables user-added sites.");
+            return;
+          }
+
           if (!rule.enabled) {
             const granted = await ext.permissions.request({
               origins: [rule.matchPattern]
@@ -265,7 +304,8 @@
             type: "PWM_SET_PROTECTED_SITE_ENABLED",
             siteId: rule.id,
             enabled: !rule.enabled,
-            url: rule.origin
+            url: rule.origin,
+            ...activeTabContext()
           });
 
           if (!response?.ok) {
@@ -277,12 +317,14 @@
         },
         !rule.enabled
       );
+      toggleButton.disabled = !currentPolicy.allowUserAddedSites;
 
       const removeButton = createButton("Remove", async () => {
         const response = await ext.runtime.sendMessage({
           type: "PWM_DELETE_PROTECTED_SITE",
           siteId: rule.id,
-          url: rule.origin
+          url: rule.origin,
+          ...activeTabContext()
         });
 
         if (!response?.ok) {
@@ -305,6 +347,11 @@
   async function handleSubmit(event) {
     event.preventDefault();
     setFormFeedback("");
+
+    if (!currentPolicy.allowUserAddedSites) {
+      setFormFeedback("Managed policy disables user-added sites.");
+      return;
+    }
 
     const normalized = normalizeProtectedSiteInput(inputEl.value);
     if (!normalized.ok) {
@@ -329,7 +376,8 @@
     const response = await ext.runtime.sendMessage({
       type: "PWM_ADD_PROTECTED_SITE",
       input: normalized.rule.origin,
-      url: normalized.rule.origin
+      url: normalized.rule.origin,
+      ...activeTabContext()
     });
 
     if (!response?.ok) {
@@ -352,17 +400,18 @@
   function renderRevealContext(context, requestId) {
     activeRevealRequestId = requestId || null;
     hideSecret();
+    updatePolicy(context?.policy);
     revealPlaceholderEl.textContent = context?.placeholder || "[PWM]";
 
     if (!activeRevealRequestId) {
       showBtn.disabled = true;
-      setRevealStatus("LeakGuard secure reveal is unavailable for this item.");
+      setRevealStatus(context?.message || "LeakGuard secure reveal is unavailable for this item.");
       return;
     }
 
-    if (!context?.available) {
+    if (!currentPolicy.allowReveal || !context?.available) {
       showBtn.disabled = true;
-      setRevealStatus("This placeholder is not available in the current tab session.");
+      setRevealStatus(context?.message || "This placeholder is not available in the current tab session.");
       return;
     }
 
@@ -406,6 +455,12 @@
   }
 
   async function showSecret() {
+    if (!currentPolicy.allowReveal) {
+      showBtn.disabled = true;
+      setRevealStatus("Secure reveal is disabled by policy.");
+      return;
+    }
+
     if (!activeRevealRequestId) {
       showBtn.disabled = true;
       return;

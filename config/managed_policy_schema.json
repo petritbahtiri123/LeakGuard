@@ -1,0 +1,43 @@
+{
+  "type": "object",
+  "properties": {
+    "enterpriseMode": {
+      "type": "boolean"
+    },
+    "allowReveal": {
+      "type": "boolean"
+    },
+    "allowUserAddedSites": {
+      "type": "boolean"
+    },
+    "blockHttpSecrets": {
+      "type": "boolean"
+    },
+    "redactHttpAggressively": {
+      "type": "boolean"
+    },
+    "defaultAction": {
+      "type": "string",
+      "enum": ["redact", "block"]
+    },
+    "auditMode": {
+      "type": "string",
+      "enum": ["off", "metadata-only", "full"]
+    },
+    "strictPolicyLoad": {
+      "type": "boolean"
+    },
+    "approvedDestinations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "blockedDestinations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

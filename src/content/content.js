@@ -58,7 +58,20 @@
   let currentUrl = location.href;
   let currentPublicState = {
     transformMode: "hide_public",
-    placeholderCount: 0
+    placeholderCount: 0,
+    policy: {
+      enterpriseMode: false,
+      allowReveal: true,
+      allowUserAddedSites: true,
+      blockHttpSecrets: false,
+      redactHttpAggressively: true,
+      defaultAction: "redact",
+      auditMode: "off",
+      strictPolicyLoad: false,
+      destinationApproved: true,
+      destinationBlocked: false,
+      http: location.protocol === "http:"
+    }
   };
   let badgeEl = null;
   let lastBadgeText = "";
@@ -369,6 +382,38 @@
     }, delay);
   }
 
+  function applyPublicState(state) {
+    if (!state || typeof state !== "object") {
+      return;
+    }
+
+    currentPublicState = {
+      ...currentPublicState,
+      ...state,
+      policy: {
+        ...(currentPublicState.policy || {}),
+        ...(state.policy || {})
+      }
+    };
+  }
+
+  function getActivePolicy() {
+    return {
+      enterpriseMode: false,
+      allowReveal: true,
+      allowUserAddedSites: true,
+      blockHttpSecrets: false,
+      redactHttpAggressively: true,
+      defaultAction: "redact",
+      auditMode: "off",
+      strictPolicyLoad: false,
+      destinationApproved: true,
+      destinationBlocked: false,
+      http: location.protocol === "http:",
+      ...(currentPublicState.policy || {})
+    };
+  }
+
   async function initState() {
     const response = await ext.runtime.sendMessage({
       type: "PWM_INIT_TAB",
@@ -376,7 +421,7 @@
     });
 
     if (response?.ok && response.state) {
-      currentPublicState = response.state;
+      applyPublicState(response.state);
     }
   }
 
@@ -393,7 +438,7 @@
     }
 
     if (response.state) {
-      currentPublicState = response.state;
+      applyPublicState(response.state);
     }
 
     return response.result;
@@ -544,6 +589,32 @@
       findings: [...secretFindings, ...networkFindings].sort((a, b) => a.start - b.start),
       placeholderNormalized: normalizedText !== originalText
     };
+  }
+
+  function shouldEnforceHttpSecretPolicy(secretFindings) {
+    const policy = getActivePolicy();
+    return Boolean(policy.blockHttpSecrets && policy.http && (secretFindings || []).length > 0);
+  }
+
+  async function handleHttpSecretPolicy(secretFindings, onRedact) {
+    if (!shouldEnforceHttpSecretPolicy(secretFindings)) {
+      return false;
+    }
+
+    const policy = getActivePolicy();
+    if (policy.defaultAction === "redact") {
+      await onRedact();
+      return true;
+    }
+
+    setBadge("HTTP secret blocked by policy");
+    hideBadgeSoon(3200);
+    await showMessageModal(
+      "Sensitive content blocked",
+      "LeakGuard blocked sensitive content on this HTTP destination because policy treats HTTP as high risk."
+    );
+    refreshBadgeFromCurrentInput();
+    return true;
   }
 
   function getFindings(text) {
@@ -1009,6 +1080,30 @@
     event.preventDefault();
     event.stopPropagation();
 
+    const httpPolicyHandled = await handleHttpSecretPolicy(relevantSecretFindings, async () => {
+      const result = await requestRedaction(nextAnalysis.normalizedText, relevantSecretFindings);
+      const ok = await applyTypedInterceptionRewrite(
+        input,
+        result.redactedText,
+        originalText,
+        selection,
+        "input"
+      );
+
+      if (!ok) {
+        return;
+      }
+
+      lastTypedPromptText = result.redactedText;
+      setBadge("Content redacted");
+      hideBadgeSoon();
+      refreshBadgeFromCurrentInput();
+    });
+
+    if (httpPolicyHandled) {
+      return;
+    }
+
     if (!relevantFindings.length) {
       const ok = await applyTypedInterceptionRewrite(
         input,
@@ -1106,6 +1201,34 @@
 
     consumeInterceptionEvent(event);
 
+    const httpPolicyHandled = await handleHttpSecretPolicy(analysis.secretFindings, async () => {
+      const latestInput = findComposer(input);
+      if (!latestInput) return;
+
+      const latestText = getInputText(latestInput);
+      const baseText = latestText === originalText ? latestText : originalText;
+      const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
+      const ok = await applyPasteDecision(
+        latestInput,
+        baseText,
+        selection,
+        result.redactedText,
+        "paste"
+      );
+
+      if (!ok) {
+        return;
+      }
+
+      setBadge("Content redacted");
+      hideBadgeSoon();
+      refreshBadgeFromCurrentInput();
+    });
+
+    if (httpPolicyHandled) {
+      return;
+    }
+
     const decision = await showDecisionModal(analysis.findings, "paste");
     if (decision.action === "cancel") return;
 
@@ -1175,6 +1298,44 @@
 
     event.preventDefault();
     event.stopPropagation();
+
+    const httpPolicyHandled = await handleHttpSecretPolicy(analysis.secretFindings, async () => {
+      const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
+      const applied = await applyComposerText(input, result.redactedText, {
+        caretOffset: result.redactedText.length,
+        restoreText: analysis.normalizedText,
+        restoreCaretOffset: analysis.normalizedText.length
+      });
+
+      if (!applied.ok) {
+        await showRewriteFailure(
+          "submit",
+          collectFailureDetails(input, result.redactedText, applied.actual, "submit")
+        );
+        refreshBadgeFromCurrentInput();
+        return;
+      }
+
+      setBadge("Content redacted");
+      hideBadgeSoon();
+      refreshBadgeFromCurrentInput();
+
+      if (!(await ensureExactComposerState(input, result.redactedText))) {
+        await showRewriteFailure(
+          "submit",
+          collectFailureDetails(input, result.redactedText, getInputText(input), "submit")
+        );
+        refreshBadgeFromCurrentInput();
+        return;
+      }
+
+      bypassNextSubmit = true;
+      queueMicrotask(() => submitComposer(form, input));
+    });
+
+    if (httpPolicyHandled) {
+      return;
+    }
 
     if (!analysis.findings.length) {
       const normalized = await applyNormalizedComposerRewrite(input, text, "submit");
@@ -1283,6 +1444,51 @@
 
     event.preventDefault();
     event.stopPropagation();
+
+    const httpPolicyHandled = await handleHttpSecretPolicy(analysis.secretFindings, async () => {
+      const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
+      const applied = await applyComposerText(input, result.redactedText, {
+        caretOffset: result.redactedText.length,
+        restoreText: analysis.normalizedText,
+        restoreCaretOffset: analysis.normalizedText.length
+      });
+
+      if (!applied.ok) {
+        await showRewriteFailure(
+          "submit",
+          collectFailureDetails(input, result.redactedText, applied.actual, "submit")
+        );
+        refreshBadgeFromCurrentInput();
+        return;
+      }
+
+      setBadge("Content redacted");
+      hideBadgeSoon();
+      refreshBadgeFromCurrentInput();
+
+      queueMicrotask(() => {
+        ensureExactComposerState(input, result.redactedText)
+          .then((isExact) => {
+            if (!isExact) {
+              return showRewriteFailure(
+                "submit",
+                collectFailureDetails(input, result.redactedText, getInputText(input), "submit")
+              ).then(() => {
+                refreshBadgeFromCurrentInput();
+              });
+            }
+
+            const button = findSendButton(input);
+            if (button) button.click();
+            return null;
+          })
+          .catch(console.error);
+      });
+    });
+
+    if (httpPolicyHandled) {
+      return;
+    }
 
     if (!analysis.findings.length) {
       const normalized = await applyNormalizedComposerRewrite(input, text, "submit");
@@ -1404,6 +1610,42 @@
 
     lastTypedPromptText = analysis.normalizedText;
 
+    const httpPolicyHandled = await handleHttpSecretPolicy(analysis.secretFindings, async () => {
+      const latestInput = findComposer(input);
+      if (!latestInput) return;
+
+      const latestText = getInputText(latestInput);
+      if (latestText !== text) {
+        refreshBadgeFromCurrentInput();
+        return;
+      }
+
+      const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
+      const applied = await applyComposerText(latestInput, result.redactedText, {
+        caretOffset: result.redactedText.length,
+        restoreText: analysis.normalizedText,
+        restoreCaretOffset: analysis.normalizedText.length
+      });
+
+      if (!applied.ok) {
+        await showRewriteFailure(
+          "input",
+          collectFailureDetails(latestInput, result.redactedText, applied.actual, "input")
+        );
+        refreshBadgeFromCurrentInput();
+        return;
+      }
+
+      lastTypedPromptText = result.redactedText;
+      setBadge("Content redacted");
+      hideBadgeSoon();
+      refreshBadgeFromCurrentInput();
+    });
+
+    if (httpPolicyHandled) {
+      return;
+    }
+
     const decision = await showDecisionModal(analysis.findings, "input");
     if (decision.action !== "redact") {
       refreshBadgeFromCurrentInput();
@@ -1499,6 +1741,12 @@
   }
 
   async function openRevealInExtensionUi(placeholder) {
+    if (!getActivePolicy().allowReveal) {
+      setBadge("Secure reveal disabled by policy");
+      hideBadgeSoon(2400);
+      return;
+    }
+
     const response = await openPopupReveal(placeholder);
 
     debugReveal("reveal:popup-open", {

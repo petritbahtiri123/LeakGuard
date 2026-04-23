@@ -1,0 +1,9 @@
+{
+  "name": "LeakGuard Enterprise",
+  "action": {
+    "default_title": "LeakGuard Enterprise"
+  },
+  "storage": {
+    "managed_schema": "config/managed_policy_schema.json"
+  }
+}

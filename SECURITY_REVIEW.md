@@ -35,6 +35,7 @@ The audit covered:
 - Added a secure extension-owned reveal flow that renders raw values only inside the LeakGuard popup.
 - Switched reveal launching to opaque request ids created by the background.
 - Restricted raw reveal responses to extension UI senders only.
+- Added a restrictive extension-page CSP: `script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'`.
 - Removed masked raw previews and secret-type labels from page badge/modal UI.
 - Sanitized debug logging and rewrite-failure reporting so they no longer dump raw composer text.
 - Removed unsafe raw reveal behavior from the local harness.
@@ -100,6 +101,7 @@ Repository scan and low-risk remediation covered:
 - Raw secrets remain in background `chrome.storage.session` for the active tab session so secure reveal can work after service worker restarts.
 - The session fingerprint is scoped and non-reversible in practice for this MVP design, but it is still an in-extension implementation detail rather than a hardened cryptographic vault.
 - A hostile page can observe that a placeholder was clicked and that a generic extension popup opened, but it cannot read that popup DOM or any revealed raw text.
+- Future extension UI changes that rely on inline scripts, `eval`, WebAssembly, `<base>`, or embedding extension pages in frames would require an explicit CSP review.
 
 ## Verification
 

@@ -1,0 +1,20 @@
+{
+  "enterpriseMode": true,
+  "allowReveal": false,
+  "allowUserAddedSites": false,
+  "blockHttpSecrets": true,
+  "redactHttpAggressively": true,
+  "defaultAction": "block",
+  "auditMode": "metadata-only",
+  "strictPolicyLoad": false,
+  "approvedDestinations": [
+    "https://chatgpt.com/*",
+    "https://chat.openai.com/*",
+    "https://gemini.google.com/*",
+    "https://claude.ai/*",
+    "https://grok.com/*"
+  ],
+  "blockedDestinations": [
+    "http://*/*"
+  ]
+}
