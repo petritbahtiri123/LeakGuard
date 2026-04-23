@@ -11,9 +11,22 @@
   const feedbackEl = document.getElementById("form-feedback");
   const userSiteListEl = document.getElementById("user-site-list");
   const builtinSiteListEl = document.getElementById("builtin-site-list");
+  let currentPolicy = {
+    allowUserAddedSites: true
+  };
 
   function setFeedback(text) {
     feedbackEl.textContent = text || "";
+  }
+
+  function updatePolicy(policy) {
+    currentPolicy = {
+      ...currentPolicy,
+      ...(policy || {})
+    };
+
+    inputEl.disabled = !currentPolicy.allowUserAddedSites;
+    formEl.querySelector('button[type="submit"]').disabled = !currentPolicy.allowUserAddedSites;
   }
 
   function createPill(text) {
@@ -94,6 +107,11 @@
       const toggleButton = createButton(
         rule.enabled ? "Disable" : "Enable",
         async () => {
+          if (!currentPolicy.allowUserAddedSites) {
+            setFeedback("Managed policy disables user-added sites.");
+            return;
+          }
+
           if (!rule.enabled) {
             const granted = await ext.permissions.request({
               origins: [rule.matchPattern]
@@ -120,6 +138,7 @@
         },
         !rule.enabled
       );
+      toggleButton.disabled = !currentPolicy.allowUserAddedSites;
 
       const removeButton = createButton("Remove", async () => {
         const response = await ext.runtime.sendMessage({
@@ -153,6 +172,7 @@
       throw new Error(response?.error || "LeakGuard could not load site settings.");
     }
 
+    updatePolicy(response.policy);
     renderUserSites(response.userSites || []);
     renderBuiltinSites();
   }
@@ -160,6 +180,11 @@
   async function handleSubmit(event) {
     event.preventDefault();
     setFeedback("");
+
+    if (!currentPolicy.allowUserAddedSites) {
+      setFeedback("Managed policy disables user-added sites.");
+      return;
+    }
 
     const normalized = normalizeProtectedSiteInput(inputEl.value);
     if (!normalized.ok) {
