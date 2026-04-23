@@ -1,0 +1,9 @@
+{
+  "enterpriseMode": false,
+  "allowReveal": true,
+  "allowUserAddedSites": true,
+  "blockHttpSecrets": false,
+  "redactHttpAggressively": true,
+  "defaultAction": "redact",
+  "auditMode": "off"
+}

@@ -1,0 +1,11 @@
+{
+  "name": "LeakGuard Enterprise",
+  "action": {
+    "default_title": "LeakGuard Enterprise"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "leakguard-enterprise@test.local"
+    }
+  }
+}

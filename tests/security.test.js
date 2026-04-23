@@ -1,9 +1,9 @@
 const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
+const { pathToFileURL } = require("url");
 
 const repoRoot = path.join(__dirname, "..");
-const { buildManifest } = require(path.join(repoRoot, "scripts/build-extension.js"));
 require(path.join(repoRoot, "src/shared/placeholders.js"));
 const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
 const backgroundSource = fs.readFileSync(
@@ -15,7 +15,6 @@ const harnessSource = fs.readFileSync(
   path.join(repoRoot, "sandbox/composer-harness.js"),
   "utf8"
 );
-const manifest = buildManifest("chrome");
 const {
   PLACEHOLDER_TOKEN_REGEX,
   normalizeVisiblePlaceholders,
@@ -156,13 +155,6 @@ function testHostPageHydrationRequiresPlausibleSessionPlaceholders() {
   );
 }
 
-function testManifestNoLongerExposesRevealUiToWebPages() {
-  assert.ok(
-    !Array.isArray(manifest.web_accessible_resources) || manifest.web_accessible_resources.length === 0,
-    "manifest should not expose popup-only reveal assets to web pages"
-  );
-}
-
 function testPageUiNoLongerLeaksClassificationsOrMaskedFragments() {
   assertNotIncludes(
     contentSource,
@@ -214,16 +206,43 @@ function testOnlyPwmPlaceholdersRemainCanonical() {
   PLACEHOLDER_TOKEN_REGEX.lastIndex = 0;
 }
 
-function run() {
+async function run() {
+  const { buildManifest } = await import(
+    pathToFileURL(path.join(repoRoot, "scripts/build-extension.mjs")).href
+  );
+  const manifest = buildManifest("chrome", "consumer");
+
   testUnsafeContentRevealPathRemoved();
   testSafeRevealUiExists();
   testContentPublicStateIsMinimized();
   testRevealNeverInjectsHostDomContainers();
   testHostPageHydrationRequiresPlausibleSessionPlaceholders();
-  testManifestNoLongerExposesRevealUiToWebPages();
+  testManifestNoLongerExposesRevealUiToWebPages(manifest);
+  testExtensionPagesUseRestrictiveCsp(manifest);
   testPageUiNoLongerLeaksClassificationsOrMaskedFragments();
   testOnlyPwmPlaceholdersRemainCanonical();
   console.log("PASS security hardening static regressions");
 }
 
-run();
+function testManifestNoLongerExposesRevealUiToWebPages(manifest) {
+  assert.ok(
+    !Array.isArray(manifest.web_accessible_resources) || manifest.web_accessible_resources.length === 0,
+    "manifest should not expose popup-only reveal assets to web pages"
+  );
+}
+
+function testExtensionPagesUseRestrictiveCsp(manifest) {
+  assert.deepStrictEqual(
+    manifest.content_security_policy,
+    {
+      extension_pages:
+        "script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none';"
+    },
+    "manifest should lock extension pages to packaged scripts and disallow framing/base overrides"
+  );
+}
+
+run().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
