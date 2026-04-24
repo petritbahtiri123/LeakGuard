@@ -207,6 +207,37 @@ function testQueryParamsAndGenericSecretAssignments() {
   assertPreservedOutput(result.redactedText, ["region=eu-central-1"], "query params and generic secret assignments");
 }
 
+function testConfidenceBandSyntheticInputs() {
+  const text = [
+    "HarborLock4455!",
+    "secret1234",
+    "username=wayland.dev",
+    "email=wayland.dev@corp.internal",
+    "release-2026-04-24"
+  ].join("\n");
+
+  const { findings, result } = redact(text);
+  const passwordFinding = findings.find((finding) => finding.raw === "HarborLock4455!");
+  const secretKeywordFinding = findings.find((finding) => finding.raw === "secret1234");
+  const usernameFinding = findings.find((finding) => finding.type === "USERNAME");
+  const emailFinding = findings.find((finding) => finding.type === "EMAIL");
+
+  assert.ok(passwordFinding, "synthetic bare password should detect");
+  assert.strictEqual(passwordFinding.severity, "high", "synthetic bare password should land in the auto-redact band");
+  assert.ok(secretKeywordFinding, "secret keyword password should detect");
+  assert.strictEqual(secretKeywordFinding.severity, "high");
+  assert.ok(usernameFinding, "synthetic username assignment should detect");
+  assert.ok(emailFinding, "synthetic email assignment should detect");
+  assert.strictEqual(usernameFinding.severity, "medium");
+  assert.strictEqual(emailFinding.severity, "medium");
+  assertForbiddenOutput(result.redactedText, ["HarborLock4455!", "secret1234"], "confidence band synthetic inputs");
+  assertPreservedOutput(
+    result.redactedText,
+    ["release-2026-04-24"],
+    "confidence band synthetic inputs"
+  );
+}
+
 function testPlaceholdersSafeValuesAndNetworkTransform() {
   const text = [
     "API_KEY=[PWM_1]",
@@ -293,6 +324,7 @@ function run() {
   testAuthHeadersCookiesAndUrls();
   testStructuredConfigForms();
   testQueryParamsAndGenericSecretAssignments();
+  testConfidenceBandSyntheticInputs();
   testPlaceholdersSafeValuesAndNetworkTransform();
   testSyntheticMegaBlock();
   console.log("PASS synthetic secret pack regressions");
