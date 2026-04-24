@@ -10,24 +10,34 @@
   const DEFAULT_CONSUMER_POLICY = Object.freeze({
     enterpriseMode: false,
     allowReveal: true,
+    allowUserOverride: true,
     allowUserAddedSites: true,
+    allowSiteRemoval: true,
     blockHttpSecrets: false,
     redactHttpAggressively: true,
     defaultAction: "redact",
+    defaultDestinationAction: "allow",
     auditMode: "off",
     strictPolicyLoad: false,
+    managedProtectedSites: [],
+    destinationPolicies: [],
     approvedDestinations: [],
     blockedDestinations: []
   });
   const DEFAULT_ENTERPRISE_POLICY = Object.freeze({
     enterpriseMode: true,
     allowReveal: false,
+    allowUserOverride: false,
     allowUserAddedSites: false,
+    allowSiteRemoval: true,
     blockHttpSecrets: true,
     redactHttpAggressively: true,
     defaultAction: "block",
+    defaultDestinationAction: "block",
     auditMode: "metadata-only",
     strictPolicyLoad: false,
+    managedProtectedSites: [],
+    destinationPolicies: [],
     approvedDestinations: [
       "https://chatgpt.com/*",
       "https://chat.openai.com/*",
@@ -39,6 +49,7 @@
   });
   const VALID_DEFAULT_ACTIONS = new Set(["redact", "block"]);
   const VALID_AUDIT_MODES = new Set(["off", "metadata-only", "full"]);
+  const VALID_DESTINATION_ACTIONS = new Set(["allow", "redact", "block"]);
   let cachedPolicyPromise = null;
 
   function cloneValue(value) {
@@ -152,6 +163,38 @@
     return normalized;
   }
 
+  function asDestinationPolicies(value, fallback) {
+    if (value === undefined) {
+      return Array.isArray(fallback) ? cloneValue(fallback) : [];
+    }
+
+    if (!Array.isArray(value)) {
+      throw new Error("Expected an array of destination policy objects.");
+    }
+
+    return value.map((entry, index) => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+        throw new Error(`Entry ${index + 1} must be an object.`);
+      }
+
+      const match = String(entry.match || "").trim();
+      if (!match) {
+        throw new Error(`Entry ${index + 1} must include a match pattern.`);
+      }
+
+      if (!parseMatchPattern(match)) {
+        throw new Error(`Entry ${index + 1} has an invalid match pattern.`);
+      }
+
+      const action = asEnum(entry.action, undefined, VALID_DESTINATION_ACTIONS);
+
+      return {
+        match,
+        action
+      };
+    });
+  }
+
   function normalizePolicyInput(rawPolicy, options = {}) {
     const buildInfo = options.buildInfo || getBuildInfo();
     const basePolicy = options.basePolicy ? cloneValue(options.basePolicy) : getBundledDefaultPolicy(buildInfo);
@@ -168,12 +211,19 @@
     };
 
     assign("allowReveal", asBoolean);
+    assign("allowUserOverride", asBoolean);
     assign("allowUserAddedSites", asBoolean);
+    assign("allowSiteRemoval", asBoolean);
     assign("blockHttpSecrets", asBoolean);
     assign("redactHttpAggressively", asBoolean);
     assign("strictPolicyLoad", asBoolean);
+    assign("managedProtectedSites", asStringArray);
     assign("defaultAction", (value, fallback) => asEnum(value, fallback, VALID_DEFAULT_ACTIONS));
+    assign("defaultDestinationAction", (value, fallback) =>
+      asEnum(value, fallback, VALID_DESTINATION_ACTIONS)
+    );
     assign("auditMode", (value, fallback) => asEnum(value, fallback, VALID_AUDIT_MODES));
+    assign("destinationPolicies", asDestinationPolicies);
     assign("approvedDestinations", asStringArray);
     assign("blockedDestinations", asStringArray);
 
@@ -191,11 +241,15 @@
       ...cloneValue(basePolicy),
       enterpriseMode: Boolean(buildInfo.enterprise),
       allowReveal: false,
+      allowUserOverride: false,
       allowUserAddedSites: false,
+      allowSiteRemoval: true,
       blockHttpSecrets: true,
       redactHttpAggressively: true,
       defaultAction: "block",
-      auditMode: "metadata-only"
+      defaultDestinationAction: "block",
+      auditMode: "metadata-only",
+      managedProtectedSites: []
     };
   }
 
@@ -361,26 +415,159 @@
     return pathMatchesPattern(pathWithSearch, parsedPattern.path) || pathMatchesPattern(parsedUrl.pathname, parsedPattern.path);
   }
 
+  function getDestinationPolicyInputs(policyOrSummary, url) {
+    const targetUrl = String(url || "");
+    const hasTargetUrl = Boolean(targetUrl);
+    const destinationPolicies = Array.isArray(policyOrSummary?.destinationPolicies)
+      ? cloneValue(policyOrSummary.destinationPolicies)
+      : [];
+    const destinationPoliciesConfigured =
+      typeof policyOrSummary?.destinationPoliciesConfigured === "boolean"
+        ? policyOrSummary.destinationPoliciesConfigured
+        : destinationPolicies.length > 0;
+    const defaultDestinationAction =
+      typeof policyOrSummary?.defaultDestinationAction === "string"
+        ? policyOrSummary.defaultDestinationAction
+        : Boolean(policyOrSummary?.enterpriseMode)
+          ? "block"
+          : "allow";
+    const matchedDestinationPolicy =
+      typeof policyOrSummary?.matchedDestinationPolicy === "object" &&
+      policyOrSummary?.matchedDestinationPolicy
+        ? cloneValue(policyOrSummary.matchedDestinationPolicy)
+        : destinationPoliciesConfigured && hasTargetUrl
+          ? destinationPolicies.find((entry) => matchPattern(entry.match, targetUrl)) || null
+          : null;
+    const approvedDestinations = Array.isArray(policyOrSummary?.approvedDestinations)
+      ? policyOrSummary.approvedDestinations
+      : [];
+    const blockedDestinations = Array.isArray(policyOrSummary?.blockedDestinations)
+      ? policyOrSummary.blockedDestinations
+      : [];
+    const destinationApprovalConfigured =
+      typeof policyOrSummary?.destinationApprovalConfigured === "boolean"
+        ? policyOrSummary.destinationApprovalConfigured
+        : approvedDestinations.length > 0;
+    const destinationApproved =
+      typeof policyOrSummary?.destinationApproved === "boolean"
+        ? policyOrSummary.destinationApproved
+        : hasTargetUrl && destinationApprovalConfigured
+          ? approvedDestinations.some((pattern) => matchPattern(pattern, targetUrl))
+          : true;
+    const destinationBlocked =
+      typeof policyOrSummary?.destinationBlocked === "boolean"
+        ? policyOrSummary.destinationBlocked
+        : hasTargetUrl
+          ? blockedDestinations.some((pattern) => matchPattern(pattern, targetUrl))
+          : false;
+    const destinationAction =
+      typeof policyOrSummary?.destinationAction === "string"
+        ? policyOrSummary.destinationAction
+        : destinationPoliciesConfigured
+          ? matchedDestinationPolicy?.action || defaultDestinationAction
+          : destinationBlocked
+            ? "block"
+            : "allow";
+    const destinationRequiresRedaction =
+      typeof policyOrSummary?.destinationRequiresRedaction === "boolean"
+        ? policyOrSummary.destinationRequiresRedaction
+        : destinationAction === "redact";
+
+    return {
+      enterpriseMode: Boolean(policyOrSummary?.enterpriseMode),
+      strictFailure: Boolean(policyOrSummary?.strictFailure),
+      targetUrl,
+      destinationPoliciesConfigured,
+      defaultDestinationAction,
+      matchedDestinationPolicy,
+      destinationPolicies,
+      destinationApprovalConfigured,
+      destinationApproved,
+      destinationBlocked,
+      destinationAction,
+      destinationRequiresRedaction
+    };
+  }
+
+  function evaluateDestinationPolicy(policyOrSummary, url) {
+    const state = getDestinationPolicyInputs(policyOrSummary, url);
+    let reason = null;
+    let message = "";
+    let blocked = false;
+    let requiresRedaction = false;
+
+    if (state.enterpriseMode && state.strictFailure) {
+      reason = "policy_fail_closed";
+      blocked = true;
+      message = "LeakGuard blocked this action because enterprise policy could not be loaded safely.";
+    } else if (state.destinationPoliciesConfigured) {
+      if (state.destinationAction === "block") {
+        blocked = true;
+        reason = state.matchedDestinationPolicy ? "destination_blocked" : "destination_not_approved";
+        message = "LeakGuard blocked this action because this destination is not approved by enterprise policy.";
+      } else if (state.destinationAction === "redact") {
+        requiresRedaction = true;
+        reason = "destination_requires_redaction";
+        message = "LeakGuard redacted this action because this destination requires redaction by enterprise policy.";
+      }
+    } else if (state.destinationBlocked) {
+      blocked = true;
+      reason = "destination_blocked";
+      message = "LeakGuard blocked this action because this destination is not approved by enterprise policy.";
+    } else if (
+      state.enterpriseMode &&
+      state.destinationApprovalConfigured &&
+      !state.destinationApproved
+    ) {
+      blocked = true;
+      reason = "destination_not_approved";
+      message = "LeakGuard blocked this action because this destination is not approved by enterprise policy.";
+    }
+
+    return {
+      ...state,
+      allowed: !blocked,
+      blocked,
+      requiresRedaction,
+      reason,
+      message
+    };
+  }
+
+  function shouldBlockDestination(policyOrSummary, url) {
+    return evaluateDestinationPolicy(policyOrSummary, url).blocked;
+  }
+
   function summarizePolicy(policy, url, meta = {}) {
     const targetUrl = String(url || "");
     const isHttp = /^http:\/\//i.test(targetUrl);
-    const approved = policy.approvedDestinations.length
-      ? policy.approvedDestinations.some((pattern) => matchPattern(pattern, targetUrl))
-      : true;
-    const blocked = policy.blockedDestinations.some((pattern) => matchPattern(pattern, targetUrl));
+    const destinationPolicy = evaluateDestinationPolicy(policy, targetUrl);
 
     return {
       enterpriseMode: Boolean(policy.enterpriseMode),
       allowReveal: Boolean(policy.allowReveal),
+      allowUserOverride: Boolean(policy.allowUserOverride),
       allowUserAddedSites: Boolean(policy.allowUserAddedSites),
+      allowSiteRemoval: Boolean(policy.allowSiteRemoval),
       blockHttpSecrets: Boolean(policy.blockHttpSecrets),
       redactHttpAggressively: Boolean(policy.redactHttpAggressively),
       defaultAction: policy.defaultAction,
+      defaultDestinationAction: policy.defaultDestinationAction,
+      managedProtectedSites: Array.isArray(policy.managedProtectedSites)
+        ? [...policy.managedProtectedSites]
+        : [],
       auditMode: policy.auditMode,
       strictPolicyLoad: Boolean(policy.strictPolicyLoad),
-      destinationApproved: approved,
-      destinationBlocked: blocked,
+      destinationPoliciesConfigured: destinationPolicy.destinationPoliciesConfigured,
+      destinationAction: destinationPolicy.destinationAction,
+      destinationRequiresRedaction: destinationPolicy.destinationRequiresRedaction,
+      destinationPolicies: destinationPolicy.destinationPolicies,
+      matchedDestinationPolicy: destinationPolicy.matchedDestinationPolicy,
+      destinationApprovalConfigured: destinationPolicy.destinationApprovalConfigured,
+      destinationApproved: destinationPolicy.destinationApproved,
+      destinationBlocked: destinationPolicy.destinationBlocked,
       http: isHttp,
+      managedAvailable: Boolean(meta.managedAvailable),
       managedApplied: Boolean(meta.managedApplied),
       strictFailure: Boolean(meta.strictFailure)
     };
@@ -400,6 +587,8 @@
   root.PWM.getPolicySummary = getPolicySummary;
   root.PWM.invalidatePolicyCache = invalidatePolicyCache;
   root.PWM.matchPolicyPattern = matchPattern;
+  root.PWM.evaluateDestinationPolicy = evaluateDestinationPolicy;
+  root.PWM.shouldBlockDestination = shouldBlockDestination;
   root.PWM.summarizePolicy = summarizePolicy;
 
   if (typeof module !== "undefined" && module.exports) {
@@ -413,6 +602,8 @@
       getPolicySummary,
       invalidatePolicyCache,
       matchPattern,
+      evaluateDestinationPolicy,
+      shouldBlockDestination,
       summarizePolicy,
       normalizePolicyInput,
       buildFailClosedPolicy

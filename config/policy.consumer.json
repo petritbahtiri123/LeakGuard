@@ -1,9 +1,14 @@
 {
   "enterpriseMode": false,
   "allowReveal": true,
+  "allowUserOverride": true,
   "allowUserAddedSites": true,
+  "allowSiteRemoval": true,
   "blockHttpSecrets": false,
   "redactHttpAggressively": true,
   "defaultAction": "redact",
-  "auditMode": "off"
+  "defaultDestinationAction": "allow",
+  "auditMode": "off",
+  "managedProtectedSites": [],
+  "destinationPolicies": []
 }

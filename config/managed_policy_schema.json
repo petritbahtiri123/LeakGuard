@@ -7,7 +7,13 @@
     "allowReveal": {
       "type": "boolean"
     },
+    "allowUserOverride": {
+      "type": "boolean"
+    },
     "allowUserAddedSites": {
+      "type": "boolean"
+    },
+    "allowSiteRemoval": {
       "type": "boolean"
     },
     "blockHttpSecrets": {
@@ -20,12 +26,38 @@
       "type": "string",
       "enum": ["redact", "block"]
     },
+    "defaultDestinationAction": {
+      "type": "string",
+      "enum": ["allow", "redact", "block"]
+    },
     "auditMode": {
       "type": "string",
       "enum": ["off", "metadata-only", "full"]
     },
     "strictPolicyLoad": {
       "type": "boolean"
+    },
+    "managedProtectedSites": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "destinationPolicies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "match": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string",
+            "enum": ["allow", "redact", "block"]
+          }
+        },
+        "required": ["match", "action"]
+      }
     },
     "approvedDestinations": {
       "type": "array",

@@ -118,6 +118,18 @@ npm run build:firefox-enterprise
 
 Open a built-in protected site or any normal website you want to add from the popup, then click the LeakGuard toolbar icon to verify the popup renders and current-site state loads correctly.
 
+## Enterprise Deployment
+
+LeakGuard's enterprise runtime can now:
+
+- enforce destination actions in the real submit, paste, and typed-content paths with legacy `approvedDestinations` / `blockedDestinations` support and explicit `destinationPolicies` support for `allow`, `redact`, and `block`
+- support `managedProtectedSites` so enterprise policy can mark extra origins for LeakGuard protection without user-created site rules
+- disable `Allow once` with `allowUserOverride`
+- gate user site removal with `allowSiteRemoval`
+- store bounded metadata-only audit events when content is blocked or redacted
+
+Browser-managed deployment is still required for force install, hard removal prevention, incognito or InPrivate handling, and developer-mode restrictions. See [docs/ENTERPRISE_DEPLOYMENT.md](docs/ENTERPRISE_DEPLOYMENT.md) for the exact Chrome and Edge policy guidance this repo now expects.
+
 ## Testing
 
 ### Automated
@@ -186,6 +198,7 @@ The manual smoke block contains synthetic secrets, passwords, tokens, connection
 - [SECURITY_REVIEW.md](SECURITY_REVIEW.md)
 - [BROWSER_COMPAT.md](BROWSER_COMPAT.md)
 - [docs/BUILD_TARGETS.md](docs/BUILD_TARGETS.md)
+- [docs/ENTERPRISE_DEPLOYMENT.md](docs/ENTERPRISE_DEPLOYMENT.md)
 - [docs/CHROME_WEB_STORE_LISTING.md](docs/CHROME_WEB_STORE_LISTING.md)
 - [docs/PRIVACY_POLICY.md](docs/PRIVACY_POLICY.md)
 - [docs/RELEASE_QA_CHECKLIST.md](docs/RELEASE_QA_CHECKLIST.md)

@@ -31,6 +31,12 @@ const {
 
 const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
 
+function extractFunctionSource(source, name) {
+  const match = source.match(new RegExp(`async function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n  \\}`));
+  assert.ok(match, `expected to find function ${name}`);
+  return match[0];
+}
+
 function analyze(text) {
   return new Detector().scan(text).filter((finding) => finding.severity !== "low");
 }
@@ -151,6 +157,10 @@ function testCaretDerivationPrefersOriginalSuffixAnchor() {
 }
 
 function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
+  const beforeInputSource = extractFunctionSource(contentSource, "maybeHandleBeforeInput");
+  const submitSource = extractFunctionSource(contentSource, "maybeHandleSubmit");
+  const fallbackSendSource = extractFunctionSource(contentSource, "maybeHandleFallbackSendKey");
+
   assert.ok(
     contentSource.includes('"beforeinput"'),
     "content script should bind a beforeinput listener for early typed interception"
@@ -178,6 +188,12 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   assert.ok(
     contentSource.includes("consumeInterceptionEvent(event);"),
     "intercepted rewrite paths should fully consume host events when PWM takes ownership"
+  );
+  assert.ok(
+    beforeInputSource.includes("consumeInterceptionEvent(event);") &&
+      submitSource.includes("consumeInterceptionEvent(event);") &&
+      fallbackSendSource.includes("consumeInterceptionEvent(event);"),
+    "beforeinput, submit, and Enter-send interception should all stop immediate propagation to block host races"
   );
   assert.ok(
     contentSource.includes("shouldAutoRedactTypedSecrets"),

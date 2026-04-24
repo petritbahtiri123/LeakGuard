@@ -12,6 +12,7 @@
 
   const siteLabelEl = document.getElementById("site-label");
   const statusCopyEl = document.getElementById("status-copy");
+  const policyWarningEl = document.getElementById("policy-warning");
   const feedbackEl = document.getElementById("feedback");
   const protectBtn = document.getElementById("protect-btn");
   const manageBtn = document.getElementById("manage-btn");
@@ -20,6 +21,7 @@
   const formEl = document.getElementById("add-site-form");
   const inputEl = document.getElementById("site-input");
   const formFeedbackEl = document.getElementById("form-feedback");
+  const managedSiteListEl = document.getElementById("managed-site-list");
   const userSiteListEl = document.getElementById("user-site-list");
   const builtinSiteListEl = document.getElementById("builtin-site-list");
 
@@ -37,11 +39,21 @@
   let activeRevealRequestId = null;
   let currentPolicy = {
     allowReveal: true,
-    allowUserAddedSites: true
+    allowUserAddedSites: true,
+    allowSiteRemoval: true,
+    enterpriseMode: false,
+    managedAvailable: false,
+    managedApplied: false,
+    strictFailure: false
   };
 
   function setFeedback(text) {
     feedbackEl.textContent = text || "";
+  }
+
+  function setPolicyWarning(text) {
+    policyWarningEl.hidden = !text;
+    policyWarningEl.textContent = text || "";
   }
 
   function setFormFeedback(text) {
@@ -52,6 +64,31 @@
     revealStatusEl.textContent = text || "";
   }
 
+  function renderPolicyWarning() {
+    const warnings = [];
+    const tabIncognito = Boolean(activeTab?.incognito || ext.extension?.inIncognitoContext);
+
+    if (currentPolicy.enterpriseMode && !currentPolicy.managedApplied) {
+      warnings.push(
+        "Managed enterprise policy is not active. Browser policy is still required to force install LeakGuard, control removal, and keep protection aligned with enterprise settings."
+      );
+    }
+
+    if (currentPolicy.strictFailure) {
+      warnings.push(
+        "LeakGuard is currently failing closed for sensitive actions because strict enterprise policy could not be loaded safely."
+      );
+    }
+
+    if (tabIncognito && (!currentPolicy.enterpriseMode || !currentPolicy.managedApplied)) {
+      warnings.push(
+        "Incognito detected. LeakGuard cannot force incognito coverage from extension code alone. Use browser policy to disable incognito or explicitly allow the extension there."
+      );
+    }
+
+    setPolicyWarning(warnings.join(" "));
+  }
+
   function updatePolicy(policy) {
     currentPolicy = {
       ...currentPolicy,
@@ -60,6 +97,7 @@
 
     inputEl.disabled = !currentPolicy.allowUserAddedSites;
     formEl.querySelector('button[type="submit"]').disabled = !currentPolicy.allowUserAddedSites;
+    renderPolicyWarning();
   }
 
   function setView(view) {
@@ -148,6 +186,7 @@
       currentWindow: true
     });
     activeTab = tab || null;
+    renderPolicyWarning();
     return activeTab;
   }
 
@@ -188,6 +227,7 @@
     }
 
     updatePolicy(response.policy);
+    renderManagedSites(response.managedSites || []);
     renderUserSites(response.userSites || []);
     renderBuiltinSites(response.builtInSites || BUILTIN_PROTECTED_SITES);
   }
@@ -266,6 +306,30 @@
     });
   }
 
+  function renderManagedSites(managedSites) {
+    managedSiteListEl.textContent = "";
+
+    if (!managedSites.length) {
+      const empty = document.createElement("p");
+      empty.textContent = "No policy-managed sites are active.";
+      managedSiteListEl.appendChild(empty);
+      return;
+    }
+
+    managedSites.forEach((rule) => {
+      const pills = [];
+      pills.push(rule.active ? "Active" : rule.hasPermission ? "Ready" : "Access missing");
+      pills.push("Managed");
+      pills.push(rule.protocol === "http:" ? "HTTP" : "HTTPS");
+
+      managedSiteListEl.appendChild(
+        createSiteCard(rule, {
+          pills
+        })
+      );
+    });
+  }
+
   function renderUserSites(userSites) {
     userSiteListEl.textContent = "";
 
@@ -280,6 +344,9 @@
       const pills = [];
       pills.push(rule.active ? "Active" : rule.enabled ? "Access missing" : "Disabled");
       pills.push(rule.protocol === "http:" ? "HTTP" : "HTTPS");
+      if (!currentPolicy.allowSiteRemoval) {
+        pills.push("Removal locked");
+      }
 
       const toggleButton = createButton(
         rule.enabled ? "Disable" : "Enable",
@@ -334,6 +401,10 @@
         setFormFeedback("");
         await refreshAllState();
       });
+      removeButton.disabled = !currentPolicy.allowSiteRemoval;
+      if (!currentPolicy.allowSiteRemoval) {
+        removeButton.title = "Managed policy blocks removing protected sites.";
+      }
 
       userSiteListEl.appendChild(
         createSiteCard(rule, {

@@ -5,7 +5,7 @@
   "description": "Local-first secret redaction engine for LLM chat UIs",
   "scripts": {
     "icons:export": "node scripts/export-icons.mjs",
-    "test": "node tests/detector.test.js && node tests/ip_transform.test.js && node tests/ip_child_first_audit.test.js && node tests/composer_helpers.test.js && node tests/typed_interception.test.js && node tests/protected_sites.test.js && node tests/productization.test.js && node tests/security.test.js && node tests/synthetic_pack.test.js && node tests/build_targets.test.js",
+    "test": "node tests/detector.test.js && node tests/ip_transform.test.js && node tests/ip_child_first_audit.test.js && node tests/composer_helpers.test.js && node tests/typed_interception.test.js && node tests/protected_sites.test.js && node tests/enterprise_policy.test.js && node tests/productization.test.js && node tests/security.test.js && node tests/synthetic_pack.test.js && node tests/build_targets.test.js",
     "build:chrome": "node scripts/build-extension.mjs --browser chrome --mode consumer",
     "build:chrome-enterprise": "node scripts/build-extension.mjs --browser chrome --mode enterprise",
     "build:firefox": "node scripts/build-extension.mjs --browser firefox --mode consumer",

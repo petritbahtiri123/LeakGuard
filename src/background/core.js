@@ -13,6 +13,7 @@ const {
   isBuiltinProtectedSiteRule,
   loadPolicy,
   getPolicySummary,
+  evaluateDestinationPolicy,
   invalidatePolicyCache,
   ext,
   supportsDynamicContentScripts,
@@ -41,10 +42,111 @@ const CONTENT_SCRIPT_FILES = [
   "shared/transformOutboundPrompt.js",
   "shared/redactor.js",
   "shared/protected_sites.js",
+  "shared/policy.js",
   "content/composer_helpers.js",
   "content/content.js"
 ];
 const CONTENT_STYLE_FILES = ["content/overlay.css"];
+const AUDIT_EVENTS_STORAGE_KEY = "pwm:auditEvents";
+const MAX_AUDIT_EVENTS = 250;
+const DESTINATION_POLICY_BLOCK_MESSAGE =
+  "LeakGuard blocked this action because this destination is not approved by enterprise policy.";
+const PROTECTED_SITE_REMOVAL_BLOCK_MESSAGE =
+  "Managed policy blocks removing protected sites.";
+
+function createPolicyDecisionError(decision) {
+  const error = new Error(decision?.message || DESTINATION_POLICY_BLOCK_MESSAGE);
+  error.reason = decision?.reason || "destination_blocked";
+  return error;
+}
+
+function normalizeAuditFindingType(type) {
+  const normalized = String(type || "secret")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+  return normalized || "secret";
+}
+
+function summarizeAuditFindings(findings) {
+  const normalizedFindings = Array.isArray(findings) ? findings : [];
+  const findingTypes = [...new Set(
+    normalizedFindings.map((finding) => normalizeAuditFindingType(finding?.type || finding?.placeholderType))
+  )];
+
+  return {
+    findingCount: normalizedFindings.length,
+    findingTypes
+  };
+}
+
+function parseAuditUrl(url) {
+  try {
+    const parsed = new URL(url);
+    return {
+      urlOrigin: parsed.origin,
+      siteHost: parsed.hostname
+    };
+  } catch {
+    return {
+      urlOrigin: "",
+      siteHost: ""
+    };
+  }
+}
+
+function trimAuditEvents(events) {
+  const normalizedEvents = Array.isArray(events) ? events.filter(Boolean) : [];
+  return normalizedEvents.slice(-MAX_AUDIT_EVENTS);
+}
+
+function buildAuditEventEntry({ action, reason, url, findings, policySummary }) {
+  const { urlOrigin, siteHost } = parseAuditUrl(url);
+  const findingSummary = summarizeAuditFindings(findings);
+
+  return {
+    timestamp: new Date().toISOString(),
+    action,
+    reason,
+    urlOrigin,
+    siteHost,
+    findingCount: findingSummary.findingCount,
+    findingTypes: findingSummary.findingTypes,
+    policyMode: policySummary?.enterpriseMode ? "enterprise" : "consumer"
+  };
+}
+
+async function recordAuditEvent({ action, reason, url, findings, policySummary }) {
+  if (!ext?.storage?.local?.get || !ext?.storage?.local?.set) {
+    return null;
+  }
+
+  const summary = policySummary || (url ? await getPolicySummary(url) : null);
+  if (!summary || summary.auditMode === "off") {
+    return null;
+  }
+
+  const entry = buildAuditEventEntry({
+    action,
+    reason,
+    url,
+    findings,
+    policySummary: summary
+  });
+  const stored = await ext.storage.local.get(AUDIT_EVENTS_STORAGE_KEY);
+  const existingEvents = Array.isArray(stored[AUDIT_EVENTS_STORAGE_KEY])
+    ? stored[AUDIT_EVENTS_STORAGE_KEY]
+    : [];
+  const events = trimAuditEvents([...existingEvents, entry]);
+
+  await ext.storage.local.set({
+    [AUDIT_EVENTS_STORAGE_KEY]: events
+  });
+
+  return entry;
+}
 
 function storageKey(tabId) {
   return `${STORAGE_PREFIX}${tabId}`;
@@ -130,6 +232,24 @@ function userSiteScriptId(rule) {
   return `${USER_SITE_SCRIPT_ID_PREFIX}${stableRuleHash(rule?.id)}`;
 }
 
+async function getManagedProtectedSites(policy = null) {
+  const loadedPolicy = policy || (await loadPolicy());
+  const managedInputs = Array.isArray(loadedPolicy?.policy?.managedProtectedSites)
+    ? loadedPolicy.policy.managedProtectedSites
+    : [];
+
+  return normalizeProtectedSiteList(
+    managedInputs
+      .map((input) => normalizeProtectedSiteInput(input))
+      .filter((normalized) => normalized.ok)
+      .map((normalized) => ({
+        ...normalized.rule,
+        enabled: true,
+        managed: true
+      }))
+  );
+}
+
 function siteRuleMatchesUrl(rule, url) {
   const normalized = normalizeProtectedSiteInput(url);
   return Boolean(normalized.ok && rule?.id && normalized.rule.id === rule.id);
@@ -156,19 +276,24 @@ async function enrichProtectedSites(rules, policySummary) {
       const hasPermission = await ext.permissions.contains({
         origins: [rule.matchPattern]
       });
+      const managed = Boolean(rule.managed);
+      const activeByPolicy = managed ? true : Boolean(policySummary?.allowUserAddedSites);
 
       return {
         ...rule,
         hasPermission,
-        active: Boolean(policySummary?.allowUserAddedSites && rule.enabled && hasPermission),
-        policyLocked: !policySummary?.allowUserAddedSites
+        active: Boolean(activeByPolicy && rule.enabled && hasPermission),
+        policyLocked: managed ? true : !policySummary?.allowUserAddedSites,
+        removalLocked: managed ? true : !policySummary?.allowSiteRemoval
       };
     })
   );
 }
 
 async function getProtectedSiteOverview(url) {
+  const loadedPolicy = await loadPolicy();
   const policy = await getPolicySummary(url);
+  const managedSites = await enrichProtectedSites(await getManagedProtectedSites(loadedPolicy), policy);
   const userSites = await enrichProtectedSites(await getStoredProtectedSites(), policy);
   const normalized = normalizeProtectedSiteInput(url);
 
@@ -176,6 +301,7 @@ async function getProtectedSiteOverview(url) {
     return {
       policy,
       builtInSites: BUILTIN_PROTECTED_SITES,
+      managedSites,
       userSites,
       currentSite: {
         eligible: false,
@@ -190,12 +316,14 @@ async function getProtectedSiteOverview(url) {
 
   const targetRule = normalized.rule;
   const builtInRule = BUILTIN_PROTECTED_SITES.find((rule) => rule.id === targetRule.id);
+  const managedRule = managedSites.find((rule) => rule.id === targetRule.id) || null;
   const storedRule = userSites.find((rule) => rule.id === targetRule.id) || null;
 
   if (builtInRule) {
     return {
       policy,
       builtInSites: BUILTIN_PROTECTED_SITES,
+      managedSites,
       userSites,
       currentSite: {
         eligible: true,
@@ -208,10 +336,45 @@ async function getProtectedSiteOverview(url) {
     };
   }
 
+  if (managedRule?.active) {
+    return {
+      policy,
+      builtInSites: BUILTIN_PROTECTED_SITES,
+      managedSites,
+      userSites,
+      currentSite: {
+        eligible: true,
+        protected: true,
+        source: "managed",
+        canProtect: false,
+        rule: managedRule,
+        message: "Managed LeakGuard protection is active on this site."
+      }
+    };
+  }
+
+  if (managedRule && !managedRule.hasPermission) {
+    return {
+      policy,
+      builtInSites: BUILTIN_PROTECTED_SITES,
+      managedSites,
+      userSites,
+      currentSite: {
+        eligible: true,
+        protected: false,
+        source: "managed",
+        canProtect: false,
+        rule: managedRule,
+        message: "Managed policy includes this site, but browser site access is missing."
+      }
+    };
+  }
+
   if (storedRule?.active) {
     return {
       policy,
       builtInSites: BUILTIN_PROTECTED_SITES,
+      managedSites,
       userSites,
       currentSite: {
         eligible: true,
@@ -228,6 +391,7 @@ async function getProtectedSiteOverview(url) {
     return {
       policy,
       builtInSites: BUILTIN_PROTECTED_SITES,
+      managedSites,
       userSites,
       currentSite: {
         eligible: true,
@@ -246,6 +410,7 @@ async function getProtectedSiteOverview(url) {
     return {
       policy,
       builtInSites: BUILTIN_PROTECTED_SITES,
+      managedSites,
       userSites,
       currentSite: {
         eligible: true,
@@ -262,6 +427,7 @@ async function getProtectedSiteOverview(url) {
     return {
       policy,
       builtInSites: BUILTIN_PROTECTED_SITES,
+      managedSites,
       userSites,
       currentSite: {
         eligible: true,
@@ -279,6 +445,7 @@ async function getProtectedSiteOverview(url) {
   return {
     policy,
     builtInSites: BUILTIN_PROTECTED_SITES,
+    managedSites,
     userSites,
     currentSite: {
       eligible: true,
@@ -295,14 +462,12 @@ async function getProtectedSiteOverview(url) {
 
 async function buildUserSiteRegistrations() {
   const loadedPolicy = await loadPolicy();
-  if (!loadedPolicy.policy.allowUserAddedSites) {
-    return [];
-  }
-
-  const userSites = await getStoredProtectedSites();
+  const managedSites = await getManagedProtectedSites(loadedPolicy);
+  const userSites = loadedPolicy.policy.allowUserAddedSites ? await getStoredProtectedSites() : [];
+  const siteRules = normalizeProtectedSiteList([...managedSites, ...userSites]);
   const registrations = [];
 
-  for (const rule of userSites) {
+  for (const rule of siteRules) {
     if (!rule.enabled) continue;
 
     const hasPermission = await ext.permissions.contains({
@@ -415,6 +580,11 @@ async function setProtectedSiteEnabled(siteId, enabled) {
     throw new Error("Managed policy disables user-added sites.");
   }
 
+  const managedRule = (await getManagedProtectedSites(loadedPolicy)).find((rule) => rule.id === siteId);
+  if (managedRule) {
+    throw new Error("Managed policy controls this protected site.");
+  }
+
   const currentRules = await getStoredProtectedSites();
   const existingRule = currentRules.find((rule) => rule.id === siteId);
 
@@ -439,11 +609,21 @@ async function setProtectedSiteEnabled(siteId, enabled) {
 }
 
 async function deleteProtectedSite(siteId) {
+  const loadedPolicy = await loadPolicy();
+  const managedRule = (await getManagedProtectedSites(loadedPolicy)).find((rule) => rule.id === siteId);
+  if (managedRule) {
+    throw new Error("Managed policy controls this protected site.");
+  }
+
   const currentRules = await getStoredProtectedSites();
   const existingRule = currentRules.find((rule) => rule.id === siteId);
 
   if (!existingRule) {
     throw new Error("Protected site rule not found.");
+  }
+
+  if (!loadedPolicy.policy.allowSiteRemoval) {
+    throw new Error(PROTECTED_SITE_REMOVAL_BLOCK_MESSAGE);
   }
 
   const nextRules = currentRules.filter((rule) => rule.id !== siteId);
@@ -640,8 +820,21 @@ function normalizeFinding(finding) {
   };
 }
 
-async function redactForTab(tabId, url, text, findings) {
+async function redactForTab(tabId, url, text, findings, options = {}) {
   const policySummary = await getPolicySummary(url);
+  const destinationPolicy = evaluateDestinationPolicy(policySummary, url);
+
+  if (destinationPolicy.blocked) {
+    await recordAuditEvent({
+      action: "blocked",
+      reason: destinationPolicy.reason,
+      url,
+      findings,
+      policySummary
+    }).catch(() => null);
+    throw createPolicyDecisionError(destinationPolicy);
+  }
+
   const current = await initState(tabId, url);
   const manager = new PlaceholderManager();
   manager.setPrivateState(current || {});
@@ -657,6 +850,14 @@ async function redactForTab(tabId, url, text, findings) {
     transformMode: normalizeTransformMode(current?.transformMode || DEFAULT_TRANSFORM_MODE),
     ...manager.exportPrivateState()
   });
+
+  await recordAuditEvent({
+    action: "redacted",
+    reason: options.auditReason || "redacted",
+    url,
+    findings: normalizedFindings,
+    policySummary
+  }).catch(() => null);
 
   return {
     result: serializeRedactionResult(result),
@@ -839,7 +1040,9 @@ ext.runtime?.onMessage?.addListener((message, sender, sendResponse) => {
     }
 
     if (message?.type === "PWM_REDACT_TEXT") {
-      const payload = await redactForTab(tabId, message.url, message.text, message.findings);
+      const payload = await redactForTab(tabId, message.url, message.text, message.findings, {
+        auditReason: message.auditReason
+      });
       sendResponse({ ok: true, ...payload });
       return;
     }
@@ -897,6 +1100,19 @@ ext.runtime?.onMessage?.addListener((message, sender, sendResponse) => {
       await reloadTabForRuleChange(message.tabId, message.tabUrl || message.url, rule).catch(() => false);
       const overview = await getProtectedSiteOverview(message.url || rule.origin);
       sendResponse({ ok: true, rule, overview });
+      return;
+    }
+
+    if (message?.type === "PWM_RECORD_AUDIT_EVENT") {
+      const policySummary = message.url ? await getPolicySummary(message.url) : null;
+      const entry = await recordAuditEvent({
+        action: message.action,
+        reason: message.reason,
+        url: message.url,
+        findings: message.findings,
+        policySummary
+      });
+      sendResponse({ ok: true, entry });
       return;
     }
 
@@ -980,7 +1196,8 @@ ext.runtime?.onMessage?.addListener((message, sender, sendResponse) => {
   })().catch((error) => {
     sendResponse({
       ok: false,
-      error: error?.message || String(error)
+      error: error?.message || String(error),
+      reason: error?.reason || null
     });
   });
 

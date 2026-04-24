@@ -169,6 +169,15 @@ h3 {
   color: #fef3c7;
 }
 
+.policy-warning {
+  margin: 0 0 12px;
+  border: 1px solid rgba(250, 204, 21, 0.28);
+  border-radius: 14px;
+  background: rgba(120, 53, 15, 0.28);
+  color: #fde68a;
+  padding: 10px 12px;
+}
+
 .field {
   display: grid;
   gap: 8px;

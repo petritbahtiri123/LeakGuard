@@ -10,6 +10,7 @@
     PLACEHOLDER_TOKEN_REGEX,
     normalizeVisiblePlaceholders,
     buildNetworkUiFindings,
+    evaluateDestinationPolicy,
     ComposerHelpers
   } = globalThis.PWM;
   const {
@@ -62,14 +63,26 @@
     policy: {
       enterpriseMode: false,
       allowReveal: true,
+      allowUserOverride: true,
       allowUserAddedSites: true,
+      allowSiteRemoval: true,
       blockHttpSecrets: false,
       redactHttpAggressively: true,
       defaultAction: "redact",
+      defaultDestinationAction: "allow",
       auditMode: "off",
       strictPolicyLoad: false,
+      destinationPoliciesConfigured: false,
+      destinationAction: "allow",
+      destinationRequiresRedaction: false,
+      destinationPolicies: [],
+      matchedDestinationPolicy: null,
+      destinationApprovalConfigured: false,
       destinationApproved: true,
       destinationBlocked: false,
+      managedAvailable: false,
+      managedApplied: false,
+      strictFailure: false,
       http: location.protocol === "http:"
     }
   };
@@ -401,17 +414,123 @@
     return {
       enterpriseMode: false,
       allowReveal: true,
+      allowUserOverride: true,
       allowUserAddedSites: true,
+      allowSiteRemoval: true,
       blockHttpSecrets: false,
       redactHttpAggressively: true,
       defaultAction: "redact",
+      defaultDestinationAction: "allow",
       auditMode: "off",
       strictPolicyLoad: false,
+      destinationPoliciesConfigured: false,
+      destinationAction: "allow",
+      destinationRequiresRedaction: false,
+      destinationPolicies: [],
+      matchedDestinationPolicy: null,
+      destinationApprovalConfigured: false,
       destinationApproved: true,
       destinationBlocked: false,
+      managedAvailable: false,
+      managedApplied: false,
+      strictFailure: false,
       http: location.protocol === "http:",
       ...(currentPublicState.policy || {})
     };
+  }
+
+  function sanitizeAuditFindings(findings) {
+    return (findings || []).map((finding) => ({
+      type: finding?.type || finding?.placeholderType || "SECRET"
+    }));
+  }
+
+  async function recordMetadataAuditEvent(action, reason, findings) {
+    try {
+      await ext.runtime.sendMessage({
+        type: "PWM_RECORD_AUDIT_EVENT",
+        action,
+        reason,
+        url: location.href,
+        findings: sanitizeAuditFindings(findings)
+      });
+    } catch {
+      // Audit logging should never break the content flow.
+    }
+  }
+
+  async function refreshPublicState() {
+    const response = await ext.runtime.sendMessage({
+      type: "PWM_GET_PUBLIC_STATE",
+      url: location.href
+    });
+
+    if (!response?.ok) {
+      const error = new Error(response?.error || "LeakGuard could not refresh policy state.");
+      error.reason = response?.reason || null;
+      throw error;
+    }
+
+    if (response.state) {
+      applyPublicState(response.state);
+    }
+
+    return getActivePolicy();
+  }
+
+  async function getPolicyForAction() {
+    try {
+      return await refreshPublicState();
+    } catch {
+      const fallbackPolicy = getActivePolicy();
+      if (fallbackPolicy.enterpriseMode && fallbackPolicy.strictPolicyLoad) {
+        return {
+          ...fallbackPolicy,
+          strictFailure: true
+        };
+      }
+
+      return fallbackPolicy;
+    }
+  }
+
+  function resolveDecisionAction(action, policy) {
+    if (action !== "allow" || policy.allowUserOverride) {
+      return action;
+    }
+
+    return policy.defaultAction === "redact" ? "redact" : "cancel";
+  }
+
+  function getDestinationPolicyDecision(policy) {
+    return evaluateDestinationPolicy(policy, location.href);
+  }
+
+  function shouldForceDestinationRedaction(decision, findings) {
+    return Boolean(decision?.requiresRedaction && (findings || []).length > 0);
+  }
+
+  async function handleDestinationPolicy(findings, policy) {
+    const decision = getDestinationPolicyDecision(policy);
+
+    if (!decision.blocked) {
+      return decision;
+    }
+
+    await recordMetadataAuditEvent("blocked", decision.reason, findings);
+    setBadge("Destination blocked by policy");
+    hideBadgeSoon(3200);
+    await showMessageModal("Sensitive content blocked", decision.message);
+    refreshBadgeFromCurrentInput();
+    return decision;
+  }
+
+  async function promptForSensitiveContentDecision(findings, mode, policy) {
+    const decision = await showDecisionModal(findings, mode, {
+      allowUserOverride: policy.allowUserOverride
+    });
+
+    return resolveDecisionAction(decision.action, policy);
   }
 
   async function initState() {
@@ -425,16 +544,29 @@
     }
   }
 
-  async function requestRedaction(text, findings) {
+  async function requestRedaction(text, findings, options = {}) {
     const response = await ext.runtime.sendMessage({
       type: "PWM_REDACT_TEXT",
       url: location.href,
       text,
-      findings
+      findings,
+      auditReason: options.auditReason || null
     });
 
     if (!response?.ok || !response?.result) {
-      throw new Error(response?.error || "LeakGuard could not redact this content.");
+      const error = new Error(response?.error || "LeakGuard could not redact this content.");
+      error.reason = response?.reason || null;
+      if (
+        error.reason === "destination_blocked" ||
+        error.reason === "destination_not_approved" ||
+        error.reason === "policy_fail_closed"
+      ) {
+        setBadge("Destination blocked by policy");
+        hideBadgeSoon(3200);
+        await showMessageModal("Sensitive content blocked", error.message);
+        refreshBadgeFromCurrentInput();
+      }
+      throw error;
     }
 
     if (response.state) {
@@ -615,22 +747,21 @@
     return secretFindings.every((finding) => finding?.severity === "high");
   }
 
-  function shouldEnforceHttpSecretPolicy(secretFindings) {
-    const policy = getActivePolicy();
+  function shouldEnforceHttpSecretPolicy(policy, secretFindings) {
     return Boolean(policy.blockHttpSecrets && policy.http && (secretFindings || []).length > 0);
   }
 
-  async function handleHttpSecretPolicy(secretFindings, onRedact) {
-    if (!shouldEnforceHttpSecretPolicy(secretFindings)) {
+  async function handleHttpSecretPolicy(policy, secretFindings, onRedact) {
+    if (!shouldEnforceHttpSecretPolicy(policy, secretFindings)) {
       return false;
     }
 
-    const policy = getActivePolicy();
     if (policy.defaultAction === "redact") {
       await onRedact();
       return true;
     }
 
+    await recordMetadataAuditEvent("blocked", "http_blocked", secretFindings);
     setBadge("HTTP secret blocked by policy");
     hideBadgeSoon(3200);
     await showMessageModal(
@@ -704,12 +835,13 @@
     container.appendChild(row);
   }
 
-  function showDecisionModal(findings, mode) {
+  function showDecisionModal(findings, mode, options = {}) {
     if (modalOpen) {
       return Promise.resolve({ action: "cancel" });
     }
 
     modalOpen = true;
+    const allowUserOverride = options.allowUserOverride !== false;
 
     return new Promise((resolve) => {
       const backdrop = document.createElement("div");
@@ -765,7 +897,7 @@
       const getFocusedAction = () => {
         const active = document.activeElement;
         if (active === redactBtn) return "redact";
-        if (active === allowBtn) return "allow";
+        if (allowUserOverride && active === allowBtn) return "allow";
         if (active === cancelBtn) return "cancel";
         if (modal.contains(active)) return "redact";
         return null;
@@ -808,7 +940,11 @@
         }
       });
 
-      actions.append(cancelBtn, allowBtn, redactBtn);
+      actions.append(cancelBtn);
+      if (allowUserOverride) {
+        actions.appendChild(allowBtn);
+      }
+      actions.appendChild(redactBtn);
       modal.append(title, desc, findingsWrap, actions);
       backdrop.appendChild(modal);
       document.documentElement.appendChild(backdrop);
@@ -1106,10 +1242,19 @@
       relevantFindings
     );
 
-    event.preventDefault();
-    event.stopPropagation();
+    consumeInterceptionEvent(event);
 
-    const httpPolicyHandled = await handleHttpSecretPolicy(relevantSecretFindings, async () => {
+    const policy = await getPolicyForAction();
+    const destinationPolicy = await handleDestinationPolicy(relevantFindings, policy);
+    if (destinationPolicy.blocked) {
+      return;
+    }
+    const destinationForceRedact = shouldForceDestinationRedaction(
+      destinationPolicy,
+      relevantFindings
+    );
+
+    const httpPolicyHandled = await handleHttpSecretPolicy(policy, relevantSecretFindings, async () => {
       const result = await requestRedaction(nextAnalysis.normalizedText, relevantSecretFindings);
       const ok = await applyTypedInterceptionRewrite(
         input,
@@ -1130,6 +1275,27 @@
     });
 
     if (httpPolicyHandled) {
+      return;
+    }
+
+    if (destinationForceRedact) {
+      const result = await requestRedaction(nextAnalysis.normalizedText, relevantSecretFindings, {
+        auditReason: destinationPolicy.reason
+      });
+      const ok = await applyTypedInterceptionRewrite(
+        input,
+        result.redactedText,
+        originalText,
+        selection,
+        "input"
+      );
+
+      if (!ok) return;
+
+      lastTypedPromptText = result.redactedText;
+      setBadge("Destination policy required redaction");
+      hideBadgeSoon();
+      refreshBadgeFromCurrentInput();
       return;
     }
 
@@ -1172,13 +1338,13 @@
       return;
     }
 
-    const decision = await showDecisionModal(relevantFindings, "input");
-    if (decision.action === "cancel") {
+    const decisionAction = await promptForSensitiveContentDecision(relevantFindings, "input", policy);
+    if (decisionAction === "cancel") {
       refreshBadgeFromCurrentInput();
       return;
     }
 
-    if (decision.action === "allow") {
+    if (decisionAction === "allow") {
       const ok = await applyTypedInterceptionRewrite(
         input,
         nextAnalysis.normalizedText,
@@ -1251,7 +1417,14 @@
 
     consumeInterceptionEvent(event);
 
-    const httpPolicyHandled = await handleHttpSecretPolicy(analysis.secretFindings, async () => {
+    const policy = await getPolicyForAction();
+    const destinationPolicy = await handleDestinationPolicy(analysis.findings, policy);
+    if (destinationPolicy.blocked) {
+      return;
+    }
+    const destinationForceRedact = shouldForceDestinationRedaction(destinationPolicy, analysis.findings);
+
+    const httpPolicyHandled = await handleHttpSecretPolicy(policy, analysis.secretFindings, async () => {
       const latestInput = findComposer(input);
       if (!latestInput) return;
 
@@ -1279,8 +1452,34 @@
       return;
     }
 
-    const decision = await showDecisionModal(analysis.findings, "paste");
-    if (decision.action === "cancel") return;
+    if (destinationForceRedact) {
+      const latestInput = findComposer(input);
+      if (!latestInput) return;
+
+      const latestText = getInputText(latestInput);
+      const baseText = latestText === originalText ? latestText : originalText;
+      const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings, {
+        auditReason: destinationPolicy.reason
+      });
+
+      const ok = await applyPasteDecision(
+        latestInput,
+        baseText,
+        selection,
+        result.redactedText,
+        "paste"
+      );
+
+      if (!ok) return;
+
+      setBadge("Destination policy required redaction");
+      hideBadgeSoon();
+      refreshBadgeFromCurrentInput();
+      return;
+    }
+
+    const decisionAction = await promptForSensitiveContentDecision(analysis.findings, "paste", policy);
+    if (decisionAction === "cancel") return;
 
     const latestInput = findComposer(input);
     if (!latestInput) return;
@@ -1288,7 +1487,7 @@
     const latestText = getInputText(latestInput);
     const baseText = latestText === originalText ? latestText : originalText;
 
-    if (decision.action === "allow") {
+    if (decisionAction === "allow") {
       const ok = await applyPasteDecision(
         latestInput,
         baseText,
@@ -1323,8 +1522,7 @@
 
   async function maybeHandleSubmit(event) {
     if (modalOpen) {
-      event.preventDefault();
-      event.stopPropagation();
+      consumeInterceptionEvent(event);
       return;
     }
 
@@ -1346,10 +1544,18 @@
     const analysis = analyzeText(text);
     if (!analysis.findings.length && !analysis.placeholderNormalized) return;
 
-    event.preventDefault();
-    event.stopPropagation();
+    consumeInterceptionEvent(event);
 
-    const httpPolicyHandled = await handleHttpSecretPolicy(analysis.secretFindings, async () => {
+    const policy = analysis.findings.length ? await getPolicyForAction() : getActivePolicy();
+    const destinationPolicy = analysis.findings.length
+      ? await handleDestinationPolicy(analysis.findings, policy)
+      : getDestinationPolicyDecision(policy);
+    if (analysis.findings.length && destinationPolicy.blocked) {
+      return;
+    }
+    const destinationForceRedact = shouldForceDestinationRedaction(destinationPolicy, analysis.findings);
+
+    const httpPolicyHandled = await handleHttpSecretPolicy(policy, analysis.secretFindings, async () => {
       const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
       const applied = await applyComposerText(input, result.redactedText, {
         caretOffset: result.redactedText.length,
@@ -1387,6 +1593,43 @@
       return;
     }
 
+    if (destinationForceRedact) {
+      const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings, {
+        auditReason: destinationPolicy.reason
+      });
+      const applied = await applyComposerText(input, result.redactedText, {
+        caretOffset: result.redactedText.length,
+        restoreText: analysis.normalizedText,
+        restoreCaretOffset: analysis.normalizedText.length
+      });
+
+      if (!applied.ok) {
+        await showRewriteFailure(
+          "submit",
+          collectFailureDetails(input, result.redactedText, applied.actual, "submit")
+        );
+        refreshBadgeFromCurrentInput();
+        return;
+      }
+
+      setBadge("Destination policy required redaction");
+      hideBadgeSoon();
+      refreshBadgeFromCurrentInput();
+
+      if (!(await ensureExactComposerState(input, result.redactedText))) {
+        await showRewriteFailure(
+          "submit",
+          collectFailureDetails(input, result.redactedText, getInputText(input), "submit")
+        );
+        refreshBadgeFromCurrentInput();
+        return;
+      }
+
+      bypassNextSubmit = true;
+      queueMicrotask(() => submitComposer(form, input));
+      return;
+    }
+
     if (!analysis.findings.length) {
       const normalized = await applyNormalizedComposerRewrite(input, text, "submit");
       if (!normalized.ok) return;
@@ -1405,10 +1648,10 @@
       return;
     }
 
-    const decision = await showDecisionModal(analysis.findings, "submit");
-    if (decision.action === "cancel") return;
+    const decisionAction = await promptForSensitiveContentDecision(analysis.findings, "submit", policy);
+    if (decisionAction === "cancel") return;
 
-    if (decision.action === "allow") {
+    if (decisionAction === "allow") {
       if (analysis.placeholderNormalized) {
         const rewritten = await applyNormalizedComposerRewrite(input, text, "submit");
         if (!rewritten.ok) {
@@ -1492,10 +1735,18 @@
     const analysis = analyzeText(text);
     if (!analysis.findings.length && !analysis.placeholderNormalized) return;
 
-    event.preventDefault();
-    event.stopPropagation();
+    consumeInterceptionEvent(event);
 
-    const httpPolicyHandled = await handleHttpSecretPolicy(analysis.secretFindings, async () => {
+    const policy = analysis.findings.length ? await getPolicyForAction() : getActivePolicy();
+    const destinationPolicy = analysis.findings.length
+      ? await handleDestinationPolicy(analysis.findings, policy)
+      : getDestinationPolicyDecision(policy);
+    if (analysis.findings.length && destinationPolicy.blocked) {
+      return;
+    }
+    const destinationForceRedact = shouldForceDestinationRedaction(destinationPolicy, analysis.findings);
+
+    const httpPolicyHandled = await handleHttpSecretPolicy(policy, analysis.secretFindings, async () => {
       const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
       const applied = await applyComposerText(input, result.redactedText, {
         caretOffset: result.redactedText.length,
@@ -1540,6 +1791,50 @@
       return;
     }
 
+    if (destinationForceRedact) {
+      const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings, {
+        auditReason: destinationPolicy.reason
+      });
+      const applied = await applyComposerText(input, result.redactedText, {
+        caretOffset: result.redactedText.length,
+        restoreText: analysis.normalizedText,
+        restoreCaretOffset: analysis.normalizedText.length
+      });
+
+      if (!applied.ok) {
+        await showRewriteFailure(
+          "submit",
+          collectFailureDetails(input, result.redactedText, applied.actual, "submit")
+        );
+        refreshBadgeFromCurrentInput();
+        return;
+      }
+
+      setBadge("Destination policy required redaction");
+      hideBadgeSoon();
+      refreshBadgeFromCurrentInput();
+
+      queueMicrotask(() => {
+        ensureExactComposerState(input, result.redactedText)
+          .then((isExact) => {
+            if (!isExact) {
+              return showRewriteFailure(
+                "submit",
+                collectFailureDetails(input, result.redactedText, getInputText(input), "submit")
+              ).then(() => {
+                refreshBadgeFromCurrentInput();
+              });
+            }
+
+            const button = findSendButton(input);
+            if (button) button.click();
+            return null;
+          })
+          .catch(console.error);
+      });
+      return;
+    }
+
     if (!analysis.findings.length) {
       const normalized = await applyNormalizedComposerRewrite(input, text, "submit");
       if (!normalized.ok) return;
@@ -1565,10 +1860,10 @@
       return;
     }
 
-    const decision = await showDecisionModal(analysis.findings, "submit");
-    if (decision.action === "cancel") return;
+    const decisionAction = await promptForSensitiveContentDecision(analysis.findings, "submit", policy);
+    if (decisionAction === "cancel") return;
 
-    if (decision.action === "allow") {
+    if (decisionAction === "allow") {
       if (analysis.placeholderNormalized) {
         const rewritten = await applyNormalizedComposerRewrite(input, text, "submit");
         if (!rewritten.ok) return;
@@ -1663,8 +1958,15 @@
       analysis.secretFindings,
       analysis.findings
     );
+    const policy = await getPolicyForAction();
 
-    const httpPolicyHandled = await handleHttpSecretPolicy(analysis.secretFindings, async () => {
+    const destinationPolicy = await handleDestinationPolicy(analysis.findings, policy);
+    if (destinationPolicy.blocked) {
+      return;
+    }
+    const destinationForceRedact = shouldForceDestinationRedaction(destinationPolicy, analysis.findings);
+
+    const httpPolicyHandled = await handleHttpSecretPolicy(policy, analysis.secretFindings, async () => {
       const latestInput = findComposer(input);
       if (!latestInput) return;
 
@@ -1697,6 +1999,41 @@
     });
 
     if (httpPolicyHandled) {
+      return;
+    }
+
+    if (destinationForceRedact) {
+      const latestInput = findComposer(input);
+      if (!latestInput) return;
+
+      const latestText = getInputText(latestInput);
+      if (latestText !== text) {
+        refreshBadgeFromCurrentInput();
+        return;
+      }
+
+      const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings, {
+        auditReason: destinationPolicy.reason
+      });
+      const applied = await applyComposerText(latestInput, result.redactedText, {
+        caretOffset: result.redactedText.length,
+        restoreText: analysis.normalizedText,
+        restoreCaretOffset: analysis.normalizedText.length
+      });
+
+      if (!applied.ok) {
+        await showRewriteFailure(
+          "input",
+          collectFailureDetails(latestInput, result.redactedText, applied.actual, "input")
+        );
+        refreshBadgeFromCurrentInput();
+        return;
+      }
+
+      lastTypedPromptText = result.redactedText;
+      setBadge("Destination policy required redaction");
+      hideBadgeSoon();
+      refreshBadgeFromCurrentInput();
       return;
     }
 
@@ -1734,8 +2071,8 @@
       return;
     }
 
-    const decision = await showDecisionModal(analysis.findings, "input");
-    if (decision.action !== "redact") {
+    const decisionAction = await promptForSensitiveContentDecision(analysis.findings, "input", policy);
+    if (decisionAction !== "redact") {
       refreshBadgeFromCurrentInput();
       return;
     }

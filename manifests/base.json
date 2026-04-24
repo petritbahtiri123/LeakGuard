@@ -55,6 +55,7 @@
         "shared/transformOutboundPrompt.js",
         "shared/redactor.js",
         "shared/protected_sites.js",
+        "shared/policy.js",
         "content/composer_helpers.js",
         "content/content.js"
       ],
