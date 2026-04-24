@@ -591,6 +591,30 @@
     };
   }
 
+  function splitSecretFindingsBySeverity(findings) {
+    const high = [];
+    const medium = [];
+
+    for (const finding of findings || []) {
+      if (finding?.severity === "high") {
+        high.push(finding);
+      } else if (finding?.severity === "medium") {
+        medium.push(finding);
+      }
+    }
+
+    return {
+      high,
+      medium
+    };
+  }
+
+  function shouldAutoRedactTypedSecrets(secretFindings, allFindings) {
+    if (!(secretFindings || []).length) return false;
+    if ((allFindings || []).length !== secretFindings.length) return false;
+    return secretFindings.every((finding) => finding?.severity === "high");
+  }
+
   function shouldEnforceHttpSecretPolicy(secretFindings) {
     const policy = getActivePolicy();
     return Boolean(policy.blockHttpSecrets && policy.http && (secretFindings || []).length > 0);
@@ -705,7 +729,7 @@
         mode === "paste"
           ? "This pasted content appears to contain sensitive material. Redact it before it reaches the chat input."
           : mode === "input"
-            ? "This typed content appears to contain sensitive material. Redact it before it sits in the chat input."
+            ? "This typed content may contain sensitive material. High-confidence detections auto-redact; review this one before it sits in the chat input."
           : "This message appears to contain sensitive material. Redact it before sending.";
 
       const findingsWrap = document.createElement("div");
@@ -1077,6 +1101,11 @@
       return;
     }
 
+    const typedShouldAutoRedact = shouldAutoRedactTypedSecrets(
+      relevantSecretFindings,
+      relevantFindings
+    );
+
     event.preventDefault();
     event.stopPropagation();
 
@@ -1101,6 +1130,27 @@
     });
 
     if (httpPolicyHandled) {
+      return;
+    }
+
+    if (typedShouldAutoRedact) {
+      const result = await requestRedaction(nextAnalysis.normalizedText, relevantSecretFindings);
+      const ok = await applyTypedInterceptionRewrite(
+        input,
+        result.redactedText,
+        originalText,
+        selection,
+        "input"
+      );
+
+      if (!ok) {
+        return;
+      }
+
+      lastTypedPromptText = result.redactedText;
+      setBadge("High-confidence secret redacted");
+      hideBadgeSoon();
+      refreshBadgeFromCurrentInput();
       return;
     }
 
@@ -1609,6 +1659,10 @@
     }
 
     lastTypedPromptText = analysis.normalizedText;
+    const typedShouldAutoRedact = shouldAutoRedactTypedSecrets(
+      analysis.secretFindings,
+      analysis.findings
+    );
 
     const httpPolicyHandled = await handleHttpSecretPolicy(analysis.secretFindings, async () => {
       const latestInput = findComposer(input);
@@ -1643,6 +1697,40 @@
     });
 
     if (httpPolicyHandled) {
+      return;
+    }
+
+    if (typedShouldAutoRedact) {
+      const latestInput = findComposer(input);
+      if (!latestInput) return;
+
+      const latestText = getInputText(latestInput);
+      if (latestText !== text) {
+        refreshBadgeFromCurrentInput();
+        return;
+      }
+
+      const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
+
+      const applied = await applyComposerText(latestInput, result.redactedText, {
+        caretOffset: result.redactedText.length,
+        restoreText: analysis.normalizedText,
+        restoreCaretOffset: analysis.normalizedText.length
+      });
+
+      if (!applied.ok) {
+        await showRewriteFailure(
+          "input",
+          collectFailureDetails(latestInput, result.redactedText, applied.actual, "input")
+        );
+        refreshBadgeFromCurrentInput();
+        return;
+      }
+
+      lastTypedPromptText = result.redactedText;
+      setBadge("High-confidence secret redacted");
+      hideBadgeSoon();
+      refreshBadgeFromCurrentInput();
       return;
     }
 
@@ -1717,7 +1805,11 @@
       return;
     }
 
-    setBadge("Sensitive content detected");
+    if (!analysis.networkFindings.length && severityBandsOnlyMedium(analysis.secretFindings)) {
+      setBadge("Review possible sensitive content");
+    } else {
+      setBadge("Sensitive content detected");
+    }
     updateStatusPanel({
       hasComposer: true,
       detectedCount: analysis.findings.length,
@@ -1738,6 +1830,11 @@
       refreshBadgeFromCurrentInput();
       maybeHandleTypedSecrets().catch(console.error);
     }, 220);
+  }
+
+  function severityBandsOnlyMedium(findings) {
+    const bands = splitSecretFindingsBySeverity(findings);
+    return bands.medium.length > 0 && bands.high.length === 0;
   }
 
   async function openRevealInExtensionUi(placeholder) {

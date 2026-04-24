@@ -503,6 +503,102 @@
     return looksLikeUnsupportedVendorHexAssignment(keyMatch[1], value);
   }
 
+  function isIdentityAssignmentKey(key) {
+    const normalized = normalizeAssignmentKey(key);
+    return /(?:^|_)(?:username|user(?:_?name)?|login|email|e_mail|mail)(?:$|_)/.test(normalized);
+  }
+
+  function isLikelyEmailAddress(value) {
+    return /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i.test(String(value || ""));
+  }
+
+  function isLikelyUsernameLikeValue(value) {
+    return /^(?!\d+$)[A-Za-z0-9._@-]{3,64}$/.test(String(value || ""));
+  }
+
+  function isBuildLabelLike(value) {
+    return /^(?:[A-Za-z]+-){1,4}\d{4}(?:-\d{2}){1,2}$/i.test(String(value || "").trim());
+  }
+
+  function containsPasswordKeyword(value) {
+    const normalized = String(value || "").trim();
+    return /(?:^|[_\-\s])(?:secret|password|passwd|passcode|passphrase|pwd)(?=$|[_\-\s]|\d)/i.test(
+      normalized
+    );
+  }
+
+  function shouldSuppressIdentityValue(raw, text, start, end, key) {
+    if (!raw) return true;
+    if (isCleanPlaceholder(raw)) return true;
+    if (containsPlaceholder(raw)) return true;
+    if (looksExampleLike(raw) || containsTemplateMarker(raw)) return true;
+    if (isLikelyEmailAddress(raw) && /@example\.(?:com|org|net)$/i.test(raw)) return true;
+
+    const ctx = contextScore(text, start, end);
+    if (ctx <= -8 && !/(password|secret|token|credential|auth)/i.test(String(key || ""))) {
+      return true;
+    }
+
+    return false;
+  }
+
+  function isLikelyBarePasswordCandidate(raw, text, start, end) {
+    const value = String(raw || "").trim();
+    if (!value || value.length < 10 || value.length > 128) return false;
+    if (/\s/.test(value)) return false;
+    if (isCleanPlaceholder(value) || containsPlaceholder(value)) return false;
+    if (looksExampleLike(value) || containsTemplateMarker(value) || likelyTemplateValue(value)) return false;
+    if (isLikelyEmailAddress(value)) return false;
+    if (/^(?:https?|wss?|ftp|sftp|mailto):/i.test(value)) return false;
+    if (/^(?:\d{1,3}\.){3}\d{1,3}(?:\/\d{1,2})?$/.test(value)) return false;
+    if (/^[a-f0-9]{32,}$/i.test(value)) return false;
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
+      return false;
+    }
+    if (/^(?:v?\d+\.)+\d+(?:[-+][A-Za-z0-9._-]+)?$/.test(value)) return false;
+    if (isBuildLabelLike(value)) return false;
+    if (looksLikeFilesystemPath(text, start, end, value)) return false;
+
+    const variety = countClassVariety(value);
+    const hasLetter = /[A-Za-z]/.test(value);
+    const hasDigit = /\d/.test(value);
+    const hasSymbol = /[^A-Za-z0-9]/.test(value);
+    const hasMixedCase = /[a-z]/.test(value) && /[A-Z]/.test(value);
+    const hasPasswordKeyword = containsPasswordKeyword(value);
+
+    if (variety < 3 && !hasPasswordKeyword) return false;
+
+    if (
+      !(
+        hasLetter &&
+        hasDigit &&
+        (hasSymbol || (hasMixedCase && value.length >= 14) || (hasPasswordKeyword && value.length >= 10))
+      )
+    ) {
+      return false;
+    }
+
+    const entropy = calculateEntropy(value);
+    return entropy >= 3.1 || (hasPasswordKeyword && entropy >= 2.6);
+  }
+
+  function unwrapQuotedStandaloneValue(value) {
+    const normalized = String(value || "").trim();
+    if (normalized.length < 2) return normalized;
+
+    const first = normalized[0];
+    const last = normalized[normalized.length - 1];
+    if (
+      (first === '"' && last === '"') ||
+      (first === "'" && last === "'") ||
+      (first === "`" && last === "`")
+    ) {
+      return normalized.slice(1, -1);
+    }
+
+    return normalized;
+  }
+
   function extractPatternValue(match, pattern) {
     if (!pattern.captureGroups || !pattern.captureGroups.length) {
       return {
@@ -950,6 +1046,122 @@
       return findings;
     }
 
+    scanIdentityAssignments(text) {
+      const findings = [];
+      const regex =
+        /([A-Za-z_][A-Za-z0-9_.-]{0,80})\s*[:=]\s*(?:"([^"\r\n]+)"|'([^'\r\n]+)'|`([^`\r\n]+)`|([^\s\r\n]+))/gim;
+      let match;
+
+      while ((match = regex.exec(text)) !== null) {
+        const key = match[1];
+        if (!isIdentityAssignmentKey(key)) continue;
+
+        const rawCandidate = [match[2], match[3], match[4], match[5]].find(
+          (candidate) => typeof candidate === "string"
+        );
+        if (!rawCandidate) continue;
+
+        const raw = normalizeCandidate(rawCandidate);
+        if (!raw || raw.length < 3 || raw.length > 256) continue;
+
+        const valueIndex = match[0].indexOf(rawCandidate);
+        if (valueIndex < 0) continue;
+
+        const start = match.index + valueIndex;
+        const end = start + rawCandidate.length;
+        if (this.isAllowlisted(raw)) continue;
+        if (shouldSuppressIdentityValue(raw, text, start, end, key)) continue;
+
+        const normalizedKey = normalizeAssignmentKey(key);
+        const emailLike = isLikelyEmailAddress(raw);
+        const usernameLike = isLikelyUsernameLikeValue(raw);
+        if (!emailLike && !usernameLike) continue;
+
+        let score = emailLike ? 52 : 48;
+        const ctx = contextScore(text, start, end);
+
+        if (/email|mail/.test(normalizedKey)) score += 10;
+        if (/username|login|user/.test(normalizedKey)) score += 8;
+        if (emailLike) score += 8;
+        if (/[._-]/.test(raw)) score += 3;
+        if (/\d/.test(raw)) score += 2;
+        if (/\b(?:password|secret|token|auth|credential)\b/i.test(getContextWindow(text, start, end, 96))) {
+          score += 8;
+        }
+        score += Math.max(-8, ctx);
+
+        if (score < this.thresholds.medium) continue;
+
+        findings.push(
+          this.buildFinding({
+            category: "identity",
+            placeholderType: emailLike ? "EMAIL" : "USERNAME",
+            raw,
+            start,
+            end,
+            score,
+            methods: ["assignment", "identity"]
+          })
+        );
+      }
+
+      return findings;
+    }
+
+    scanBarePasswordCandidates(text) {
+      const findings = [];
+      const lines = String(text || "").split(/\n/);
+      let offset = 0;
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        const lineStart = offset;
+        offset += line.length + 1;
+
+        if (!trimmed) continue;
+        if (/[=:]/.test(trimmed) || /\s{2,}/.test(trimmed)) continue;
+
+        const raw = unwrapQuotedStandaloneValue(trimmed);
+        const rawOffset = line.indexOf(raw);
+        if (rawOffset < 0) continue;
+
+        const start = lineStart + rawOffset;
+        const end = start + raw.length;
+
+        if (!isLikelyBarePasswordCandidate(raw, text, start, end)) continue;
+        if (this.isAllowlisted(raw)) continue;
+        if (this.shouldSuppress({ raw, text, start, end, placeholderType: "PASSWORD", source: "bare" })) {
+          continue;
+        }
+
+        const entropy = calculateEntropy(raw);
+        let score = 54;
+        const hasPasswordKeyword = containsPasswordKeyword(raw);
+
+        if (/[^A-Za-z0-9]/.test(raw)) score += 12;
+        if (/[A-Z]/.test(raw) && /[a-z]/.test(raw)) score += 8;
+        if (/\d/.test(raw)) score += 8;
+        if (raw.length >= 14) score += 6;
+        if (hasPasswordKeyword) score += 20;
+        if (entropy >= 3.6) score += 8;
+        score += Math.max(-6, contextScore(text, start, end));
+
+        findings.push(
+          this.buildFinding({
+            category: "credential",
+            placeholderType: "PASSWORD",
+            raw,
+            start,
+            end,
+            score,
+            methods: ["heuristic", "bare-password", entropy >= 3.6 ? "entropy" : null].filter(Boolean)
+          })
+        );
+      }
+
+      return findings;
+    }
+
     scanEntropyFallback(text) {
       const findings = [];
       const regex = /\b[A-Za-z0-9+/_-]{16,}={0,2}\b/g;
@@ -964,6 +1176,7 @@
         if (/^[A-Z]{2,10}[a-z]+$/.test(raw)) continue;
         if (/^(https?|wss?):\/\//i.test(raw)) continue;
         if (/^\d+$/.test(raw)) continue;
+        if (isBuildLabelLike(raw)) continue;
         if (looksLikeFilesystemPath(text, start, end, raw)) continue;
         if (hasUnsupportedVendorHexAssignmentContext(text, start, raw)) continue;
         if (this.shouldSuppress({ raw, text, start, end })) continue;
@@ -1058,6 +1271,8 @@
         ...this.scanStructuredAssignments(input),
         ...this.scanPatterns(input),
         ...this.scanAssignments(input),
+        ...this.scanIdentityAssignments(input),
+        ...this.scanBarePasswordCandidates(input),
         ...this.scanEntropyFallback(input)
       ];
 
