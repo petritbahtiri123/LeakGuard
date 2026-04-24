@@ -15,6 +15,7 @@
     allowSiteRemoval: true,
     blockHttpSecrets: false,
     redactHttpAggressively: true,
+    aiAssistEnabled: true,
     defaultAction: "redact",
     defaultDestinationAction: "allow",
     auditMode: "off",
@@ -32,6 +33,7 @@
     allowSiteRemoval: true,
     blockHttpSecrets: true,
     redactHttpAggressively: true,
+    aiAssistEnabled: true,
     defaultAction: "block",
     defaultDestinationAction: "block",
     auditMode: "metadata-only",
@@ -216,6 +218,7 @@
     assign("allowSiteRemoval", asBoolean);
     assign("blockHttpSecrets", asBoolean);
     assign("redactHttpAggressively", asBoolean);
+    assign("aiAssistEnabled", asBoolean);
     assign("strictPolicyLoad", asBoolean);
     assign("managedProtectedSites", asStringArray);
     assign("defaultAction", (value, fallback) => asEnum(value, fallback, VALID_DEFAULT_ACTIONS));
@@ -246,6 +249,7 @@
       allowSiteRemoval: true,
       blockHttpSecrets: true,
       redactHttpAggressively: true,
+      aiAssistEnabled: false,
       defaultAction: "block",
       defaultDestinationAction: "block",
       auditMode: "metadata-only",
@@ -551,6 +555,7 @@
       allowSiteRemoval: Boolean(policy.allowSiteRemoval),
       blockHttpSecrets: Boolean(policy.blockHttpSecrets),
       redactHttpAggressively: Boolean(policy.redactHttpAggressively),
+      aiAssistEnabled: Boolean(policy.aiAssistEnabled),
       defaultAction: policy.defaultAction,
       defaultDestinationAction: policy.defaultDestinationAction,
       managedProtectedSites: Array.isArray(policy.managedProtectedSites)

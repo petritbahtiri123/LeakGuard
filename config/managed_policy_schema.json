@@ -22,6 +22,9 @@
     "redactHttpAggressively": {
       "type": "boolean"
     },
+    "aiAssistEnabled": {
+      "type": "boolean"
+    },
     "defaultAction": {
       "type": "string",
       "enum": ["redact", "block"]

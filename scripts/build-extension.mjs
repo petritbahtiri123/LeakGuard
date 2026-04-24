@@ -12,7 +12,14 @@ const sourceRoot = path.join(repoRoot, "src");
 const manifestsRoot = path.join(repoRoot, "manifests");
 const distRoot = path.join(repoRoot, "dist");
 const assetDirs = ["background", "content", "popup", "options", "ui", "shared", "compat"];
-const staticDirs = ["icons", "config"];
+const staticDirs = ["icons", "config", "ai/models"];
+const vendorRuntimeFiles = [
+  "ort.min.js",
+  "ort-wasm.wasm",
+  "ort-wasm-simd.wasm",
+  "ort-wasm-threaded.wasm",
+  "ort-wasm-simd-threaded.wasm"
+];
 const supportedBrowsers = new Set(["chrome", "firefox"]);
 const supportedModes = new Set(["consumer", "enterprise"]);
 
@@ -112,6 +119,16 @@ function writeBuildInfo(targetRoot, buildInfo) {
   fs.writeFileSync(path.join(sharedRoot, "build_info.js"), buildInfoSource(buildInfo));
 }
 
+function copyOnnxRuntime(targetRoot) {
+  const sourceDir = path.join(repoRoot, "node_modules", "onnxruntime-web", "dist");
+  const targetDir = path.join(targetRoot, "vendor", "onnxruntime");
+  ensureDir(targetDir);
+
+  for (const file of vendorRuntimeFiles) {
+    fs.copyFileSync(path.join(sourceDir, file), path.join(targetDir, file));
+  }
+}
+
 function buildTarget(browser, mode = "consumer") {
   const target = resolveTargetName(browser, mode);
   const targetRoot = path.join(distRoot, target);
@@ -126,6 +143,8 @@ function buildTarget(browser, mode = "consumer") {
   for (const dir of staticDirs) {
     copyDirContents(path.join(repoRoot, dir), path.join(targetRoot, dir));
   }
+
+  copyOnnxRuntime(targetRoot);
 
   writeBuildInfo(targetRoot, { browser, mode, builtAt });
 

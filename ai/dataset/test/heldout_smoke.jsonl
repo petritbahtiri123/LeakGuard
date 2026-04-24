@@ -1,0 +1,10 @@
+{"label":"SECRET","text":"Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.prodPayload1234567890.prodSignature1234567890"}
+{"label":"SECRET","text":"DATABASE_URL=postgres://app:ProdDbPass2026!@db.internal:5432/app"}
+{"label":"SECRET","text":"api_key=lg_test_key_51NqProdSecretValue9876543210ABCD"}
+{"label":"NOT_SECRET","text":"region=eu-central-1"}
+{"label":"NOT_SECRET","text":"version=1.2.3"}
+{"label":"NOT_SECRET","text":"username=admin"}
+{"label":"NOT_SECRET","text":"api_version=v1"}
+{"label":"UNSURE","text":"password_hint=ask-admin"}
+{"label":"UNSURE","text":"token_limit=4096"}
+{"label":"UNSURE","text":"secret_santa=true"}

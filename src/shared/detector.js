@@ -1278,6 +1278,77 @@
 
       return this.resolveOverlaps(this.dedupe(findings));
     }
+
+    getAiAssistCandidates(findings) {
+      return (findings || []).filter(
+        (finding) =>
+          finding &&
+          finding.severity === "medium" &&
+          finding.raw &&
+          !finding.method?.includes("ai-assist")
+      );
+    }
+
+    async scanWithAiAssist(text, options = {}) {
+      const findings = this.scan(text);
+      const classifier = options.classifier || root.PWM.LeakGuardAiClassifier;
+      const policy = options.policy || {};
+
+      if (!policy.aiAssistEnabled || !classifier?.classify) {
+        return findings;
+      }
+
+      const upgraded = [];
+      for (const finding of findings) {
+        if (finding.severity === "high") {
+          upgraded.push(finding);
+          continue;
+        }
+
+        if (!this.getAiAssistCandidates([finding]).length) {
+          upgraded.push(finding);
+          continue;
+        }
+
+        try {
+          const result = await classifier.classify(finding.raw, {
+            finding,
+            text: String(text || "")
+          });
+          const confidence = Number(result?.confidence || 0);
+          if (result?.risk === "SECRET" && confidence >= 0.85) {
+            upgraded.push({
+              ...finding,
+              score: Math.max(finding.score, this.thresholds.high),
+              severity: "high",
+              aiAssist: {
+                risk: "SECRET",
+                confidence
+              },
+              method: [...new Set([...(finding.method || []), "ai-assist"])]
+            });
+          } else if (result?.risk === "SECRET" && confidence >= 0.6) {
+            upgraded.push({
+              ...finding,
+              aiAssist: {
+                risk: "SECRET",
+                confidence
+              },
+              method: [...new Set([...(finding.method || []), "ai-assist-warning"])]
+            });
+          } else {
+            upgraded.push(finding);
+          }
+        } catch (error) {
+          if (root.console?.warn) {
+            root.console.warn("LeakGuard AI assist failed; deterministic finding retained.", error);
+          }
+          upgraded.push(finding);
+        }
+      }
+
+      return this.resolveOverlaps(this.dedupe(upgraded));
+    }
   }
 
   root.PWM.Detector = Detector;
