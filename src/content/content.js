@@ -68,6 +68,7 @@
       allowSiteRemoval: true,
       blockHttpSecrets: false,
       redactHttpAggressively: true,
+      aiAssistEnabled: true,
       defaultAction: "redact",
       defaultDestinationAction: "allow",
       auditMode: "off",
@@ -419,6 +420,7 @@
       allowSiteRemoval: true,
       blockHttpSecrets: false,
       redactHttpAggressively: true,
+      aiAssistEnabled: true,
       defaultAction: "redact",
       defaultDestinationAction: "allow",
       auditMode: "off",
@@ -709,6 +711,41 @@
 
     const detector = new Detector();
     const secretFindings = detector.scan(normalizedText).filter((finding) => finding.severity !== "low");
+    const networkFindings = buildNetworkUiFindings(normalizedText, {
+      mode: currentPublicState.transformMode
+    });
+
+    return {
+      originalText,
+      normalizedText,
+      secretFindings,
+      networkFindings,
+      findings: [...secretFindings, ...networkFindings].sort((a, b) => a.start - b.start),
+      placeholderNormalized: normalizedText !== originalText
+    };
+  }
+
+  async function analyzeTextWithAiAssist(text, policy = getActivePolicy()) {
+    const originalText = String(text || "");
+    const normalizedText = normalizeVisiblePlaceholders(originalText);
+
+    if (!normalizedText.trim()) {
+      return {
+        originalText,
+        normalizedText,
+        secretFindings: [],
+        networkFindings: [],
+        findings: [],
+        placeholderNormalized: normalizedText !== originalText
+      };
+    }
+
+    const detector = new Detector();
+    const scan =
+      policy.aiAssistEnabled && typeof detector.scanWithAiAssist === "function"
+        ? await detector.scanWithAiAssist(normalizedText, { policy })
+        : detector.scan(normalizedText);
+    const secretFindings = scan.filter((finding) => finding.severity !== "low");
     const networkFindings = buildNetworkUiFindings(normalizedText, {
       mode: currentPublicState.transformMode
     });
@@ -1215,8 +1252,8 @@
     const originalText = getInputText(input);
     const selection = getSelectionOffsets(input);
     const next = spliceSelectionText(originalText, selection, insertedText);
-    const currentAnalysis = analyzeText(originalText);
-    const nextAnalysis = analyzeText(next.text);
+    const currentAnalysis = await analyzeTextWithAiAssist(originalText);
+    const nextAnalysis = await analyzeTextWithAiAssist(next.text);
     const relevantFindings = selectFindingsOverlappingInsertion(
       nextAnalysis.findings,
       selection,
@@ -1390,7 +1427,7 @@
 
     if (!pasted) return;
 
-    const analysis = analyzeText(pasted);
+    const analysis = await analyzeTextWithAiAssist(pasted);
     if (!analysis.findings.length && !analysis.placeholderNormalized) return;
 
     const originalText = getInputText(input);
@@ -1541,7 +1578,7 @@
     const text = getInputText(input);
     if (!text || !text.trim()) return;
 
-    const analysis = analyzeText(text);
+    const analysis = await analyzeTextWithAiAssist(text);
     if (!analysis.findings.length && !analysis.placeholderNormalized) return;
 
     consumeInterceptionEvent(event);
@@ -1732,7 +1769,7 @@
     const text = getInputText(input);
     if (!text || !text.trim()) return;
 
-    const analysis = analyzeText(text);
+    const analysis = await analyzeTextWithAiAssist(text);
     if (!analysis.findings.length && !analysis.placeholderNormalized) return;
 
     consumeInterceptionEvent(event);
@@ -1927,7 +1964,7 @@
       return;
     }
 
-    const analysis = analyzeText(text);
+    const analysis = await analyzeTextWithAiAssist(text);
     if (!analysis.findings.length) {
       if (analysis.placeholderNormalized) {
         if (text !== lastTypedPromptText) {
@@ -2109,7 +2146,7 @@
     refreshBadgeFromCurrentInput();
   }
 
-  function refreshBadgeFromCurrentInput() {
+  async function refreshBadgeFromCurrentInput() {
     const input = findComposer();
     if (!input) {
       updateStatusPanel({
@@ -2131,7 +2168,7 @@
       return;
     }
 
-    const analysis = analyzeText(text);
+    const analysis = await analyzeTextWithAiAssist(text);
     if (!analysis.findings.length) {
       setBadge("");
       updateStatusPanel({

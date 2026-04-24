@@ -41,6 +41,12 @@ LeakGuard currently focuses on high-value prompt leak cases such as:
 
 The detector is heuristic by design. It is tuned to catch realistic mistakes while suppressing obvious docs placeholders and safe literals where possible.
 
+### Local AI Assist
+
+LeakGuard can optionally run a tiny local ONNX classifier on medium-confidence deterministic findings. This AI layer is only an assist: it can upgrade uncertain findings or keep them as warnings, but it cannot downgrade high-confidence deterministic detections.
+
+Training, export, browser smoke tests, and enterprise disable guidance live in [docs/AI_ASSIST.md](docs/AI_ASSIST.md).
+
 ## Security Model
 
 - Raw secrets are not sent to external services by the extension.
@@ -199,6 +205,7 @@ The manual smoke block contains synthetic secrets, passwords, tokens, connection
 - [BROWSER_COMPAT.md](BROWSER_COMPAT.md)
 - [docs/BUILD_TARGETS.md](docs/BUILD_TARGETS.md)
 - [docs/ENTERPRISE_DEPLOYMENT.md](docs/ENTERPRISE_DEPLOYMENT.md)
+- [docs/AI_ASSIST.md](docs/AI_ASSIST.md)
 - [docs/CHROME_WEB_STORE_LISTING.md](docs/CHROME_WEB_STORE_LISTING.md)
 - [docs/PRIVACY_POLICY.md](docs/PRIVACY_POLICY.md)
 - [docs/RELEASE_QA_CHECKLIST.md](docs/RELEASE_QA_CHECKLIST.md)

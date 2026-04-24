@@ -6,6 +6,7 @@
   "allowSiteRemoval": true,
   "blockHttpSecrets": false,
   "redactHttpAggressively": true,
+  "aiAssistEnabled": true,
   "defaultAction": "redact",
   "defaultDestinationAction": "allow",
   "auditMode": "off",
