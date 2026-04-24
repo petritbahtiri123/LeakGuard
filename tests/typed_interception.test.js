@@ -31,6 +31,12 @@ const {
 
 const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
 
+function extractFunctionSource(source, name) {
+  const match = source.match(new RegExp(`async function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n  \\}`));
+  assert.ok(match, `expected to find function ${name}`);
+  return match[0];
+}
+
 function analyze(text) {
   return new Detector().scan(text).filter((finding) => finding.severity !== "low");
 }
@@ -74,6 +80,47 @@ function testTypedAssignmentSecretIsCaughtBeforeCommit() {
   );
 }
 
+function testTypedStandalonePasswordHeuristicIsHighConfidence() {
+  const currentText = "";
+  const selection = { start: 0, end: 0 };
+  const next = spliceSelectionText(currentText, selection, "HarborLock4455!");
+  const findings = analyze(next.text);
+  const relevant = selectFindingsOverlappingInsertion(findings, selection, "HarborLock4455!");
+
+  assert.ok(relevant.length > 0, "typed standalone password should produce findings");
+  assert.strictEqual(relevant[0].type, "PASSWORD");
+  assert.strictEqual(relevant[0].severity, "high");
+  assert.ok(
+    relevant[0].method.includes("bare-password"),
+    "typed standalone password should use the bare-password heuristic path"
+  );
+}
+
+function testTypedSecretKeywordPasswordHeuristicIsHighConfidence() {
+  const currentText = "";
+  const selection = { start: 0, end: 0 };
+  const next = spliceSelectionText(currentText, selection, "secret1234");
+  const findings = analyze(next.text);
+  const relevant = selectFindingsOverlappingInsertion(findings, selection, "secret1234");
+
+  assert.ok(relevant.length > 0, "typed secret-prefixed password should produce findings");
+  assert.strictEqual(relevant[0].type, "PASSWORD");
+  assert.strictEqual(relevant[0].severity, "high");
+  assert.ok(relevant[0].method.includes("bare-password"));
+}
+
+function testTypedUsernameAssignmentStaysMediumConfidence() {
+  const currentText = "username=";
+  const selection = { start: currentText.length, end: currentText.length };
+  const next = spliceSelectionText(currentText, selection, "wayland.dev");
+  const findings = analyze(next.text);
+  const relevant = selectFindingsOverlappingInsertion(findings, selection, "wayland.dev");
+
+  assert.ok(relevant.length > 0, "typed username should surface a contextual identity finding");
+  assert.strictEqual(relevant[0].type, "USERNAME");
+  assert.strictEqual(relevant[0].severity, "medium");
+}
+
 function testTypedPublicIpUsesSameDecisionFlow() {
   const currentText = "Allow ";
   const selection = { start: currentText.length, end: currentText.length };
@@ -110,6 +157,10 @@ function testCaretDerivationPrefersOriginalSuffixAnchor() {
 }
 
 function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
+  const beforeInputSource = extractFunctionSource(contentSource, "maybeHandleBeforeInput");
+  const submitSource = extractFunctionSource(contentSource, "maybeHandleSubmit");
+  const fallbackSendSource = extractFunctionSource(contentSource, "maybeHandleFallbackSendKey");
+
   assert.ok(
     contentSource.includes('"beforeinput"'),
     "content script should bind a beforeinput listener for early typed interception"
@@ -139,6 +190,24 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
     "intercepted rewrite paths should fully consume host events when PWM takes ownership"
   );
   assert.ok(
+    beforeInputSource.includes("consumeInterceptionEvent(event);") &&
+      submitSource.includes("consumeInterceptionEvent(event);") &&
+      fallbackSendSource.includes("consumeInterceptionEvent(event);"),
+    "beforeinput, submit, and Enter-send interception should all stop immediate propagation to block host races"
+  );
+  assert.ok(
+    contentSource.includes("shouldAutoRedactTypedSecrets"),
+    "content script should distinguish high-confidence typed secrets from warning-only detections"
+  );
+  assert.ok(
+    contentSource.includes("High-confidence secret redacted"),
+    "content script should auto-redact high-confidence typed secrets without forcing the same modal every time"
+  );
+  assert.ok(
+    contentSource.includes("Review possible sensitive content"),
+    "content script should surface a softer warning state for medium-confidence typed detections"
+  );
+  assert.ok(
     contentSource.includes('window.addEventListener("keyup", onKeyPassthrough, true);') &&
       contentSource.includes('window.addEventListener("keypress", onKeyPassthrough, true);'),
     "decision modal should consume confirm/cancel keys across keydown, keypress, and keyup while open"
@@ -162,6 +231,9 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
 function run() {
   testBeforeInputGuardStaysConservative();
   testTypedAssignmentSecretIsCaughtBeforeCommit();
+  testTypedStandalonePasswordHeuristicIsHighConfidence();
+  testTypedSecretKeywordPasswordHeuristicIsHighConfidence();
+  testTypedUsernameAssignmentStaysMediumConfidence();
   testTypedPublicIpUsesSameDecisionFlow();
   testPlaceholderNormalizationCanHappenBeforeCommit();
   testCaretDerivationPrefersOriginalSuffixAnchor();

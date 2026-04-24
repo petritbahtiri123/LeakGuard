@@ -6,6 +6,7 @@
 - Confirm the popup opens and renders correctly on desktop width.
 - Confirm the popup still renders correctly on a smaller laptop display.
 - Confirm `npm test` passes locally.
+- Confirm the built manifest includes `content_security_policy.extension_pages` with LeakGuard's restrictive extension-page CSP.
 
 ## Built-in Site Coverage
 

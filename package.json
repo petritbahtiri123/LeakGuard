@@ -4,8 +4,18 @@
   "private": true,
   "description": "Local-first secret redaction engine for LLM chat UIs",
   "scripts": {
-    "test": "node tests/detector.test.js && node tests/ip_transform.test.js && node tests/ip_child_first_audit.test.js && node tests/composer_helpers.test.js && node tests/typed_interception.test.js && node tests/protected_sites.test.js && node tests/productization.test.js && node tests/security.test.js && node tests/synthetic_pack.test.js",
-    "build:chrome": "node scripts/build-extension.js chrome",
-    "build:firefox": "node scripts/build-extension.js firefox"
+    "icons:export": "node scripts/export-icons.mjs",
+    "test": "node tests/detector.test.js && node tests/ip_transform.test.js && node tests/ip_child_first_audit.test.js && node tests/composer_helpers.test.js && node tests/typed_interception.test.js && node tests/protected_sites.test.js && node tests/enterprise_policy.test.js && node tests/productization.test.js && node tests/security.test.js && node tests/synthetic_pack.test.js && node tests/build_targets.test.js",
+    "build:chrome": "node scripts/build-extension.mjs --browser chrome --mode consumer",
+    "build:chrome-enterprise": "node scripts/build-extension.mjs --browser chrome --mode enterprise",
+    "build:firefox": "node scripts/build-extension.mjs --browser firefox --mode consumer",
+    "build:firefox-enterprise": "node scripts/build-extension.mjs --browser firefox --mode enterprise",
+    "build:all": "npm run build:chrome && npm run build:chrome-enterprise && npm run build:firefox && npm run build:firefox-enterprise"
+  },
+  "devDependencies": {
+    "sharp": "^0.34.5"
+  },
+  "dependencies": {
+    "@xenova/transformers": "^2.17.2"
   }
 }

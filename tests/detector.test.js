@@ -1539,6 +1539,64 @@ function testExactMixedLegacyPlaceholderInputDoesNotReemitTypedTokens() {
   );
 }
 
+function testStandaloneBarePasswordHeuristicRedactsHighConfidenceValue() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const text = "HarborLock4455!";
+  const findings = detector.scan(text);
+  const passwordFinding = findings.find((finding) => finding.raw === text);
+  const result = redactor.redact(text, findings);
+
+  assert.ok(passwordFinding, "standalone password-like value should be detected");
+  assert.strictEqual(passwordFinding.type, "PASSWORD");
+  assert.strictEqual(passwordFinding.severity, "high");
+  assert.ok(
+    passwordFinding.method.includes("bare-password"),
+    "standalone password-like value should be marked as a bare-password heuristic"
+  );
+  assert.strictEqual(result.redactedText, "[PWM_1]", "standalone password-like value should redact cleanly");
+}
+
+function testStandaloneSecretKeywordPasswordRedactsHighConfidenceValue() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const text = "secret1234";
+  const findings = detector.scan(text);
+  const passwordFinding = findings.find((finding) => finding.raw === text);
+  const result = redactor.redact(text, findings);
+
+  assert.ok(passwordFinding, "secret-prefixed password-like value should be detected");
+  assert.strictEqual(passwordFinding.type, "PASSWORD");
+  assert.strictEqual(passwordFinding.severity, "high");
+  assert.ok(passwordFinding.method.includes("bare-password"));
+  assert.strictEqual(result.redactedText, "[PWM_1]", "secret-prefixed password-like value should redact cleanly");
+}
+
+function testStandaloneBenignBuildLabelStaysVisible() {
+  const detector = new Detector();
+  const text = "release-2026-04-24";
+  const findings = detector.scan(text);
+
+  assert.strictEqual(findings.length, 0, "harmless build/version labels should not be treated as passwords");
+}
+
+function testUsernameAndEmailAssignmentsStayMediumConfidence() {
+  const detector = new Detector();
+  const text = ["username=wayland.dev", "email=wayland.dev@corp.internal"].join("\n");
+  const findings = detector.scan(text);
+  const usernameFinding = findings.find((finding) => finding.type === "USERNAME");
+  const emailFinding = findings.find((finding) => finding.type === "EMAIL");
+
+  assert.ok(usernameFinding, "username assignment should surface as a contextual identity finding");
+  assert.ok(emailFinding, "email assignment should surface as a contextual identity finding");
+  assert.strictEqual(usernameFinding.severity, "medium", "username assignments should warn before they auto-redact");
+  assert.strictEqual(emailFinding.severity, "medium", "email assignments should warn before they auto-redact");
+  assert.ok(usernameFinding.method.includes("identity"));
+  assert.ok(emailFinding.method.includes("identity"));
+}
+
 function run() {
   testPatternMetadata();
   testPositiveFixtures();
@@ -1585,6 +1643,10 @@ function run() {
   testPlaceholderFormatIsGeneric();
   testPublicStateOmitsRawMappings();
   testExactMixedLegacyPlaceholderInputDoesNotReemitTypedTokens();
+  testStandaloneBarePasswordHeuristicRedactsHighConfidenceValue();
+  testStandaloneSecretKeywordPasswordRedactsHighConfidenceValue();
+  testStandaloneBenignBuildLabelStaysVisible();
+  testUsernameAndEmailAssignmentsStayMediumConfidence();
 
   console.log(
     `PASS ${fixtures.length} positive fixtures + metadata, suppression, multiline, and reveal regressions`

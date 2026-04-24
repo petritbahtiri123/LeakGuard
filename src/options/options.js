@@ -9,11 +9,26 @@
   const formEl = document.getElementById("add-site-form");
   const inputEl = document.getElementById("site-input");
   const feedbackEl = document.getElementById("form-feedback");
+  const managedSiteListEl = document.getElementById("managed-site-list");
   const userSiteListEl = document.getElementById("user-site-list");
   const builtinSiteListEl = document.getElementById("builtin-site-list");
+  let currentPolicy = {
+    allowUserAddedSites: true,
+    allowSiteRemoval: true
+  };
 
   function setFeedback(text) {
     feedbackEl.textContent = text || "";
+  }
+
+  function updatePolicy(policy) {
+    currentPolicy = {
+      ...currentPolicy,
+      ...(policy || {})
+    };
+
+    inputEl.disabled = !currentPolicy.allowUserAddedSites;
+    formEl.querySelector('button[type="submit"]').disabled = !currentPolicy.allowUserAddedSites;
   }
 
   function createPill(text) {
@@ -76,6 +91,30 @@
     });
   }
 
+  function renderManagedSites(managedSites) {
+    managedSiteListEl.textContent = "";
+
+    if (!managedSites.length) {
+      const empty = document.createElement("p");
+      empty.textContent = "No policy-managed sites are active.";
+      managedSiteListEl.appendChild(empty);
+      return;
+    }
+
+    managedSites.forEach((rule) => {
+      const pills = [];
+      pills.push(rule.active ? "Active" : rule.hasPermission ? "Ready" : "Access missing");
+      pills.push("Managed");
+      pills.push(rule.protocol === "http:" ? "HTTP" : "HTTPS");
+
+      managedSiteListEl.appendChild(
+        createSiteCard(rule, {
+          pills
+        })
+      );
+    });
+  }
+
   function renderUserSites(userSites) {
     userSiteListEl.textContent = "";
 
@@ -90,10 +129,18 @@
       const pills = [];
       pills.push(rule.active ? "Active" : rule.enabled ? "Access missing" : "Disabled");
       pills.push(rule.protocol === "http:" ? "HTTP" : "HTTPS");
+      if (!currentPolicy.allowSiteRemoval) {
+        pills.push("Removal locked");
+      }
 
       const toggleButton = createButton(
         rule.enabled ? "Disable" : "Enable",
         async () => {
+          if (!currentPolicy.allowUserAddedSites) {
+            setFeedback("Managed policy disables user-added sites.");
+            return;
+          }
+
           if (!rule.enabled) {
             const granted = await ext.permissions.request({
               origins: [rule.matchPattern]
@@ -120,6 +167,7 @@
         },
         !rule.enabled
       );
+      toggleButton.disabled = !currentPolicy.allowUserAddedSites;
 
       const removeButton = createButton("Remove", async () => {
         const response = await ext.runtime.sendMessage({
@@ -134,6 +182,10 @@
 
         await refresh();
       });
+      removeButton.disabled = !currentPolicy.allowSiteRemoval;
+      if (!currentPolicy.allowSiteRemoval) {
+        removeButton.title = "Managed policy blocks removing protected sites.";
+      }
 
       userSiteListEl.appendChild(
         createSiteCard(rule, {
@@ -153,6 +205,8 @@
       throw new Error(response?.error || "LeakGuard could not load site settings.");
     }
 
+    updatePolicy(response.policy);
+    renderManagedSites(response.managedSites || []);
     renderUserSites(response.userSites || []);
     renderBuiltinSites();
   }
@@ -160,6 +214,11 @@
   async function handleSubmit(event) {
     event.preventDefault();
     setFeedback("");
+
+    if (!currentPolicy.allowUserAddedSites) {
+      setFeedback("Managed policy disables user-added sites.");
+      return;
+    }
 
     const normalized = normalizeProtectedSiteInput(inputEl.value);
     if (!normalized.ok) {

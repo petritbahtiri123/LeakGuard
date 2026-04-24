@@ -1,0 +1,25 @@
+{
+  "enterpriseMode": true,
+  "allowReveal": false,
+  "allowUserOverride": false,
+  "allowUserAddedSites": false,
+  "allowSiteRemoval": true,
+  "blockHttpSecrets": true,
+  "redactHttpAggressively": true,
+  "defaultAction": "block",
+  "defaultDestinationAction": "block",
+  "auditMode": "metadata-only",
+  "managedProtectedSites": [],
+  "destinationPolicies": [],
+  "strictPolicyLoad": false,
+  "approvedDestinations": [
+    "https://chatgpt.com/*",
+    "https://chat.openai.com/*",
+    "https://gemini.google.com/*",
+    "https://claude.ai/*",
+    "https://grok.com/*"
+  ],
+  "blockedDestinations": [
+    "http://*/*"
+  ]
+}

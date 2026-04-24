@@ -1,10 +1,9 @@
 const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
+const { pathToFileURL } = require("url");
 
 const repoRoot = path.join(__dirname, "..");
-const { buildManifest } = require(path.join(repoRoot, "scripts/build-extension.js"));
-const manifest = buildManifest("chrome");
 const readme = fs.readFileSync(path.join(repoRoot, "README.md"), "utf8");
 const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
 const overlaySource = fs.readFileSync(path.join(repoRoot, "src/content/overlay.css"), "utf8");
@@ -31,7 +30,7 @@ function fileExists(relativePath) {
   return fs.existsSync(path.join(repoRoot, relativePath));
 }
 
-function testManifestBrandingAndProductPagesExist() {
+function testManifestBrandingAndProductPagesExist(manifest) {
   assert.strictEqual(manifest.name, "LeakGuard");
   assert.ok(
     manifest.description.includes("Local-only prompt protection"),
@@ -71,7 +70,7 @@ function testLeakGuardBrandingShowsUpInUiAndDocs() {
   assert.ok(releaseChecklist.includes("LeakGuard"), "QA checklist should use LeakGuard branding");
 }
 
-function testBuiltInProtectedSitesRemainStaticAndAligned() {
+function testBuiltInProtectedSitesRemainStaticAndAligned(manifest) {
   const manifestMatches = manifest.content_scripts[0].matches;
   const hostPermissions = manifest.host_permissions;
   const builtinMatches = BUILTIN_PROTECTED_SITES.map((rule) => rule.matchPattern);
@@ -100,7 +99,7 @@ function testPanelAndManagementUiAreWired() {
   );
 }
 
-function testDynamicSiteSupportIsDeclaredMinimally() {
+function testDynamicSiteSupportIsDeclaredMinimally(manifest) {
   assert.ok(
     manifest.permissions.includes("scripting") && manifest.permissions.includes("activeTab"),
     "manifest should include only the runtime permissions needed for popup-driven site activation"
@@ -134,14 +133,22 @@ function testPublishReadinessDocsCoverStorePrivacyAndQa() {
   );
 }
 
-function run() {
-  testManifestBrandingAndProductPagesExist();
+async function run() {
+  const { buildManifest } = await import(
+    pathToFileURL(path.join(repoRoot, "scripts/build-extension.mjs")).href
+  );
+  const manifest = buildManifest("chrome", "consumer");
+
+  testManifestBrandingAndProductPagesExist(manifest);
   testLeakGuardBrandingShowsUpInUiAndDocs();
-  testBuiltInProtectedSitesRemainStaticAndAligned();
+  testBuiltInProtectedSitesRemainStaticAndAligned(manifest);
   testPanelAndManagementUiAreWired();
-  testDynamicSiteSupportIsDeclaredMinimally();
+  testDynamicSiteSupportIsDeclaredMinimally(manifest);
   testPublishReadinessDocsCoverStorePrivacyAndQa();
   console.log("PASS productization static regressions");
 }
 
-run();
+run().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

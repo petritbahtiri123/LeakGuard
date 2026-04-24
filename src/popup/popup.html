@@ -9,6 +9,7 @@
   <body>
     <main class="popup-shell">
       <p class="eyebrow">LeakGuard</p>
+      <p class="policy-warning" id="policy-warning" hidden></p>
 
       <section class="view" id="home-view">
         <h1>Protect prompts before they leave the page.</h1>
@@ -42,6 +43,14 @@
           <button class="btn btn-primary" type="submit">Add Protected Site</button>
         </form>
         <p class="feedback" id="form-feedback" aria-live="polite"></p>
+
+        <section class="card card-section">
+          <div class="section-head">
+            <h3>Managed sites</h3>
+            <p>Applied from enterprise policy when browser site access is available.</p>
+          </div>
+          <div class="site-list" id="managed-site-list"></div>
+        </section>
 
         <section class="card card-section">
           <div class="section-head">
