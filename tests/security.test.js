@@ -225,9 +225,30 @@ async function run() {
 }
 
 function testManifestNoLongerExposesRevealUiToWebPages(manifest) {
+  const entries = Array.isArray(manifest.web_accessible_resources) ? manifest.web_accessible_resources : [];
+  const resources = entries.flatMap((entry) => entry.resources || []);
+
+  assert.strictEqual(entries.length, 1, "manifest should expose only the AI runtime asset group");
+  assert.deepStrictEqual(
+    [...resources].sort(),
+    [
+      "ai/models/leakguard_secret_classifier.features.json",
+      "ai/models/leakguard_secret_classifier.onnx",
+      "vendor/onnxruntime/ort-wasm-simd-threaded.wasm",
+      "vendor/onnxruntime/ort-wasm-simd.wasm",
+      "vendor/onnxruntime/ort-wasm-threaded.wasm",
+      "vendor/onnxruntime/ort-wasm.wasm"
+    ].sort(),
+    "manifest should expose only packaged AI model/runtime assets"
+  );
   assert.ok(
-    !Array.isArray(manifest.web_accessible_resources) || manifest.web_accessible_resources.length === 0,
-    "manifest should not expose popup-only reveal assets to web pages"
+    resources.every((resource) => !resource.startsWith("popup/") && !resource.startsWith("ui/")),
+    "manifest must not expose popup-only reveal assets to web pages"
+  );
+  assert.deepStrictEqual(
+    entries[0].matches,
+    manifest.content_scripts[0].matches,
+    "AI runtime assets should only be web-accessible on protected content-script origins"
   );
 }
 

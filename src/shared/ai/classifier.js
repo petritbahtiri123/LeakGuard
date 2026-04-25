@@ -27,8 +27,17 @@
   let sessionPromise = null;
   let featureSpecPromise = null;
 
+  function extensionUrlIsUsable(ext) {
+    if (!ext?.runtime?.getURL) return false;
+    try {
+      return !String(ext.runtime.getURL("")).startsWith("chrome-extension://invalid");
+    } catch {
+      return false;
+    }
+  }
+
   function getExtensionUrl(relativePath) {
-    const ext = root.PWM.ext || root.browser || root.chrome || null;
+    const ext = [root.PWM.ext, root.browser, root.chrome].find(extensionUrlIsUsable) || null;
     if (!ext?.runtime?.getURL) return relativePath;
     return ext.runtime.getURL(relativePath);
   }
