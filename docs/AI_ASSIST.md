@@ -8,7 +8,7 @@ LeakGuard includes an optional local AI assist layer for uncertain deterministic
 - AI cannot downgrade a high-confidence deterministic finding
 - no network calls are made by the classifier
 
-The browser loads the packaged ONNX model from `ai/models/leakguard_secret_classifier.onnx` and uses local ONNX Runtime files packaged from the installed `@xenova/transformers` dependency stack.
+The browser loads the packaged ONNX model from `ai/models/leakguard_secret_classifier.onnx` and uses local ONNX Runtime files packaged from the installed `onnxruntime-web` dependency.
 
 ## Browser Smoke Test
 
@@ -103,7 +103,7 @@ python -m venv venv
 Generate synthetic training data:
 
 ```bash
-./venv/bin/python scripts/generate_dataset.py
+./venv/bin/python scripts/generate_initial_dataset.py
 ```
 
 Add manually reviewed JSONL files to:

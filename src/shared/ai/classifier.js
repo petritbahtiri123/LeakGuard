@@ -39,7 +39,7 @@
     }
   }
 
-  async function loadTransformersRuntime() {
+  async function loadOnnxRuntime() {
     if (root.ort?.InferenceSession?.create) {
       return {
         ort: root.ort,
@@ -71,8 +71,8 @@
   async function loadSession() {
     if (!sessionPromise) {
       sessionPromise = (async () => {
-        const transformers = await loadTransformersRuntime();
-        const runtime = transformers?.ort || root.ort;
+        const onnxRuntime = await loadOnnxRuntime();
+        const runtime = onnxRuntime?.ort || root.ort;
         if (!runtime?.InferenceSession?.create) {
           throw new Error("ONNX Runtime session API is unavailable");
         }
@@ -201,8 +201,8 @@
     }
 
     try {
-      const transformers = await loadTransformersRuntime();
-      const runtime = transformers?.ort || root.ort;
+      const onnxRuntime = await loadOnnxRuntime();
+      const runtime = onnxRuntime?.ort || root.ort;
       const Tensor = runtime?.Tensor || root.ort?.Tensor;
       if (!Tensor) throw new Error("ONNX Tensor API is unavailable");
 
