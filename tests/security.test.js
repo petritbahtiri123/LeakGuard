@@ -207,10 +207,11 @@ function testOnlyPwmPlaceholdersRemainCanonical() {
 }
 
 async function run() {
-  const { buildManifest } = await import(
+  const { buildManifest, getOnnxRuntimeWebAccessibleResources } = await import(
     pathToFileURL(path.join(repoRoot, "scripts/build-extension.mjs")).href
   );
   const manifest = buildManifest("chrome", "consumer");
+  const runtimeResources = getOnnxRuntimeWebAccessibleResources();
 
   testUnsafeContentRevealPathRemoved();
   testSafeRevealUiExists();
@@ -218,14 +219,14 @@ async function run() {
   testRevealNeverInjectsHostDomContainers();
   testHostPageHydrationRequiresPlausibleSessionPlaceholders();
   testContentRuntimeInvalidationIsHandled();
-  testManifestNoLongerExposesRevealUiToWebPages(manifest);
+  testManifestNoLongerExposesRevealUiToWebPages(manifest, runtimeResources);
   testExtensionPagesUseRestrictiveCsp(manifest);
   testPageUiNoLongerLeaksClassificationsOrMaskedFragments();
   testOnlyPwmPlaceholdersRemainCanonical();
   console.log("PASS security hardening static regressions");
 }
 
-function testManifestNoLongerExposesRevealUiToWebPages(manifest) {
+function testManifestNoLongerExposesRevealUiToWebPages(manifest, runtimeResources) {
   const entries = Array.isArray(manifest.web_accessible_resources) ? manifest.web_accessible_resources : [];
   const resources = entries.flatMap((entry) => entry.resources || []);
 
@@ -235,10 +236,7 @@ function testManifestNoLongerExposesRevealUiToWebPages(manifest) {
     [
       "ai/models/leakguard_secret_classifier.features.json",
       "ai/models/leakguard_secret_classifier.onnx",
-      "vendor/onnxruntime/ort-wasm-simd-threaded.wasm",
-      "vendor/onnxruntime/ort-wasm-simd.wasm",
-      "vendor/onnxruntime/ort-wasm-threaded.wasm",
-      "vendor/onnxruntime/ort-wasm.wasm"
+      ...runtimeResources
     ].sort(),
     "manifest should expose only packaged AI model/runtime assets"
   );

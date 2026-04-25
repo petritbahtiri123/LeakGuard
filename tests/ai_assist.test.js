@@ -1,6 +1,7 @@
 const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
+const { pathToFileURL } = require("url");
 
 const repoRoot = path.join(__dirname, "..");
 require(path.join(repoRoot, "src/shared/entropy.js"));
@@ -40,11 +41,15 @@ async function testAiAssistDoesNotDowngradeHighConfidenceDeterministicMatches() 
   assert.ok(!findings[0].method.includes("ai-assist"), "high-confidence deterministic matches stay authoritative");
 }
 
-function testBrowserIntegrationIsOptionalAndPolicyControlled() {
+async function testBrowserIntegrationIsOptionalAndPolicyControlled() {
   const detectorSource = fs.readFileSync(path.join(repoRoot, "src/shared/detector.js"), "utf8");
   const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
   const policySource = fs.readFileSync(path.join(repoRoot, "src/shared/policy.js"), "utf8");
-  const manifest = JSON.parse(fs.readFileSync(path.join(repoRoot, "manifests/base.json"), "utf8"));
+  const { buildManifest, getOnnxRuntimeWebAccessibleResources } = await import(
+    pathToFileURL(path.join(repoRoot, "scripts/build-extension.mjs")).href
+  );
+  const manifest = buildManifest("chrome", "consumer");
+  const runtimeResources = getOnnxRuntimeWebAccessibleResources();
 
   assert.ok(detectorSource.includes("scanWithAiAssist"), "detector should expose async AI assist scanning");
   assert.ok(contentSource.includes("analyzeTextWithAiAssist"), "content pipeline should call AI assist path");
@@ -58,7 +63,9 @@ function testBrowserIntegrationIsOptionalAndPolicyControlled() {
       "ai/models/leakguard_secret_classifier.features.json"
     ) &&
       manifest.web_accessible_resources?.[0]?.resources.includes("ai/models/leakguard_secret_classifier.onnx") &&
-      manifest.web_accessible_resources?.[0]?.resources.includes("vendor/onnxruntime/ort-wasm.wasm"),
+      runtimeResources.every((resource) =>
+        manifest.web_accessible_resources?.[0]?.resources.includes(resource)
+      ),
     "content scripts should be allowed to fetch the packaged feature spec, model, and ONNX WASM runtime"
   );
   assert.ok(
@@ -72,7 +79,7 @@ function testBrowserIntegrationIsOptionalAndPolicyControlled() {
 async function run() {
   await testAiAssistUpgradesOnlyUncertainSpans();
   await testAiAssistDoesNotDowngradeHighConfidenceDeterministicMatches();
-  testBrowserIntegrationIsOptionalAndPolicyControlled();
+  await testBrowserIntegrationIsOptionalAndPolicyControlled();
   console.log("PASS local AI assist regressions");
 }
 

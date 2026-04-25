@@ -13,13 +13,8 @@ const manifestsRoot = path.join(repoRoot, "manifests");
 const distRoot = path.join(repoRoot, "dist");
 const assetDirs = ["background", "content", "popup", "options", "ui", "shared", "compat"];
 const staticDirs = ["icons", "config", "ai/models"];
-const vendorRuntimeFiles = [
-  "ort.min.js",
-  "ort-wasm.wasm",
-  "ort-wasm-simd.wasm",
-  "ort-wasm-threaded.wasm",
-  "ort-wasm-simd-threaded.wasm"
-];
+const onnxRuntimeLoaderFiles = ["ort.min.js"];
+const onnxRuntimeWasmPattern = /^ort-wasm.*\.wasm$/;
 const supportedBrowsers = new Set(["chrome", "firefox"]);
 const supportedModes = new Set(["consumer", "enterprise"]);
 
@@ -34,6 +29,46 @@ function pathExists(targetPath) {
 
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
+}
+
+function getOnnxRuntimeDistDir() {
+  return path.join(repoRoot, "node_modules", "onnxruntime-web", "dist");
+}
+
+function listOnnxRuntimeFiles() {
+  const sourceDir = getOnnxRuntimeDistDir();
+  if (!pathExists(sourceDir)) {
+    throw new Error(
+      `Missing ONNX Runtime browser assets at ${sourceDir}. Run "npm install" before building.`
+    );
+  }
+
+  const files = fs
+    .readdirSync(sourceDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => entry.name);
+  const runtimeFiles = files
+    .filter(
+      (file) => onnxRuntimeLoaderFiles.includes(file) || onnxRuntimeWasmPattern.test(file)
+    )
+    .sort();
+
+  for (const file of onnxRuntimeLoaderFiles) {
+    if (!runtimeFiles.includes(file)) {
+      throw new Error(`Missing ONNX Runtime loader asset ${path.join(sourceDir, file)}.`);
+    }
+  }
+  if (!runtimeFiles.some((file) => onnxRuntimeWasmPattern.test(file))) {
+    throw new Error(`Missing ONNX Runtime WASM assets in ${sourceDir}.`);
+  }
+
+  return runtimeFiles;
+}
+
+function getOnnxRuntimeWebAccessibleResources() {
+  return listOnnxRuntimeFiles()
+    .filter((file) => onnxRuntimeWasmPattern.test(file))
+    .map((file) => `vendor/onnxruntime/${file}`);
 }
 
 function mergeValue(baseValue, overrideValue) {
@@ -101,6 +136,20 @@ function buildManifest(browser, mode = "consumer") {
     manifest = mergeValue(manifest, enterpriseOverlay);
   }
 
+  const webAccessibleResources = Array.isArray(manifest.web_accessible_resources)
+    ? manifest.web_accessible_resources
+    : [];
+  if (webAccessibleResources[0]) {
+    const staticResources = (webAccessibleResources[0].resources || []).filter(
+      (resource) => !resource.startsWith("vendor/onnxruntime/")
+    );
+    webAccessibleResources[0] = {
+      ...webAccessibleResources[0],
+      resources: [...staticResources, ...getOnnxRuntimeWebAccessibleResources()]
+    };
+    manifest.web_accessible_resources = webAccessibleResources;
+  }
+
   return manifest;
 }
 
@@ -129,24 +178,13 @@ function writeBuildInfo(targetRoot, buildInfo) {
 }
 
 function copyOnnxRuntime(targetRoot) {
-  const sourceDir = path.join(repoRoot, "node_modules", "onnxruntime-web", "dist");
+  const sourceDir = getOnnxRuntimeDistDir();
   const targetDir = path.join(targetRoot, "vendor", "onnxruntime");
-
-  if (!pathExists(sourceDir)) {
-    throw new Error(
-      `Missing ONNX Runtime browser assets at ${sourceDir}. Run "npm install" before building.`
-    );
-  }
 
   ensureDir(targetDir);
 
-  for (const file of vendorRuntimeFiles) {
+  for (const file of listOnnxRuntimeFiles()) {
     const sourceFile = path.join(sourceDir, file);
-    if (!pathExists(sourceFile)) {
-      throw new Error(
-        `Missing ONNX Runtime asset ${sourceFile}. Reinstall dependencies with "npm install".`
-      );
-    }
     fs.copyFileSync(sourceFile, path.join(targetDir, file));
   }
 }
@@ -238,6 +276,7 @@ export {
   buildManifest,
   buildTarget,
   buildInfoSource,
+  getOnnxRuntimeWebAccessibleResources,
   mergeValue,
   parseArgs,
   resolveTargetName
