@@ -427,7 +427,7 @@
       if (/^[A-Za-z_][A-Za-z0-9_.-]{0,80}\s*[:=]$/.test(trimmed)) return true;
       if (/^https?:\/\/[^\s]+$/i.test(trimmed)) return true;
       if (/^:\/\/[^\s]+$/i.test(trimmed)) return true;
-      if (/^(?:\.[A-Za-z0-9._-]+)+$/.test(trimmed)) return true;
+      if (/^\.[A-Za-z0-9._-]+$/.test(trimmed)) return true;
       if (isRegionLikeSegment(trimmed)) return true;
       return false;
     });
