@@ -217,6 +217,7 @@ async function run() {
   testContentPublicStateIsMinimized();
   testRevealNeverInjectsHostDomContainers();
   testHostPageHydrationRequiresPlausibleSessionPlaceholders();
+  testContentRuntimeInvalidationIsHandled();
   testManifestNoLongerExposesRevealUiToWebPages(manifest);
   testExtensionPagesUseRestrictiveCsp(manifest);
   testPageUiNoLongerLeaksClassificationsOrMaskedFragments();
@@ -249,6 +250,31 @@ function testManifestNoLongerExposesRevealUiToWebPages(manifest) {
     entries[0].matches,
     manifest.content_scripts[0].matches,
     "AI runtime assets should only be web-accessible on protected content-script origins"
+  );
+}
+
+function testContentRuntimeInvalidationIsHandled() {
+  assert.ok(
+    contentSource.includes("function sendRuntimeMessage"),
+    "content script should route background calls through a runtime messaging wrapper"
+  );
+  assert.ok(
+    contentSource.includes("extension_context_invalidated"),
+    "content script should classify extension reload/invalidation errors"
+  );
+  assert.ok(
+    contentSource.includes("LeakGuard reloaded. Refresh this page."),
+    "content script should show a user-facing refresh hint after extension reload"
+  );
+  assertNotIncludes(
+    contentSource,
+    ".catch(console.error)",
+    "content script async event handlers should suppress expected invalidation errors"
+  );
+  assert.strictEqual(
+    (contentSource.match(/ext\.runtime\.sendMessage/g) || []).length,
+    1,
+    "content script should call ext.runtime.sendMessage only inside sendRuntimeMessage"
   );
 }
 

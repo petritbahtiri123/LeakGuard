@@ -102,7 +102,52 @@
   let statusPanelSiteValueEl = null;
   let statusPanelComposerValueEl = null;
   let statusPanelSessionValueEl = null;
+  let extensionRuntimeAvailable = true;
   const PROGRAMMATIC_INPUT_SUPPRESS_MS = 500;
+
+  function isExtensionContextInvalidatedError(error) {
+    const message = String(error?.message || error || "");
+    return /extension context invalidated/i.test(message);
+  }
+
+  function createExtensionContextInvalidatedError(originalError = null) {
+    const error = new Error("LeakGuard was reloaded. Refresh this page to reactivate protection.");
+    error.reason = "extension_context_invalidated";
+    error.originalError = originalError;
+    return error;
+  }
+
+  function markExtensionContextInvalidated() {
+    extensionRuntimeAvailable = false;
+    setBadge("LeakGuard reloaded. Refresh this page.");
+    hideBadgeSoon(5000);
+  }
+
+  async function sendRuntimeMessage(message) {
+    if (!extensionRuntimeAvailable || !ext?.runtime?.sendMessage) {
+      markExtensionContextInvalidated();
+      throw createExtensionContextInvalidatedError();
+    }
+
+    try {
+      return await ext.runtime.sendMessage(message);
+    } catch (error) {
+      if (isExtensionContextInvalidatedError(error)) {
+        markExtensionContextInvalidated();
+        throw createExtensionContextInvalidatedError(error);
+      }
+      throw error;
+    }
+  }
+
+  function handleContentError(error) {
+    if (error?.reason === "extension_context_invalidated" || isExtensionContextInvalidatedError(error)) {
+      markExtensionContextInvalidated();
+      return;
+    }
+
+    console.error(error);
+  }
 
   function isDebugEnabled() {
     try {
@@ -226,7 +271,7 @@
   }
 
   async function openProtectedSitesUi() {
-    const response = await ext.runtime.sendMessage({
+    const response = await sendRuntimeMessage({
       type: "PWM_OPEN_POPUP_SITE_MANAGER"
     });
 
@@ -238,7 +283,7 @@
   }
 
   function openOptionsPage() {
-    return ext.runtime.sendMessage({
+    return sendRuntimeMessage({
       type: "PWM_OPEN_OPTIONS_PAGE"
     });
   }
@@ -449,7 +494,7 @@
 
   async function recordMetadataAuditEvent(action, reason, findings) {
     try {
-      await ext.runtime.sendMessage({
+      await sendRuntimeMessage({
         type: "PWM_RECORD_AUDIT_EVENT",
         action,
         reason,
@@ -462,7 +507,7 @@
   }
 
   async function refreshPublicState() {
-    const response = await ext.runtime.sendMessage({
+    const response = await sendRuntimeMessage({
       type: "PWM_GET_PUBLIC_STATE",
       url: location.href
     });
@@ -536,7 +581,7 @@
   }
 
   async function initState() {
-    const response = await ext.runtime.sendMessage({
+    const response = await sendRuntimeMessage({
       type: "PWM_INIT_TAB",
       url: location.href
     });
@@ -547,7 +592,7 @@
   }
 
   async function requestRedaction(text, findings, options = {}) {
-    const response = await ext.runtime.sendMessage({
+    const response = await sendRuntimeMessage({
       type: "PWM_REDACT_TEXT",
       url: location.href,
       text,
@@ -579,7 +624,7 @@
   }
 
   async function openPopupReveal(placeholder) {
-    const response = await ext.runtime.sendMessage({
+    const response = await sendRuntimeMessage({
       type: "PWM_OPEN_POPUP_REVEAL",
       placeholder
     });
@@ -1241,7 +1286,7 @@
   }
 
   async function maybeHandleBeforeInput(event) {
-    if (modalOpen || !shouldInterceptBeforeInput(event)) return;
+    if (!extensionRuntimeAvailable || modalOpen || !shouldInterceptBeforeInput(event)) return;
 
     const input = findComposer(event.target);
     if (!input) return;
@@ -1417,7 +1462,7 @@
   }
 
   async function maybeHandlePaste(event) {
-    if (modalOpen || event.defaultPrevented) return;
+    if (!extensionRuntimeAvailable || modalOpen || event.defaultPrevented) return;
 
     const input = findComposer(event.target);
     if (!input) return;
@@ -1558,6 +1603,10 @@
   }
 
   async function maybeHandleSubmit(event) {
+    if (!extensionRuntimeAvailable) {
+      return;
+    }
+
     if (modalOpen) {
       consumeInterceptionEvent(event);
       return;
@@ -1751,6 +1800,7 @@
 
   async function maybeHandleFallbackSendKey(event) {
     if (
+      !extensionRuntimeAvailable ||
       modalOpen ||
       event.defaultPrevented ||
       event.key !== "Enter" ||
@@ -1820,7 +1870,7 @@
             if (button) button.click();
             return null;
           })
-          .catch(console.error);
+          .catch(handleContentError);
       });
     });
 
@@ -1867,7 +1917,7 @@
             if (button) button.click();
             return null;
           })
-          .catch(console.error);
+          .catch(handleContentError);
       });
       return;
     }
@@ -1892,7 +1942,7 @@
             if (button) button.click();
             return null;
           })
-          .catch(console.error);
+          .catch(handleContentError);
       });
       return;
     }
@@ -1948,12 +1998,12 @@
           if (button) button.click();
           return null;
         })
-        .catch(console.error);
+        .catch(handleContentError);
     });
   }
 
   async function maybeHandleTypedSecrets() {
-    if (modalOpen) return;
+    if (!extensionRuntimeAvailable || modalOpen) return;
 
     const input = findComposer();
     if (!input) return;
@@ -2202,7 +2252,7 @@
         return;
       }
       refreshBadgeFromCurrentInput();
-      maybeHandleTypedSecrets().catch(console.error);
+      maybeHandleTypedSecrets().catch(handleContentError);
     }, 220);
   }
 
@@ -2452,7 +2502,7 @@
   function installNavigationWatchers() {
     const scheduleCheck = () => {
       queueMicrotask(() => {
-        handleUrlChange().catch(console.error);
+        handleUrlChange().catch(handleContentError);
       });
     };
 
@@ -2474,7 +2524,7 @@
     window.addEventListener("hashchange", () => scheduleCheck(), true);
 
     window.setInterval(() => {
-      handleUrlChange().catch(console.error);
+      handleUrlChange().catch(handleContentError);
     }, 1500);
   }
 
@@ -2494,7 +2544,7 @@
     document.addEventListener(
       "beforeinput",
       (event) => {
-        maybeHandleBeforeInput(event).catch(console.error);
+        maybeHandleBeforeInput(event).catch(handleContentError);
       },
       true
     );
@@ -2502,7 +2552,7 @@
     document.addEventListener(
       "paste",
       (event) => {
-        maybeHandlePaste(event).catch(console.error);
+        maybeHandlePaste(event).catch(handleContentError);
       },
       true
     );
@@ -2510,7 +2560,7 @@
     document.addEventListener(
       "submit",
       (event) => {
-        maybeHandleSubmit(event).catch(console.error);
+        maybeHandleSubmit(event).catch(handleContentError);
       },
       true
     );
@@ -2518,7 +2568,7 @@
     document.addEventListener(
       "keydown",
       (event) => {
-        maybeHandleFallbackSendKey(event).catch(console.error);
+        maybeHandleFallbackSendKey(event).catch(handleContentError);
       },
       true
     );
@@ -2535,5 +2585,5 @@
     refreshBadgeFromCurrentInput();
   }
 
-  boot().catch(console.error);
+  boot().catch(handleContentError);
 })();
