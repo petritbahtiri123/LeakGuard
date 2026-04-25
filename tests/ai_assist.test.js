@@ -53,6 +53,20 @@ function testBrowserIntegrationIsOptionalAndPolicyControlled() {
     manifest.content_scripts[0].js.includes("shared/ai/classifier.js"),
     "content scripts should load the browser-side classifier module"
   );
+  assert.ok(
+    manifest.web_accessible_resources?.[0]?.resources.includes(
+      "ai/models/leakguard_secret_classifier.features.json"
+    ) &&
+      manifest.web_accessible_resources?.[0]?.resources.includes("ai/models/leakguard_secret_classifier.onnx") &&
+      manifest.web_accessible_resources?.[0]?.resources.includes("vendor/onnxruntime/ort-wasm.wasm"),
+    "content scripts should be allowed to fetch the packaged feature spec, model, and ONNX WASM runtime"
+  );
+  assert.ok(
+    fs
+      .readFileSync(path.join(repoRoot, "src/shared/ai/classifier.js"), "utf8")
+      .includes("chrome-extension://invalid"),
+    "classifier should reject invalid Chrome runtime URLs before fetching model assets"
+  );
 }
 
 async function run() {

@@ -65,6 +65,26 @@
       "run_at": "document_idle"
     }
   ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "ai/models/leakguard_secret_classifier.features.json",
+        "ai/models/leakguard_secret_classifier.onnx",
+        "vendor/onnxruntime/ort-wasm.wasm",
+        "vendor/onnxruntime/ort-wasm-simd.wasm",
+        "vendor/onnxruntime/ort-wasm-threaded.wasm",
+        "vendor/onnxruntime/ort-wasm-simd-threaded.wasm"
+      ],
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*",
+        "https://gemini.google.com/*",
+        "https://claude.ai/*",
+        "https://grok.com/*",
+        "https://x.com/*"
+      ]
+    }
+  ],
   "icons": {
     "16": "icons/icon16.png",
     "32": "icons/icon32.png",

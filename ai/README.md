@@ -23,7 +23,7 @@ Run commands from this directory:
 
 ```bash
 python -m pip install -r requirements.txt
-python scripts/generate_dataset.py
+python scripts/generate_initial_dataset.py
 python scripts/train_classifier.py
 python scripts/evaluate_model.py
 python scripts/export_onnx.py
@@ -56,4 +56,4 @@ The AI classifier can only upgrade a match's risk. It must never override or dow
 - `0.60 <= confidence < 0.85`: warn the user
 - `< 0.60`: let the deterministic result stand
 
-All processing stays local. The ONNX model is loaded in the extension via `@xenova/transformers`, which bundles ONNX Runtime for browser execution.
+All processing stays local. The ONNX model is loaded in the extension with packaged `onnxruntime-web` browser assets.

@@ -27,8 +27,17 @@
   let sessionPromise = null;
   let featureSpecPromise = null;
 
+  function extensionUrlIsUsable(ext) {
+    if (!ext?.runtime?.getURL) return false;
+    try {
+      return !String(ext.runtime.getURL("")).startsWith("chrome-extension://invalid");
+    } catch {
+      return false;
+    }
+  }
+
   function getExtensionUrl(relativePath) {
-    const ext = root.PWM.ext || root.browser || root.chrome || null;
+    const ext = [root.PWM.ext, root.browser, root.chrome].find(extensionUrlIsUsable) || null;
     if (!ext?.runtime?.getURL) return relativePath;
     return ext.runtime.getURL(relativePath);
   }
@@ -39,7 +48,7 @@
     }
   }
 
-  async function loadTransformersRuntime() {
+  async function loadOnnxRuntime() {
     if (root.ort?.InferenceSession?.create) {
       return {
         ort: root.ort,
@@ -71,8 +80,8 @@
   async function loadSession() {
     if (!sessionPromise) {
       sessionPromise = (async () => {
-        const transformers = await loadTransformersRuntime();
-        const runtime = transformers?.ort || root.ort;
+        const onnxRuntime = await loadOnnxRuntime();
+        const runtime = onnxRuntime?.ort || root.ort;
         if (!runtime?.InferenceSession?.create) {
           throw new Error("ONNX Runtime session API is unavailable");
         }
@@ -201,8 +210,8 @@
     }
 
     try {
-      const transformers = await loadTransformersRuntime();
-      const runtime = transformers?.ort || root.ort;
+      const onnxRuntime = await loadOnnxRuntime();
+      const runtime = onnxRuntime?.ort || root.ort;
       const Tensor = runtime?.Tensor || root.ort?.Tensor;
       if (!Tensor) throw new Error("ONNX Tensor API is unavailable");
 

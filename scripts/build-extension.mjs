@@ -2,7 +2,7 @@
 
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -22,6 +22,15 @@ const vendorRuntimeFiles = [
 ];
 const supportedBrowsers = new Set(["chrome", "firefox"]);
 const supportedModes = new Set(["consumer", "enterprise"]);
+
+function pathExists(targetPath) {
+  try {
+    fs.accessSync(targetPath, fs.constants.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
@@ -122,10 +131,23 @@ function writeBuildInfo(targetRoot, buildInfo) {
 function copyOnnxRuntime(targetRoot) {
   const sourceDir = path.join(repoRoot, "node_modules", "onnxruntime-web", "dist");
   const targetDir = path.join(targetRoot, "vendor", "onnxruntime");
+
+  if (!pathExists(sourceDir)) {
+    throw new Error(
+      `Missing ONNX Runtime browser assets at ${sourceDir}. Run "npm install" before building.`
+    );
+  }
+
   ensureDir(targetDir);
 
   for (const file of vendorRuntimeFiles) {
-    fs.copyFileSync(path.join(sourceDir, file), path.join(targetDir, file));
+    const sourceFile = path.join(sourceDir, file);
+    if (!pathExists(sourceFile)) {
+      throw new Error(
+        `Missing ONNX Runtime asset ${sourceFile}. Reinstall dependencies with "npm install".`
+      );
+    }
+    fs.copyFileSync(sourceFile, path.join(targetDir, file));
   }
 }
 
@@ -208,7 +230,7 @@ async function main() {
   process.stdout.write(`Built ${result.target} extension at ${result.targetRoot}\n`);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main();
 }
 
