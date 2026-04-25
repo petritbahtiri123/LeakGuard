@@ -69,11 +69,7 @@
     {
       "resources": [
         "ai/models/leakguard_secret_classifier.features.json",
-        "ai/models/leakguard_secret_classifier.onnx",
-        "vendor/onnxruntime/ort-wasm.wasm",
-        "vendor/onnxruntime/ort-wasm-simd.wasm",
-        "vendor/onnxruntime/ort-wasm-threaded.wasm",
-        "vendor/onnxruntime/ort-wasm-simd-threaded.wasm"
+        "ai/models/leakguard_secret_classifier.onnx"
       ],
       "matches": [
         "https://chatgpt.com/*",
