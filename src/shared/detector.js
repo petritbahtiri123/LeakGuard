@@ -267,13 +267,21 @@
 
   const SAFE_ASSIGNMENT_KEYS = new Set([
     "api_version",
+    "build_id",
+    "commit_sha",
     "debug",
     "environment",
+    "image_tag",
+    "jira_key",
+    "max_token_limit",
     "password_hint",
     "public_url",
     "region",
+    "release_id",
     "secret_santa",
+    "ticket_id",
     "token_limit",
+    "trace_id",
     "url",
     "version"
   ]);
@@ -304,8 +312,10 @@
   function isSensitiveAssignmentKey(key) {
     if (isSafeAssignmentKey(key)) return false;
     if (isExactCredentialAssignmentKey(key)) return true;
+    const normalized = normalizeAssignmentKey(key);
+    const leet = normalized.replace(/0/g, "o").replace(/3/g, "e").replace(/\$/g, "s").replace(/@/g, "a");
     return /(password|passwd|pwd|secret|api[_\s-]?key|token|auth|authorization|client[_\s-]?secret|shared[_\s-]?secret|webhook)/i.test(
-      normalizeAssignmentKey(key)
+      leet
     );
   }
 
@@ -668,8 +678,10 @@
     const leetCompact = input
       .toLowerCase()
       .replace(/0/g, "o")
+      .replace(/3/g, "e")
       .replace(/\$/g, "s")
-      .replace(/[\u200B-\u200D\uFEFF\s._$-]+/g, "");
+      .replace(/@/g, "a")
+      .replace(/[\u200B-\u200D\uFEFF\s._$@-]+/g, "");
 
     if (leetCompact === lower) return false;
 
@@ -1276,6 +1288,55 @@
       return findings;
     }
 
+    scanUrlCredentials(text) {
+      const findings = [];
+      const regex = /\b([a-z][a-z0-9+.-]*:\/\/)([^\/\s:@'"`<>]+):([^@\s'"`<>]+)@([^\s'"`<>]+)/gi;
+      let match;
+
+      while ((match = regex.exec(text)) !== null) {
+        const scheme = String(match[1] || "").slice(0, -3).toLowerCase();
+        const username = decodeURIComponent(match[2] || "");
+        const secret = decodeURIComponent(match[3] || "");
+        const usernameStart = match.index + match[1].length;
+        const secretStart = usernameStart + match[2].length + 1;
+
+        if (!username || !secret) continue;
+        if (isCleanPlaceholder(username) && isCleanPlaceholder(secret)) continue;
+        if (hasExampleHost(match[0]) && hasGenericDbCredentials(match[0])) continue;
+
+        if (!isCleanPlaceholder(username) && !this.isAllowlisted(username)) {
+          findings.push(
+            this.buildFinding({
+              category: "identity",
+              placeholderType: "USERNAME",
+              raw: username,
+              start: usernameStart,
+              end: usernameStart + match[2].length,
+              score: 96,
+              methods: ["url-credentials", "username"]
+            })
+          );
+        }
+
+        if (!isCleanPlaceholder(secret) && !this.isAllowlisted(secret)) {
+          const isDbScheme = /^(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis|amqp|mssql)$/.test(scheme);
+          findings.push(
+            this.buildFinding({
+              category: "credential",
+              placeholderType: isDbScheme ? "DB_URI" : /token|oauth/i.test(username) ? "TOKEN" : "PASSWORD",
+              raw: secret,
+              start: secretStart,
+              end: secretStart + match[3].length,
+              score: 99,
+              methods: ["url-credentials"]
+            })
+          );
+        }
+      }
+
+      return findings;
+    }
+
     scanIdentityAssignments(text) {
       const findings = [];
       const regex =
@@ -1332,6 +1393,40 @@
             end,
             score,
             methods: ["assignment", "identity"]
+          })
+        );
+      }
+
+      return findings;
+    }
+
+    scanJsonIdentityFields(text) {
+      const findings = [];
+      const regex = /"((?:user|username|user_name))"\s*:\s*"([^"\r\n]{3,256})"/gi;
+      let match;
+
+      while ((match = regex.exec(text)) !== null) {
+        const key = match[1];
+        const raw = normalizeCandidate(match[2]);
+        if (!raw || isCleanPlaceholder(raw) || containsPlaceholder(raw)) continue;
+        if (!isLikelyUsernameLikeValue(raw) && !isLikelyEmailAddress(raw)) continue;
+
+        const valueOffset = match[0].lastIndexOf(match[2]);
+        if (valueOffset < 0) continue;
+        const start = match.index + valueOffset;
+        const end = start + match[2].length;
+        if (this.isAllowlisted(raw)) continue;
+        if (shouldSuppressIdentityValue(raw, text, start, end, key)) continue;
+
+        findings.push(
+          this.buildFinding({
+            category: "identity",
+            placeholderType: isLikelyEmailAddress(raw) ? "EMAIL" : "USERNAME",
+            raw,
+            start,
+            end,
+            score: isLikelyEmailAddress(raw) ? 70 : 64,
+            methods: ["json", "identity"]
           })
         );
       }
@@ -1445,7 +1540,7 @@
     scanAdversarialAssignments(text) {
       const findings = [];
       const regex =
-        /([A-Za-z](?:[\u200B-\u200D\uFEFF\s._$-]*[A-Za-z0-9$]){1,80})\s*[:=]\s*(?:"([^"\r\n]+)"|'([^'\r\n]+)'|`([^`\r\n]+)`|([^\s\r\n]+))/gim;
+        /([A-Za-z](?:[\u200B-\u200D\uFEFF\s._$@-]*[A-Za-z0-9$@]){1,80})\s*[:=]\s*(?:"([^"\r\n]+)"|'([^'\r\n]+)'|`([^`\r\n]+)`|([^\s\r\n]+))/gim;
       let match;
 
       while ((match = regex.exec(text)) !== null) {
@@ -1571,11 +1666,13 @@
 
       const findings = [
         ...this.scanStructuredAssignments(input),
+        ...this.scanUrlCredentials(input),
         ...this.scanPatterns(input),
         ...this.scanAssignments(input),
         ...this.scanExplicitCredentialAssignments(input),
         ...this.scanAdversarialAssignments(input),
         ...this.scanIdentityAssignments(input),
+        ...this.scanJsonIdentityFields(input),
         ...this.scanBarePasswordCandidates(input),
         ...this.scanEntropyFallback(input)
       ];

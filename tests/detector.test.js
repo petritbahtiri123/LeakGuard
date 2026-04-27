@@ -504,8 +504,14 @@ function testFullValueReplacementForConnectionStyleAssignments() {
   );
 
   assert.strictEqual(lines[0], "AZURE_STORAGE_CONNECTION_STRING=[PWM_1]");
-  assert.strictEqual(lines[1], "DATABASE_URL=postgres://testuser:[PWM_2]@db.internal:5432/appdb");
-  assert.strictEqual(lines[2], "MYSQL_URL=mysql://reporter:[PWM_3]@mysql.internal:3306/analytics");
+  assert.ok(
+    /^DATABASE_URL=postgres:\/\/\[PWM_\d+\]:\[PWM_\d+\]@db\.internal:5432\/appdb$/.test(lines[1]),
+    "DATABASE_URL assignment should redact username and password while preserving URL structure"
+  );
+  assert.ok(
+    /^MYSQL_URL=mysql:\/\/\[PWM_\d+\]:\[PWM_\d+\]@mysql\.internal:3306\/analytics$/.test(lines[2]),
+    "MYSQL_URL assignment should redact username and password while preserving URL structure"
+  );
 
   assert.ok(
     !result.redactedText.includes("FakeDbPass123!") &&
@@ -513,8 +519,8 @@ function testFullValueReplacementForConnectionStyleAssignments() {
     "db passwords must not survive redaction output"
   );
   assert.ok(
-    result.redactedText.includes("testuser") && result.redactedText.includes("reporter"),
-    "db usernames should remain visible so connection structure stays intact"
+    !result.redactedText.includes("testuser") && !result.redactedText.includes("reporter"),
+    "db usernames must not survive redaction output"
   );
   assert.ok(
     !result.redactedText.includes("FakeAccountKey1234567890ABCDEFGHIJKLMN==") &&
@@ -536,8 +542,9 @@ function testGenericBasicAuthUrl() {
   const findings = detector.scan(text);
 
   assert.ok(
-    findings.some((finding) => finding.type === "CONNECTION_STRING"),
-    "basic auth URL should be detected via generic credential URI rule"
+    findings.some((finding) => finding.type === "USERNAME" && finding.raw === "deploy") &&
+      findings.some((finding) => finding.type === "PASSWORD" && finding.raw === "Sup3rSecr3t!"),
+    "basic auth URL should redact username and password segments"
   );
 }
 
@@ -1212,12 +1219,14 @@ function testDatabaseUrlAssignmentKeepsUriButMasksOnlyPassword() {
     "databaseUrl assignment should detect only the DB password segment"
   );
   assert.ok(
-    result.redactedText.includes('databaseUrl: "postgres://admin:[PWM_1]@db.example.com:5432/appdb"'),
-    "databaseUrl should keep the URI shape while masking only the password"
+    /databaseUrl: "postgres:\/\/\[PWM_\d+\]:\[PWM_\d+\]@db\.example\.com:5432\/appdb"/.test(
+      result.redactedText
+    ),
+    "databaseUrl should keep the URI shape while masking username and password"
   );
   assert.ok(
-    !result.redactedText.includes("MyUltraSecretPass"),
-    "raw database password must not survive redaction"
+    !result.redactedText.includes("MyUltraSecretPass") && !result.redactedText.includes("admin:"),
+    "raw database credentials must not survive redaction"
   );
 }
 
@@ -1377,14 +1386,14 @@ function testSyntheticCredentialHardeningBlock() {
   }
 
   assert.ok(
-    /databaseUrl="postgres:\/\/admin:\[PWM_\d+\]@db\.prod\.internal:5432\/app"/.test(result.redactedText),
-    "databaseUrl should keep its URI structure while masking only the password"
+    /databaseUrl="postgres:\/\/\[PWM_\d+\]:\[PWM_\d+\]@db\.prod\.internal:5432\/app"/.test(result.redactedText),
+    "databaseUrl should keep its URI structure while masking username and password"
   );
   assert.ok(
-    /MYSQL_URL=mysql:\/\/reporter:\[PWM_\d+\]@mysql\.ops\.internal:3306\/analytics/.test(
+    /MYSQL_URL=mysql:\/\/\[PWM_\d+\]:\[PWM_\d+\]@mysql\.ops\.internal:3306\/analytics/.test(
       result.redactedText
     ),
-    "MYSQL_URL should keep its URI structure while masking only the password"
+    "MYSQL_URL should keep its URI structure while masking username and password"
   );
   assert.ok(result.redactedText.includes("PUBLIC_URL=https://openai.com"), "safe public URLs should stay visible");
   assert.ok(result.redactedText.includes("REGION=eu-central-1"), "regions should stay visible");
