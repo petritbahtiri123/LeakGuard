@@ -4,7 +4,7 @@
 
   const { classifyNetworkToken } = root.PWM;
   const IPV4_CANDIDATE_REGEX =
-    /(?:^|[^0-9A-Za-z_.])((?:\d{1,3}\.){3}\d{1,3}(?:\/(?:3[0-2]|[12]?\d))?)(?=$|[^0-9A-Za-z_.])/g;
+    /(?:^|[^0-9A-Za-z_.])((?:\d{1,3}\.){3}\d{1,3}(?:\/(?:3[0-2]|[12]?\d))?)(?=$|[^0-9A-Za-z_]|\.(?:\s|$))/g;
   const ROLE_PATTERNS = [
     {
       role: "GW",

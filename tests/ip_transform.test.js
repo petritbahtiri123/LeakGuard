@@ -157,6 +157,23 @@ function testMixedTextCases() {
   assert.strictEqual(exampleTwo, "Firewall allows [PUB_HOST_1] and [PUB_HOST_2]");
 }
 
+function testTerminalOutputPunctuation() {
+  const sample = [
+    "curl -vk https://54.93.254.59:443",
+    "* Trying 54.93.254.59:443...",
+    "* connect to 54.93.254.59 port 443 from 192.168.3.188 port 46368 failed",
+    "telnet 54.93.254.59 443",
+    "Trying 54.93.254.59...",
+    "Version 1.2.3 should stay."
+  ].join("\n");
+  const output = transform(sample).result.redactedText;
+
+  assert.strictEqual(output.includes("54.93.254.59"), false);
+  assert.ok(output.includes("192.168.3.188"), "private local source IP should stay visible");
+  assert.ok(output.includes("Version 1.2.3 should stay."));
+  assert.ok(output.includes("Trying [PUB_HOST_1]..."));
+}
+
 function testNoFalseCorruption() {
   const text = [
     "Invalid 999.999.999.999 should stay.",
@@ -311,6 +328,7 @@ function run() {
   testHierarchyPreservation();
   testModes();
   testMixedTextCases();
+  testTerminalOutputPunctuation();
   testMixedSecretAndIpBlockStillRedactsOnFirstPass();
   testKnownPlaceholderSecretReusesSameMappingAcrossMixedPrompt();
   testDetectedSecretAlsoRedactsLaterDuplicateOccurrences();
