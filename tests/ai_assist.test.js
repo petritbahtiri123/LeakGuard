@@ -79,6 +79,12 @@ async function testBrowserIntegrationIsOptionalAndPolicyControlled() {
       .includes("chrome-extension://invalid"),
     "classifier should reject invalid Chrome runtime URLs before fetching model assets"
   );
+  assert.ok(
+    fs
+      .readFileSync(path.join(repoRoot, "src/shared/ai/classifier.js"), "utf8")
+      .includes("runExclusiveInference"),
+    "classifier should serialize ONNX inference calls because the WASM backend rejects overlapping session runs"
+  );
 }
 
 async function run() {
