@@ -161,5 +161,130 @@ function testBreakPackRedactionAndSafeLines() {
   assert.ok(/\[PUB_HOST_\d+\]/.test(transformedText), "public IP should use public-host placeholder");
 }
 
+function testFullCapabilityBreakPackV2() {
+  const text = [
+    "https://admin:AdminUrlPass2026@example.com/admin",
+    "https://user:UrlSecretPass123@internal.example.com/path",
+    "https://oauth2:GitUrlToken1234567890@gitlab.example.com/group/repo.git",
+    "https://user:NpmRegistryPass123@registry.example.com/",
+    "https://example.com/api",
+    "https://example.com/oauth/callback",
+    "username=admin",
+    "user_name=admin",
+    '"user": "admin"',
+    '"username": "admin"',
+    "Username: admin",
+    "password_hint=ask-admin",
+    "passw0rd=FakeStrongPass2026!",
+    "pa$$word=FakeStrongPass2026!",
+    "p@ssword=FakeStrongPass2026!",
+    "passwd=FakeStrongPass2026!",
+    "pwd=FakeStrongPass2026!",
+    "secr3t=FakeSecret2026!",
+    "tok3n=FakeToken2026!",
+    "normal sentence says passw0rd is a typo",
+    "token_limit=4096",
+    "max_token_limit=8192",
+    "api_version=2026-04-27",
+    "secret_santa=true",
+    "build_id=build-2026-04-27",
+    "commit_sha=abcdef1234567890abcdef1234567890abcdef12",
+    "image_tag=leakguard:2026.04",
+    "release_id=rel-2026-04-27",
+    "ticket_id=LG-1234",
+    "jira_key=LG-5678",
+    "trace_id=00-abcdef1234567890abcdef1234567890-abcdef1234567890-01",
+    "existing placeholders [PWM_1] [PWM_2] [PWM_3]",
+    "API_KEY=sk_live_7Qm2Lp9Xv4Nc8Tr6Yh1Zw5Kd3Bj0Pf",
+    "API_KEY=sk_live_7Qm2Lp9Xv4Nc8Tr6Yh1Zw5Kd3Bj0Pf"
+  ].join("\n");
+
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const findings = detector.scan(text);
+  const { redactedText } = new Redactor(manager).redact(text, findings);
+
+  const adminPlaceholder = /^username=(\[PWM_\d+\])$/m.exec(redactedText)?.[1];
+  const apiPlaceholder = /^API_KEY=(\[PWM_\d+\])$/m.exec(redactedText)?.[1];
+  assert.ok(adminPlaceholder, "username assignment should redact");
+  assert.ok(apiPlaceholder, "repeated API key should redact");
+
+  assert.ok(
+    redactedText.includes(`https://${adminPlaceholder}:`) &&
+      /https:\/\/\[PWM_\d+\]:\[PWM_\d+\]@example\.com\/admin/.test(redactedText),
+    "URL credentials should redact username and password while preserving URL structure"
+  );
+  assert.ok(
+    /https:\/\/\[PWM_\d+\]:\[PWM_\d+\]@internal\.example\.com\/path/.test(redactedText),
+    "internal URL credentials should preserve URL structure"
+  );
+  assert.ok(
+    /https:\/\/\[PWM_\d+\]:\[PWM_\d+\]@gitlab\.example\.com\/group\/repo\.git/.test(redactedText),
+    "git remote URL credentials should preserve URL structure"
+  );
+  assert.ok(
+    /https:\/\/\[PWM_\d+\]:\[PWM_\d+\]@registry\.example\.com\//.test(redactedText),
+    "registry URL credentials should preserve URL structure"
+  );
+
+  assertIncludesAll(
+    redactedText,
+    [
+      "https://example.com/api",
+      "https://example.com/oauth/callback",
+      `password_hint=ask-${adminPlaceholder}`,
+      "normal sentence says passw0rd is a typo",
+      "token_limit=4096",
+      "max_token_limit=8192",
+      "api_version=2026-04-27",
+      "secret_santa=true",
+      "build_id=build-2026-04-27",
+      "commit_sha=abcdef1234567890abcdef1234567890abcdef12",
+      "image_tag=leakguard:2026.04",
+      "release_id=rel-2026-04-27",
+      "ticket_id=LG-1234",
+      "jira_key=LG-5678",
+      "trace_id=00-abcdef1234567890abcdef1234567890-abcdef1234567890-01",
+      "existing placeholders [PWM_1] [PWM_2] [PWM_3]"
+    ],
+    "break pack v2"
+  );
+
+  assertExcludesAll(
+    redactedText,
+    [
+      "AdminUrlPass2026",
+      "UrlSecretPass123",
+      "GitUrlToken1234567890",
+      "NpmRegistryPass123",
+      "FakeStrongPass2026!",
+      "FakeSecret2026!",
+      "FakeToken2026!",
+      '"user": "admin"',
+      '"username": "admin"',
+      "Username: admin"
+    ],
+    "break pack v2"
+  );
+
+  assert.strictEqual(
+    redactedText.split(`API_KEY=${apiPlaceholder}`).length - 1,
+    2,
+    "repeated API key should reuse one placeholder"
+  );
+  assert.ok(/^user_name=\[PWM_\d+\]$/m.test(redactedText), "user_name should redact");
+  assert.ok(/"user": "\[PWM_\d+\]"/.test(redactedText), "JSON user should redact");
+  assert.ok(/"username": "\[PWM_\d+\]"/.test(redactedText), "JSON username should redact");
+  assert.ok(/^Username: \[PWM_\d+\]$/m.test(redactedText), "labelled Username should redact");
+  assert.ok(/^passw0rd=\[PWM_\d+\]$/m.test(redactedText), "passw0rd alias should redact");
+  assert.ok(/^pa\$\$word=\[PWM_\d+\]$/m.test(redactedText), "pa$$word alias should redact");
+  assert.ok(/^p@ssword=\[PWM_\d+\]$/m.test(redactedText), "p@ssword alias should redact");
+  assert.ok(/^passwd=\[PWM_\d+\]$/m.test(redactedText), "passwd alias should redact");
+  assert.ok(/^pwd=\[PWM_\d+\]$/m.test(redactedText), "pwd alias should redact");
+  assert.ok(/^secr3t=\[PWM_\d+\]$/m.test(redactedText), "secr3t alias should redact");
+  assert.ok(/^tok3n=\[PWM_\d+\]$/m.test(redactedText), "tok3n alias should redact");
+}
+
 testBreakPackRedactionAndSafeLines();
+testFullCapabilityBreakPackV2();
 console.log("PASS LeakGuard break-test redaction pack");

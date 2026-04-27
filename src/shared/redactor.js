@@ -26,6 +26,25 @@
 
           const start = offset + relativeIndex;
           const end = start + entry.raw.length;
+          const previous = start > 0 ? text[start - 1] : "";
+          const next = end < text.length ? text[end] : "";
+          const leftContext = text.slice(Math.max(0, start - 32), start).toLowerCase();
+          const shortIdentifier = /^[A-Za-z0-9._-]{3,16}$/.test(entry.raw);
+
+          if (
+            shortIdentifier &&
+            !(
+              previous === "-" &&
+              /(?:password_hint|hint|ask)\s*[:=]?\s*[\w.-]*-$/.test(leftContext)
+            )
+          ) {
+            searchIndex = relativeIndex + Math.max(1, entry.raw.length);
+            continue;
+          }
+          if (shortIdentifier && /[A-Za-z0-9._-]/.test(next)) {
+            searchIndex = relativeIndex + Math.max(1, entry.raw.length);
+            continue;
+          }
           const candidate = {
             id: `reuse_${start}_${end}`,
             raw: entry.raw,
