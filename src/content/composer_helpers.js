@@ -367,7 +367,12 @@
     const deleted = runEditableCommand("delete", null);
     if (!deleted) return false;
 
-    const inserted = normalized ? runEditableCommand("insertText", normalized) : true;
+    const inserted = normalized
+      ? runEditableCommand(
+          normalized.includes("\n") ? "insertHTML" : "insertText",
+          normalized.includes("\n") ? textToBlockHtml(normalized) : normalized
+        )
+      : true;
 
     if (!inserted) {
       return false;

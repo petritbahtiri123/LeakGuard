@@ -224,8 +224,8 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   assert.ok(
     fs
       .readFileSync(path.join(repoRoot, "src/content/composer_helpers.js"), "utf8")
-      .includes('const deleted = runEditableCommand("delete", null);'),
-    "contenteditable rewrites should clear the host editor state before inserting replacement text"
+      .includes('normalized.includes("\\n") ? "insertHTML" : "insertText"'),
+    "multiline contenteditable rewrites should use HTML insertion after clearing host editor state"
   );
   assert.ok(
     contentSource.includes("const latestInput = findComposer(input);") &&
