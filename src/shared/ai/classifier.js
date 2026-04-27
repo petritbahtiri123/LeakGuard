@@ -26,6 +26,7 @@
   let runtimePromise = null;
   let sessionPromise = null;
   let featureSpecPromise = null;
+  let inferenceQueue = Promise.resolve();
 
   function extensionUrlIsUsable(ext) {
     if (!ext?.runtime?.getURL) return false;
@@ -198,6 +199,12 @@
     return Array.from(data).slice(0, LABELS.length);
   }
 
+  function runExclusiveInference(task) {
+    const next = inferenceQueue.catch(() => null).then(task);
+    inferenceQueue = next.catch(() => null);
+    return next;
+  }
+
   async function classify(text) {
     const input = String(text || "");
     if (!input.trim()) {
@@ -218,7 +225,7 @@
       const features = computeFeatures(input, featureSpec);
       const tensor = new Tensor("float32", features, [1, features.length]);
       const inputName = session.inputNames?.[0] || "input";
-      const outputs = await session.run({ [inputName]: tensor });
+      const outputs = await runExclusiveInference(() => session.run({ [inputName]: tensor }));
       const probabilities = readProbabilities(outputs);
       if (!probabilities) throw new Error("ONNX probability output missing");
 
