@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import base64
+import argparse
 import json
 import random
 import string
@@ -13,6 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "dataset" / "generated" / "initial_dataset.jsonl"
 RANDOM_SEED = 20260424
+DEFAULT_RECORD_COUNT = 2000
 RANDOM = random.Random(RANDOM_SEED)
 
 
@@ -66,7 +68,74 @@ def add(records: list[dict], text: str, label: str, source: str = "synthetic") -
     records.append({"text": text, "label": label, "source": source})
 
 
-def build_records() -> list[dict]:
+def random_secret_record() -> tuple[str, str]:
+    alnum = string.ascii_letters + string.digits
+    factories = [
+        lambda: f"password=Summer2026!{token(alnum, 8)}",
+        lambda: f"db_password=Pg-{token(alnum, 18)}!",
+        lambda: f"api_key=lg_test_key_{token(alnum, 32)}",
+        lambda: f"PAYMENT_SECRET_KEY=lg_payment_secret_{token(alnum, 38)}",
+        lambda: f"Authorization: Bearer {bearer_token()}",
+        lambda: f"jwt={jwt()}",
+        lambda: f"DATABASE_URL=postgres://app:{token(alnum + '-_', 20)}@db.internal:5432/app",
+        lambda: f"MYSQL_URL=mysql://root:{token(alnum + '!@#', 18)}@localhost:3306/reporting",
+        lambda: f"AWS_SECRET_ACCESS_KEY={aws_secret_access_key()}",
+        lambda: f"GITHUB_TOKEN={github_pat()}",
+        lambda: f"client_secret=GOCSPX-{token(alnum + '-_', 36)}",
+        lambda: f"private_key={private_key()}",
+        lambda: f"temporary credential: {aws_access_key_id()} / {aws_secret_access_key()}",
+        lambda: f"curl -H 'Authorization: Bearer {bearer_token()}' https://api.internal.example/v1",
+    ]
+    return RANDOM.choice(factories)(), "SECRET"
+
+
+def random_not_secret_record() -> tuple[str, str]:
+    hex_chars = "0123456789abcdef"
+    factories = [
+        lambda: f"region={RANDOM.choice(['eu-central-1', 'us-east-1', 'us-west-2', 'ap-southeast-1'])}",
+        lambda: f"version={RANDOM.randint(0, 4)}.{RANDOM.randint(0, 20)}.{RANDOM.randint(0, 50)}",
+        lambda: f"username=user_{RANDOM.randint(1, 9999)}",
+        lambda: f"api_version=v{RANDOM.randint(1, 5)}",
+        lambda: f"token_limit={RANDOM.choice([1024, 2048, 4096, 8192, 16384])}",
+        lambda: f"build_id={token(hex_chars, 12)}",
+        lambda: "Authorization: Bearer <token>",
+        lambda: "GITHUB_TOKEN=ghp-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        lambda: "AWS_SECRET_ACCESS_KEY=<your-secret-here>",
+        lambda: "Use ${API_KEY} from your local environment",
+        lambda: "JWT format is header.payload.signature",
+        lambda: "password_policy=min-16-chars",
+    ]
+    return RANDOM.choice(factories)(), "NOT_SECRET"
+
+
+def random_unsure_record() -> tuple[str, str]:
+    alnum = string.ascii_letters + string.digits
+    factories = [
+        lambda: f"session_token_example={token(alnum, 12)}",
+        lambda: f"example_api_key=replace-me-{RANDOM.randint(1, 9999)}",
+        lambda: f"password_note=stored in vault item {RANDOM.randint(1, 9999)}",
+        lambda: "stripe_secret_key documentation section",
+        lambda: "github_pat example format",
+        lambda: "aws access key id docs",
+        lambda: "Bearer token placeholder",
+        lambda: "Authorization header must not be empty",
+        lambda: "private_key_rotation_days=30",
+    ]
+    return RANDOM.choice(factories)(), "UNSURE"
+
+
+def extend_records(records: list[dict], count: int) -> None:
+    if count < len(records):
+        del records[count:]
+        return
+
+    factories = (random_secret_record, random_not_secret_record, random_unsure_record)
+    while len(records) < count:
+        text, label = factories[len(records) % len(factories)]()
+        add(records, text, label)
+
+
+def build_records(count: int = DEFAULT_RECORD_COUNT) -> list[dict]:
     RANDOM.seed(RANDOM_SEED)
     records: list[dict] = []
     hex_chars = "0123456789abcdef"
@@ -201,13 +270,25 @@ def build_records() -> list[dict]:
     for text, label in context_contrasts:
         add(records, text, label)
 
+    extend_records(records, count)
     RANDOM.shuffle(records)
     return records
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Generate a synthetic LeakGuard classifier dataset.")
+    parser.add_argument(
+        "--count",
+        type=int,
+        default=DEFAULT_RECORD_COUNT,
+        help=f"number of records to write (default: {DEFAULT_RECORD_COUNT})",
+    )
+    args = parser.parse_args()
+    if args.count <= 0:
+        raise SystemExit("--count must be greater than 0")
+
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-    records = build_records()
+    records = build_records(args.count)
     with OUTPUT.open("w", encoding="utf-8") as handle:
         for record in records:
             handle.write(json.dumps(record, sort_keys=True) + "\n")
