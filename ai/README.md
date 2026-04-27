@@ -23,7 +23,7 @@ Run commands from this directory:
 
 ```bash
 python -m pip install -r requirements.txt
-python scripts/generate_initial_dataset.py
+python scripts/generate_initial_dataset.py --count 2000
 python scripts/train_classifier.py
 python scripts/evaluate_model.py
 python scripts/export_onnx.py
@@ -34,6 +34,8 @@ The generated dataset is written to:
 ```text
 dataset/generated/initial_dataset.jsonl
 ```
+
+`npm run build:*` commands run `scripts/prepare-build.mjs` first. That setup step installs missing npm dependencies, creates `ai/.venv` when needed, installs Python training dependencies, generates 2000 synthetic examples, trains the classifier, and exports the ONNX model before packaging the extension.
 
 Training merges `dataset/generated/*.jsonl` and `dataset/labeled/*.jsonl`, trains a small scikit-learn logistic regression model, and writes:
 

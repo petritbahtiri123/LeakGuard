@@ -4,6 +4,7 @@
 /build
 /tmp
 /ai/venv
+/ai/.venv
 __pycache__/
 *.pyc
 # Logs
