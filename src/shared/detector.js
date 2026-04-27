@@ -582,6 +582,72 @@
     return entropy >= 3.1 || (hasPasswordKeyword && entropy >= 2.6);
   }
 
+  function isSensitiveObfuscatedKey(key) {
+    const input = String(key || "");
+    if (!/[\u200B-\u200D\uFEFF\s]/.test(input)) return false;
+
+    const compact = input
+      .replace(/[\u200B-\u200D\uFEFF\s._-]+/g, "")
+      .toLowerCase();
+
+    return /^(?:password|passwd|passcode|passphrase|pwd|secret|token|apikey|authorization|auth|session|cookie)$/.test(
+      compact
+    );
+  }
+
+  function tryDecodeBase64(value) {
+    const input = String(value || "").trim();
+    if (!/^[A-Za-z0-9+/]{16,}={0,2}$/.test(input) || input.length % 4 === 1) return "";
+
+    try {
+      const decodeBase64 =
+        typeof root.atob === "function"
+          ? root.atob.bind(root)
+          : typeof atob === "function"
+            ? atob
+            : null;
+      if (!decodeBase64) return "";
+
+      const decoded = decodeBase64(input);
+      if (!decoded || /[\uFFFD]/.test(decoded)) return "";
+      if (!/^[\x09\x0A\x0D\x20-\x7E]+$/.test(decoded)) return "";
+      return decoded;
+    } catch {
+      return "";
+    }
+  }
+
+  function looksSensitiveDecodedBase64(value) {
+    const decoded = tryDecodeBase64(value);
+    if (!decoded || decoded.length < 8 || decoded.length > 256) return false;
+
+    if (/(password|passwd|secret|token|api[_ -]?key|credential|auth)/i.test(decoded)) return true;
+    return isLikelyBarePasswordCandidate(decoded, decoded, 0, decoded.length);
+  }
+
+  function isExplicitEncodedAssignmentKey(key) {
+    return /(?:^|[_\-.])(?:encoded|base64|b64|secret|token|password|credential)(?:$|[_\-.])/i.test(
+      String(key || "")
+    );
+  }
+
+  function isLikelyIpv6Address(value) {
+    const input = String(value || "").trim();
+    if (!input || input.length > 64 || !input.includes(":")) return false;
+    if (!/^[0-9A-Fa-f:.]+(?:%\w+)?$/.test(input)) return false;
+
+    const zoneStripped = input.replace(/%\w+$/, "");
+    const pieces = zoneStripped.split("::");
+    if (pieces.length > 2) return false;
+
+    const left = pieces[0] ? pieces[0].split(":") : [];
+    const right = pieces.length === 2 && pieces[1] ? pieces[1].split(":") : [];
+    const groups = [...left, ...right];
+    if (groups.some((group) => !/^[0-9A-Fa-f]{1,4}$/.test(group))) return false;
+
+    return pieces.length === 2 ? groups.length < 8 : groups.length === 8;
+  }
+
   function unwrapQuotedStandaloneValue(value) {
     const normalized = String(value || "").trim();
     if (normalized.length < 2) return normalized;
@@ -1211,6 +1277,68 @@
       return findings;
     }
 
+    scanAdversarialAssignments(text) {
+      const findings = [];
+      const regex =
+        /([A-Za-z](?:[\u200B-\u200D\uFEFF\s._-]*[A-Za-z0-9]){1,80})\s*[:=]\s*(?:"([^"\r\n]+)"|'([^'\r\n]+)'|`([^`\r\n]+)`|([^\s\r\n]+))/gim;
+      let match;
+
+      while ((match = regex.exec(text)) !== null) {
+        const key = match[1];
+        const rawCandidate = [match[2], match[3], match[4], match[5]].find(
+          (candidate) => typeof candidate === "string"
+        );
+        if (!rawCandidate) continue;
+
+        const raw = normalizeCandidate(rawCandidate);
+        if (!raw || raw.length < 8) continue;
+
+        const valueIndex = match[0].indexOf(rawCandidate);
+        if (valueIndex < 0) continue;
+
+        const start = match.index + valueIndex;
+        const end = start + rawCandidate.length;
+
+        let placeholderType = inferPlaceholderTypeFromKey(key);
+        let score = 0;
+        const methods = ["assignment", "adversarial"];
+
+        if (isSensitiveObfuscatedKey(key)) {
+          score = 94;
+          methods.push("obfuscated-key");
+        } else if (isExplicitEncodedAssignmentKey(key) && looksSensitiveDecodedBase64(raw)) {
+          score = 88;
+          placeholderType = "SECRET";
+          methods.push("base64");
+        } else if (/ipv6/i.test(key) && isLikelyIpv6Address(raw)) {
+          score = 86;
+          placeholderType = "IP_ADDRESS";
+          methods.push("ipv6");
+        } else {
+          continue;
+        }
+
+        if (this.isAllowlisted(raw)) continue;
+        if (this.shouldSuppress({ raw, text, start, end, key, placeholderType, source: "assignment" })) {
+          continue;
+        }
+
+        findings.push(
+          this.buildFinding({
+            category: placeholderType === "IP_ADDRESS" ? "network" : "credential",
+            placeholderType,
+            raw,
+            start,
+            end,
+            score,
+            methods
+          })
+        );
+      }
+
+      return findings;
+    }
+
     dedupe(findings) {
       const seen = new Map();
 
@@ -1271,6 +1399,7 @@
         ...this.scanStructuredAssignments(input),
         ...this.scanPatterns(input),
         ...this.scanAssignments(input),
+        ...this.scanAdversarialAssignments(input),
         ...this.scanIdentityAssignments(input),
         ...this.scanBarePasswordCandidates(input),
         ...this.scanEntropyFallback(input)
