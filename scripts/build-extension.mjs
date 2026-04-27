@@ -15,6 +15,7 @@ const assetDirs = ["background", "content", "popup", "options", "ui", "shared", 
 const staticDirs = ["icons", "config", "ai/models"];
 const onnxRuntimeLoaderFiles = ["ort.min.js"];
 const onnxRuntimeWasmPattern = /^ort-wasm.*\.wasm$/;
+const onnxRuntimeModulePattern = /^ort-wasm.*\.mjs$/;
 const supportedBrowsers = new Set(["chrome", "firefox"]);
 const supportedModes = new Set(["consumer", "enterprise"]);
 
@@ -49,7 +50,10 @@ function listOnnxRuntimeFiles() {
     .map((entry) => entry.name);
   const runtimeFiles = files
     .filter(
-      (file) => onnxRuntimeLoaderFiles.includes(file) || onnxRuntimeWasmPattern.test(file)
+      (file) =>
+        onnxRuntimeLoaderFiles.includes(file) ||
+        onnxRuntimeWasmPattern.test(file) ||
+        onnxRuntimeModulePattern.test(file)
     )
     .sort();
 
@@ -67,7 +71,7 @@ function listOnnxRuntimeFiles() {
 
 function getOnnxRuntimeWebAccessibleResources() {
   return listOnnxRuntimeFiles()
-    .filter((file) => onnxRuntimeWasmPattern.test(file))
+    .filter((file) => onnxRuntimeWasmPattern.test(file) || onnxRuntimeModulePattern.test(file))
     .map((file) => `vendor/onnxruntime/${file}`);
 }
 

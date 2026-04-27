@@ -59,6 +59,11 @@ async function testBrowserIntegrationIsOptionalAndPolicyControlled() {
     "content scripts should load the browser-side classifier module"
   );
   assert.ok(
+    runtimeResources.some((resource) => resource.endsWith(".mjs")) &&
+      runtimeResources.some((resource) => resource.endsWith(".wasm")),
+    "ONNX Runtime resources should include dynamic module loaders and WASM binaries"
+  );
+  assert.ok(
     manifest.web_accessible_resources?.[0]?.resources.includes(
       "ai/models/leakguard_secret_classifier.features.json"
     ) &&
@@ -87,4 +92,3 @@ run().catch((error) => {
   console.error(error);
   process.exitCode = 1;
 });
-
