@@ -364,9 +364,10 @@
     const selection = selectContentEditableContents(el);
     if (!selection) return false;
 
-    const inserted = normalized
-      ? runEditableCommand("insertText", normalized)
-      : runEditableCommand("delete", null);
+    const deleted = runEditableCommand("delete", null);
+    if (!deleted) return false;
+
+    const inserted = normalized ? runEditableCommand("insertText", normalized) : true;
 
     if (!inserted) {
       return false;
@@ -427,10 +428,9 @@
     }
 
     if (isContentEditable(el)) {
-      rewriteContentEditableBlocks(el, value, options);
-      if (getInputText(el) !== normalizeComposerText(value)) {
+      if (!rewriteContentEditableNative(el, value, options)) {
         if (!rewriteContentEditableHtml(el, value, options)) {
-          rewriteContentEditableNative(el, value, options);
+          rewriteContentEditableBlocks(el, value, options);
         }
       }
     }
