@@ -427,9 +427,10 @@
     }
 
     if (isContentEditable(el)) {
-      if (!rewriteContentEditableNative(el, value, options)) {
+      rewriteContentEditableBlocks(el, value, options);
+      if (getInputText(el) !== normalizeComposerText(value)) {
         if (!rewriteContentEditableHtml(el, value, options)) {
-          rewriteContentEditableBlocks(el, value, options);
+          rewriteContentEditableNative(el, value, options);
         }
       }
     }

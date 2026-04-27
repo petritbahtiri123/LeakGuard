@@ -222,6 +222,12 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
     "composer rewrite verification should allow safe normalized-equivalent editor states"
   );
   assert.ok(
+    fs
+      .readFileSync(path.join(repoRoot, "src/content/composer_helpers.js"), "utf8")
+      .includes("rewriteContentEditableBlocks(el, value, options);"),
+    "contenteditable rewrites should replace the editor contents directly instead of relying on native insertion"
+  );
+  assert.ok(
     contentSource.includes("const latestInput = findComposer(input);") &&
       contentSource.includes("const latestText = getInputText(latestInput);"),
     "paste rewrite flow should re-resolve the composer after modal decisions before applying redaction"
