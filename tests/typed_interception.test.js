@@ -158,6 +158,7 @@ function testCaretDerivationPrefersOriginalSuffixAnchor() {
 
 function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   const beforeInputSource = extractFunctionSource(contentSource, "maybeHandleBeforeInput");
+  const pasteSource = extractFunctionSource(contentSource, "maybeHandlePaste");
   const submitSource = extractFunctionSource(contentSource, "maybeHandleSubmit");
   const fallbackSendSource = extractFunctionSource(contentSource, "maybeHandleFallbackSendKey");
 
@@ -231,6 +232,11 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
     contentSource.includes("const latestInput = findComposer(input);") &&
       contentSource.includes("const latestText = getInputText(latestInput);"),
     "paste rewrite flow should re-resolve the composer after modal decisions before applying redaction"
+  );
+  assert.ok(
+    pasteSource.indexOf("consumeInterceptionEvent(event);") <
+      pasteSource.indexOf("await analyzeTextWithAiAssist(pasted)"),
+    "paste handler should consume sensitive paste events before async AI analysis can let the host insert raw text"
   );
 }
 

@@ -1472,15 +1472,16 @@
 
     if (!pasted) return;
 
-    const analysis = await analyzeTextWithAiAssist(pasted);
-    if (!analysis.findings.length && !analysis.placeholderNormalized) return;
+    const quickAnalysis = analyzeText(pasted);
+    if (!quickAnalysis.findings.length && !quickAnalysis.placeholderNormalized) return;
 
     const originalText = getInputText(input);
     const selection = getSelectionOffsets(input);
+    consumeInterceptionEvent(event);
+
+    const analysis = await analyzeTextWithAiAssist(pasted);
 
     if (!analysis.findings.length) {
-      consumeInterceptionEvent(event);
-
       const ok = await applyPasteDecision(
         input,
         originalText,
@@ -1496,8 +1497,6 @@
       refreshBadgeFromCurrentInput();
       return;
     }
-
-    consumeInterceptionEvent(event);
 
     const policy = await getPolicyForAction();
     const destinationPolicy = await handleDestinationPolicy(analysis.findings, policy);
