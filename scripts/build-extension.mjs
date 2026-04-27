@@ -15,7 +15,8 @@ const assetDirs = ["background", "content", "popup", "options", "ui", "shared", 
 const staticDirs = ["icons", "config", "ai/models"];
 const onnxRuntimeLoaderFiles = ["ort.min.js"];
 const onnxRuntimeWasmPattern = /^ort-wasm.*\.wasm$/;
-const onnxRuntimeModulePattern = /^ort-wasm.*\.mjs$/;
+const onnxRuntimeDynamicLoaderPattern = /^ort-wasm.*\.(?:js|mjs)$/;
+const onnxRuntimeSidecarPattern = /^ort-wasm.*\.(?:js|mjs|wasm)$/;
 const supportedBrowsers = new Set(["chrome", "firefox"]);
 const supportedModes = new Set(["consumer", "enterprise"]);
 
@@ -52,8 +53,7 @@ function listOnnxRuntimeFiles() {
     .filter(
       (file) =>
         onnxRuntimeLoaderFiles.includes(file) ||
-        onnxRuntimeWasmPattern.test(file) ||
-        onnxRuntimeModulePattern.test(file)
+        onnxRuntimeSidecarPattern.test(file)
     )
     .sort();
 
@@ -65,13 +65,16 @@ function listOnnxRuntimeFiles() {
   if (!runtimeFiles.some((file) => onnxRuntimeWasmPattern.test(file))) {
     throw new Error(`Missing ONNX Runtime WASM assets in ${sourceDir}.`);
   }
+  if (!runtimeFiles.some((file) => onnxRuntimeDynamicLoaderPattern.test(file))) {
+    throw new Error(`Missing ONNX Runtime dynamic loader assets in ${sourceDir}.`);
+  }
 
   return runtimeFiles;
 }
 
 function getOnnxRuntimeWebAccessibleResources() {
   return listOnnxRuntimeFiles()
-    .filter((file) => onnxRuntimeWasmPattern.test(file) || onnxRuntimeModulePattern.test(file))
+    .filter((file) => onnxRuntimeSidecarPattern.test(file))
     .map((file) => `vendor/onnxruntime/${file}`);
 }
 

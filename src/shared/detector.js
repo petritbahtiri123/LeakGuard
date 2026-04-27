@@ -185,8 +185,20 @@
     const isAwsSecretAccessKeyAssignment =
       source === "assignment" &&
       /(?:^|[_\-.])aws[_-]?secret[_-]?access[_-]?key$/.test(normalizedKey);
+    const isCredentialAssignment =
+      source === "assignment" &&
+      isSensitiveAssignmentKey(key) &&
+      looksCredentialLikeAssignmentValue(raw);
 
     if (containsTemplateMarker(raw)) {
+      if (
+        isCredentialAssignment &&
+        /placeholder/i.test(String(raw || "")) &&
+        !/^(?:placeholder|example|sample|dummy)/i.test(String(raw || "")) &&
+        !/(?:^|[._\/-])(?:example|sample|dummy)(?:$|[._\/-])/i.test(String(raw || ""))
+      ) {
+        return true;
+      }
       if (
         isAwsSecretAccessKeyAssignment &&
         /^(?:example|sample|dummy)[A-Z0-9]/.test(String(raw || "")) &&
@@ -198,7 +210,11 @@
       return false;
     }
 
-    if (source === "assignment" && isExplicitSensitiveAssignment(key, placeholderType)) {
+    if (
+      source === "assignment" &&
+      isExplicitSensitiveAssignment(key, placeholderType) &&
+      (isExactCredentialAssignmentKey(key) || looksCredentialLikeAssignmentValue(raw))
+    ) {
       return true;
     }
 
@@ -241,11 +257,79 @@
     ]).has(String(placeholderType || ""));
   }
 
+  function normalizeAssignmentKey(key) {
+    return String(key || "").toLowerCase().replace(/[\s.-]+/g, "_");
+  }
+
+  function compactAssignmentKey(key) {
+    return normalizeAssignmentKey(key).replace(/_/g, "");
+  }
+
+  const SAFE_ASSIGNMENT_KEYS = new Set([
+    "api_version",
+    "debug",
+    "environment",
+    "password_hint",
+    "public_url",
+    "region",
+    "secret_santa",
+    "token_limit",
+    "url",
+    "version"
+  ]);
+
+  const EXACT_CREDENTIAL_KEYS = new Set([
+    "api_key",
+    "auth_header",
+    "authorization",
+    "client_secret",
+    "database_url",
+    "db_password",
+    "mysql_url",
+    "redis_url",
+    "secret_key",
+    "shared_secret",
+    "token",
+    "webhook_url"
+  ]);
+
+  function isSafeAssignmentKey(key) {
+    return SAFE_ASSIGNMENT_KEYS.has(normalizeAssignmentKey(key));
+  }
+
+  function isExactCredentialAssignmentKey(key) {
+    return EXACT_CREDENTIAL_KEYS.has(normalizeAssignmentKey(key));
+  }
+
+  function isSensitiveAssignmentKey(key) {
+    if (isSafeAssignmentKey(key)) return false;
+    if (isExactCredentialAssignmentKey(key)) return true;
+    return /(password|passwd|pwd|secret|api[_\s-]?key|token|auth|authorization|client[_\s-]?secret|shared[_\s-]?secret|webhook)/i.test(
+      normalizeAssignmentKey(key)
+    );
+  }
+
+  function looksCredentialLikeAssignmentValue(value) {
+    const raw = String(value || "").trim();
+    if (raw.length < 8) return false;
+    if (isCleanPlaceholder(raw) || likelyTemplateValue(raw)) return false;
+    if (/^(?:true|false|null|undefined|none|yes|no|on|off)$/i.test(raw)) return false;
+    if (/^\d+$/.test(raw)) return false;
+    if (/^(?:v?\d+\.)+\d+(?:[-+][A-Za-z0-9._-]+)?$/.test(raw)) return false;
+    if (isRegionLikeSegment(raw)) return false;
+
+    return (
+      /[A-Za-z]/.test(raw) &&
+      (/\d/.test(raw) || /[^A-Za-z0-9]/.test(raw) || /(?:secret|token|pass|key|bearer)/i.test(raw))
+    );
+  }
+
   function assignmentKeyScoreBoost(key, value) {
     const normalizedKey = String(key || "").toLowerCase();
     const normalizedValue = String(value || "");
     let score = 0;
 
+    if (isExactCredentialAssignmentKey(key)) score += 18;
     if (/^[A-Z0-9_]+$/.test(key || "")) score += 4;
     if (/session(?:_id|_secret)?|cookie|token|secret|private[_-]?key|account[_-]?key/.test(normalizedKey)) {
       score += 8;
@@ -263,13 +347,9 @@
     return score;
   }
 
-  function normalizeAssignmentKey(key) {
-    return String(key || "").toLowerCase().replace(/[.-]/g, "_");
-  }
-
   function isDbUriAssignmentKey(key) {
     const normalized = normalizeAssignmentKey(key);
-    const compact = String(key || "").toLowerCase().replace(/[._-]/g, "");
+    const compact = compactAssignmentKey(key);
     return (
       /\b(?:database|db|mysql|postgres(?:ql)?|mariadb|mongodb|mongo|redis|amqp|rabbitmq|mssql|sqlserver)_(?:url|uri)\b/.test(
         normalized
@@ -584,14 +664,17 @@
 
   function isSensitiveObfuscatedKey(key) {
     const input = String(key || "");
-    if (!/[\u200B-\u200D\uFEFF\s]/.test(input)) return false;
+    const lower = input.toLowerCase();
+    const leetCompact = input
+      .toLowerCase()
+      .replace(/0/g, "o")
+      .replace(/\$/g, "s")
+      .replace(/[\u200B-\u200D\uFEFF\s._$-]+/g, "");
 
-    const compact = input
-      .replace(/[\u200B-\u200D\uFEFF\s._-]+/g, "")
-      .toLowerCase();
+    if (leetCompact === lower) return false;
 
-    return /^(?:password|passwd|passcode|passphrase|pwd|secret|token|apikey|authorization|auth|session|cookie)$/.test(
-      compact
+    return /^(?:password|passwd|passcode|passphrase|pwd|secret|token|apikey|bearertoken|authorization|authorizationbearer|auth|session|cookie)$/.test(
+      leetCompact
     );
   }
 
@@ -1023,6 +1106,8 @@
         const placeholderType = inferPlaceholderTypeFromKey(key);
         const normalizedKey = String(key || "").toLowerCase();
 
+        if (match.index > 0 && /[?&]/.test(String(text || "")[match.index - 1])) continue;
+        if (isSafeAssignmentKey(key)) continue;
         if (!normalized || normalized.length < 8) continue;
 
         const valueIndex = full.indexOf(token);
@@ -1112,6 +1197,85 @@
       return findings;
     }
 
+    scanExplicitCredentialAssignments(text) {
+      const findings = [];
+      const regex =
+        /([A-Za-z_][A-Za-z0-9_.-]{0,80})\s*[:=]\s*(?:"([^"\r\n]+)"|'([^'\r\n]+)'|`([^`\r\n]+)`|([^\s\r\n]+))/gim;
+      let match;
+
+      while ((match = regex.exec(text)) !== null) {
+        const key = match[1];
+        if (match.index > 0 && /[?&]/.test(String(text || "")[match.index - 1])) continue;
+        if (isSafeAssignmentKey(key)) continue;
+        if (isDbUriAssignmentKey(key) || isConnectionStringAssignmentKey(key)) continue;
+        if (!isSensitiveAssignmentKey(key)) continue;
+
+        const rawCandidate = [match[2], match[3], match[4], match[5]].find(
+          (candidate) => typeof candidate === "string"
+        );
+        if (!rawCandidate) continue;
+
+        const raw = normalizeCandidate(rawCandidate);
+        if (!looksCredentialLikeAssignmentValue(raw)) continue;
+        if (looksLikeUnsupportedVendorHexAssignment(key, raw)) continue;
+        if (containsPlaceholder(raw) && isBenignPlaceholderComposite(raw)) continue;
+        if (
+          /^(?:cookie|session)$/i.test(normalizeAssignmentKey(key)) &&
+          raw.length < 16 &&
+          !/(?:secret|token|auth|session|jwt|bearer)/i.test(raw)
+        ) {
+          continue;
+        }
+        if (/^(?:auth(?:_?header)?|authorization)$/i.test(normalizeAssignmentKey(key)) && /^bearer\s+/i.test(raw)) {
+          continue;
+        }
+
+        const valueIndex = match[0].indexOf(rawCandidate);
+        if (valueIndex < 0) continue;
+
+        const start = match.index + valueIndex;
+        const end = start + rawCandidate.length;
+        const placeholderType = inferPlaceholderTypeFromKey(key);
+
+        if (
+          this.shouldSuppress({
+            raw,
+            text,
+            start,
+            end,
+            key,
+            placeholderType,
+            source: "assignment"
+          })
+        ) {
+          continue;
+        }
+
+        const entropy = calculateEntropy(raw);
+        const score =
+          62 +
+          (isExactCredentialAssignmentKey(key) ? 12 : 4) +
+          (entropy >= 3.6 ? 4 : 0) +
+          (countClassVariety(raw) >= 3 ? 2 : 0);
+
+        findings.push(
+          this.buildFinding({
+            category: "credential",
+            placeholderType,
+            raw,
+            start,
+            end,
+            score,
+            methods: ["assignment", "explicit-key", entropy >= 3.6 ? "entropy" : null].filter(
+              Boolean
+            )
+          })
+        );
+      }
+
+      return findings;
+    }
+
     scanIdentityAssignments(text) {
       const findings = [];
       const regex =
@@ -1120,6 +1284,7 @@
 
       while ((match = regex.exec(text)) !== null) {
         const key = match[1];
+        if (isSafeAssignmentKey(key)) continue;
         if (!isIdentityAssignmentKey(key)) continue;
 
         const rawCandidate = [match[2], match[3], match[4], match[5]].find(
@@ -1280,7 +1445,7 @@
     scanAdversarialAssignments(text) {
       const findings = [];
       const regex =
-        /([A-Za-z](?:[\u200B-\u200D\uFEFF\s._-]*[A-Za-z0-9]){1,80})\s*[:=]\s*(?:"([^"\r\n]+)"|'([^'\r\n]+)'|`([^`\r\n]+)`|([^\s\r\n]+))/gim;
+        /([A-Za-z](?:[\u200B-\u200D\uFEFF\s._$-]*[A-Za-z0-9$]){1,80})\s*[:=]\s*(?:"([^"\r\n]+)"|'([^'\r\n]+)'|`([^`\r\n]+)`|([^\s\r\n]+))/gim;
       let match;
 
       while ((match = regex.exec(text)) !== null) {
@@ -1292,6 +1457,15 @@
 
         const raw = normalizeCandidate(rawCandidate);
         if (!raw || raw.length < 8) continue;
+        if (isSafeAssignmentKey(key)) continue;
+        if (containsPlaceholder(raw) && isBenignPlaceholderComposite(raw)) continue;
+        if (
+          /^(?:cookie|session)$/i.test(normalizeAssignmentKey(key)) &&
+          raw.length < 16 &&
+          !/(?:secret|token|auth|session|jwt|bearer)/i.test(raw)
+        ) {
+          continue;
+        }
 
         const valueIndex = match[0].indexOf(rawCandidate);
         if (valueIndex < 0) continue;
@@ -1399,6 +1573,7 @@
         ...this.scanStructuredAssignments(input),
         ...this.scanPatterns(input),
         ...this.scanAssignments(input),
+        ...this.scanExplicitCredentialAssignments(input),
         ...this.scanAdversarialAssignments(input),
         ...this.scanIdentityAssignments(input),
         ...this.scanBarePasswordCandidates(input),

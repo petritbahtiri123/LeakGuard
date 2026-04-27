@@ -59,9 +59,9 @@ async function testBrowserIntegrationIsOptionalAndPolicyControlled() {
     "content scripts should load the browser-side classifier module"
   );
   assert.ok(
-    runtimeResources.some((resource) => resource.endsWith(".mjs")) &&
+    runtimeResources.some((resource) => /ort-wasm.*\.(?:js|mjs)$/.test(resource)) &&
       runtimeResources.some((resource) => resource.endsWith(".wasm")),
-    "ONNX Runtime resources should include dynamic module loaders and WASM binaries"
+    "ONNX Runtime resources should include dynamic JS/module loaders and WASM binaries"
   );
   assert.ok(
     manifest.web_accessible_resources?.[0]?.resources.includes(
