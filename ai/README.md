@@ -23,7 +23,7 @@ Run commands from this directory:
 
 ```bash
 python -m pip install -r requirements.txt
-python scripts/generate_initial_dataset.py --count 2000
+python scripts/generate_initial_dataset.py --count 10000
 python scripts/train_classifier.py
 python scripts/evaluate_model.py
 python scripts/export_onnx.py
@@ -36,6 +36,31 @@ dataset/generated/initial_dataset.jsonl
 ```
 
 `npm run build:*` commands run `scripts/prepare-build.mjs` first. `npm run build:all` runs that setup once and then packages every browser target. The setup step installs missing npm dependencies, creates `ai/.venv` when needed, installs Python training dependencies, generates 10,000 synthetic examples, trains the classifier, and exports the ONNX model before packaging the extension.
+
+## Enterprise Training Proof
+
+Run these commands from the repository root after changing AI training data or model generation:
+
+```bash
+npm run prepare:build
+ai/.venv/bin/python ai/scripts/evaluate_model.py
+npm run build
+npm test
+```
+
+On Windows, use this evaluation command instead:
+
+```powershell
+ai\.venv\Scripts\python.exe ai\scripts\evaluate_model.py
+```
+
+`npm run prepare:build` should create or refresh `dataset/generated/initial_dataset.jsonl` with 10,000 records, train the sklearn model, and export the ONNX model. The generated model metadata should show a 7,500 / 2,500 train-validation split:
+
+```text
+models/leakguard_secret_classifier.training.json
+```
+
+`scripts/evaluate_model.py` evaluates only `dataset/test/*.jsonl`. Those held-out records are not included in training, so this is the regression proof for enterprise ambiguity separation across `SECRET`, `NOT_SECRET`, and `UNSURE`.
 
 Training merges `dataset/generated/*.jsonl` and `dataset/labeled/*.jsonl`, trains a small scikit-learn logistic regression model, and writes:
 
