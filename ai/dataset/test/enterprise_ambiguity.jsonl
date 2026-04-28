@@ -1,0 +1,18 @@
+{"label":"SECRET","text":"Slack bot token copied from prod deployment: xoxb-synthetic-123456789012-987654321098-AbCdEfGhIjKlMnOpQrStUvWx"}
+{"label":"SECRET","text":"AZURE_STORAGE_CONNECTION_STRING=DefaultEndpointsProtocol=https;AccountName=acctprod01;AccountKey=AbCdEfGhIjKlMnOpQrStUvWxYz0123456789+/AbCdEfGhIjKlMnOpQrStUvWxYz==;EndpointSuffix=core.windows.net"}
+{"label":"SECRET","text":"terraform.tfvars: client_secret = \"n7Qm9Vx2Lp4Rz8Ta6Yu1Ws3Ed5Fg7Hj9Kl0P\""}
+{"label":"SECRET","text":"kubectl create secret generic app --from-literal=token=QmFzZTY0U3ludGhldGljVG9rZW5WYWx1ZTEyMzQ1"}
+{"label":"SECRET","text":"GitHub Actions log printed DEPLOY_TOKEN=ghp-synthetic-AbCdEfGhIjKlMnOpQrStUvWxYz123456"}
+{"label":"SECRET","text":"Webhook from incident ticket: https://hooks.example.invalid/services/T00000000/B00000000/AbCdEfGhIjKlMnOpQrStUvWx"}
+{"label":"NOT_SECRET","text":"Slack bot token format starts with xoxb- in documentation"}
+{"label":"NOT_SECRET","text":"AZURE_STORAGE_CONNECTION_STRING=<connection-string>"}
+{"label":"NOT_SECRET","text":"terraform variable client_secret should be marked sensitive and supplied by CI"}
+{"label":"NOT_SECRET","text":"kubectl create secret generic app --from-literal=token=<token>"}
+{"label":"NOT_SECRET","text":"GitHub Actions should reference ${{ secrets.DEPLOY_TOKEN }}"}
+{"label":"NOT_SECRET","text":"Webhook examples should use https://hooks.example.invalid/services/..."}
+{"label":"UNSURE","text":"prod secret rotation playbook mentions Slack bot token without the value"}
+{"label":"UNSURE","text":"Azure storage key was rotated after incident; value removed from ticket"}
+{"label":"UNSURE","text":"terraform sensitive variable client_secret appeared in the diff summary"}
+{"label":"UNSURE","text":"Kubernetes service account token warning in audit log"}
+{"label":"UNSURE","text":"pipeline masked DEPLOY_TOKEN as ***"}
+{"label":"UNSURE","text":"possible webhook URL in screenshot; verify manually"}

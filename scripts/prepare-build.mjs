@@ -15,6 +15,9 @@ const pythonBin = process.platform === "win32"
   : path.join(venvRoot, "bin", "python");
 const onnxRuntimeDist = path.join(repoRoot, "node_modules", "onnxruntime-web", "dist");
 const generatedDataset = path.join(aiRoot, "dataset", "generated", "initial_dataset.jsonl");
+const generatedDatasetSourcePaths = [
+  path.join(aiRoot, "scripts", "generate_dataset.py")
+];
 const modelFiles = [
   path.join(aiRoot, "models", "leakguard_secret_classifier.joblib"),
   path.join(aiRoot, "models", "leakguard_secret_classifier.features.json"),
@@ -153,21 +156,26 @@ function oldestMtime(paths) {
 }
 
 function modelIsCurrent(targetCount) {
+  if (!generatedDatasetIsCurrent(targetCount)) return false;
+  return oldestMtime(modelFiles) > newestMtime(modelSourcePaths);
+}
+
+function generatedDatasetIsCurrent(targetCount) {
   if (countJsonlRecords(generatedDataset) !== targetCount) {
     return false;
   }
-  return oldestMtime(modelFiles) > newestMtime(modelSourcePaths);
+  return oldestMtime([generatedDataset]) > newestMtime(generatedDatasetSourcePaths);
 }
 
 function prepareModel() {
   ensurePythonEnvironment();
 
-  const targetCount = Number(process.env.LEAKGUARD_TRAINING_EXAMPLES || "2000");
+  const targetCount = Number(process.env.LEAKGUARD_TRAINING_EXAMPLES || "10000");
   if (!Number.isInteger(targetCount) || targetCount <= 0) {
     throw new Error("LEAKGUARD_TRAINING_EXAMPLES must be a positive integer.");
   }
 
-  if (countJsonlRecords(generatedDataset) !== targetCount) {
+  if (!generatedDatasetIsCurrent(targetCount)) {
     process.stdout.write(`Generating ${targetCount} synthetic AI training examples...\n`);
     run(pythonBin, ["scripts/generate_dataset.py", "--count", String(targetCount)], { cwd: aiRoot });
   }

@@ -35,7 +35,7 @@ The generated dataset is written to:
 dataset/generated/initial_dataset.jsonl
 ```
 
-`npm run build:*` commands run `scripts/prepare-build.mjs` first. `npm run build:all` runs that setup once and then packages every browser target. The setup step installs missing npm dependencies, creates `ai/.venv` when needed, installs Python training dependencies, generates 2000 synthetic examples, trains the classifier, and exports the ONNX model before packaging the extension.
+`npm run build:*` commands run `scripts/prepare-build.mjs` first. `npm run build:all` runs that setup once and then packages every browser target. The setup step installs missing npm dependencies, creates `ai/.venv` when needed, installs Python training dependencies, generates 10,000 synthetic examples, trains the classifier, and exports the ONNX model before packaging the extension.
 
 Training merges `dataset/generated/*.jsonl` and `dataset/labeled/*.jsonl`, trains a small scikit-learn logistic regression model, and writes:
 
