@@ -382,8 +382,9 @@
       category: "credential",
       baseScore: 83,
       suppressionNotes:
-        "Only match Authorization: Basic headers with realistic base64 payload length to avoid ordinary prose about basic auth.",
-      regex: /\bAuthorization\s*:\s*Basic\s+([A-Za-z0-9+/]{16,}={0,2})\b/gi,
+        "Only match explicit Basic auth headers or assignment keys with realistic base64 payload length to avoid ordinary prose about basic auth.",
+      regex:
+        /\b(?:Authorization|AUTH_HEADER|BASIC_AUTH|Basic_Auth)\b\s*[:=]\s*Basic\s+([A-Za-z0-9+/]{16,}(?:={1,2})?)(?=$|[\s,;])/gi,
       captureGroups: [1]
     },
     {
