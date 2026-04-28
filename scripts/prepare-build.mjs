@@ -3,7 +3,7 @@
 import fs from "fs";
 import path from "path";
 import { spawnSync } from "child_process";
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -37,12 +37,19 @@ function pathExists(targetPath) {
   }
 }
 
+function executable(command) {
+  if (process.platform !== "win32") {
+    return command;
+  }
+
+  return command.endsWith(".cmd") || command.endsWith(".exe") ? command : `${command}.cmd`;
+}
+
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: options.cwd || repoRoot,
     env: { ...process.env, ...options.env },
-    stdio: "inherit",
-    shell: process.platform === "win32"
+    stdio: "inherit"
   });
 
   if (result.error) {
@@ -59,14 +66,24 @@ function ensureNodeDependencies() {
   }
 
   process.stdout.write("Missing npm dependencies; running npm install...\n");
-  run("npm", ["install"]);
+  run(executable("npm"), ["install"]);
 }
 
 function findSystemPython() {
-  for (const command of ["python3", "python"]) {
-    const result = spawnSync(command, ["--version"], { stdio: "ignore" });
+  const candidates = process.platform === "win32"
+    ? [
+        { command: "py.exe", args: ["-3"] },
+        { command: "python.exe", args: [] }
+      ]
+    : [
+        { command: "python3", args: [] },
+        { command: "python", args: [] }
+      ];
+
+  for (const { command, args } of candidates) {
+    const result = spawnSync(command, [...args, "--version"], { stdio: "ignore" });
     if (result.status === 0) {
-      return command;
+      return { command, args };
     }
   }
   throw new Error("Python 3 is required to train the local AI model.");
@@ -75,7 +92,8 @@ function findSystemPython() {
 function ensurePythonEnvironment() {
   if (!pathExists(pythonBin)) {
     process.stdout.write("Creating AI training virtual environment at ai/.venv...\n");
-    run(findSystemPython(), ["-m", "venv", venvRoot]);
+    const python = findSystemPython();
+    run(python.command, [...python.args, "-m", "venv", venvRoot]);
   }
 
   const check = spawnSync(
@@ -175,4 +193,15 @@ function main() {
   prepareModel();
 }
 
-main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
+}
+
+export {
+  ensureNodeDependencies,
+  executable,
+  findSystemPython,
+  main,
+  prepareModel,
+  run
+};

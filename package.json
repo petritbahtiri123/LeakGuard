@@ -7,6 +7,7 @@
     "icons:export": "node scripts/export-icons.mjs",
     "prepare:build": "node scripts/prepare-build.mjs",
     "test": "node scripts/run-tests.mjs",
+    "build": "npm run build:all",
     "prebuild:chrome": "npm run prepare:build",
     "build:chrome": "node scripts/build-extension.mjs --browser chrome --mode consumer",
     "prebuild:chrome-enterprise": "npm run prepare:build",
@@ -15,7 +16,7 @@
     "build:firefox": "node scripts/build-extension.mjs --browser firefox --mode consumer",
     "prebuild:firefox-enterprise": "npm run prepare:build",
     "build:firefox-enterprise": "node scripts/build-extension.mjs --browser firefox --mode enterprise",
-    "build:all": "npm run build:chrome && npm run build:chrome-enterprise && npm run build:firefox && npm run build:firefox-enterprise"
+    "build:all": "npm run prepare:build && node scripts/build-all.mjs"
   },
   "devDependencies": {
     "sharp": "^0.34.5"
