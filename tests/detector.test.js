@@ -583,6 +583,29 @@ function testAuthorizationBearerVariants() {
   assert.strictEqual(unique.length, 1, "same bearer token should reuse one placeholder");
 }
 
+function testBasicAuthAssignmentVariants() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const text = [
+    "Authorization: Basic dXNlcjpwYXNzd29yZA==",
+    "BASIC_AUTH=Basic dXNlcjpwYXNzd29yZA==",
+    "AUTH_HEADER=Basic dXNlcjpwYXNzd29yZA=="
+  ].join("\n");
+
+  const findings = detector.scan(text);
+  const result = redactor.redact(text, findings);
+  const matches = getPlaceholders(result.redactedText);
+  const unique = [...new Set(matches)];
+
+  assert.strictEqual(findings.length, 3, "all Basic auth assignment variants should be detected");
+  assert.ok(findings.every((finding) => finding.type === "TOKEN"), "Basic auth values should map to TOKEN");
+  assert.strictEqual(result.redactedText.includes("dXNlcjpwYXNzd29yZA=="), false);
+  assert.strictEqual(result.redactedText.includes("[PWM_1]=="), false, "base64 padding should be redacted");
+  assert.strictEqual(matches.length, 3, "all Basic auth payloads should be redacted");
+  assert.strictEqual(unique.length, 1, "same Basic auth payload should reuse one placeholder");
+}
+
 function testOverlappingMatchesPreferSinglePemBlock() {
   const detector = new Detector();
   const text =
@@ -1625,6 +1648,7 @@ function run() {
   testGenericBasicAuthUrl();
   testOverlapBearerVsJwt();
   testAuthorizationBearerVariants();
+  testBasicAuthAssignmentVariants();
   testOverlappingMatchesPreferSinglePemBlock();
   testAllowlist();
   testExampleValuesDoNotTrigger();
