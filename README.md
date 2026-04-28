@@ -99,8 +99,16 @@ Protected sites also show a compact right-side status panel.
 ## Build And Load
 
 1. Clone this repository.
-2. Run `npm test`.
-3. Build the target you want:
+2. Make sure Node.js/npm and Python 3 are available on your PATH.
+3. Build every browser target:
+
+```bash
+npm run build
+```
+
+`npm run build` is an alias for `npm run build:all`. It installs missing npm packages, creates `ai/.venv`, installs Python training dependencies, generates the local AI dataset, trains/exports the local model when stale, and writes all unpacked extension builds under `dist/`.
+
+To build one target only:
 
 ```bash
 npm run build:chrome
@@ -149,6 +157,12 @@ npm test
 This covers detector hardening, network transformations, composer helpers, typed interception, protected-site management, productization checks, and security regressions.
 
 The browser build outputs are created with:
+
+```bash
+npm run build
+```
+
+Individual browser targets are also available:
 
 ```bash
 npm run build:chrome
