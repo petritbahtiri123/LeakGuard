@@ -40,7 +40,8 @@ def private_key() -> str:
 
 
 def aws_access_key_id() -> str:
-    return f"AKIA-SYNTH-{token(string.ascii_uppercase + string.digits, 12)}"
+    prefix = RANDOM.choice(["AKIA", "ASIA"])
+    return f"{prefix}-SYNTH-{token(string.ascii_uppercase + string.digits, 12)}"
 
 
 def aws_secret_access_key() -> str:
@@ -154,6 +155,16 @@ def random_not_secret_record() -> tuple[str, str]:
         lambda: "vault write secret/prod/api token=<token>",
         lambda: "kubernetes.io/service-account-token is mounted automatically",
         lambda: "terraform variable client_secret should come from CI secrets",
+        lambda: "secret_santa=true",
+        lambda: "token_limit=4096",
+        lambda: "password_hint=ask-admin",
+        lambda: "password=changeme",
+        lambda: "password=test123",
+        lambda: "example_token=replace-me",
+        lambda: "api_version=v1",
+        lambda: "username=admin",
+        lambda: "region=eu-central-1",
+        lambda: "debug=true",
     ]
     return RANDOM.choice(factories)(), "NOT_SECRET"
 
@@ -177,9 +188,6 @@ def random_unsure_record() -> tuple[str, str]:
         lambda: "possible webhook URL in the log excerpt",
         lambda: "service-account-token warning in Kubernetes docs",
         lambda: "oauth client secret must be rotated after review",
-        lambda: "password_hint=ask-admin",
-        lambda: "token_limit=4096",
-        lambda: "secret_santa=true",
         lambda: "terraform sensitive variable client_secret appeared in the diff summary",
     ]
     return RANDOM.choice(factories)(), "UNSURE"
@@ -255,6 +263,21 @@ def build_records(count: int = DEFAULT_RECORD_COUNT) -> list[dict]:
         for factory in enterprise_secret_factories:
             add(records, factory(), "SECRET")
 
+    hard_secret_examples = [
+        lambda: f"AWS_ACCESS_KEY_ID={aws_access_key_id()}",
+        lambda: f"aws access key id leaked: {aws_access_key_id()}",
+        lambda: f"export AWS_ACCESS_KEY_ID={aws_access_key_id()}",
+        lambda: f"access_key_id: {aws_access_key_id()}",
+        lambda: f"Authorization: Bearer {bearer_token()}",
+        lambda: f"GITHUB_TOKEN={github_pat()}",
+        lambda: f"SLACK_BOT_TOKEN={slack_bot_token()}",
+        lambda: f"api_secret={base64.b64encode(bytes(RANDOM.getrandbits(8) for _ in range(36))).decode('ascii')}",
+        lambda: f"client_secret={high_entropy_secret(36)}",
+    ]
+    for _ in range(40):
+        for factory in hard_secret_examples:
+            add(records, factory(), "SECRET")
+
     safe_values = [
         "region=eu-central-1",
         "region=us-east-1",
@@ -322,11 +345,8 @@ def build_records(count: int = DEFAULT_RECORD_COUNT) -> list[dict]:
         add(records, f"build_id={token(hex_chars, 12)}", "NOT_SECRET")
 
     confusers = [
-        "password_hint=ask-admin",
         "password_required=true",
-        "secret_santa=true",
         "secretary_email=office@example.com",
-        "token_limit=4096",
         "tokenizer_model=cl100k_base",
         "authored_by=admin",
         "authorization_required=false",
@@ -357,9 +377,6 @@ def build_records(count: int = DEFAULT_RECORD_COUNT) -> list[dict]:
         "Kubernetes service account token warning in audit log",
         "pipeline masked DEPLOY_TOKEN as ***",
         "possible webhook URL in screenshot; verify manually",
-        "password_hint=ask-admin",
-        "token_limit=4096",
-        "secret_santa=true",
         "client_secret found in screenshot; verify before redaction",
         "oauth client secret must be rotated after review",
         "vault path may contain a secret reference but no value",
@@ -370,6 +387,28 @@ def build_records(count: int = DEFAULT_RECORD_COUNT) -> list[dict]:
     for _ in range(12):
         for value in enterprise_ambiguous_notes:
             add(records, value, "UNSURE")
+
+    hard_false_positive_traps = [
+        "secret_santa=true",
+        "token_limit=4096",
+        "password_hint=ask-admin",
+        "password=changeme",
+        "password=test123",
+        "example_token=replace-me",
+        "api_version=v1",
+        "username=admin",
+        "region=eu-central-1",
+        "debug=true",
+        "Authorization: Bearer <token>",
+        "JWT format is header.payload.signature",
+        "GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "SLACK_BOT_TOKEN=xoxb-<workspace>-<bot>-<token>",
+        "AWS_SECRET_ACCESS_KEY=<your-secret-here>",
+        "DATABASE_URL=postgres://user:password@localhost:5432/app",
+    ]
+    for _ in range(35):
+        for value in hard_false_positive_traps:
+            add(records, value, "NOT_SECRET")
 
     enterprise_safe_guidance = [
         "terraform variable client_secret should be marked sensitive and supplied by CI",
