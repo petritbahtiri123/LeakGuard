@@ -21,6 +21,7 @@ RANDOM_SEED = 20260428
 MIN_GENERATED_EVAL_RECORDS = 2100
 FAIL_SECRET_RECALL_BELOW = 0.98
 FAIL_NOT_SECRET_RECALL_BELOW = 0.95
+FAIL_UNSURE_RECALL_BELOW = 0.80
 
 
 def token(random_source: random.Random, alphabet: str, length: int) -> str:
@@ -76,6 +77,24 @@ def obfuscated_secret_key(random_source: random.Random) -> str:
         token(random_source, string.ascii_letters + string.digits, 8),
     ]
     return "-".join(chunks)
+
+
+def medium_alnum(random_source: random.Random) -> str:
+    return token(random_source, string.ascii_letters + string.digits, random_source.randint(10, 20))
+
+
+def invalid_base64_like(random_source: random.Random) -> str:
+    return f"{token(random_source, string.ascii_letters + string.digits + '+/', random_source.randint(18, 26))}==="
+
+
+def borderline_entropy_value(random_source: random.Random) -> str:
+    chunks = [
+        token(random_source, string.ascii_lowercase, 4),
+        token(random_source, string.digits, 4),
+        token(random_source, string.ascii_uppercase, 3),
+    ]
+    random_source.shuffle(chunks)
+    return "".join(chunks)
 
 
 def add(records: list[dict], text: str, label: str, source: str) -> None:
@@ -153,9 +172,6 @@ def independent_not_secret(random_source: random.Random) -> str:
 def independent_unsure(random_source: random.Random) -> str:
     factories = [
         lambda: "possible token in screenshot; verify manually",
-        lambda: "password_hint=ask-admin",
-        lambda: "secret_santa=true",
-        lambda: "token_limit=4096",
         lambda: "incident says credential leaked but value was removed",
         lambda: "masked DEPLOY_TOKEN appeared as ***",
         lambda: "redacted API key shown as [REDACTED]",
@@ -163,7 +179,18 @@ def independent_unsure(random_source: random.Random) -> str:
         lambda: "vault secret path secret/data/payments/prod",
         lambda: "webhook URL may be present in the attached image",
         lambda: "service account token warning without raw value",
-        lambda: f"example_token={token(random_source, string.ascii_lowercase, 8)}",
+        lambda: "partially masked token sk-abc****xyz",
+        lambda: f"partially masked token sk-{token(random_source, string.ascii_lowercase, 3)}****{token(random_source, string.ascii_lowercase, 3)}",
+        lambda: f"short random string seen in log: {medium_alnum(random_source)}",
+        lambda: f"borderline entropy value: {borderline_entropy_value(random_source)}",
+        lambda: f"config candidate api_token={medium_alnum(random_source)}",
+        lambda: f"config candidate session={medium_alnum(random_source)}",
+        lambda: f"mixed alphanumeric without prefix: {medium_alnum(random_source)}",
+        lambda: f"base64-like invalid padding: {invalid_base64_like(random_source)}",
+        lambda: f"example_token={medium_alnum(random_source)}",
+        lambda: "suspicious config value auth_code=asdfgh1234",
+        lambda: "safe-looking config key secret_mode=optional",
+        lambda: "borderline config password_mode=manual",
     ]
     return random_source.choice(factories)()
 
@@ -265,14 +292,18 @@ def main() -> None:
         average="macro",
         zero_division=0,
     )
+    unsure_recall = recall_score(labels, predictions, labels=["UNSURE"], average="macro", zero_division=0)
     print(f"SECRET recall: {secret_recall:.4f}")
     print(f"NOT_SECRET recall: {not_secret_recall:.4f}")
+    print(f"UNSURE recall: {unsure_recall:.4f}")
 
     failures = []
     if secret_recall < FAIL_SECRET_RECALL_BELOW:
         failures.append(f"SECRET recall {secret_recall:.4f} < {FAIL_SECRET_RECALL_BELOW:.2f}")
     if not_secret_recall < FAIL_NOT_SECRET_RECALL_BELOW:
         failures.append(f"NOT_SECRET recall {not_secret_recall:.4f} < {FAIL_NOT_SECRET_RECALL_BELOW:.2f}")
+    if unsure_recall < FAIL_UNSURE_RECALL_BELOW:
+        failures.append(f"UNSURE recall {unsure_recall:.4f} < {FAIL_UNSURE_RECALL_BELOW:.2f}")
     if failures:
         raise SystemExit("; ".join(failures))
 

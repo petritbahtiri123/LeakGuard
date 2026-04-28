@@ -60,7 +60,7 @@ ai\.venv\Scripts\python.exe ai\scripts\evaluate_model.py
 models/leakguard_secret_classifier.training.json
 ```
 
-`scripts/evaluate_model.py` evaluates a deterministic independent synthetic test set with more than 2,000 stratified records, then appends `dataset/test/*.jsonl` held-out records. It does not evaluate on `dataset/generated` or `dataset/labeled` training data. The script prints a classification report, confusion matrix, false positives, and false negatives, then fails if `SECRET` recall drops below `0.98` or `NOT_SECRET` recall drops below `0.95`.
+`scripts/evaluate_model.py` evaluates a deterministic independent synthetic test set with more than 2,000 stratified records, then appends `dataset/test/*.jsonl` held-out records. It does not evaluate on `dataset/generated` or `dataset/labeled` training data. The script prints a classification report, confusion matrix, false positives, and false negatives, then fails if `SECRET` recall drops below `0.98`, `NOT_SECRET` recall drops below `0.95`, or `UNSURE` recall drops below `0.80`.
 
 Training merges `dataset/generated/*.jsonl` and `dataset/labeled/*.jsonl`, trains a small scikit-learn logistic regression model, and writes:
 

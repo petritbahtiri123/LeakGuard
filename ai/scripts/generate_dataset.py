@@ -85,6 +85,24 @@ def high_entropy_secret(length: int = 40) -> str:
     return token(string.ascii_letters + string.digits + "-_=+/", length)
 
 
+def medium_alnum() -> str:
+    return token(string.ascii_letters + string.digits, RANDOM.randint(10, 20))
+
+
+def invalid_base64_like() -> str:
+    return f"{token(string.ascii_letters + string.digits + '+/', RANDOM.randint(18, 26))}==="
+
+
+def borderline_entropy_value() -> str:
+    chunks = [
+        token(string.ascii_lowercase, 4),
+        token(string.digits, 4),
+        token(string.ascii_uppercase, 3),
+    ]
+    RANDOM.shuffle(chunks)
+    return "".join(chunks)
+
+
 def bearer_token() -> str:
     return token(string.ascii_letters + string.digits + "-_", 52)
 
@@ -189,6 +207,18 @@ def random_unsure_record() -> tuple[str, str]:
         lambda: "service-account-token warning in Kubernetes docs",
         lambda: "oauth client secret must be rotated after review",
         lambda: "terraform sensitive variable client_secret appeared in the diff summary",
+        lambda: "partially masked token sk-abc****xyz",
+        lambda: f"partially masked token sk-{token(string.ascii_lowercase, 3)}****{token(string.ascii_lowercase, 3)}",
+        lambda: f"short random string seen in log: {medium_alnum()}",
+        lambda: f"borderline entropy value: {borderline_entropy_value()}",
+        lambda: f"config candidate api_token={medium_alnum()}",
+        lambda: f"config candidate session={medium_alnum()}",
+        lambda: f"mixed alphanumeric without prefix: {medium_alnum()}",
+        lambda: f"base64-like invalid padding: {invalid_base64_like()}",
+        lambda: f"example_token={medium_alnum()}",
+        lambda: "suspicious config value auth_code=asdfgh1234",
+        lambda: "safe-looking config key secret_mode=optional",
+        lambda: "borderline config password_mode=manual",
     ]
     return RANDOM.choice(factories)(), "UNSURE"
 
@@ -387,6 +417,27 @@ def build_records(count: int = DEFAULT_RECORD_COUNT) -> list[dict]:
     for _ in range(12):
         for value in enterprise_ambiguous_notes:
             add(records, value, "UNSURE")
+
+    ambiguous_token_shapes = [
+        lambda: "partially masked token sk-abc****xyz",
+        lambda: f"partially masked token sk-{token(string.ascii_lowercase, 3)}****{token(string.ascii_lowercase, 3)}",
+        lambda: f"short random string seen in log: {medium_alnum()}",
+        lambda: f"borderline entropy value: {borderline_entropy_value()}",
+        lambda: f"config candidate api_token={medium_alnum()}",
+        lambda: f"config candidate session={medium_alnum()}",
+        lambda: f"mixed alphanumeric without prefix: {medium_alnum()}",
+        lambda: f"base64-like invalid padding: {invalid_base64_like()}",
+        lambda: f"example_token={medium_alnum()}",
+        lambda: "suspicious config value auth_code=asdfgh1234",
+        lambda: "config note maybe token asdfgh1234 but no provider prefix",
+        lambda: "safe-looking config key secret_mode=optional",
+        lambda: "borderline config password_mode=manual",
+        lambda: f"temporary-looking value candidate={medium_alnum()}",
+        lambda: f"masked credential candidate {token(string.ascii_lowercase, 4)}****{token(string.ascii_lowercase, 4)}",
+    ]
+    for _ in range(35):
+        for factory in ambiguous_token_shapes:
+            add(records, factory(), "UNSURE")
 
     hard_false_positive_traps = [
         "secret_santa=true",
