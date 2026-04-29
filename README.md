@@ -10,6 +10,23 @@ LeakGuard does not use a backend service or cloud processing. It is designed for
 
 > Local-only. No backend. No telemetry. Secure reveal stays inside extension-owned UI..
 
+## ❤️ Support LeakGuard
+
+LeakGuard is a privacy-first AI protection tool that helps prevent accidental data leaks when using ChatGPT, Gemini, and other AI platforms.
+
+Everything runs locally:
+- No cloud processing
+- No tracking
+- No data collection
+
+If you want to support development and upcoming features like:
+- File scanning (env, logs, configs)
+- PDF & DOCX detection
+- Image OCR redaction
+
+👉 You can support here:
+https://ko-fi.com/petritbahtiri
+
 ## V1 Snapshot
 
 - Built-in protection for `chatgpt.com`, `chat.openai.com`, `claude.ai`, `gemini.google.com`, `grok.com`, and `x.com`
