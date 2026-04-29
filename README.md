@@ -1,5 +1,5 @@
 # LeakGuard
-
+[![Support me on Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/petritbahtiri)
 LeakGuard is a local-only browser extension for reducing accidental prompt leaks on AI chat sites.
 
 The public product name is LeakGuard.
@@ -26,7 +26,7 @@ If you want to support development and upcoming features like:
 
 👉 You can support here:
 https://ko-fi.com/petritbahtiri
-[![Support me on Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/petritbahtiri)
+
 ## V1 Snapshot
 
 - Built-in protection for `chatgpt.com`, `chat.openai.com`, `claude.ai`, `gemini.google.com`, `grok.com`, and `x.com`
