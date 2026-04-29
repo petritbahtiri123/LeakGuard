@@ -80,7 +80,7 @@ Use real extension screenshots with production copy. Avoid showing raw real cred
 
 1. Popup home view on a supported site showing `Protect This Site` or active protection state.
 2. Popup protected-site management view with one user-managed site and built-in sites visible.
-3. In-page right-side LeakGuard status panel on a protected site.
+3. In-page top-center LeakGuard status menu on a protected site.
 4. Allow once / Redact decision modal over a composer with realistic synthetic secrets.
 5. Popup secure reveal view showing a placeholder and the revealed value inside extension UI only.
 
