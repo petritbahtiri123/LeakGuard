@@ -182,6 +182,7 @@ function prepareModel() {
 
   if (modelIsCurrent(targetCount)) {
     process.stdout.write("Local AI classifier is current; skipping training.\n");
+    evaluateModel();
     return;
   }
 
@@ -194,6 +195,13 @@ function prepareModel() {
       throw new Error(`Expected model artifact was not created: ${file}`);
     }
   }
+
+  evaluateModel();
+}
+
+function evaluateModel() {
+  process.stdout.write("Running independent AI evaluation...\n");
+  run(pythonBin, ["scripts/evaluate_model.py"], { cwd: aiRoot });
 }
 
 function main() {

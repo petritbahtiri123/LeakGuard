@@ -57,6 +57,7 @@ def main() -> None:
     model.fit(train_x, train_labels)
 
     predictions = model.predict(test_x)
+    print("Internal validation on a random split of the training pool:")
     print(classification_report(test_labels, predictions, labels=["SECRET", "NOT_SECRET", "UNSURE"]))
 
     MODEL_ROOT.mkdir(parents=True, exist_ok=True)
@@ -77,6 +78,7 @@ def main() -> None:
             {
                 "training_records": len(train_texts),
                 "validation_records": len(test_texts),
+                "validation_type": "random_split_from_training_pool",
                 "labels": list(model.classes_),
                 "n_features": int(train_x.shape[1]),
             },
