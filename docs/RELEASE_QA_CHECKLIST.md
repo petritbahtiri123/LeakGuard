@@ -7,6 +7,7 @@
 - Confirm the popup still renders correctly on a smaller laptop display.
 - Confirm `npm test` passes locally.
 - Confirm the built manifest includes `content_security_policy.extension_pages` with LeakGuard's restrictive extension-page CSP.
+- Confirm the built manifest does not add new host permissions for File Scanner.
 
 ## Built-in Site Coverage
 
@@ -54,6 +55,18 @@
 - Confirm the raw value is shown only inside the LeakGuard popup after `Show`.
 - Confirm `Hide` clears the raw value from the popup view.
 - Confirm an unknown placeholder reports unavailable instead of injecting raw text into the page.
+
+## File Scanner Flow
+
+- Open the popup and click `Open File Scanner`.
+- Select a supported text file such as `.env`, `.json`, `.md`, `.log`, or `.csv`.
+- Confirm the scanner shows file name, type, size, findings count, severity summary, findings list, and redacted preview.
+- Confirm the redacted preview uses placeholders and does not show detected raw secrets.
+- Download the redacted copy and confirm raw secrets are absent.
+- Download the JSON report and confirm raw secrets are absent from the report.
+- Select an oversized file above 2 MiB and confirm it is rejected before scanning.
+- Select unsupported files such as `.pdf`, `.docx`, `.png`, `.jpg`, `.zip`, and `.exe` and confirm the text-only release message appears.
+- Confirm PDF, DOCX, and image redaction are not claimed as supported.
 
 ## Regression Checks
 

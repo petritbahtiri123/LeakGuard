@@ -1,12 +1,12 @@
 # LeakGuard Privacy Policy
 
-Last updated: 2026-04-24
+Last updated: 2026-04-29
 
 ## Summary
 
-LeakGuard processes protected prompt text locally in your browser to help reduce accidental leaks of secrets and public IPv4 network details.
+LeakGuard processes protected prompt text and explicitly selected local text files locally in your browser to help reduce accidental leaks of secrets and public IPv4 network details.
 
-LeakGuard does not operate a backend service and does not send your prompt text, raw secrets, or raw network values to our servers.
+LeakGuard does not operate a backend service and does not send your prompt text, selected file contents, raw secrets, or raw network values to our servers.
 
 ## What LeakGuard Accesses
 
@@ -18,6 +18,8 @@ LeakGuard may access text you type, paste, or submit in protected site composers
 - replace sensitive values with placeholders
 - reveal placeholders later only inside extension-owned UI
 
+LeakGuard may also access a local text file only after you choose it in the File Scanner page. This release supports text-based files only and can export a redacted text copy or a sanitized JSON findings report.
+
 ## What LeakGuard Stores
 
 LeakGuard stores only the following extension data:
@@ -25,17 +27,20 @@ LeakGuard stores only the following extension data:
 - normalized user-managed protected-site rules in extension `storage.local`
 - session-scoped placeholder mappings and reveal state in `chrome.storage.session`
 
-LeakGuard does not intentionally persist raw prompts, raw secrets, or raw public IPv4 values in long-term extension storage.
+LeakGuard does not intentionally persist raw prompts, selected file contents, raw secrets, or raw public IPv4 values in long-term extension storage. File Scanner scan results stay in memory on the scanner page until you clear the scan or close the page.
 
 ## What LeakGuard Does Not Send
 
 LeakGuard does not send the following to our servers because the extension does not use a backend service:
 
 - prompt text
+- selected file contents
 - raw secret values
 - raw network values
 - placeholder maps
 - browsing telemetry
+
+Sanitized File Scanner JSON reports do not include raw secret values by default. Redacted file copies and reports are created only after you click the export buttons.
 
 ## Site Permissions
 
@@ -62,9 +67,11 @@ LeakGuard is a risk-reduction tool, not a guarantee of secrecy or privacy. It do
 - browser compromise or malware
 - OS-level clipboard/history capture
 - screenshots or shoulder surfing
-- unsupported upload flows such as files, screenshots, or drag-and-drop payloads
+- unsupported binary document or image redaction flows such as PDF, DOCX, screenshots, or image OCR
 - websites or editors whose DOM changes break interception logic
 - raw values that you intentionally reveal or manually send
+
+PDF, DOCX, and image redaction are planned but not enabled in this release. The current File Scanner safely redacts text-based files only.
 
 ## Data Retention
 

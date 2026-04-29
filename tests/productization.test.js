@@ -9,6 +9,8 @@ const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.j
 const overlaySource = fs.readFileSync(path.join(repoRoot, "src/content/overlay.css"), "utf8");
 const popupHtml = fs.readFileSync(path.join(repoRoot, "src/popup/popup.html"), "utf8");
 const popupJs = fs.readFileSync(path.join(repoRoot, "src/popup/popup.js"), "utf8");
+const scannerHtml = fs.readFileSync(path.join(repoRoot, "src/scanner/scanner.html"), "utf8");
+const scannerJs = fs.readFileSync(path.join(repoRoot, "src/scanner/scanner.js"), "utf8");
 const optionsHtml = fs.readFileSync(path.join(repoRoot, "src/options/options.html"), "utf8");
 const optionsJs = fs.readFileSync(path.join(repoRoot, "src/options/options.js"), "utf8");
 const backgroundSource = fs.readFileSync(
@@ -42,6 +44,9 @@ function testManifestBrandingAndProductPagesExist(manifest) {
   assert.ok(fileExists("src/popup/popup.html"), "expected popup HTML to exist");
   assert.ok(fileExists("src/popup/popup.js"), "expected popup JS to exist");
   assert.ok(fileExists("src/popup/popup.css"), "expected popup CSS to exist");
+  assert.ok(fileExists("src/scanner/scanner.html"), "expected scanner HTML to exist");
+  assert.ok(fileExists("src/scanner/scanner.js"), "expected scanner JS to exist");
+  assert.ok(fileExists("src/scanner/scanner.css"), "expected scanner CSS to exist");
   assert.ok(fileExists("src/options/options.html"), "expected options HTML to exist");
   assert.ok(fileExists("src/options/options.js"), "expected options JS to exist");
   assert.ok(fileExists("src/options/options.css"), "expected options CSS to exist");
@@ -54,6 +59,8 @@ function testLeakGuardBrandingShowsUpInUiAndDocs() {
   assert.ok(readme.includes("public product name is LeakGuard"), "README should explain the public product name");
   assert.ok(popupHtml.includes("LeakGuard"), "popup HTML should use LeakGuard branding");
   assert.ok(popupJs.includes("LeakGuard"), "popup JS should use LeakGuard copy");
+  assert.ok(scannerHtml.includes("LeakGuard File Scanner"), "scanner HTML should use LeakGuard branding");
+  assert.ok(scannerJs.includes("LeakGuard"), "scanner JS should use LeakGuard copy");
   assert.ok(optionsHtml.includes("LeakGuard"), "options HTML should use LeakGuard branding");
   assert.ok(optionsJs.includes("LeakGuard"), "options JS should use LeakGuard copy");
   assert.ok(
@@ -91,6 +98,8 @@ function testPanelAndManagementUiAreWired() {
   assert.ok(contentSource.includes("pwm-panel"), "content script should create the top-center status menu");
   assert.ok(contentSource.includes("Manage Sites"), "panel should expose a settings shortcut");
   assert.ok(overlaySource.includes(".pwm-panel"), "panel styles should live in overlay.css");
+  assert.ok(popupHtml.includes("Open File Scanner"), "popup should expose the file scanner");
+  assert.ok(popupJs.includes("scanner/scanner.html"), "popup should open the extension-owned scanner page");
   assert.ok(
     popupJs.includes("PWM_GET_PROTECTED_SITE_OVERVIEW") &&
       popupJs.includes("PWM_EXTENSION_REVEAL_SECRET") &&
@@ -113,6 +122,10 @@ function testDynamicSiteSupportIsDeclaredMinimally(manifest) {
     backgroundSource.includes("unregisterContentScripts") &&
       !backgroundSource.includes("removeContentScripts"),
     "dynamic site sync should use the supported MV3 unregisterContentScripts API"
+  );
+  assert.ok(
+    !manifest.content_scripts[0].js.some((script) => script.includes("scanner")),
+    "scanner scripts should not be injected into protected sites"
   );
 }
 

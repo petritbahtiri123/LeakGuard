@@ -35,6 +35,7 @@ https://ko-fi.com/petritbahtiri
 - Built-in protection for `chatgpt.com`, `chat.openai.com`, `claude.ai`, `gemini.google.com`, `grok.com`, and `x.com`
 - User-managed protection for additional exact `http://` or `https://` origins
 - Local-only detection and redaction in the browser
+- Local File Scanner for text-based files with redacted-copy and sanitized-report exports
 - Popup-based site management for add, enable, disable, and remove flows
 - In-page top-center status menu on protected pages
 - Popup-only secure reveal for placeholders
@@ -48,6 +49,21 @@ https://ko-fi.com/petritbahtiri
 3. If you choose `Redact`, it rewrites the composer with stable placeholders such as `[PWM_1]`, `[PUB_HOST_1]`, and `[NET_1]`.
 4. Private raw-to-placeholder mappings stay in the background service worker and `chrome.storage.session` for the active browser session only.
 5. Clicking a revealable placeholder stages a secure reveal inside the LeakGuard popup. Raw values are not written back into the page DOM.
+
+## Local File Scanner
+
+LeakGuard includes an extension-owned File Scanner page for local text files. It reads files only after you choose them, scans them in the browser with the same deterministic detector used for prompts, and can export a redacted text copy or a sanitized JSON findings report.
+
+Supported scanner files for this release: `.txt`, `.env`, `.log`, `.json`, `.yaml`, `.yml`, `.xml`, `.csv`, `.md`, `.ini`, `.conf`, `.ps1`, `.sh`, `.py`, `.js`, `.ts`, `.html`, and `.css`.
+
+File scanner limits:
+
+- 2 MiB maximum file size
+- single-file scan
+- deterministic detection only
+- raw file contents are not stored in extension storage
+- exported JSON reports do not include raw secrets by default
+- PDF, DOCX, and image redaction are planned but not enabled in this release
 
 ## Detection Coverage
 
@@ -71,6 +87,7 @@ Training, export, browser smoke tests, and enterprise disable guidance live in [
 
 - Raw secrets are not sent to external services by the extension.
 - Raw secrets are not persisted in `chrome.storage.local`.
+- Selected file contents are scanned locally and are not stored in extension storage.
 - Persistent local storage is limited to normalized protected-site rules.
 - Raw values are kept only in session-scoped background storage so secure reveal can work during the active tab session.
 - Secure reveal is restricted to extension-owned UI.
@@ -105,6 +122,7 @@ The popup is the primary control surface.
 
 - Home view shows the current tab, protection status, and `Protect This Site`
 - Protected-sites view lets you add, enable, disable, and remove extra sites without leaving the popup
+- File Scanner opens an extension-owned page for local text-file scanning and redacted exports
 - Secure reveal view shows the raw value for a known placeholder only inside the extension popup
 
 ### In-page UI
