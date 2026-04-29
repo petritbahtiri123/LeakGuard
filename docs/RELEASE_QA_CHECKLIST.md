@@ -12,7 +12,7 @@
 
 - Open ChatGPT and confirm LeakGuard shows the current site as protected.
 - Open at least one additional built-in site such as Claude, Gemini, Grok, OpenAI Chat, or X and confirm the same.
-- Confirm the in-page right-side status panel appears on protected sites.
+- Confirm the in-page top-center status menu appears on protected sites.
 
 ## User-managed Site Flow
 

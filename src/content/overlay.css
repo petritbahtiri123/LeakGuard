@@ -23,51 +23,58 @@
 
 .pwm-panel {
   position: fixed;
-  top: 92px;
-  right: 16px;
+  top: 12px;
+  left: 50%;
   z-index: 2147483639;
-  width: min(292px, calc(100vw - 32px));
+  width: min(360px, calc(100vw - 24px));
   border: 1px solid rgba(125, 211, 252, 0.24);
-  border-radius: 18px;
+  border-radius: 999px;
   background:
     linear-gradient(180deg, rgba(8, 47, 73, 0.95), rgba(15, 23, 42, 0.96)),
     rgba(15, 23, 42, 0.96);
   color: #e0f2fe;
-  box-shadow: 0 24px 48px -26px rgba(2, 6, 23, 0.75);
+  box-shadow: 0 14px 32px -24px rgba(2, 6, 23, 0.82);
   backdrop-filter: blur(14px);
-  font: 13px/1.45 "IBM Plex Sans", "Segoe UI", sans-serif;
+  font: 12px/1.35 "IBM Plex Sans", "Segoe UI", sans-serif;
+  transform: translateX(-50%);
 }
 
 .pwm-panel.is-collapsed {
-  width: auto;
+  width: min(300px, calc(100vw - 24px));
 }
 
 .pwm-panel-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 14px 14px 10px;
+  gap: 10px;
+  min-height: 40px;
+  padding: 5px 7px 5px 14px;
 }
 
 .pwm-panel-brand {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   min-width: 0;
 }
 
 .pwm-panel-eyebrow {
-  margin: 0 0 4px;
+  margin: 0;
   color: #7dd3fc;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .pwm-panel-title {
   margin: 0;
   color: #f0fdfa;
-  font-size: 17px;
+  font-size: 14px;
   line-height: 1.1;
+  white-space: nowrap;
 }
 
 .pwm-panel-toggle {
@@ -78,26 +85,31 @@
   color: #bae6fd;
   cursor: pointer;
   font: inherit;
-  padding: 6px 10px;
+  min-height: 30px;
+  padding: 4px 10px;
   white-space: nowrap;
 }
 
 .pwm-panel-body {
-  padding: 0 14px 14px;
+  padding: 0 14px 12px;
+}
+
+.pwm-panel:not(.is-collapsed) {
+  border-radius: 18px;
 }
 
 .pwm-panel-row {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 12px;
-  padding: 9px 0;
+  gap: 10px;
+  padding: 7px 0;
   border-top: 1px solid rgba(125, 211, 252, 0.12);
 }
 
 .pwm-panel-label {
   color: #7dd3fc;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -105,13 +117,13 @@
 
 .pwm-panel-value {
   color: #ecfeff;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   text-align: right;
 }
 
 .pwm-panel-actions {
-  margin-top: 10px;
+  margin-top: 8px;
 }
 
 .pwm-panel-manage {
@@ -234,9 +246,21 @@
 
 @media (max-width: 720px) {
   .pwm-panel {
-    top: auto;
-    right: 12px;
-    bottom: 74px;
-    width: min(272px, calc(100vw - 24px));
+    top: 8px;
+    left: 50%;
+    width: min(336px, calc(100vw - 16px));
+  }
+
+  .pwm-panel.is-collapsed {
+    width: min(292px, calc(100vw - 16px));
+  }
+
+  .pwm-panel-header {
+    min-height: 38px;
+    padding-left: 12px;
+  }
+
+  .pwm-panel-eyebrow {
+    display: none;
   }
 }

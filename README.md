@@ -16,7 +16,7 @@ LeakGuard does not use a backend service or cloud processing. It is designed for
 - User-managed protection for additional exact `http://` or `https://` origins
 - Local-only detection and redaction in the browser
 - Popup-based site management for add, enable, disable, and remove flows
-- In-page right-side status panel on protected pages
+- In-page top-center status menu on protected pages
 - Popup-only secure reveal for placeholders
 - Session-scoped placeholder state in `chrome.storage.session`
 - No cloud processing, telemetry, or backend service
@@ -89,7 +89,7 @@ The popup is the primary control surface.
 
 ### In-page UI
 
-Protected sites also show a compact right-side status panel.
+Protected sites also show a compact top-center status menu.
 
 - Confirms protection is active
 - Shows generic sensitive-item and placeholder counts

@@ -88,7 +88,7 @@ function testBuiltInProtectedSitesRemainStaticAndAligned(manifest) {
 }
 
 function testPanelAndManagementUiAreWired() {
-  assert.ok(contentSource.includes("pwm-panel"), "content script should create the right-side status panel");
+  assert.ok(contentSource.includes("pwm-panel"), "content script should create the top-center status menu");
   assert.ok(contentSource.includes("Manage Sites"), "panel should expose a settings shortcut");
   assert.ok(overlaySource.includes(".pwm-panel"), "panel styles should live in overlay.css");
   assert.ok(
