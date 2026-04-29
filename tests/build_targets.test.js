@@ -23,6 +23,10 @@ async function run() {
   results.forEach((result) => {
     const manifestPath = path.join(result.targetRoot, "manifest.json");
     assert.ok(fs.existsSync(manifestPath), `expected manifest to exist for ${result.target}`);
+    assert.ok(
+      fs.existsSync(path.join(result.targetRoot, "scanner/scanner.html")),
+      `expected scanner page to be packaged for ${result.target}`
+    );
   });
 
   const consumerBuildInfo = require(path.join(repoRoot, "dist/chrome/shared/build_info.js"));

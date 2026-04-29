@@ -16,6 +16,7 @@
   const feedbackEl = document.getElementById("feedback");
   const protectBtn = document.getElementById("protect-btn");
   const manageBtn = document.getElementById("manage-btn");
+  const fileScannerBtn = document.getElementById("file-scanner-btn");
 
   const sitesBackBtn = document.getElementById("sites-back-btn");
   const formEl = document.getElementById("add-site-form");
@@ -244,6 +245,12 @@
     setFormFeedback("");
     await refreshSiteData();
     setView("sites");
+  }
+
+  async function openFileScanner() {
+    await ext.tabs.create({
+      url: ext.runtime.getURL("scanner/scanner.html")
+    });
   }
 
   function activeTabContext() {
@@ -620,6 +627,12 @@
       setView("sites");
       renderBuiltinSites(BUILTIN_PROTECTED_SITES);
       setFormFeedback(error?.message || "LeakGuard could not load site settings.");
+    });
+  });
+
+  fileScannerBtn.addEventListener("click", () => {
+    openFileScanner().catch((error) => {
+      setFeedback(error?.message || "LeakGuard could not open the file scanner.");
     });
   });
 

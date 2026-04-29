@@ -14,6 +14,7 @@ const testFiles = [
   "tests/protected_sites.test.js",
   "tests/enterprise_policy.test.js",
   "tests/ai_assist.test.js",
+  "tests/file_scanner.test.js",
   "tests/productization.test.js",
   "tests/security.test.js",
   "tests/synthetic_pack.test.js",

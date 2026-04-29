@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>LeakGuard File Scanner</title>
+    <link rel="stylesheet" href="scanner.css">
+  </head>
+  <body>
+    <main class="scanner-shell">
+      <header class="scanner-head">
+        <div>
+          <p class="eyebrow">LeakGuard</p>
+          <h1>File Scanner</h1>
+        </div>
+        <p class="privacy-note">
+          Local-only scan. Files are not uploaded, sent to APIs, or stored by LeakGuard.
+        </p>
+      </header>
+
+      <section class="scanner-grid">
+        <section class="panel scan-panel">
+          <h2>Choose a text file</h2>
+          <p class="copy">
+            Text-based files can be scanned and exported as redacted copies. PDF, DOCX, and image redaction are planned but not enabled in this release.
+          </p>
+
+          <label class="file-picker">
+            <span>Local file</span>
+            <input id="file-input" type="file" accept=".txt,.env,.log,.json,.yaml,.yml,.xml,.csv,.md,.ini,.conf,.ps1,.sh,.py,.js,.ts,.html,.css,text/*,application/json,application/xml">
+          </label>
+
+          <div class="file-meta" id="file-meta" hidden>
+            <p><span>Name</span><strong id="file-name"></strong></p>
+            <p><span>Type</span><strong id="file-type"></strong></p>
+            <p><span>Size</span><strong id="file-size"></strong></p>
+          </div>
+
+          <p class="status" id="status" aria-live="polite"></p>
+
+          <div class="actions">
+            <button class="btn btn-primary" id="scan-btn" type="button" disabled>Scan File</button>
+            <button class="btn" id="clear-btn" type="button">Clear Scan</button>
+          </div>
+        </section>
+
+        <section class="panel result-panel" id="result-panel" hidden>
+          <div class="section-head">
+            <div>
+              <p class="label">Scan summary</p>
+              <h2 id="result-title">No file scanned</h2>
+            </div>
+            <div class="summary-pills" id="summary-pills"></div>
+          </div>
+
+          <div class="summary-grid">
+            <p><span>Findings</span><strong id="finding-count">0</strong></p>
+            <p><span>High</span><strong id="high-count">0</strong></p>
+            <p><span>Medium</span><strong id="medium-count">0</strong></p>
+            <p><span>Low</span><strong id="low-count">0</strong></p>
+          </div>
+
+          <div class="actions export-actions">
+            <button class="btn btn-primary" id="download-redacted-btn" type="button" disabled>Download Redacted Copy</button>
+            <button class="btn" id="download-report-btn" type="button" disabled>Download JSON Report</button>
+          </div>
+
+          <section class="findings-section">
+            <h3>Findings</h3>
+            <div class="findings-list" id="findings-list"></div>
+          </section>
+
+          <section class="preview-section">
+            <h3>Redacted preview</h3>
+            <pre class="preview" id="redacted-preview"></pre>
+          </section>
+        </section>
+      </section>
+    </main>
+
+    <script src="../shared/entropy.js"></script>
+    <script src="../shared/patterns.js"></script>
+    <script src="../shared/detector.js"></script>
+    <script src="../shared/placeholders.js"></script>
+    <script src="../shared/sessionMapStore.js"></script>
+    <script src="../shared/ipClassification.js"></script>
+    <script src="../shared/ipDetection.js"></script>
+    <script src="../shared/networkHierarchy.js"></script>
+    <script src="../shared/placeholderAllocator.js"></script>
+    <script src="../shared/transformOutboundPrompt.js"></script>
+    <script src="../shared/fileScanner.js"></script>
+    <script src="scanner.js"></script>
+  </body>
+</html>
