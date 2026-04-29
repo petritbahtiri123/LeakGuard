@@ -14,9 +14,10 @@ const distRoot = path.join(repoRoot, "dist");
 const assetDirs = ["background", "content", "popup", "options", "ui", "shared", "compat"];
 const staticDirs = ["icons", "config", "ai/models"];
 const onnxRuntimeLoaderFiles = ["ort.min.js"];
-const onnxRuntimeWasmPattern = /^ort-wasm.*\.wasm$/;
-const onnxRuntimeDynamicLoaderPattern = /^ort-wasm.*\.(?:js|mjs)$/;
-const onnxRuntimeSidecarPattern = /^ort-wasm.*\.(?:js|mjs|wasm)$/;
+const onnxRuntimeSidecarFiles = [
+  "ort-wasm-simd-threaded.mjs",
+  "ort-wasm-simd-threaded.wasm"
+];
 const supportedBrowsers = new Set(["chrome", "firefox"]);
 const supportedModes = new Set(["consumer", "enterprise"]);
 
@@ -49,24 +50,12 @@ function listOnnxRuntimeFiles() {
     .readdirSync(sourceDir, { withFileTypes: true })
     .filter((entry) => entry.isFile())
     .map((entry) => entry.name);
-  const runtimeFiles = files
-    .filter(
-      (file) =>
-        onnxRuntimeLoaderFiles.includes(file) ||
-        onnxRuntimeSidecarPattern.test(file)
-    )
-    .sort();
+  const runtimeFiles = [...onnxRuntimeLoaderFiles, ...onnxRuntimeSidecarFiles].sort();
 
-  for (const file of onnxRuntimeLoaderFiles) {
-    if (!runtimeFiles.includes(file)) {
+  for (const file of runtimeFiles) {
+    if (!files.includes(file)) {
       throw new Error(`Missing ONNX Runtime loader asset ${path.join(sourceDir, file)}.`);
     }
-  }
-  if (!runtimeFiles.some((file) => onnxRuntimeWasmPattern.test(file))) {
-    throw new Error(`Missing ONNX Runtime WASM assets in ${sourceDir}.`);
-  }
-  if (!runtimeFiles.some((file) => onnxRuntimeDynamicLoaderPattern.test(file))) {
-    throw new Error(`Missing ONNX Runtime dynamic loader assets in ${sourceDir}.`);
   }
 
   return runtimeFiles;
@@ -74,7 +63,7 @@ function listOnnxRuntimeFiles() {
 
 function getOnnxRuntimeWebAccessibleResources() {
   return listOnnxRuntimeFiles()
-    .filter((file) => onnxRuntimeSidecarPattern.test(file))
+    .filter((file) => onnxRuntimeSidecarFiles.includes(file))
     .map((file) => `vendor/onnxruntime/${file}`);
 }
 
