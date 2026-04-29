@@ -35,7 +35,7 @@ The generated dataset is written to:
 dataset/generated/initial_dataset.jsonl
 ```
 
-`npm run build:*` commands run `scripts/prepare-build.mjs` first. `npm run build:all` runs that setup once and then packages every browser target. The setup step installs missing npm dependencies, creates `ai/.venv` when needed, installs Python training dependencies, generates 10,000 synthetic examples, trains the classifier, and exports the ONNX model before packaging the extension.
+`npm run build:*` commands run `scripts/prepare-build.mjs` first. `npm run build:all` runs that setup once and then packages every browser target. The setup step installs missing npm dependencies, creates `ai/.venv` when needed, installs Python training dependencies, generates 10,000 synthetic examples, trains the classifier, runs an independent held-out evaluation, and exports the ONNX model before packaging the extension.
 
 ## Enterprise Training Proof
 
@@ -54,7 +54,7 @@ On Windows, use this evaluation command instead:
 ai\.venv\Scripts\python.exe ai\scripts\evaluate_model.py
 ```
 
-`npm run prepare:build` should create or refresh `dataset/generated/initial_dataset.jsonl` with 10,000 records, train the sklearn model, and export the ONNX model. The generated model metadata should show a 7,500 / 2,500 train-validation split:
+`npm run prepare:build` should create or refresh `dataset/generated/initial_dataset.jsonl` with 10,000 records, train the sklearn model, run the independent evaluation, and export the ONNX model. The generated model metadata should show a 7,500 / 2,500 internal train-validation split:
 
 ```text
 models/leakguard_secret_classifier.training.json
@@ -68,6 +68,8 @@ Training merges `dataset/generated/*.jsonl` and `dataset/labeled/*.jsonl`, train
 models/leakguard_secret_classifier.joblib
 models/leakguard_secret_classifier.features.json
 ```
+
+The training script prints an internal random-split validation report from that same training pool. Treat it as a quick sanity check, not the final score. The independent score comes from `scripts/evaluate_model.py`.
 
 ONNX export writes:
 
