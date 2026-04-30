@@ -294,6 +294,17 @@
       captureGroups: [1, 2, 3, 4]
     },
     {
+      name: "natural_language_secret",
+      type: "SECRET",
+      category: "credential",
+      baseScore: 76,
+      suppressionNotes:
+        "Catch natural-language secret disclosures such as 'my secret is petrit123' while requiring a digit or symbol in the value to avoid ordinary prose.",
+      regex:
+        /\b(?:my|the|our)?\s*secret\s*(?:is|=|:)\s*(?:"(?=[^"\r\n]{8,})(?=[^"\r\n]*[0-9_!@#$%^&*+=:.?/~\\-])([^"\r\n]+)"|'(?=[^'\r\n]{8,})(?=[^'\r\n]*[0-9_!@#$%^&*+=:.?/~\\-])([^'\r\n]+)'|`(?=[^`\r\n]{8,})(?=[^`\r\n]*[0-9_!@#$%^&*+=:.?/~\\-])([^`\r\n]+)`|((?=[^\s,;]{8,})(?=[^\s,;]*[0-9_!@#$%^&*+=:.?/~\\-])[^\s,;]+))/gi,
+      captureGroups: [1, 2, 3, 4]
+    },
+    {
       name: "labelled_password_value",
       type: "PASSWORD",
       category: "credential",
@@ -620,6 +631,7 @@
     natural_language_api_key: "API_KEY",
     natural_language_openai_key: "API_KEY",
     natural_language_password: "PASSWORD",
+    natural_language_secret: "SECRET",
     labelled_password_value: "PASSWORD",
     labelled_openai_key_value: "API_KEY",
     real_value_label: "SECRET",

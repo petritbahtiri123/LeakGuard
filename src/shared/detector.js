@@ -518,9 +518,60 @@
       if (/^https?:\/\/[^\s]+$/i.test(trimmed)) return true;
       if (/^:\/\/[^\s]+$/i.test(trimmed)) return true;
       if (/^\.[A-Za-z0-9._-]+$/.test(trimmed)) return true;
+      if (/^\\+$/.test(trimmed)) return true;
       if (isRegionLikeSegment(trimmed)) return true;
       return false;
     });
+  }
+
+  function getSinglePlaceholderSuffix(value) {
+    const input = String(value || "");
+    const regex = new RegExp(`^${CONTAINS_PLACEHOLDER_REGEX.source}([^\\s,;\\]\\)\\}]+)$`);
+    const match = regex.exec(input);
+    return match ? match[1] : "";
+  }
+
+  function isLikelyPlaceholderSuffixSecret(value) {
+    const input = String(value || "").trim();
+    if (input.length < 8 || input.length > 128) return false;
+    if (/\s/.test(input)) return false;
+    if (/^[.:/\\]+/.test(input)) return false;
+    if (isCleanPlaceholder(input) || containsPlaceholder(input)) return false;
+    if (looksExampleLike(input) || containsTemplateMarker(input) || likelyTemplateValue(input)) return false;
+    if (/^(?:https?|wss?|ftp|sftp|mailto):/i.test(input)) return false;
+    if (/^(?:v?\d+\.)+\d+(?:[-+][A-Za-z0-9._-]+)?$/.test(input)) return false;
+    if (isBuildLabelLike(input)) return false;
+    if (isRegionLikeSegment(input)) return false;
+
+    const entropy = calculateEntropy(input);
+    const variety = countClassVariety(input);
+    const hasDigit = /\d/.test(input);
+    const hasLetter = /[A-Za-z]/.test(input);
+    const hasSymbol = /[^A-Za-z0-9]/.test(input);
+
+    if (/^\d+$/.test(input)) {
+      return input.length >= 12 && entropy >= 2.0;
+    }
+
+    return entropy >= 3.0 && variety >= 2 && (hasDigit || hasSymbol || hasLetter);
+  }
+
+  function scorePlaceholderSuffixSecret(value, text, start, end) {
+    const input = String(value || "");
+    const entropy = calculateEntropy(input);
+    const variety = countClassVariety(input);
+    let score = 70;
+
+    if (input.length >= 12) score += 6;
+    if (input.length >= 20) score += 6;
+    if (/^\d+$/.test(input)) score += 4;
+    if (variety >= 2) score += 5;
+    if (variety >= 3) score += 5;
+    if (entropy >= 3.2) score += 4;
+    if (entropy >= 3.8) score += 4;
+    score += Math.max(0, contextScore(text, start, end));
+
+    return score;
   }
 
   function shouldSuppressStructuredAssignment(raw, placeholderType) {
@@ -837,6 +888,16 @@
       if (this.isAllowlisted(raw)) return true;
       if (likelyTemplateValue(raw)) return true;
       if (isCleanPlaceholder(raw)) return true;
+      if (containsPlaceholder(raw) && isBenignPlaceholderComposite(raw)) return true;
+      if (containsPlaceholder(raw)) {
+        const placeholderSuffix = getSinglePlaceholderSuffix(raw);
+        if (
+          placeholderSuffix &&
+          (/^\d+$/.test(placeholderSuffix) || isLikelyPlaceholderSuffixSecret(placeholderSuffix))
+        ) {
+          return true;
+        }
+      }
       const failClosedForExample = shouldFailClosedDespiteExample(raw, {
         patternName,
         key,
@@ -1537,6 +1598,43 @@
       return findings;
     }
 
+    scanPlaceholderSuffixSecrets(text) {
+      const findings = [];
+      const regex = new RegExp(`${CONTAINS_PLACEHOLDER_REGEX.source}([^\\s,;:=\\]\\)\\}]+)`, "g");
+      let match;
+
+      while ((match = regex.exec(text)) !== null) {
+        const raw = normalizeCandidate(match[1]);
+        if (!raw) continue;
+
+        const start = match.index + match[0].length - match[1].length;
+        const end = start + raw.length;
+
+        if (/^[A-Za-z_][A-Za-z0-9_.-]{0,80}$/.test(raw) && /[:=]/.test(text[end] || "")) {
+          continue;
+        }
+        if (!isLikelyPlaceholderSuffixSecret(raw)) continue;
+        if (this.isAllowlisted(raw)) continue;
+        if (this.shouldSuppress({ raw, text, start, end, placeholderType: "SECRET", source: "placeholder-suffix" })) {
+          continue;
+        }
+
+        findings.push(
+          this.buildFinding({
+            category: "credential",
+            placeholderType: "SECRET",
+            raw,
+            start,
+            end,
+            score: scorePlaceholderSuffixSecret(raw, text, start, end),
+            methods: ["placeholder-suffix", "heuristic"]
+          })
+        );
+      }
+
+      return findings;
+    }
+
     scanAdversarialAssignments(text) {
       const findings = [];
       const regex =
@@ -1673,6 +1771,7 @@
         ...this.scanAdversarialAssignments(input),
         ...this.scanIdentityAssignments(input),
         ...this.scanJsonIdentityFields(input),
+        ...this.scanPlaceholderSuffixSecrets(input),
         ...this.scanBarePasswordCandidates(input),
         ...this.scanEntropyFallback(input)
       ];
