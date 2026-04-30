@@ -47,6 +47,7 @@ const NEW_PATTERN_NAMES = [
   "query_param_api_key",
   "query_param_token",
   "natural_language_openai_key",
+  "natural_language_secret",
   "labelled_password_value",
   "labelled_openai_key_value",
   "real_value_label",
@@ -145,6 +146,21 @@ const NEGATIVE_CASES = [
   {
     name: "cookie preference",
     text: "Cookie: theme=dark; locale=en-US",
+    expectsNoFindings: true
+  },
+  {
+    name: "natural language secret prose",
+    text: "The secret is patience during the rollout.",
+    expectsNoFindings: true
+  },
+  {
+    name: "placeholder after password label",
+    text: "password is [PWM_2]\\",
+    expectsNoFindings: true
+  },
+  {
+    name: "short version-like suffix after placeholder",
+    text: "my password is [PWM_2]1234",
     expectsNoFindings: true
   }
 ];
@@ -1606,6 +1622,50 @@ function testStandaloneSecretKeywordPasswordRedactsHighConfidenceValue() {
   assert.strictEqual(result.redactedText, "[PWM_1]", "secret-prefixed password-like value should redact cleanly");
 }
 
+function testNaturalLanguageSecretRedactsCredentialLikeValue() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const text = "my secret is petrit123";
+  const findings = detector.scan(text);
+  const secretFinding = findings.find((finding) => finding.raw === "petrit123");
+  const result = redactor.redact(text, findings);
+
+  assert.ok(secretFinding, "natural-language secret value should be detected");
+  assert.strictEqual(secretFinding.type, "SECRET");
+  assert.strictEqual(
+    secretFinding.severity,
+    "high",
+    "explicit natural-language secret disclosures should auto-redact"
+  );
+  assert.ok(secretFinding.method.includes("pattern"));
+  assert.strictEqual(
+    result.redactedText,
+    "my secret is [PWM_1]",
+    "natural-language secret value should redact without changing surrounding prose"
+  );
+}
+
+function testPlaceholderSuffixSecretRedactsOnlyAppendedMaterial() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const text = "my password is [PWM_2]45123412341324123";
+  const findings = detector.scan(text);
+  const suffixFinding = findings.find((finding) => finding.raw === "45123412341324123");
+  const result = redactor.redact(text, findings);
+
+  assert.ok(suffixFinding, "secret-like material appended to a placeholder should be detected");
+  assert.strictEqual(suffixFinding.type, "SECRET");
+  assert.strictEqual(suffixFinding.severity, "high");
+  assert.ok(suffixFinding.method.includes("placeholder-suffix"));
+  assert.strictEqual(
+    result.redactedText,
+    "my password is [PWM_2][PWM_3]",
+    "existing placeholder should stay while appended secret material is redacted separately"
+  );
+}
+
 function testStandaloneBenignBuildLabelStaysVisible() {
   const detector = new Detector();
   const text = "release-2026-04-24";
@@ -1678,6 +1738,8 @@ function run() {
   testExactMixedLegacyPlaceholderInputDoesNotReemitTypedTokens();
   testStandaloneBarePasswordHeuristicRedactsHighConfidenceValue();
   testStandaloneSecretKeywordPasswordRedactsHighConfidenceValue();
+  testNaturalLanguageSecretRedactsCredentialLikeValue();
+  testPlaceholderSuffixSecretRedactsOnlyAppendedMaterial();
   testStandaloneBenignBuildLabelStaysVisible();
   testUsernameAndEmailAssignmentsStayMediumConfidence();
 
