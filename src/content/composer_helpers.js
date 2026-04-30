@@ -384,6 +384,7 @@
       placeCaretAtEnd(el);
     }
 
+    dispatchInput(el, normalized, "insertReplacementText");
     return true;
   }
 
@@ -406,7 +407,12 @@
       placeCaretAtEnd(el);
     }
 
+    dispatchInput(el, normalized, "insertReplacementText");
     return true;
+  }
+
+  function rewriteMatchesExpected(el, value) {
+    return getInputText(el) === normalizeComposerText(value);
   }
 
   function setInputTextPlain(el, value, options = {}) {
@@ -433,11 +439,13 @@
     }
 
     if (isContentEditable(el)) {
-      if (!rewriteContentEditableNative(el, value, options)) {
-        if (!rewriteContentEditableHtml(el, value, options)) {
-          rewriteContentEditableBlocks(el, value, options);
-        }
+      if (rewriteContentEditableNative(el, value, options) && rewriteMatchesExpected(el, value)) {
+        return;
       }
+      if (rewriteContentEditableHtml(el, value, options) && rewriteMatchesExpected(el, value)) {
+        return;
+      }
+      rewriteContentEditableBlocks(el, value, options);
     }
   }
 
@@ -450,9 +458,10 @@
     }
 
     if (isContentEditable(el)) {
-      if (!rewriteContentEditableHtml(el, value, options)) {
-        rewriteContentEditableBlocks(el, value, options);
+      if (rewriteContentEditableHtml(el, value, options) && rewriteMatchesExpected(el, value)) {
+        return;
       }
+      rewriteContentEditableBlocks(el, value, options);
     }
   }
 
