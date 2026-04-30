@@ -227,6 +227,12 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
     "decision modal should consume confirm/cancel keys across keydown, keypress, and keyup while open"
   );
   assert.ok(
+    contentSource.includes('window.addEventListener("beforeinput", onModalPassthrough, true);') &&
+      contentSource.includes('window.addEventListener("input", onModalPassthrough, true);') &&
+      contentSource.includes('window.addEventListener("paste", onModalPassthrough, true);'),
+    "message modals should consume typing and paste events so host composers cannot change underneath errors"
+  );
+  assert.ok(
     contentSource.includes('finish({ action: getFocusedAction() || "redact" });'),
     "decision modal should fail closed to redaction when Enter is pressed and focus is ambiguous"
   );
