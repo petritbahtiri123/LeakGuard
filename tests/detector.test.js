@@ -157,6 +157,11 @@ const NEGATIVE_CASES = [
     name: "placeholder after password label",
     text: "password is [PWM_2]\\",
     expectsNoFindings: true
+  },
+  {
+    name: "numeric suffix after placeholder",
+    text: "my password is [PWM_2]45123412341324123",
+    expectsNoFindings: true
   }
 ];
 

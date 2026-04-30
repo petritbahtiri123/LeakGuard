@@ -519,6 +519,7 @@
       if (/^:\/\/[^\s]+$/i.test(trimmed)) return true;
       if (/^\.[A-Za-z0-9._-]+$/.test(trimmed)) return true;
       if (/^\\+$/.test(trimmed)) return true;
+      if (/^\d+$/.test(trimmed)) return true;
       if (isRegionLikeSegment(trimmed)) return true;
       return false;
     });
