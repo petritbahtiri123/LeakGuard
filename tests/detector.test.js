@@ -159,8 +159,8 @@ const NEGATIVE_CASES = [
     expectsNoFindings: true
   },
   {
-    name: "numeric suffix after placeholder",
-    text: "my password is [PWM_2]45123412341324123",
+    name: "short version-like suffix after placeholder",
+    text: "my password is [PWM_2]1234",
     expectsNoFindings: true
   }
 ];
@@ -1646,6 +1646,26 @@ function testNaturalLanguageSecretRedactsCredentialLikeValue() {
   );
 }
 
+function testPlaceholderSuffixSecretRedactsOnlyAppendedMaterial() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const text = "my password is [PWM_2]45123412341324123";
+  const findings = detector.scan(text);
+  const suffixFinding = findings.find((finding) => finding.raw === "45123412341324123");
+  const result = redactor.redact(text, findings);
+
+  assert.ok(suffixFinding, "secret-like material appended to a placeholder should be detected");
+  assert.strictEqual(suffixFinding.type, "SECRET");
+  assert.strictEqual(suffixFinding.severity, "high");
+  assert.ok(suffixFinding.method.includes("placeholder-suffix"));
+  assert.strictEqual(
+    result.redactedText,
+    "my password is [PWM_2][PWM_3]",
+    "existing placeholder should stay while appended secret material is redacted separately"
+  );
+}
+
 function testStandaloneBenignBuildLabelStaysVisible() {
   const detector = new Detector();
   const text = "release-2026-04-24";
@@ -1719,6 +1739,7 @@ function run() {
   testStandaloneBarePasswordHeuristicRedactsHighConfidenceValue();
   testStandaloneSecretKeywordPasswordRedactsHighConfidenceValue();
   testNaturalLanguageSecretRedactsCredentialLikeValue();
+  testPlaceholderSuffixSecretRedactsOnlyAppendedMaterial();
   testStandaloneBenignBuildLabelStaysVisible();
   testUsernameAndEmailAssignmentsStayMediumConfidence();
 
