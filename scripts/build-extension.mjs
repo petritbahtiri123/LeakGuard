@@ -14,10 +14,7 @@ const distRoot = path.join(repoRoot, "dist");
 const assetDirs = ["background", "content", "popup", "options", "ui", "scanner", "shared", "compat"];
 const staticDirs = ["icons", "config", "ai/models"];
 const onnxRuntimeLoaderFiles = ["ort.min.js"];
-const onnxRuntimeSidecarFiles = [
-  "ort-wasm-simd-threaded.mjs",
-  "ort-wasm-simd-threaded.wasm"
-];
+const onnxRuntimeSidecarPattern = /^ort-wasm-simd-threaded(?:\.[^.]+)?\.(?:mjs|wasm)$/;
 const supportedBrowsers = new Set(["chrome", "firefox"]);
 const supportedModes = new Set(["consumer", "enterprise"]);
 
@@ -50,7 +47,8 @@ function listOnnxRuntimeFiles() {
     .readdirSync(sourceDir, { withFileTypes: true })
     .filter((entry) => entry.isFile())
     .map((entry) => entry.name);
-  const runtimeFiles = [...onnxRuntimeLoaderFiles, ...onnxRuntimeSidecarFiles].sort();
+  const sidecarFiles = files.filter((file) => onnxRuntimeSidecarPattern.test(file)).sort();
+  const runtimeFiles = [...onnxRuntimeLoaderFiles, ...sidecarFiles].sort();
 
   for (const file of runtimeFiles) {
     if (!files.includes(file)) {
@@ -63,7 +61,7 @@ function listOnnxRuntimeFiles() {
 
 function getOnnxRuntimeWebAccessibleResources() {
   return listOnnxRuntimeFiles()
-    .filter((file) => onnxRuntimeSidecarFiles.includes(file))
+    .filter((file) => onnxRuntimeSidecarPattern.test(file))
     .map((file) => `vendor/onnxruntime/${file}`);
 }
 
