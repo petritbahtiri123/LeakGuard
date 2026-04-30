@@ -1069,17 +1069,37 @@
       closeBtn.type = "button";
       closeBtn.textContent = "Close";
 
+      const consumeModalEvent = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (typeof event.stopImmediatePropagation === "function") {
+          event.stopImmediatePropagation();
+        }
+      };
+
       const finish = () => {
         window.removeEventListener("keydown", onKeyDown, true);
+        window.removeEventListener("keypress", onModalPassthrough, true);
+        window.removeEventListener("keyup", onModalPassthrough, true);
+        window.removeEventListener("beforeinput", onModalPassthrough, true);
+        window.removeEventListener("input", onModalPassthrough, true);
+        window.removeEventListener("paste", onModalPassthrough, true);
         closeModal(backdrop);
         resolve();
       };
 
       const onKeyDown = (event) => {
         if (event.key === "Escape" || event.key === "Enter") {
-          event.preventDefault();
+          consumeModalEvent(event);
           finish();
+          return;
         }
+
+        consumeModalEvent(event);
+      };
+
+      const onModalPassthrough = (event) => {
+        consumeModalEvent(event);
       };
 
       closeBtn.addEventListener("click", finish);
@@ -1095,6 +1115,11 @@
       document.documentElement.appendChild(backdrop);
 
       window.addEventListener("keydown", onKeyDown, true);
+      window.addEventListener("keypress", onModalPassthrough, true);
+      window.addEventListener("keyup", onModalPassthrough, true);
+      window.addEventListener("beforeinput", onModalPassthrough, true);
+      window.addEventListener("input", onModalPassthrough, true);
+      window.addEventListener("paste", onModalPassthrough, true);
       closeBtn.focus();
     });
   }
