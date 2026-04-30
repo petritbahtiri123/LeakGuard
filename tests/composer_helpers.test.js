@@ -1,4 +1,5 @@
 const assert = require("assert");
+const fs = require("fs");
 const path = require("path");
 
 require(path.join(__dirname, "../src/content/composer_helpers.js"));
@@ -7,6 +8,11 @@ const {
   normalizeEditorInnerText,
   serializeContentEditableRoot
 } = globalThis.PWM.ComposerHelpers;
+
+const composerHelperSource = fs.readFileSync(
+  path.join(__dirname, "../src/content/composer_helpers.js"),
+  "utf8"
+);
 
 function textNode(value) {
   return {
@@ -121,12 +127,38 @@ function testSerializesTopLevelBreakRunsAsBlankLines() {
   );
 }
 
+function testContentEditableRewritePathsSyncHostState() {
+  const nativeSource = composerHelperSource.match(
+    /function rewriteContentEditableNative\([^)]*\) \{[\s\S]*?\n  \}/
+  )?.[0];
+  const htmlSource = composerHelperSource.match(
+    /function rewriteContentEditableHtml\([^)]*\) \{[\s\S]*?\n  \}/
+  )?.[0];
+  const setInputSource = composerHelperSource.match(
+    /function setInputText\([^)]*\) \{[\s\S]*?\n  \}/
+  )?.[0];
+
+  assert.ok(
+    nativeSource?.includes('dispatchInput(el, normalized, "insertReplacementText");'),
+    "native contenteditable rewrites should dispatch input so controlled editors sync their model"
+  );
+  assert.ok(
+    htmlSource?.includes('dispatchInput(el, normalized, "insertReplacementText");'),
+    "HTML contenteditable rewrites should dispatch input so controlled editors sync their model"
+  );
+  assert.ok(
+    setInputSource?.includes("rewriteMatchesExpected"),
+    "contenteditable rewrite orchestration should fall through when a strategy reports success but leaves mismatched text"
+  );
+}
+
 function run() {
   testPreservesSingleIntentionalBlankLine();
   testCollapsesExcessBlankRunsToOneEmptyLine();
   testSerializesBlockTreeWithBlankLines();
   testTrimsEditorGeneratedTrailingBlankLines();
   testSerializesTopLevelBreakRunsAsBlankLines();
+  testContentEditableRewritePathsSyncHostState();
   console.log("PASS composer helper multiline normalization regressions");
 }
 
