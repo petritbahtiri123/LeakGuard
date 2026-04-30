@@ -518,6 +518,7 @@
       if (/^https?:\/\/[^\s]+$/i.test(trimmed)) return true;
       if (/^:\/\/[^\s]+$/i.test(trimmed)) return true;
       if (/^\.[A-Za-z0-9._-]+$/.test(trimmed)) return true;
+      if (/^\\+$/.test(trimmed)) return true;
       if (isRegionLikeSegment(trimmed)) return true;
       return false;
     });
@@ -837,6 +838,7 @@
       if (this.isAllowlisted(raw)) return true;
       if (likelyTemplateValue(raw)) return true;
       if (isCleanPlaceholder(raw)) return true;
+      if (containsPlaceholder(raw) && isBenignPlaceholderComposite(raw)) return true;
       const failClosedForExample = shouldFailClosedDespiteExample(raw, {
         patternName,
         key,

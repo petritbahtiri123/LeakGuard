@@ -109,6 +109,19 @@ function testTypedSecretKeywordPasswordHeuristicIsHighConfidence() {
   assert.ok(relevant[0].method.includes("bare-password"));
 }
 
+function testTypedNaturalLanguageSecretDisclosureIsHighConfidence() {
+  const currentText = "";
+  const selection = { start: 0, end: 0 };
+  const next = spliceSelectionText(currentText, selection, "my secret is petrit123");
+  const findings = analyze(next.text);
+  const relevant = selectFindingsOverlappingInsertion(findings, selection, "my secret is petrit123");
+
+  assert.ok(relevant.length > 0, "typed natural-language secret disclosure should produce findings");
+  assert.strictEqual(relevant[0].raw, "petrit123");
+  assert.strictEqual(relevant[0].type, "SECRET");
+  assert.strictEqual(relevant[0].severity, "high");
+}
+
 function testTypedUsernameAssignmentStaysMediumConfidence() {
   const currentText = "username=";
   const selection = { start: currentText.length, end: currentText.length };
@@ -245,6 +258,7 @@ function run() {
   testTypedAssignmentSecretIsCaughtBeforeCommit();
   testTypedStandalonePasswordHeuristicIsHighConfidence();
   testTypedSecretKeywordPasswordHeuristicIsHighConfidence();
+  testTypedNaturalLanguageSecretDisclosureIsHighConfidence();
   testTypedUsernameAssignmentStaysMediumConfidence();
   testTypedPublicIpUsesSameDecisionFlow();
   testPlaceholderNormalizationCanHappenBeforeCommit();
