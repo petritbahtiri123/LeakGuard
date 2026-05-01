@@ -285,6 +285,341 @@ function testFullCapabilityBreakPackV2() {
   assert.ok(/^tok3n=\[PWM_\d+\]$/m.test(redactedText), "tok3n alias should redact");
 }
 
+function redactSingleText(text) {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const findings = detector.scan(text);
+  return new Redactor(manager).redact(text, findings).redactedText;
+}
+
+function redactTextWithManager(text, manager = new PlaceholderManager()) {
+  const detector = new Detector();
+  const findings = detector.scan(text, { manager });
+  return {
+    findings,
+    result: new Redactor(manager).redact(text, findings),
+    manager
+  };
+}
+
+function testSensitiveHttpHeaderRedaction() {
+  const xApiKey = redactSingleText("X-API-Key: ApiKeyHeader1234567890");
+  assert.ok(/^X-API-Key: \[PWM_\d+\]$/.test(xApiKey), `unexpected X-API-Key redaction: ${xApiKey}`);
+  assertExcludesAll(
+    xApiKey,
+    ["ApiKeyHeader1234567890", "ApiKey", "Header123", "1234567890"],
+    "X-API-Key header"
+  );
+
+  const authorization = redactSingleText("Authorization: Bearer BearerToken1234567890");
+  assert.ok(
+    /^Authorization: Bearer \[PWM_\d+\]$/.test(authorization),
+    `unexpected Authorization redaction: ${authorization}`
+  );
+  assertExcludesAll(authorization, ["BearerToken1234567890"], "Authorization header");
+
+  const authToken = redactSingleText("X-Auth-Token: AuthToken1234567890");
+  assert.ok(
+    /^X-Auth-Token: \[PWM_\d+\]$/.test(authToken),
+    `unexpected X-Auth-Token redaction: ${authToken}`
+  );
+  assertExcludesAll(authToken, ["AuthToken1234567890", "AuthToken"], "X-Auth-Token header");
+
+  const subscriptionKey = redactSingleText("Ocp-Apim-Subscription-Key: SubKey1234567890");
+  assert.ok(
+    /^Ocp-Apim-Subscription-Key: \[PWM_\d+\]$/.test(subscriptionKey),
+    `unexpected subscription key redaction: ${subscriptionKey}`
+  );
+  assertExcludesAll(
+    subscriptionKey,
+    ["SubKey1234567890", "SubKey"],
+    "Ocp-Apim-Subscription-Key header"
+  );
+
+  const cookie = redactSingleText("Cookie: sessionid=SessionValue1234567890");
+  assert.ok(
+    /^Cookie: sessionid=\[PWM_\d+\]$/.test(cookie) || /^Cookie: \[PWM_\d+\]$/.test(cookie),
+    `unexpected Cookie redaction: ${cookie}`
+  );
+  assertExcludesAll(cookie, ["SessionValue1234567890", "SessionValue"], "Cookie header");
+
+  const setCookie = redactSingleText("Set-Cookie: auth_token=AuthCookieValue1234567890; HttpOnly");
+  assert.ok(
+    /^Set-Cookie: auth_token=\[PWM_\d+\]; HttpOnly$/.test(setCookie) ||
+      /^Set-Cookie: \[PWM_\d+\]; HttpOnly$/.test(setCookie),
+    `unexpected Set-Cookie redaction: ${setCookie}`
+  );
+  assertExcludesAll(setCookie, ["AuthCookieValue1234567890", "AuthCookieValue"], "Set-Cookie header");
+
+  const safeHeaders = [
+    "Content-Type: application/json",
+    "Accept: application/json",
+    "User-Agent: Mozilla/5.0",
+    "Cache-Control: no-cache",
+    "X-Request-ID: abcdef1234567890",
+    "X-Trace-ID: 00-abcdef1234567890abcdef1234567890-abcdef1234567890-01"
+  ].join("\n");
+  assert.strictEqual(redactSingleText(safeHeaders), safeHeaders, "safe headers should stay unchanged");
+
+  const existingPlaceholders = [
+    "X-API-Key: [PWM_1]",
+    "Authorization: Bearer [PWM_2]",
+    "X-Auth-Token: AuthToken1234567890"
+  ].join("\n");
+  const placeholderManager = new PlaceholderManager();
+  placeholderManager.trackKnownPlaceholder("[PWM_1]");
+  placeholderManager.trackKnownPlaceholder("[PWM_2]");
+  const placeholderDetector = new Detector();
+  const placeholderFindings = placeholderDetector.scan(existingPlaceholders, {
+    manager: placeholderManager
+  });
+  const placeholderOutput = new Redactor(placeholderManager).redact(
+    existingPlaceholders,
+    placeholderFindings
+  ).redactedText;
+  assert.ok(
+    placeholderOutput.includes("X-API-Key: [PWM_1]"),
+    "existing API key placeholder should be preserved"
+  );
+  assert.ok(
+    placeholderOutput.includes("Authorization: Bearer [PWM_2]"),
+    "existing Authorization placeholder should be preserved"
+  );
+  assert.ok(
+    /^X-Auth-Token: \[PWM_\d+\]$/m.test(placeholderOutput),
+    `new header token should redact after existing placeholders: ${placeholderOutput}`
+  );
+  assertExcludesAll(placeholderOutput, ["AuthToken1234567890"], "existing placeholder header text");
+}
+
+function testMultiSecretHttpHeaderPromptRedaction() {
+  const text = [
+    "Authorization: Bearer BearerToken1234567890",
+    "Cookie: sessionid=SessionValue1234567890",
+    "Set-Cookie: auth_token=AuthCookieValue1234567890; HttpOnly",
+    "X-API-Key: ApiKeyHeader1234567890"
+  ].join("\n");
+  const { findings, result, manager } = redactTextWithManager(text);
+  const redactedText = result.redactedText;
+
+  assert.ok(
+    /^Authorization: Bearer \[PWM_\d+\]$/m.test(redactedText),
+    `Authorization should preserve Bearer and redact only token: ${redactedText}`
+  );
+  assert.ok(
+    /^Cookie: sessionid=\[PWM_\d+\]$/m.test(redactedText) ||
+      /^Cookie: \[PWM_\d+\]$/m.test(redactedText),
+    `Cookie should not leak session value: ${redactedText}`
+  );
+  assert.ok(
+    /^Set-Cookie: auth_token=\[PWM_\d+\]; HttpOnly$/m.test(redactedText) ||
+      /^Set-Cookie: \[PWM_\d+\]; HttpOnly$/m.test(redactedText),
+    `Set-Cookie should not leak auth cookie value: ${redactedText}`
+  );
+  assert.ok(
+    /^X-API-Key: \[PWM_\d+\]$/m.test(redactedText),
+    `X-API-Key should redact the full header value: ${redactedText}`
+  );
+  assertExcludesAll(
+    redactedText,
+    [
+      "BearerToken1234567890",
+      "SessionValue1234567890",
+      "AuthCookieValue1234567890",
+      "ApiKeyHeader1234567890"
+    ],
+    "multi sensitive header prompt"
+  );
+  assert.strictEqual(redactedText.includes("X-API-Key: ApiKey[PWM_"), false);
+  assert.strictEqual(redactedText.includes("Header123"), false);
+
+  const transformed = transformOutboundPrompt(text, {
+    manager,
+    findings,
+    mode: "hide_public"
+  }).redactedText;
+  assert.strictEqual(transformed, redactedText, "transform should reuse the same full-range replacements");
+}
+
+function testRepeatedHttpHeaderSecretReusesPlaceholder() {
+  const text = [
+    "X-API-Key: ApiKeyHeader1234567890",
+    "API-Key: ApiKeyHeader1234567890"
+  ].join("\n");
+  const { result } = redactTextWithManager(text);
+  const placeholders = result.redactedText.match(/\[PWM_\d+\]/g) || [];
+
+  assert.strictEqual(placeholders.length, 2, "both repeated header values should redact");
+  assert.strictEqual(new Set(placeholders).size, 1, "same raw header secret should reuse one placeholder");
+  assertExcludesAll(
+    result.redactedText,
+    ["ApiKeyHeader1234567890", "ApiKey", "Header123"],
+    "repeated header secret"
+  );
+}
+
+function testRepeatedHeaderSecretReusesPlaceholderInLabelledText() {
+  const text = [
+    "X-API-Key: ApiKeyHeader1234567890",
+    "X-API-Key: ApiKeyHeader1234567890",
+    "Again same key: ApiKeyHeader1234567890",
+    "Plain repeat: ApiKeyHeader1234567890"
+  ].join("\n");
+  const { findings, result, manager } = redactTextWithManager(text);
+  const redactedText = result.redactedText;
+  const placeholders = redactedText.match(/\[PWM_\d+\]/g) || [];
+
+  assert.strictEqual(placeholders.length, 4, "all repeated raw key values should redact");
+  assert.strictEqual(new Set(placeholders).size, 1, "same raw key should reuse one placeholder");
+  assert.ok(/^X-API-Key: \[PWM_\d+\]$/m.test(redactedText), "first header value should redact");
+  assert.ok(/^Again same key: \[PWM_\d+\]$/m.test(redactedText), "labelled repeat should redact");
+  assert.ok(/^Plain repeat: \[PWM_\d+\]$/m.test(redactedText), "known raw repeat should redact");
+  assertExcludesAll(
+    redactedText,
+    ["ApiKeyHeader1234567890", "ApiKey", "Header1234567890", "ApiKey[PWM_", "[PWM_]Header123"],
+    "labelled repeated header secret"
+  );
+
+  const transformed = transformOutboundPrompt(text, {
+    manager,
+    findings,
+    mode: "hide_public"
+  }).redactedText;
+  assert.strictEqual(transformed, redactedText, "transform should reuse full known raw key values");
+}
+
+function testSameLabelledSecretValuesRedactFully() {
+  const safeLines = [
+    "password policy is strong",
+    "token_limit=4096",
+    "secret_santa=Michael",
+    "api_version=v1",
+    "Content-Type: application/json",
+    "X-Request-ID: abcdef1234567890"
+  ];
+  const text = [
+    "Again same token: TokenValue1234567890",
+    "Again same password: MyP@ssw0rd123",
+    "Again same secret: SecretValue1234567890",
+    ...safeLines
+  ].join("\n");
+  const { result } = redactTextWithManager(text);
+  const redactedText = result.redactedText;
+
+  assert.ok(/^Again same token: \[PWM_\d+\]$/m.test(redactedText), "token label should redact full value");
+  assert.ok(
+    /^Again same password: \[PWM_\d+\]$/m.test(redactedText),
+    "password label should redact full value"
+  );
+  assert.ok(/^Again same secret: \[PWM_\d+\]$/m.test(redactedText), "secret label should redact full value");
+  assertExcludesAll(
+    redactedText,
+    [
+      "TokenValue1234567890",
+      "TokenValue",
+      "MyP@ssw0rd123",
+      "P@ssw0rd123",
+      "SecretValue1234567890",
+      "SecretValue"
+    ],
+    "same labelled secret values"
+  );
+  assertIncludesAll(redactedText, safeLines, "same labelled safe lines");
+}
+
+function testTrustedHeaderPlaceholdersAndRawSuffixes() {
+  const trustedManager = new PlaceholderManager();
+  trustedManager.trackKnownPlaceholder("[PWM_1]");
+  trustedManager.trackKnownPlaceholder("[PWM_2]");
+  const trustedText = [
+    "X-API-Key: [PWM_1]",
+    "Authorization: Bearer [PWM_2]"
+  ].join("\n");
+  const trusted = redactTextWithManager(trustedText, trustedManager).result.redactedText;
+
+  assert.strictEqual(trusted, trustedText, "trusted header placeholders should remain unchanged");
+
+  const tailText = "X-API-Key: [PWM_1]Header1234567890";
+  const untrustedTail = redactTextWithManager(tailText).result.redactedText;
+  assert.strictEqual(untrustedTail.includes("Header1234567890"), false);
+  assert.strictEqual(untrustedTail.includes("[PWM_1]Header"), false);
+
+  const manager = new PlaceholderManager();
+  manager.trackKnownPlaceholder("[PWM_1]");
+  const trustedTail = redactTextWithManager(tailText, manager).result.redactedText;
+  assert.ok(trustedTail.includes("X-API-Key: [PWM_1]"), "trusted prefix placeholder should stay");
+  assert.strictEqual(trustedTail.includes("Header1234567890"), false);
+}
+
+function assertUrlCredentialsRedactWithLastAt({ input, expectedRegex, forbidden }) {
+  const redactedText = redactSingleText(input);
+
+  assert.ok(expectedRegex.test(redactedText), `unexpected URL redaction: ${redactedText}`);
+  assertExcludesAll(redactedText, forbidden, input);
+}
+
+function testUrlCredentialPasswordsCanContainRawAtSigns() {
+  assertUrlCredentialsRedactWithLastAt({
+    input: "postgres://admin:p@ssw0rd123@db.internal:5432/app",
+    expectedRegex: /^postgres:\/\/\[PWM_\d+\]:\[PWM_\d+\]@db\.internal:5432\/app$/,
+    forbidden: ["admin", "p@ssw0rd123", "@ssw0rd123"]
+  });
+
+  assertUrlCredentialsRedactWithLastAt({
+    input: "mysql://reporter:Report@Pass123@mysql.internal:3306/analytics",
+    expectedRegex: /^mysql:\/\/\[PWM_\d+\]:\[PWM_\d+\]@mysql\.internal:3306\/analytics$/,
+    forbidden: ["reporter", "Report@Pass123", "@Pass123"]
+  });
+
+  assertUrlCredentialsRedactWithLastAt({
+    input: "https://user:P@ssw0rd!@example.com/path",
+    expectedRegex: /^https:\/\/\[PWM_\d+\]:\[PWM_\d+\]@example\.com\/path$/,
+    forbidden: ["user", "P@ssw0rd!", "@ssw0rd!"]
+  });
+
+  assertUrlCredentialsRedactWithLastAt({
+    input: "ftp://admin:S3cret@123@files.example.com",
+    expectedRegex: /^ftp:\/\/\[PWM_\d+\]:\[PWM_\d+\]@files\.example\.com$/,
+    forbidden: ["admin", "S3cret@123", "@123"]
+  });
+}
+
+function testUrlCredentialParserLeavesSafeUrlShapesAlone() {
+  assert.strictEqual(redactSingleText("https://example.com/path"), "https://example.com/path");
+  assert.strictEqual(
+    redactSingleText("https://user@example.com/path"),
+    "https://user@example.com/path"
+  );
+  assert.strictEqual(
+    redactSingleText("postgres://[PWM_1]:[PWM_2]@db.internal:5432/app"),
+    "postgres://[PWM_1]:[PWM_2]@db.internal:5432/app"
+  );
+}
+
+function testBrokenPlaceholderUrlTailDoesNotLeakFurther() {
+  const redactedText = redactSingleText(
+    "postgres://[PWM_1]:[PWM_2]@ssw0rd123@db.internal:5432/app"
+  );
+
+  assert.strictEqual(redactedText.includes("@ssw0rd123"), false);
+  assert.strictEqual(redactedText.includes("ssw0rd123"), false);
+  assert.ok(
+    /^postgres:\/\/\[PWM_1\]:\[PWM_2\](?:@\[PWM_\d+\]|\[PWM_\d+\])@db\.internal:5432\/app$/.test(
+      redactedText
+    ),
+    `broken placeholder URL should redact only the raw tail: ${redactedText}`
+  );
+}
+
 testBreakPackRedactionAndSafeLines();
 testFullCapabilityBreakPackV2();
+testSensitiveHttpHeaderRedaction();
+testMultiSecretHttpHeaderPromptRedaction();
+testRepeatedHttpHeaderSecretReusesPlaceholder();
+testRepeatedHeaderSecretReusesPlaceholderInLabelledText();
+testSameLabelledSecretValuesRedactFully();
+testTrustedHeaderPlaceholdersAndRawSuffixes();
+testUrlCredentialPasswordsCanContainRawAtSigns();
+testUrlCredentialParserLeavesSafeUrlShapesAlone();
+testBrokenPlaceholderUrlTailDoesNotLeakFurther();
 console.log("PASS LeakGuard break-test redaction pack");

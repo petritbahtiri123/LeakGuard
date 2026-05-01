@@ -18,6 +18,7 @@ require(path.join(repoRoot, "src/content/composer_helpers.js"));
 
 const {
   Detector,
+  PlaceholderManager,
   normalizeVisiblePlaceholders,
   buildNetworkUiFindings,
   ComposerHelpers
@@ -37,8 +38,8 @@ function extractFunctionSource(source, name) {
   return match[0];
 }
 
-function analyze(text) {
-  return new Detector().scan(text).filter((finding) => finding.severity !== "low");
+function analyze(text, options = {}) {
+  return new Detector().scan(text, options).filter((finding) => finding.severity !== "low");
 }
 
 function testBeforeInputGuardStaysConservative() {
@@ -122,6 +123,19 @@ function testTypedNaturalLanguageSecretDisclosureIsHighConfidence() {
   assert.strictEqual(relevant[0].severity, "high");
 }
 
+function testTypedNumericNaturalLanguageSecretDisclosureIsHighConfidence() {
+  const currentText = "";
+  const selection = { start: 0, end: 0 };
+  const next = spliceSelectionText(currentText, selection, "this is my secret 9876543210");
+  const findings = analyze(next.text);
+  const relevant = selectFindingsOverlappingInsertion(findings, selection, "this is my secret 9876543210");
+
+  assert.ok(relevant.length > 0, "typed numeric natural-language secret should produce findings");
+  assert.strictEqual(relevant[0].raw, "9876543210");
+  assert.strictEqual(relevant[0].type, "SECRET");
+  assert.strictEqual(relevant[0].severity, "high");
+}
+
 function testTypedUsernameAssignmentStaysMediumConfidence() {
   const currentText = "username=";
   const selection = { start: currentText.length, end: currentText.length };
@@ -158,6 +172,33 @@ function testPlaceholderNormalizationCanHappenBeforeCommit() {
   );
 }
 
+function testTypedUnknownPlaceholderLikeSecretIsCaughtBeforeCommit() {
+  const currentText = "password=";
+  const selection = { start: currentText.length, end: currentText.length };
+  const next = spliceSelectionText(currentText, selection, "[PWM_99999]");
+  const findings = analyze(next.text);
+  const relevant = selectFindingsOverlappingInsertion(findings, selection, "[PWM_99999]");
+
+  assert.ok(relevant.length > 0, "typed unknown placeholder-like password should produce findings");
+  assert.strictEqual(relevant[0].raw, "[PWM_99999]");
+  assert.strictEqual(relevant[0].type, "PASSWORD");
+}
+
+function testTypedTrustedPlaceholderTailTargetsOnlyTailBeforeCommit() {
+  const manager = new PlaceholderManager();
+  manager.trackKnownPlaceholder("[PWM_5]");
+  const currentText = "password=";
+  const inserted = "[PWM_5]4512341234";
+  const selection = { start: currentText.length, end: currentText.length };
+  const next = spliceSelectionText(currentText, selection, inserted);
+  const findings = analyze(next.text, { manager });
+  const relevant = selectFindingsOverlappingInsertion(findings, selection, inserted);
+
+  assert.ok(relevant.length > 0, "trusted-placeholder tail should produce a finding");
+  assert.strictEqual(relevant[0].raw, "4512341234");
+  assert.ok(relevant[0].method.includes("placeholder-suffix"));
+}
+
 function testCaretDerivationPrefersOriginalSuffixAnchor() {
   const expectedText = "prefix [PWM_1] suffix";
   const caretOffset = deriveRewriteCaretOffset(expectedText, " suffix");
@@ -170,6 +211,8 @@ function testCaretDerivationPrefersOriginalSuffixAnchor() {
 }
 
 function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
+  const applyComposerTextSource = extractFunctionSource(contentSource, "applyComposerText");
+  const typedRewriteSource = extractFunctionSource(contentSource, "applyTypedInterceptionRewrite");
   const beforeInputSource = extractFunctionSource(contentSource, "maybeHandleBeforeInput");
   const pasteSource = extractFunctionSource(contentSource, "maybeHandlePaste");
   const submitSource = extractFunctionSource(contentSource, "maybeHandleSubmit");
@@ -242,6 +285,17 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
     "composer rewrite verification should allow safe normalized-equivalent editor states"
   );
   assert.ok(
+    applyComposerTextSource.includes("const actualAfterPrimary = await readStableComposerText(input);") &&
+      applyComposerTextSource.includes("forceRewriteInputText(input, writeText") &&
+      applyComposerTextSource.includes("matchesComposerPlan(plan, actual)"),
+    "contenteditable rewrites should verify stable final text against the expected redacted text"
+  );
+  assert.ok(
+    typedRewriteSource.includes("ensureExactComposerState(input, expectedText)") &&
+      typedRewriteSource.includes("collectFailureDetails(input, expectedText"),
+    "typed rewrite flow should confirm final composer text equals the expected redacted text"
+  );
+  assert.ok(
     fs
       .readFileSync(path.join(repoRoot, "src/content/composer_helpers.js"), "utf8")
       .includes('normalized.includes("\\n") ? "insertHTML" : "insertText"'),
@@ -265,9 +319,12 @@ function run() {
   testTypedStandalonePasswordHeuristicIsHighConfidence();
   testTypedSecretKeywordPasswordHeuristicIsHighConfidence();
   testTypedNaturalLanguageSecretDisclosureIsHighConfidence();
+  testTypedNumericNaturalLanguageSecretDisclosureIsHighConfidence();
   testTypedUsernameAssignmentStaysMediumConfidence();
   testTypedPublicIpUsesSameDecisionFlow();
   testPlaceholderNormalizationCanHappenBeforeCommit();
+  testTypedUnknownPlaceholderLikeSecretIsCaughtBeforeCommit();
+  testTypedTrustedPlaceholderTailTargetsOnlyTailBeforeCommit();
   testCaretDerivationPrefersOriginalSuffixAnchor();
   testContentScriptBindsBeforeInputAndKeepsFallbackGuard();
   console.log("PASS typed beforeinput interception regressions");

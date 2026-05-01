@@ -4,6 +4,8 @@ import { spawnSync } from "child_process";
 
 const testFiles = [
   "tests/detector.test.js",
+  "tests/placeholder_trust.test.js",
+  "tests/natural_language_context.test.js",
   "tests/break_pack.test.js",
   "tests/ai_candidate_gate.test.js",
   "tests/transform_with_ai.test.js",

@@ -1,7 +1,7 @@
 (function () {
   const root = typeof globalThis !== "undefined" ? globalThis : window;
   root.PWM = root.PWM || {};
-  const { normalizeVisiblePlaceholders, PLACEHOLDER_TOKEN_REGEX } = root.PWM;
+  const { normalizeVisiblePlaceholders, PLACEHOLDER_TOKEN_REGEX, isTrustedVisiblePlaceholder } = root.PWM;
 
   function overlapsAnyRange(candidate, ranges) {
     return ranges.some((range) => candidate.start < range.end && candidate.end > range.start);
@@ -86,10 +86,19 @@
 
     redact(text, findings) {
       const input = String(text || "");
-      if (this.manager && typeof this.manager.trackKnownPlaceholdersFromText === "function") {
-        this.manager.trackKnownPlaceholdersFromText(input);
+      if (this.manager && typeof this.manager.reserveVisiblePlaceholdersFromText === "function") {
+        this.manager.reserveVisiblePlaceholdersFromText(input);
       }
-      const ordered = [...(findings || [])].sort((a, b) => a.start - b.start);
+      const ordered = [...(findings || [])]
+        .filter(
+          (finding) =>
+            !(
+              isTrustedVisiblePlaceholder &&
+              this.manager &&
+              isTrustedVisiblePlaceholder(finding?.raw, this.manager)
+            )
+        )
+        .sort((a, b) => a.start - b.start);
       const replacements = [];
       let output = input;
       const placeholderById = new Map();
@@ -103,9 +112,25 @@
         placeholderById.set(finding.id, placeholder);
       }
 
-      const occupiedRanges = ordered.map((finding) => ({ start: finding.start, end: finding.end }));
-      const reused = collectKnownSecretReplacements(input, this.manager, occupiedRanges);
-      const combined = [...ordered, ...reused];
+      const reused = collectKnownSecretReplacements(input, this.manager, []).filter(
+        (replacement) => {
+          const replacementLength = replacement.end - replacement.start;
+          return !ordered.some((finding) => {
+            if (finding.start >= replacement.end || finding.end <= replacement.start) return false;
+            const findingLength = finding.end - finding.start;
+            return findingLength >= replacementLength;
+          });
+        }
+      );
+      const orderedWithoutReused = ordered.filter((finding) => {
+        const findingLength = finding.end - finding.start;
+        return !reused.some((replacement) => {
+          if (finding.start >= replacement.end || finding.end <= replacement.start) return false;
+          const replacementLength = replacement.end - replacement.start;
+          return replacementLength > findingLength;
+        });
+      });
+      const combined = [...orderedWithoutReused, ...reused];
       const sorted = [...combined].sort((a, b) => b.start - a.start);
 
       for (const finding of sorted) {

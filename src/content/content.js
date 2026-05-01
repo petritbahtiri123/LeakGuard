@@ -60,6 +60,7 @@
   let currentPublicState = {
     transformMode: "hide_public",
     placeholderCount: 0,
+    trustedPlaceholders: [],
     policy: {
       enterpriseMode: false,
       allowReveal: true,
@@ -755,7 +756,11 @@
     }
 
     const detector = new Detector();
-    const secretFindings = detector.scan(normalizedText).filter((finding) => finding.severity !== "low");
+    const secretFindings = detector
+      .scan(normalizedText, {
+        trustedPlaceholders: currentPublicState.trustedPlaceholders
+      })
+      .filter((finding) => finding.severity !== "low");
     const networkFindings = buildNetworkUiFindings(normalizedText, {
       mode: currentPublicState.transformMode
     });
@@ -788,8 +793,13 @@
     const detector = new Detector();
     const scan =
       policy.aiAssistEnabled && typeof detector.scanWithAiAssist === "function"
-        ? await detector.scanWithAiAssist(normalizedText, { policy })
-        : detector.scan(normalizedText);
+        ? await detector.scanWithAiAssist(normalizedText, {
+            policy,
+            trustedPlaceholders: currentPublicState.trustedPlaceholders
+          })
+        : detector.scan(normalizedText, {
+            trustedPlaceholders: currentPublicState.trustedPlaceholders
+          });
     const secretFindings = scan.filter((finding) => finding.severity !== "low");
     const networkFindings = buildNetworkUiFindings(normalizedText, {
       mode: currentPublicState.transformMode

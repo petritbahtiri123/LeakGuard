@@ -40,7 +40,7 @@
     const deterministicFindings = Array.isArray(options.findings)
       ? [...options.findings]
       : detector?.scan
-        ? detector.scan(input)
+        ? detector.scan(input, options)
         : [];
     const ranges = deterministicFindings.map((finding) => ({
       start: finding.start,

@@ -34,13 +34,20 @@
     "environment",
     "image_tag",
     "jira_key",
+    "max_token_limit",
     "password_hint",
+    "public_url",
     "region",
+    "release_id",
     "secret_santa",
     "ticket_id",
     "token_limit",
+    "trace_id",
     "version"
   ]);
+
+  const FALSE_CONTEXT_REGEX =
+    /\b(?:regex|regular expression|password policy|password strength|validator|validation|generator|documentation|example|sample|dummy|fake|template|mock|redacted|masked|sanitized|replace[_ -]?me|changeme)\b/i;
 
   function normalizeKey(key) {
     return String(key || "").trim().toLowerCase().replace(/[\s.-]+/g, "_");
@@ -146,6 +153,7 @@
     if (hasKeyword(`${key} ${contextText}`, SECRET_CONTEXT_WORDS)) score += 18;
     if (hasKeyword(`${key} ${contextText}`, [...SAFE_KEYS])) score -= 24;
     if (candidate?.kind === "urlCredential") score += 16;
+    if (candidate?.kind === "naturalLanguage") score += 14;
     if (candidate?.kind === "bare" && !looksStructuredLikeSecret?.(value)) score -= 14;
 
     return Math.max(0, Math.min(100, Math.round(score)));
@@ -173,6 +181,7 @@
     if (!value || value.length < 3) return;
     if (isSafeValue(value)) return;
     if (SAFE_KEYS.has(key)) return;
+    if (candidate.kind !== "urlCredential" && FALSE_CONTEXT_REGEX.test(next.contextText || "")) return;
     if (overlapsAnyRange(next, ranges)) return;
 
     next.score = scoreAiCandidate(next, { policyMode: options.policyMode });
@@ -232,6 +241,20 @@
         start: valueStart,
         end: valueStart + match[1].length,
         kind: "urlCredential"
+      }, options);
+    }
+
+    const disclosure =
+      /\b((?:(?:this\s+is\s+my|here\s+is\s+my|here'?s\s+my|my|the|our|actual|real|prod(?:uction)?|live)\s+)?(?:(?:db|database)\s+)?(?:password|passwd|pwd|passcode|passphrase|secret|api\s*key|apikey|token|access\s+token|refresh\s+token|bearer\s+token|client\s+secret|private\s+key|webhook\s+secret)|real\s+value|actual\s+value)\s*(?:is|=|:|->|→|equals|set\s+to|should\s+be|becomes)?\s*("[^"\r\n]{8,}"|'[^'\r\n]{8,}'|`[^`\r\n]{8,}`|[^\s,;]{8,})/gi;
+    while ((match = disclosure.exec(input)) !== null) {
+      const rawValue = match[2];
+      const valueStart = match.index + match[0].lastIndexOf(rawValue);
+      pushCandidate(output, input, ranges, {
+        value: rawValue,
+        start: valueStart,
+        end: valueStart + rawValue.length,
+        key: match[1],
+        kind: "naturalLanguage"
       }, options);
     }
 
