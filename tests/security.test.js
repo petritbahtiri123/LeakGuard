@@ -82,13 +82,30 @@ function testSafeRevealUiExists() {
   );
 }
 
+function testBackgroundDeterministicRescanBackstopExists() {
+  const serviceWorkerSource = fs.readFileSync(
+    path.join(repoRoot, "src/background/service_worker.js"),
+    "utf8"
+  );
+
+  assert.ok(
+    serviceWorkerSource.indexOf("../shared/detector.js") > serviceWorkerSource.indexOf("../shared/patterns.js"),
+    "background service worker should load deterministic detector dependencies"
+  );
+  assert.ok(
+    backgroundSource.includes(".scan(text, { manager })") &&
+      backgroundSource.includes("mergeFindings(normalizedFindings, backgroundFindings)"),
+    "background redaction should rescan text and merge deterministic findings"
+  );
+}
+
 function testContentPublicStateIsMinimized() {
   const toPublicStateSource = extractFunctionSource(backgroundSource, "toPublicState");
 
   assertNotIncludes(
     toPublicStateSource,
     "knownPlaceholders: publicState.knownPlaceholders",
-    "background should not expose the placeholder list to the content script"
+    "background should not expose the private-state field name to the content script"
   );
   assertNotIncludes(
     toPublicStateSource,
@@ -104,6 +121,10 @@ function testContentPublicStateIsMinimized() {
     toPublicStateSource.includes("placeholderCount: publicState.knownPlaceholders.length"),
     "background should expose only the safe placeholder count for content-side UI/debug needs"
   );
+  assert.ok(
+    toPublicStateSource.includes("trustedPlaceholders: publicState.knownPlaceholders"),
+    "background should expose sanitized trusted placeholders for trust-aware detection"
+  );
   assertNotIncludes(
     contentSource,
     "currentPublicState.sessionId",
@@ -118,6 +139,10 @@ function testContentPublicStateIsMinimized() {
     contentSource,
     "currentPublicState.knownPlaceholders",
     "content script should not depend on placeholder registries from background public state"
+  );
+  assert.ok(
+    contentSource.includes("currentPublicState.trustedPlaceholders"),
+    "content script should use the sanitized trusted placeholder list for detection"
   );
 }
 
@@ -215,6 +240,7 @@ async function run() {
 
   testUnsafeContentRevealPathRemoved();
   testSafeRevealUiExists();
+  testBackgroundDeterministicRescanBackstopExists();
   testContentPublicStateIsMinimized();
   testRevealNeverInjectsHostDomContainers();
   testHostPageHydrationRequiresPlausibleSessionPlaceholders();

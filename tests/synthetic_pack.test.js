@@ -255,7 +255,13 @@ function testPlaceholdersSafeValuesAndNetworkTransform() {
     "public_subnet=52.95.110.0/24"
   ].join("\n");
 
-  const { findings, result } = redact(text);
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  for (let index = 1; index <= 3; index += 1) {
+    manager.trackKnownPlaceholder(`[PWM_${index}]`);
+  }
+  const findings = detector.scan(text, { manager });
+  const result = new Redactor(manager).redact(text, findings);
   const transformed = transform(text, findings);
 
   assert.strictEqual(findings.length, 0, "already-redacted placeholders and safe literals should not create detector findings");

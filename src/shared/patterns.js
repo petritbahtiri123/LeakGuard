@@ -95,7 +95,7 @@
       category: "credential",
       baseScore: 91,
       regex:
-        /\b(?:sk-(?:proj|live|test|org|svcacct)-[A-Za-z0-9_-]{16,}|sk-[A-Za-z0-9]{32,})\b/g
+        /\b(?:sk-(?:proj|live|test|org|svcacct|admin)-[A-Za-z0-9_-]{16,}|sk-[A-Za-z0-9]{32,})\b/g
     },
     {
       name: "anthropic_api_key",
@@ -323,7 +323,7 @@
       suppressionNotes:
         "Catch labelled vendor keys such as 'Key -> sk-...' while keeping the value requirement strict to OpenAI-style key shapes.",
       regex:
-        /\bkey\s*(?:is|=|:|->|→)\s*(?:"(sk-(?:proj|live|test|org|svcacct)-[A-Za-z0-9_-]{16,}|sk-[A-Za-z0-9]{32,})"|“(sk-(?:proj|live|test|org|svcacct)-[A-Za-z0-9_-]{16,}|sk-[A-Za-z0-9]{32,})”|'(sk-(?:proj|live|test|org|svcacct)-[A-Za-z0-9_-]{16,}|sk-[A-Za-z0-9]{32,})'|`(sk-(?:proj|live|test|org|svcacct)-[A-Za-z0-9_-]{16,}|sk-[A-Za-z0-9]{32,})`|(sk-(?:proj|live|test|org|svcacct)-[A-Za-z0-9_-]{16,}|sk-[A-Za-z0-9]{32,}))/gi,
+        /\bkey\s*(?:is|=|:|->|→)\s*(?:"(sk-(?:proj|live|test|org|svcacct|admin)-[A-Za-z0-9_-]{16,}|sk-[A-Za-z0-9]{32,})"|“(sk-(?:proj|live|test|org|svcacct|admin)-[A-Za-z0-9_-]{16,}|sk-[A-Za-z0-9]{32,})”|'(sk-(?:proj|live|test|org|svcacct|admin)-[A-Za-z0-9_-]{16,}|sk-[A-Za-z0-9]{32,})'|`(sk-(?:proj|live|test|org|svcacct|admin)-[A-Za-z0-9_-]{16,}|sk-[A-Za-z0-9]{32,})`|(sk-(?:proj|live|test|org|svcacct|admin)-[A-Za-z0-9_-]{16,}|sk-[A-Za-z0-9]{32,}))/gi,
       captureGroups: [1, 2, 3, 4, 5]
     },
     {
@@ -549,6 +549,13 @@
     "masked",
     "sanitized",
     "template",
+    "regex",
+    "regular expression",
+    "password policy",
+    "password strength",
+    "validator",
+    "generator",
+    "documentation",
     "test fixture",
     "replace me",
     "replace_me",

@@ -30,11 +30,13 @@ If you want to support development and upcoming features like:
 👉 You can support here:
 https://ko-fi.com/petritbahtiri
 
-## V1 Snapshot
+## v1.3.0 Snapshot
 
 - Built-in protection for `chatgpt.com`, `chat.openai.com`, `claude.ai`, `gemini.google.com`, `grok.com`, and `x.com`
 - User-managed protection for additional exact `http://` or `https://` origins
 - Local-only detection and redaction in the browser
+- Trust-aware placeholder preservation and reuse for session-known `[PWM_N]`, `[NET_N]`, and `[PUB_HOST_N]` tokens
+- Full-value redaction for sensitive HTTP headers such as `Authorization`, `X-API-Key`, auth token headers, `Cookie`, and `Set-Cookie`
 - Local File Scanner for text-based files with redacted-copy and sanitized-report exports
 - Popup-based site management for add, enable, disable, and remove flows
 - In-page top-center status menu on protected pages
@@ -73,6 +75,8 @@ LeakGuard currently focuses on high-value prompt leak cases such as:
 - Passwords, client secrets, cookie/session-style values, and generic secret assignments
 - Webhook URLs, Docker auth blobs, cloud connection strings, and auth headers
 - Database URLs and connection strings while preserving URI shape and masking only the secret segment
+- Sensitive HTTP headers while preserving header names, separators, auth schemes, and cookie attributes where possible
+- Repeated raw secrets across headers, assignments, and labelled prose with stable placeholder reuse
 - Public IPv4 hosts and public IPv4 CIDR ranges
 
 The detector is heuristic by design. It is tuned to catch realistic mistakes while suppressing obvious docs placeholders and safe literals where possible.

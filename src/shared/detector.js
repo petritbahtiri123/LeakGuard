@@ -18,6 +18,12 @@
     countClassVariety
   } = root.PWM;
 
+  const VISIBLE_PLACEHOLDER_TOKEN_SOURCE =
+    "\\[(?:PWM_\\d+|NET_\\d+(?:_SUB_\\d+)*(?:_(?:HOST_\\d+|GW|VIP|DNS))?|PUB_HOST_\\d+(?:_(?:GW|VIP|DNS))?|[A-Z][A-Z0-9_]*_\\d+)\\]";
+  const VISIBLE_PLACEHOLDER_EXACT_REGEX = new RegExp(`^${VISIBLE_PLACEHOLDER_TOKEN_SOURCE}$`);
+  const VISIBLE_PLACEHOLDER_REGEX = new RegExp(VISIBLE_PLACEHOLDER_TOKEN_SOURCE, "g");
+  const ATTACHED_PLACEHOLDER_TOKEN_CHARS = /[A-Za-z0-9._-]/;
+
   function cloneRegex(re) {
     return new RegExp(re.source, re.flags);
   }
@@ -45,6 +51,25 @@
 
   function normalizeCandidate(value) {
     return stripWrappingQuotes(String(value || "")).trim();
+  }
+
+  function canonicalizeVisiblePlaceholder(token) {
+    if (typeof root.PWM.canonicalizePlaceholderToken === "function") {
+      return root.PWM.canonicalizePlaceholderToken(token);
+    }
+
+    return String(token || "");
+  }
+
+  function normalizeTrustedPlaceholderSet(source) {
+    if (!source) return new Set();
+    if (source instanceof Set) {
+      return new Set([...source].map(canonicalizeVisiblePlaceholder));
+    }
+    if (Array.isArray(source)) {
+      return new Set(source.map(canonicalizeVisiblePlaceholder));
+    }
+    return new Set();
   }
 
   function inferPlaceholderTypeFromKey(key) {
@@ -125,6 +150,34 @@
     return Math.max(-36, Math.min(24, score));
   }
 
+  function getLineWindow(text, start, end) {
+    const input = String(text || "");
+    const lineStart = input.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
+    const nextLineBreak = input.indexOf("\n", Math.max(0, end));
+    const lineEnd = nextLineBreak >= 0 ? nextLineBreak : input.length;
+
+    return input.slice(lineStart, lineEnd);
+  }
+
+  function hasFalseDisclosureContext(text, start, end, { source, key, patternName } = {}) {
+    const line = getLineWindow(text, start, end).toLowerCase();
+    const normalizedKey = normalizeAssignmentKey(key);
+
+    if (SAFE_ASSIGNMENT_KEYS.has(normalizedKey)) return true;
+    if (source === "assignment" && isSensitiveAssignmentKey(key)) return false;
+    if (
+      /(?:openai_api_key|github_token|github_pat|aws_|stripe_|google_|sendgrid_|pypi_|npm_|jwt|bearer|basic_auth)/i.test(
+        String(patternName || "")
+      )
+    ) {
+      return false;
+    }
+
+    return /\b(?:regex|regular expression|password policy|password strength|policy|validator|validation|generator|generate|docs?|documentation|tutorial|example|sample|dummy|fake|template|mock|redacted|masked|sanitized|replace[_ -]?me|changeme|token limit|api version|build id|region|environment)\b/i.test(
+      line
+    );
+  }
+
   function likelyTemplateValue(value) {
     return SUPPRESSED_VALUE_REGEX.some((regex) => regex.test(value));
   }
@@ -170,8 +223,170 @@
     }
   }
 
+  const URL_USERINFO_SCHEMES = new Set([
+    "postgres",
+    "postgresql",
+    "mysql",
+    "mariadb",
+    "mongodb",
+    "mongodb+srv",
+    "redis",
+    "amqp",
+    "mssql",
+    "https",
+    "http",
+    "ftp",
+    "sftp",
+    "smtp"
+  ]);
+
+  function safeDecodeURIComponent(value) {
+    try {
+      return decodeURIComponent(String(value || ""));
+    } catch {
+      return String(value || "");
+    }
+  }
+
+  function isSupportedUrlUserinfoScheme(scheme) {
+    return URL_USERINFO_SCHEMES.has(String(scheme || "").toLowerCase());
+  }
+
+  function getUrlTokenEnd(text, start) {
+    const input = String(text || "");
+    let end = Math.max(0, start);
+
+    while (end < input.length && !/[\s'"`<>]/.test(input[end])) {
+      end += 1;
+    }
+
+    return end;
+  }
+
+  function getAuthorityEnd(token, authorityStart) {
+    const input = String(token || "");
+    let end = input.length;
+
+    for (const delimiter of ["/", "?", "#"]) {
+      const index = input.indexOf(delimiter, authorityStart);
+      if (index >= 0 && index < end) {
+        end = index;
+      }
+    }
+
+    return end;
+  }
+
+  function getHostFromHostport(hostport) {
+    const value = String(hostport || "");
+    if (value.startsWith("[")) {
+      const closing = value.indexOf("]");
+      if (closing < 0) return "";
+      const suffix = value.slice(closing + 1);
+      if (suffix && !/^:\d{1,5}$/.test(suffix)) return "";
+      return value.slice(0, closing + 1);
+    }
+
+    const colonCount = (value.match(/:/g) || []).length;
+    if (colonCount === 1) {
+      return value.slice(0, value.lastIndexOf(":"));
+    }
+    if (colonCount > 1) {
+      return "";
+    }
+
+    return value;
+  }
+
+  function isValidUrlCredentialHostport(hostport) {
+    const value = String(hostport || "");
+    if (!value || /\s/.test(value) || /@/.test(value)) return false;
+
+    const host = getHostFromHostport(value).replace(/\.$/, "");
+    if (!host) return false;
+    if (/^\[[0-9A-Fa-f:.]+\]$/.test(host)) return true;
+    if (/^(?:\d{1,3}\.){3}\d{1,3}$/.test(host)) return true;
+    if (/^localhost$/i.test(host)) return true;
+
+    return /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/.test(
+      host
+    );
+  }
+
+  function parseUrlUserinfoToken(token, tokenStart = 0) {
+    const raw = String(token || "");
+    const schemeMatch = /^([A-Za-z][A-Za-z0-9+.-]*):\/\//.exec(raw);
+    if (!schemeMatch) return null;
+
+    const scheme = schemeMatch[1].toLowerCase();
+    if (!isSupportedUrlUserinfoScheme(scheme)) return null;
+
+    const authorityStart = schemeMatch[0].length;
+    const authorityEnd = getAuthorityEnd(raw, authorityStart);
+    const authority = raw.slice(authorityStart, authorityEnd);
+    if (!authority || /\s/.test(authority)) return null;
+
+    const separatorAt = authority.lastIndexOf("@");
+    if (separatorAt <= 0) return null;
+
+    const userinfo = authority.slice(0, separatorAt);
+    const hostport = authority.slice(separatorAt + 1);
+    if (!isValidUrlCredentialHostport(hostport)) return null;
+
+    const colon = userinfo.indexOf(":");
+    if (colon < 0 || colon > separatorAt) return null;
+
+    const usernameRaw = userinfo.slice(0, colon);
+    const passwordRaw = userinfo.slice(colon + 1);
+    if (!passwordRaw) return null;
+
+    const userinfoStart = tokenStart + authorityStart;
+    const usernameStart = userinfoStart;
+    const usernameEnd = usernameStart + usernameRaw.length;
+    const passwordStart = usernameEnd + 1;
+    const passwordEnd = userinfoStart + separatorAt;
+
+    return {
+      raw,
+      scheme,
+      hostport,
+      usernameRaw,
+      username: safeDecodeURIComponent(usernameRaw),
+      usernameStart,
+      usernameEnd,
+      passwordRaw,
+      password: safeDecodeURIComponent(passwordRaw),
+      passwordStart,
+      passwordEnd
+    };
+  }
+
+  function collectUrlUserinfoCandidates(text) {
+    const input = String(text || "");
+    const regex = /\b([A-Za-z][A-Za-z0-9+.-]*:\/\/)/g;
+    const candidates = [];
+    let match;
+
+    while ((match = regex.exec(input)) !== null) {
+      const scheme = String(match[1] || "").slice(0, -3).toLowerCase();
+      if (!isSupportedUrlUserinfoScheme(scheme)) continue;
+
+      const tokenEnd = getUrlTokenEnd(input, match.index);
+      const token = input.slice(match.index, tokenEnd);
+      const candidate = parseUrlUserinfoToken(token, match.index);
+
+      if (candidate) {
+        candidates.push(candidate);
+      }
+
+      regex.lastIndex = Math.max(regex.lastIndex, tokenEnd);
+    }
+
+    return candidates;
+  }
+
   function isDbUriWithCredentials(value) {
-    return /:\/\/[^\/\s:@]+:[^@\s]+@/.test(value);
+    return Boolean(parseUrlUserinfoToken(String(value || ""), 0));
   }
 
   function hasBroadExampleSegment(value) {
@@ -228,7 +443,12 @@
       "json_password_field",
       "json_token_field",
       "json_client_secret_field",
-      "labelled_openai_key_value"
+      "labelled_openai_key_value",
+      "labelled_password_value",
+      "real_value_label",
+      "quoted_secret_label",
+      "query_param_api_key",
+      "query_param_token"
     ]).has(String(patternName || ""));
   }
 
@@ -334,6 +554,74 @@
     );
   }
 
+  const SENSITIVE_HTTP_HEADERS = new Set([
+    "authorization",
+    "x-api-key",
+    "api-key",
+    "x-auth-token",
+    "x-access-token",
+    "x-session-token",
+    "ocp-apim-subscription-key",
+    "cookie",
+    "set-cookie"
+  ]);
+
+  function normalizeHttpHeaderName(name) {
+    return String(name || "").trim().toLowerCase();
+  }
+
+  function isSensitiveHttpHeaderName(name) {
+    return SENSITIVE_HTTP_HEADERS.has(normalizeHttpHeaderName(name));
+  }
+
+  function inferHttpHeaderPlaceholderType(name) {
+    const normalized = normalizeHttpHeaderName(name);
+    if (normalized === "authorization" || normalized.endsWith("-token") || normalized.includes("auth")) {
+      return "TOKEN";
+    }
+    if (normalized === "cookie" || normalized === "set-cookie") {
+      return "TOKEN";
+    }
+    return "API_KEY";
+  }
+
+  function isSensitiveCookieName(name) {
+    const compact = String(name || "").toLowerCase().replace(/[._-]+/g, "");
+    return (
+      compact === "sid" ||
+      compact.includes("session") ||
+      compact.includes("auth") ||
+      compact.includes("token") ||
+      compact.includes("jwt")
+    );
+  }
+
+  function isRedactableHttpHeaderValue(value) {
+    const raw = normalizeCandidate(value);
+    if (!raw || raw.length < 8) return false;
+    if (isCleanPlaceholder(raw) || likelyTemplateValue(raw)) return false;
+    if (containsPlaceholder(raw) && isBenignPlaceholderComposite(raw)) return false;
+
+    return (
+      looksCredentialLikeAssignmentValue(raw) ||
+      looksStructuredLikeSecret(raw) ||
+      (/[A-Za-z]/.test(raw) && /\d/.test(raw) && calculateEntropy(raw) >= 2.6)
+    );
+  }
+
+  function isRedactableCookieValue(value) {
+    const raw = normalizeCandidate(value);
+    if (!raw || raw.length < 8) return false;
+    if (isCleanPlaceholder(raw) || likelyTemplateValue(raw)) return false;
+    if (containsPlaceholder(raw) && isBenignPlaceholderComposite(raw)) return false;
+
+    return (
+      looksCredentialLikeAssignmentValue(raw) ||
+      looksStructuredLikeSecret(raw) ||
+      /^[A-Za-z0-9%._~-]{16,}$/.test(raw)
+    );
+  }
+
   function assignmentKeyScoreBoost(key, value) {
     const normalizedKey = String(key || "").toLowerCase();
     const normalizedValue = String(value || "");
@@ -397,36 +685,16 @@
       return null;
     }
 
-    try {
-      const parsed = new URL(raw);
-      const username = parsed.username || "";
-      const password = parsed.password || "";
-
-      if (!username || !password) {
-        return null;
-      }
-
-      const credentialPrefix = `${parsed.protocol}//${username}:`;
-      const start = raw.indexOf(credentialPrefix);
-      if (start < 0) {
-        return null;
-      }
-
-      const passwordStart = start + credentialPrefix.length;
-      const passwordEnd = raw.indexOf("@", passwordStart);
-      if (passwordEnd <= passwordStart) {
-        return null;
-      }
-
-      const rawPassword = raw.slice(passwordStart, passwordEnd);
-      return {
-        raw,
-        password: rawPassword,
-        offset: passwordStart
-      };
-    } catch {
+    const parsed = parseUrlUserinfoToken(raw, 0);
+    if (!parsed?.passwordRaw) {
       return null;
     }
+
+    return {
+      raw,
+      password: parsed.passwordRaw,
+      offset: parsed.passwordStart
+    };
   }
 
   function extractConnectionStringAssignmentValue(value) {
@@ -472,6 +740,17 @@
     } catch {
       return containsTemplateMarker(raw);
     }
+  }
+
+  function looksCredentialLikeUrlPassword(value) {
+    const raw = String(value || "").trim();
+    if (raw.length < 8 || raw.length > 128) return false;
+    if (isCleanPlaceholder(raw) || containsPlaceholder(raw)) return false;
+    if (looksExampleLike(raw) || containsTemplateMarker(raw) || likelyTemplateValue(raw)) return false;
+    if (/^(?:password|secret|token|test|demo|example|sample|dummy|fake)$/i.test(raw)) return false;
+    if (/^(?:v?\d+\.)+\d+(?:[-+][A-Za-z0-9._-]+)?$/.test(raw)) return false;
+
+    return /[A-Za-z]/.test(raw) && (/\d/.test(raw) || /[^A-Za-z0-9]/.test(raw));
   }
 
   function findEmbeddedAssignmentBoundary(value) {
@@ -531,6 +810,20 @@
     return match ? match[1] : "";
   }
 
+  function getLeadingPlaceholderTail(value) {
+    const input = String(value || "").trim();
+    const regex = new RegExp(`^(${VISIBLE_PLACEHOLDER_TOKEN_SOURCE})([^\\s,;:=\\]\\)\\}]+)$`);
+    const match = regex.exec(input);
+
+    if (!match) return null;
+
+    return {
+      placeholder: match[1],
+      tail: match[2],
+      tailOffset: match[1].length
+    };
+  }
+
   function isLikelyPlaceholderSuffixSecret(value) {
     const input = String(value || "").trim();
     if (input.length < 8 || input.length > 128) return false;
@@ -554,6 +847,36 @@
     }
 
     return entropy >= 3.0 && variety >= 2 && (hasDigit || hasSymbol || hasLetter);
+  }
+
+  function isLikelyTrustedPlaceholderTailSecret(value, text, start, end) {
+    const input = String(value || "").trim();
+    if (isLikelyPlaceholderSuffixSecret(input)) return true;
+    if (input.length < 10 || input.length > 128) return false;
+    if (/\s/.test(input)) return false;
+    if (/^[.:/\\]+/.test(input)) return false;
+    if (looksExampleLike(input) || containsTemplateMarker(input) || likelyTemplateValue(input)) {
+      return false;
+    }
+    if (/^(?:v?\d+\.)+\d+(?:[-+][A-Za-z0-9._-]+)?$/.test(input)) return false;
+    if (isBuildLabelLike(input) || isRegionLikeSegment(input)) return false;
+
+    const ctx = contextScore(text, start, end);
+    if (ctx <= 0) return false;
+
+    if (/^\d+$/.test(input)) {
+      return input.length >= 10;
+    }
+
+    const entropy = calculateEntropy(input);
+    const variety = countClassVariety(input);
+    return (
+      input.length >= 10 &&
+      /[A-Za-z]/.test(input) &&
+      /\d/.test(input) &&
+      variety >= 2 &&
+      entropy >= 2.6
+    );
   }
 
   function scorePlaceholderSuffixSecret(value, text, start, end) {
@@ -665,6 +988,84 @@
     const normalized = String(value || "").trim();
     return /(?:^|[_\-\s])(?:secret|password|passwd|passcode|passphrase|pwd)(?=$|[_\-\s]|\d)/i.test(
       normalized
+    );
+  }
+
+  function inferPlaceholderTypeFromDisclosureLabel(label) {
+    const normalized = String(label || "").toLowerCase();
+
+    if (/(?:api\s*key|apikey|openai|\bagain\s+same\s+key\b|\bsame\s+key\b)/.test(normalized)) {
+      return "API_KEY";
+    }
+    if (/(?:password|passwd|passcode|passphrase|pwd)/.test(normalized)) return "PASSWORD";
+    if (/(?:token|bearer|authorization)/.test(normalized)) return "TOKEN";
+    if (/(?:private\s*key)/.test(normalized)) return "PRIVATE_KEY";
+    if (/(?:webhook)/.test(normalized)) return "WEBHOOK";
+    if (/(?:client\s*secret|shared\s*secret|secret)/.test(normalized)) return "SECRET";
+
+    return "SECRET";
+  }
+
+  function looksNaturalLanguageSecretValue(raw, placeholderType, text, start, end) {
+    const value = String(raw || "").trim();
+    if (!value || value.length > 256) return false;
+    if (/^\d+$/.test(value)) {
+      if (placeholderType === "PASSWORD") return value.length >= 6;
+      if (placeholderType === "SECRET") return value.length >= 8;
+      if (placeholderType === "TOKEN") return value.length >= 10;
+      return false;
+    }
+    if (value.length < 8) return false;
+    if (VISIBLE_PLACEHOLDER_EXACT_REGEX.test(value)) return true;
+    if (isCleanPlaceholder(value) || likelyTemplateValue(value)) return false;
+    if (looksExampleLike(value) || containsTemplateMarker(value)) return false;
+    if (/^(?:true|false|null|undefined|none|yes|no|on|off)$/i.test(value)) return false;
+    if (/^(?:v?\d+\.)+\d+(?:[-+][A-Za-z0-9._-]+)?$/.test(value)) return false;
+    if (isRegionLikeSegment(value) || isBuildLabelLike(value)) return false;
+    if (looksLikeFilesystemPath(text, start, end, value)) return false;
+
+    if (placeholderType === "API_KEY" && /^sk[-_]/i.test(value)) return true;
+    if (placeholderType === "TOKEN" && /^(?:eyJ|gh[pousr]_|github_pat_|glpat-|xox|npm_|pypi-)/i.test(value)) {
+      return true;
+    }
+
+    if (looksStructuredLikeSecret(value)) return true;
+    if (isLikelyBarePasswordCandidate(value, text, start, end)) return true;
+
+    const entropy = calculateEntropy(value);
+    const variety = countClassVariety(value);
+    const hasDigit = /\d/.test(value);
+    const hasSymbol = /[^A-Za-z0-9]/.test(value);
+
+    if (placeholderType === "PASSWORD") {
+      return /[A-Za-z]/.test(value) && (hasDigit || hasSymbol) && entropy >= 2.6;
+    }
+
+    const minimumLength = placeholderType === "SECRET" ? 8 : 10;
+    return (
+      value.length >= minimumLength &&
+      /[A-Za-z]/.test(value) &&
+      (hasDigit || hasSymbol) &&
+      variety >= 2 &&
+      entropy >= 2.8
+    );
+  }
+
+  function hasSensitivePlaceholderContext(text, start, end) {
+    const before = getLineWindow(text, start, end)
+      .slice(0, Math.max(0, start - (String(text || "").lastIndexOf("\n", Math.max(0, start - 1)) + 1)))
+      .toLowerCase();
+
+    if (
+      /(?:password|passwd|passcode|passphrase|pwd|secret|api\s*key|apikey|token|access\s+token|refresh\s+token|bearer|authorization|client\s+secret|private\s+key|webhook\s+secret|db\s+password|database\s+password|real\s+value)\s*(?:is|=|:|->|→|equals|set\s+to|should\s+be|becomes)?\s*$/.test(
+        before
+      )
+    ) {
+      return true;
+    }
+
+    return /\b(?:this\s+is\s+my|here\s+is\s+my|here'?s\s+my|my|the|our)\s+(?:db\s+|database\s+)?(?:password|secret|token|api\s*key)\s*$/.test(
+      before
     );
   }
 
@@ -847,6 +1248,7 @@
       this.allowlistExact = new Set();
       this.allowlistRegex = [];
       this._seq = 0;
+      this.scanContext = { manager: null, trustedPlaceholders: new Set() };
 
       const combinedAllowlist = []
         .concat(options.allowlist || [])
@@ -883,17 +1285,68 @@
       return this.allowlistRegex.some((regex) => regex.test(raw) || regex.test(normalized));
     }
 
+    normalizeScanContext(options = {}) {
+      const manager = options.manager || null;
+      const source =
+        options.trustedPlaceholders ||
+        options.knownPlaceholders ||
+        (manager && typeof manager.getKnownPlaceholders === "function" ? manager.getKnownPlaceholders() : []);
+
+      return {
+        manager,
+        trustedPlaceholders: normalizeTrustedPlaceholderSet(source)
+      };
+    }
+
+    isTrustedVisiblePlaceholder(raw) {
+      const token = canonicalizeVisiblePlaceholder(raw);
+      if (!VISIBLE_PLACEHOLDER_EXACT_REGEX.test(token)) return false;
+
+      if (this.scanContext?.manager && typeof this.scanContext.manager.knowsPlaceholder === "function") {
+        return this.scanContext.manager.knowsPlaceholder(token);
+      }
+
+      return this.scanContext?.trustedPlaceholders?.has(token) || false;
+    }
+
+    hasTrustedLeadingPlaceholderTail(raw) {
+      const split = getLeadingPlaceholderTail(raw);
+      if (!split) return null;
+      return this.isTrustedVisiblePlaceholder(split.placeholder) ? split : null;
+    }
+
+    shouldDeferTrustedPlaceholderTail(raw, text, start) {
+      const split = this.hasTrustedLeadingPlaceholderTail(raw);
+      if (!split) return false;
+
+      const tailStart = start + split.tailOffset;
+      return isLikelyTrustedPlaceholderTailSecret(split.tail, text, tailStart, tailStart + split.tail.length);
+    }
+
+    uriCredentialsAreTrustedPlaceholders(raw) {
+      const parsed = parseUrlUserinfoToken(String(raw || ""), 0);
+      if (!parsed) return false;
+
+      return (
+        (!parsed.username || isCleanPlaceholder(parsed.username)) &&
+        (!parsed.password || isCleanPlaceholder(parsed.password))
+      );
+    }
+
     shouldSuppress({ raw, text, start, end, patternName, key, placeholderType, source }) {
       if (!raw) return true;
       if (this.isAllowlisted(raw)) return true;
       if (likelyTemplateValue(raw)) return true;
-      if (isCleanPlaceholder(raw)) return true;
+      if (isCleanPlaceholder(raw)) return this.isTrustedVisiblePlaceholder(raw);
       if (containsPlaceholder(raw) && isBenignPlaceholderComposite(raw)) return true;
       if (containsPlaceholder(raw)) {
-        const placeholderSuffix = getSinglePlaceholderSuffix(raw);
+        const trustedTail = this.hasTrustedLeadingPlaceholderTail(raw);
+        const placeholderSuffix = trustedTail ? trustedTail.tail : getSinglePlaceholderSuffix(raw);
         if (
+          trustedTail &&
           placeholderSuffix &&
-          (/^\d+$/.test(placeholderSuffix) || isLikelyPlaceholderSuffixSecret(placeholderSuffix))
+          (/^\d+$/.test(placeholderSuffix) ||
+            isLikelyTrustedPlaceholderTailSecret(placeholderSuffix, text, start + trustedTail.tailOffset, end))
         ) {
           return true;
         }
@@ -905,6 +1358,18 @@
         source
       });
       if (patternName === "placeholder_composite_value" && isBenignPlaceholderComposite(raw)) {
+        return true;
+      }
+      if (
+        (patternName === "db_uri" || patternName === "generic_uri_credentials") &&
+        this.uriCredentialsAreTrustedPlaceholders(raw)
+      ) {
+        return true;
+      }
+      if (
+        hasFalseDisclosureContext(text, start, end, { source, key, patternName }) &&
+        !failClosedForExample
+      ) {
         return true;
       }
 
@@ -971,6 +1436,17 @@
           const end = start + raw.length;
 
           if (!raw) continue;
+          if (/^(?:natural_language_|labelled_|real_value_label|quoted_secret_label)/.test(pattern.name)) {
+            const line = getLineWindow(text, start, end);
+            const beforeRaw = line.slice(0, Math.max(0, start - (String(text || "").lastIndexOf("\n", Math.max(0, start - 1)) + 1))).toLowerCase();
+            if (
+              /\b(?:regex|regular expression|password policy|password strength|validator|validation|generator|documentation|example|sample|dummy|fake|template|mock|redacted|masked|sanitized|replace[_ -]?me|changeme)\b/i.test(
+                beforeRaw
+              )
+            ) {
+              continue;
+            }
+          }
           if (
             this.shouldSuppress({
               raw,
@@ -1016,6 +1492,167 @@
       return findings;
     }
 
+    scanSensitiveHttpHeaders(text) {
+      const findings = [];
+      const lines = String(text || "").split("\n");
+      let lineOffset = 0;
+
+      const pushHeaderFinding = ({ headerName, raw, start, end, placeholderType, methods }) => {
+        if (!raw || start < 0 || end <= start) return;
+        if (!isRedactableHttpHeaderValue(raw)) return;
+        if (
+          this.shouldSuppress({
+            raw,
+            text,
+            start,
+            end,
+            key: headerName,
+            placeholderType,
+            source: "http-header"
+          })
+        ) {
+          return;
+        }
+
+        findings.push(
+          this.buildFinding({
+            category: "credential",
+            placeholderType,
+            raw,
+            start,
+            end,
+            score: 100,
+            methods
+          })
+        );
+      };
+
+      const pushCookieFindings = ({ headerName, value, valueStart }) => {
+        const placeholderType = "TOKEN";
+        const cookieRegex = /(?:^|;\s*)([^=;\s]+)=([^;\r\n]*)/g;
+        let sawCookiePair = false;
+        let matchedCookieValue = false;
+        let cookieMatch;
+
+        while ((cookieMatch = cookieRegex.exec(value)) !== null) {
+          sawCookiePair = true;
+          const cookieName = cookieMatch[1];
+          const cookieValue = cookieMatch[2];
+          if (!isSensitiveCookieName(cookieName)) continue;
+
+          const raw = String(cookieValue || "").replace(/\s+$/g, "");
+          if (!isRedactableCookieValue(raw)) continue;
+
+          const valueOffset = cookieMatch[0].lastIndexOf(cookieValue);
+          if (valueOffset < 0) continue;
+
+          const start = valueStart + cookieMatch.index + valueOffset;
+          const end = start + raw.length;
+
+          if (
+            this.shouldSuppress({
+              raw,
+              text,
+              start,
+              end,
+              key: headerName,
+              placeholderType,
+              source: "http-header"
+            })
+          ) {
+            continue;
+          }
+
+          matchedCookieValue = true;
+          findings.push(
+            this.buildFinding({
+              category: "credential",
+              placeholderType,
+              raw,
+              start,
+              end,
+              score: 100,
+              methods: ["http-header", "cookie-value", "full-value"]
+            })
+          );
+        }
+
+        if (!matchedCookieValue && !sawCookiePair) {
+          const raw = value.replace(/\s+$/g, "");
+          pushHeaderFinding({
+            headerName,
+            raw,
+            start: valueStart,
+            end: valueStart + raw.length,
+            placeholderType,
+            methods: ["http-header", "full-value"]
+          });
+        }
+      };
+
+      for (const line of lines) {
+        const lineLength = line.endsWith("\r") ? line.length - 1 : line.length;
+        const lineText = line.slice(0, lineLength);
+        const match = /^(\s*)([A-Za-z][A-Za-z0-9-]{0,80})(\s*:\s*)(.*)$/.exec(lineText);
+
+        if (!match) {
+          lineOffset += line.length + 1;
+          continue;
+        }
+
+        const headerName = match[2];
+        if (!isSensitiveHttpHeaderName(headerName)) {
+          lineOffset += line.length + 1;
+          continue;
+        }
+
+        const value = match[4].replace(/\s+$/g, "");
+        if (!value) {
+          lineOffset += line.length + 1;
+          continue;
+        }
+
+        const valueStart = lineOffset + match[1].length + headerName.length + match[3].length;
+        const normalizedHeader = normalizeHttpHeaderName(headerName);
+
+        if (normalizedHeader === "cookie" || normalizedHeader === "set-cookie") {
+          pushCookieFindings({ headerName, value, valueStart });
+          lineOffset += line.length + 1;
+          continue;
+        }
+
+        const authSchemeMatch = /^(Bearer|Basic)(\s+)([^\s,;]+)/i.exec(value);
+        if (normalizedHeader === "authorization" && authSchemeMatch) {
+          const raw = authSchemeMatch[3];
+          const scheme = authSchemeMatch[1];
+          const start = valueStart + scheme.length + authSchemeMatch[2].length;
+          pushHeaderFinding({
+            headerName,
+            raw,
+            start,
+            end: start + raw.length,
+            placeholderType: "TOKEN",
+            methods: ["http-header", `authorization-${scheme.toLowerCase()}`, "full-value"]
+          });
+          lineOffset += line.length + 1;
+          continue;
+        }
+
+        pushHeaderFinding({
+          headerName,
+          raw: value,
+          start: valueStart,
+          end: valueStart + value.length,
+          placeholderType: inferHttpHeaderPlaceholderType(headerName),
+          methods: ["http-header", "full-value"]
+        });
+
+        lineOffset += line.length + 1;
+      }
+
+      return findings;
+    }
+
     scanStructuredAssignments(text) {
       const findings = [];
       const regex =
@@ -1049,8 +1686,9 @@
           const end = start + raw.length;
 
           if (this.isAllowlisted(raw)) continue;
-          if (isCleanPlaceholder(raw)) continue;
+          if (isCleanPlaceholder(raw) && this.isTrustedVisiblePlaceholder(raw)) continue;
           if (containsPlaceholder(raw) && !isCleanPlaceholder(raw) && !isBenignPlaceholderComposite(raw)) {
+            if (this.shouldDeferTrustedPlaceholderTail(raw, text, start)) continue;
             findings.push(
               this.buildFinding({
                 category: "credential",
@@ -1115,8 +1753,9 @@
         const end = start + raw.length;
 
         if (this.isAllowlisted(raw)) continue;
-        if (isCleanPlaceholder(raw)) continue;
+        if (isCleanPlaceholder(raw) && this.isTrustedVisiblePlaceholder(raw)) continue;
         if (containsPlaceholder(raw) && !isCleanPlaceholder(raw) && !isBenignPlaceholderComposite(raw)) {
+          if (this.shouldDeferTrustedPlaceholderTail(raw, text, start)) continue;
           findings.push(
             this.buildFinding({
               category: "connection_string",
@@ -1189,12 +1828,18 @@
         const start = match.index + valueIndex;
         const end = start + token.length;
 
-        if (isCleanPlaceholder(normalized)) continue;
+        if (isCleanPlaceholder(normalized)) {
+          if (this.isTrustedVisiblePlaceholder(normalized)) continue;
+          if (/^[A-Za-z_][A-Za-z0-9_.-]{0,80}\s*[:=]/.test(text.slice(end, end + 96))) {
+            continue;
+          }
+        }
 
         if (containsPlaceholder(normalized) && !isCleanPlaceholder(normalized)) {
           if (isBenignPlaceholderComposite(normalized)) {
             continue;
           }
+          if (this.shouldDeferTrustedPlaceholderTail(normalized, text, start)) continue;
 
           findings.push(
             this.buildFinding({
@@ -1292,6 +1937,9 @@
         if (!looksCredentialLikeAssignmentValue(raw)) continue;
         if (looksLikeUnsupportedVendorHexAssignment(key, raw)) continue;
         if (containsPlaceholder(raw) && isBenignPlaceholderComposite(raw)) continue;
+        if (this.shouldDeferTrustedPlaceholderTail(raw, text, match.index + match[0].indexOf(rawCandidate))) {
+          continue;
+        }
         if (
           /^(?:cookie|session)$/i.test(normalizeAssignmentKey(key)) &&
           raw.length < 16 &&
@@ -1351,35 +1999,74 @@
 
     scanUrlCredentials(text) {
       const findings = [];
-      const regex = /\b([a-z][a-z0-9+.-]*:\/\/)([^\/\s:@'"`<>]+):([^@\s'"`<>]+)@([^\s'"`<>]+)/gi;
-      let match;
+      const candidates = collectUrlUserinfoCandidates(text);
 
-      while ((match = regex.exec(text)) !== null) {
-        const scheme = String(match[1] || "").slice(0, -3).toLowerCase();
-        const username = decodeURIComponent(match[2] || "");
-        const secret = decodeURIComponent(match[3] || "");
-        const usernameStart = match.index + match[1].length;
-        const secretStart = usernameStart + match[2].length + 1;
+      for (const candidate of candidates) {
+        const scheme = candidate.scheme;
+        const username = candidate.username;
+        const secret = candidate.password;
+        const usernameStart = candidate.usernameStart;
+        const secretStart = candidate.passwordStart;
+        const passwordRangeEnd = candidate.passwordEnd;
 
-        if (!username || !secret) continue;
-        if (isCleanPlaceholder(username) && isCleanPlaceholder(secret)) continue;
-        if (hasExampleHost(match[0]) && hasGenericDbCredentials(match[0])) continue;
+        if (!secret) continue;
+        if (
+          hasExampleHost(candidate.raw) &&
+          hasGenericDbCredentials(candidate.raw) &&
+          !looksCredentialLikeUrlPassword(secret)
+        ) {
+          continue;
+        }
 
-        if (!isCleanPlaceholder(username) && !this.isAllowlisted(username)) {
+        if (username && !isCleanPlaceholder(username) && !this.isAllowlisted(username)) {
           findings.push(
             this.buildFinding({
               category: "identity",
               placeholderType: "USERNAME",
               raw: username,
               start: usernameStart,
-              end: usernameStart + match[2].length,
+              end: candidate.usernameEnd,
               score: 96,
               methods: ["url-credentials", "username"]
             })
           );
         }
 
-        if (!isCleanPlaceholder(secret) && !this.isAllowlisted(secret)) {
+        if (isCleanPlaceholder(secret)) {
+          continue;
+        }
+
+        if (containsPlaceholder(secret) && !isCleanPlaceholder(secret)) {
+          const leadingPlaceholder = getLeadingPlaceholderTail(secret);
+          if (leadingPlaceholder?.placeholder && isCleanPlaceholder(leadingPlaceholder.placeholder)) {
+            const rawTail = candidate.passwordRaw.slice(leadingPlaceholder.tailOffset);
+            const decodedTail = safeDecodeURIComponent(rawTail);
+            const tailStart = secretStart + leadingPlaceholder.tailOffset;
+            const tailEnd = tailStart + rawTail.length;
+
+            if (
+              decodedTail &&
+              !decodedTail.startsWith("@") &&
+              isLikelyTrustedPlaceholderTailSecret(decodedTail, text, tailStart, tailEnd) &&
+              !this.isAllowlisted(decodedTail)
+            ) {
+              findings.push(
+                this.buildFinding({
+                  category: "credential",
+                  placeholderType: "PASSWORD",
+                  raw: decodedTail,
+                  start: tailStart,
+                  end: tailEnd,
+                  score: 99,
+                  methods: ["url-credentials", "placeholder-tail"]
+                })
+              );
+            }
+            continue;
+          }
+        }
+
+        if (!this.isAllowlisted(secret)) {
           const isDbScheme = /^(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis|amqp|mssql)$/.test(scheme);
           findings.push(
             this.buildFinding({
@@ -1387,7 +2074,7 @@
               placeholderType: isDbScheme ? "DB_URI" : /token|oauth/i.test(username) ? "TOKEN" : "PASSWORD",
               raw: secret,
               start: secretStart,
-              end: secretStart + match[3].length,
+              end: passwordRangeEnd,
               score: 99,
               methods: ["url-credentials"]
             })
@@ -1598,22 +2285,173 @@
       return findings;
     }
 
-    scanPlaceholderSuffixSecrets(text) {
+    scanUnknownPlaceholderTokens(text) {
       const findings = [];
-      const regex = new RegExp(`${CONTAINS_PLACEHOLDER_REGEX.source}([^\\s,;:=\\]\\)\\}]+)`, "g");
+      let match;
+
+      while ((match = VISIBLE_PLACEHOLDER_REGEX.exec(text)) !== null) {
+        const raw = match[0];
+        const start = match.index;
+        const end = start + raw.length;
+        const previous = start > 0 ? text[start - 1] : "";
+        const next = end < text.length ? text[end] : "";
+
+        if (this.isTrustedVisiblePlaceholder(raw)) continue;
+        if (ATTACHED_PLACEHOLDER_TOKEN_CHARS.test(previous) || ATTACHED_PLACEHOLDER_TOKEN_CHARS.test(next)) {
+          continue;
+        }
+        if (!hasSensitivePlaceholderContext(text, start, end)) continue;
+        if (hasFalseDisclosureContext(text, start, end, { source: "placeholder" })) continue;
+        if (this.isAllowlisted(raw)) continue;
+
+        const context = getContextWindow(text, start, end, 96);
+        const placeholderType = inferPlaceholderTypeFromDisclosureLabel(context);
+
+        findings.push(
+          this.buildFinding({
+            category: "credential",
+            placeholderType,
+            raw,
+            start,
+            end,
+            score: 92 + Math.max(0, contextScore(text, start, end)),
+            methods: ["placeholder-trust", "context"]
+          })
+        );
+      }
+
+      VISIBLE_PLACEHOLDER_REGEX.lastIndex = 0;
+      return findings;
+    }
+
+    scanNaturalLanguageDisclosures(text) {
+      const findings = [];
+      const labelSource =
+        "(?:(?:this\\s+is\\s+my|here\\s+is\\s+my|here'?s\\s+my|my|the|our|actual|real|prod(?:uction)?|live)\\s+)?(?:(?:db|database)\\s+)?(?:password|passwd|pwd|passcode|passphrase|secret|api\\s*key|apikey|token|access\\s+token|refresh\\s+token|bearer\\s+token|client\\s+secret|private\\s+key|webhook\\s+secret)|(?:again\\s+)?same\\s+(?:key|token|password|secret)|real\\s+value|actual\\s+value";
+      const valueSource =
+        "\"([^\"\\r\\n]{6,})\"|'([^'\\r\\n]{6,})'|`([^`\\r\\n]{6,})`|([^\\s,;]{6,})";
+      const regex = new RegExp(
+        `\\b(${labelSource})\\s*(?:is|=|:|->|→|equals|set\\s+to|should\\s+be|becomes)?\\s*(?:${valueSource})`,
+        "gi"
+      );
       let match;
 
       while ((match = regex.exec(text)) !== null) {
-        const raw = normalizeCandidate(match[1]);
-        if (!raw) continue;
+        const label = match[1];
+        const rawCandidate = [match[2], match[3], match[4], match[5]].find(
+          (candidate) => typeof candidate === "string"
+        );
+        if (!rawCandidate) continue;
+        const afterLabel = match[0].slice(String(label || "").length);
+        if (!/^\s/.test(afterLabel) && !/^(?:=|:|->|→)/.test(afterLabel)) {
+          continue;
+        }
+        if (
+          /^[A-Z0-9_]+$/.test(label) &&
+          /^\s*[:=]/.test(afterLabel)
+        ) {
+          continue;
+        }
+        if (/^_/.test(afterLabel)) continue;
+        if (/["']/.test(text[Math.max(0, match.index - 1)] || "") && /^["']?\s*:/.test(afterLabel)) {
+          continue;
+        }
 
-        const start = match.index + match[0].length - match[1].length;
+        const raw = normalizeCandidate(rawCandidate);
+        const rawOffset = match[0].lastIndexOf(rawCandidate);
+        if (!raw || rawOffset < 0) continue;
+
+        const start = match.index + rawOffset;
+        const end = start + rawCandidate.length;
+        const placeholderType = inferPlaceholderTypeFromDisclosureLabel(label);
+
+        if (!looksNaturalLanguageSecretValue(raw, placeholderType, text, start, end)) continue;
+        if (this.isTrustedVisiblePlaceholder(raw)) continue;
+        if (
+          this.shouldSuppress({
+            raw,
+            text,
+            start,
+            end,
+            patternName: "natural_language_disclosure",
+            key: label,
+            placeholderType,
+            source: "natural-language"
+          })
+        ) {
+          continue;
+        }
+
+        const entropy = calculateEntropy(raw);
+        findings.push(
+          this.buildFinding({
+            category: "credential",
+            placeholderType,
+            raw,
+            start,
+            end,
+            score: 84 + (entropy >= 3.4 ? 4 : 0) + Math.max(0, contextScore(text, start, end)),
+            methods: ["natural-language", entropy >= 3.4 ? "entropy" : null].filter(Boolean)
+          })
+        );
+      }
+
+      return findings;
+    }
+
+    scanExtraAtUriCredentialSecrets(text) {
+      const findings = [];
+      const regex = new RegExp(
+        `\\b[a-z][a-z0-9+.-]*:\\/\\/(${VISIBLE_PLACEHOLDER_TOKEN_SOURCE}):(${VISIBLE_PLACEHOLDER_TOKEN_SOURCE})@([^@\\s\\/]+)@[^\\s]+`,
+        "gi"
+      );
+      let match;
+
+      while ((match = regex.exec(text)) !== null) {
+        const raw = normalizeCandidate(`@${match[3]}`);
+
+        if (!looksCredentialLikeUrlPassword(raw)) continue;
+
+        const start = match.index + match[0].indexOf(`@${match[3]}@`);
+        const end = start + raw.length;
+
+        findings.push(
+          this.buildFinding({
+            category: "credential",
+            placeholderType: "PASSWORD",
+            raw,
+            start,
+            end,
+            score: 99,
+            methods: ["url-credentials", "extra-at", "trusted-placeholder-uri"]
+          })
+        );
+      }
+
+      return findings;
+    }
+
+    scanPlaceholderSuffixSecrets(text) {
+      const findings = [];
+      const regex = new RegExp(
+        `(${VISIBLE_PLACEHOLDER_TOKEN_SOURCE})([^\\s,;:=@\\]\\)\\}]+)`,
+        "g"
+      );
+      let match;
+
+      while ((match = regex.exec(text)) !== null) {
+        const placeholder = match[1];
+        const raw = normalizeCandidate(match[2]);
+        if (!raw) continue;
+        if (!this.isTrustedVisiblePlaceholder(placeholder)) continue;
+
+        const start = match.index + match[0].length - match[2].length;
         const end = start + raw.length;
 
         if (/^[A-Za-z_][A-Za-z0-9_.-]{0,80}$/.test(raw) && /[:=]/.test(text[end] || "")) {
           continue;
         }
-        if (!isLikelyPlaceholderSuffixSecret(raw)) continue;
+        if (!isLikelyTrustedPlaceholderTailSecret(raw, text, start, end)) continue;
         if (this.isAllowlisted(raw)) continue;
         if (this.shouldSuppress({ raw, text, start, end, placeholderType: "SECRET", source: "placeholder-suffix" })) {
           continue;
@@ -1652,6 +2490,9 @@
         if (!raw || raw.length < 8) continue;
         if (isSafeAssignmentKey(key)) continue;
         if (containsPlaceholder(raw) && isBenignPlaceholderComposite(raw)) continue;
+        if (this.shouldDeferTrustedPlaceholderTail(raw, text, match.index + match[0].indexOf(rawCandidate))) {
+          continue;
+        }
         if (
           /^(?:cookie|session)$/i.test(normalizeAssignmentKey(key)) &&
           raw.length < 16 &&
@@ -1756,27 +2597,40 @@
       return chosen.sort((a, b) => a.start - b.start);
     }
 
-    scan(text) {
+    scan(text, options = {}) {
       this._seq = 0;
+      const previousContext = this.scanContext;
+      this.scanContext = this.normalizeScanContext(options);
 
       const input = String(text || "");
-      if (!input.trim()) return [];
+      if (!input.trim()) {
+        this.scanContext = previousContext;
+        return [];
+      }
 
-      const findings = [
-        ...this.scanStructuredAssignments(input),
-        ...this.scanUrlCredentials(input),
-        ...this.scanPatterns(input),
-        ...this.scanAssignments(input),
-        ...this.scanExplicitCredentialAssignments(input),
-        ...this.scanAdversarialAssignments(input),
-        ...this.scanIdentityAssignments(input),
-        ...this.scanJsonIdentityFields(input),
-        ...this.scanPlaceholderSuffixSecrets(input),
-        ...this.scanBarePasswordCandidates(input),
-        ...this.scanEntropyFallback(input)
-      ];
+      try {
+        const findings = [
+          ...this.scanSensitiveHttpHeaders(input),
+          ...this.scanStructuredAssignments(input),
+          ...this.scanUrlCredentials(input),
+          ...this.scanPatterns(input),
+          ...this.scanAssignments(input),
+          ...this.scanExplicitCredentialAssignments(input),
+          ...this.scanAdversarialAssignments(input),
+          ...this.scanIdentityAssignments(input),
+          ...this.scanJsonIdentityFields(input),
+          ...this.scanUnknownPlaceholderTokens(input),
+          ...this.scanNaturalLanguageDisclosures(input),
+          ...this.scanExtraAtUriCredentialSecrets(input),
+          ...this.scanPlaceholderSuffixSecrets(input),
+          ...this.scanBarePasswordCandidates(input),
+          ...this.scanEntropyFallback(input)
+        ];
 
-      return this.resolveOverlaps(this.dedupe(findings));
+        return this.resolveOverlaps(this.dedupe(findings));
+      } finally {
+        this.scanContext = previousContext;
+      }
     }
 
     getAiAssistCandidates(findings) {
@@ -1790,7 +2644,7 @@
     }
 
     async scanWithAiAssist(text, options = {}) {
-      const findings = this.scan(text);
+      const findings = this.scan(text, options);
       const classifier = options.classifier || root.PWM.LeakGuardAiClassifier;
       const policy = options.policy || {};
 

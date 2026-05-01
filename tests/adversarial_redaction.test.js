@@ -50,4 +50,21 @@ function redact(text) {
   assert.strictEqual(result.redactedText.includes("Secret999"), false);
 })();
 
+(function testUnknownPlaceholderLikePassword() {
+  const text = "password=[PWM_12345]";
+  const result = redact(text);
+  assert.strictEqual(result.redactedText.includes("[PWM_12345]"), false);
+})();
+
+(function testTrustedPlaceholderTailRedactsOnlyTail() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  manager.trackKnownPlaceholder("[PWM_2]");
+  const text = "password=[PWM_2]4512341234";
+  const findings = detector.scan(text, { manager });
+  const result = new Redactor(manager).redact(text, findings);
+
+  assert.strictEqual(result.redactedText, "password=[PWM_2][PWM_3]");
+})();
+
 console.log("PASS adversarial redaction tests");

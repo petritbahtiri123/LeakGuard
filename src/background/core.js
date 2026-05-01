@@ -5,6 +5,7 @@ const {
   migrateSessionState,
   normalizeTransformMode,
   DEFAULT_TRANSFORM_MODE,
+  Detector,
   transformOutboundPrompt,
   BUILTIN_PROTECTED_SITES,
   USER_PROTECTED_SITES_STORAGE_KEY,
@@ -680,6 +681,7 @@ function toPublicState(state, policySummary = null) {
   return {
     transformMode: normalizeTransformMode(state?.transformMode || DEFAULT_TRANSFORM_MODE),
     placeholderCount: publicState.knownPlaceholders.length,
+    trustedPlaceholders: publicState.knownPlaceholders,
     policy: policySummary || null
   };
 }
@@ -820,6 +822,22 @@ function normalizeFinding(finding) {
   };
 }
 
+function mergeFindings(primaryFindings, fallbackFindings) {
+  const merged = [];
+  const seen = new Set();
+
+  for (const finding of [...(primaryFindings || []), ...(fallbackFindings || [])]) {
+    if (!finding?.raw) continue;
+
+    const key = `${finding.start}:${finding.end}:${finding.raw}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(finding);
+  }
+
+  return merged.sort((left, right) => left.start - right.start);
+}
+
 async function redactForTab(tabId, url, text, findings, options = {}) {
   const policySummary = await getPolicySummary(url);
   const destinationPolicy = evaluateDestinationPolicy(policySummary, url);
@@ -840,9 +858,17 @@ async function redactForTab(tabId, url, text, findings, options = {}) {
   manager.setPrivateState(current || {});
 
   const normalizedFindings = (findings || []).map(normalizeFinding).filter((finding) => finding.raw);
+  const backgroundFindings =
+    typeof Detector === "function"
+      ? new Detector()
+          .scan(text, { manager })
+          .filter((finding) => finding.severity !== "low")
+          .map(normalizeFinding)
+      : [];
+  const mergedFindings = mergeFindings(normalizedFindings, backgroundFindings);
   const result = transformOutboundPrompt(text, {
     manager,
-    findings: normalizedFindings,
+    findings: mergedFindings,
     mode: current?.transformMode || DEFAULT_TRANSFORM_MODE
   });
   const state = await setState(tabId, {
@@ -855,7 +881,7 @@ async function redactForTab(tabId, url, text, findings, options = {}) {
     action: "redacted",
     reason: options.auditReason || "redacted",
     url,
-    findings: normalizedFindings,
+    findings: mergedFindings,
     policySummary
   }).catch(() => null);
 

@@ -14,7 +14,7 @@ const distRoot = path.join(repoRoot, "dist");
 const assetDirs = ["background", "content", "popup", "options", "ui", "scanner", "shared", "compat"];
 const staticDirs = ["icons", "config", "ai/models"];
 const onnxRuntimeLoaderFiles = ["ort.min.js"];
-const onnxRuntimeSidecarPattern = /^ort-wasm-simd-threaded(?:\.[^.]+)?\.(?:mjs|wasm)$/;
+const onnxRuntimeSidecarPattern = /^ort-wasm.*\.(?:js|mjs|wasm)$/;
 const supportedBrowsers = new Set(["chrome", "firefox"]);
 const supportedModes = new Set(["consumer", "enterprise"]);
 

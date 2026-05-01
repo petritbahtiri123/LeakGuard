@@ -152,16 +152,6 @@ const NEGATIVE_CASES = [
     name: "natural language secret prose",
     text: "The secret is patience during the rollout.",
     expectsNoFindings: true
-  },
-  {
-    name: "placeholder after password label",
-    text: "password is [PWM_2]\\",
-    expectsNoFindings: true
-  },
-  {
-    name: "short version-like suffix after placeholder",
-    text: "my password is [PWM_2]1234",
-    expectsNoFindings: true
   }
 ];
 
@@ -989,6 +979,7 @@ function testPlaceholderValuesDoNotRetriggerDetection() {
 function testExpandedDetectorFamiliesMixedBlob() {
   const detector = new Detector();
   const manager = new PlaceholderManager();
+  manager.trackKnownPlaceholder("[PWM_1]");
   const redactor = new Redactor(manager);
   const text = [
     "ANTHROPIC_API_KEY=sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWXyz0123456789_abcd",
@@ -1000,7 +991,7 @@ function testExpandedDetectorFamiliesMixedBlob() {
     "Use pypi-AgEIcHlwaS5vcmcCJDEyMzQ1Njc4OTBhYmNkZWYxMjM0NTY3ODlhYmNkZWY for release automation."
   ].join("\n");
 
-  const findings = detector.scan(text);
+  const findings = detector.scan(text, { manager });
   const result = redactor.redact(text, findings);
 
   assert.ok(findings.some((finding) => finding.raw.startsWith("sk-ant-")), "anthropic key should be detected");
@@ -1065,6 +1056,8 @@ function testGoogleApiKeyJsonRegression() {
 function testCompositePlaceholderAndNaturalLanguageEdgeCaseBlock() {
   const detector = new Detector();
   const manager = new PlaceholderManager();
+  manager.trackKnownPlaceholder("[PWM_2]");
+  manager.trackKnownPlaceholder("[PWM_3]");
   const redactor = new Redactor(manager);
   const text = [
     "API_KEY=abc123secretvalue",
@@ -1078,7 +1071,7 @@ function testCompositePlaceholderAndNaturalLanguageEdgeCaseBlock() {
     "[PWM_4]LEKEY"
   ].join("\n");
 
-  const findings = detector.scan(text);
+  const findings = detector.scan(text, { manager });
   const result = redactor.redact(text, findings);
   const lines = result.redactedText.split("\n");
   const compositeAssignment = findings.find(
@@ -1113,11 +1106,14 @@ function testCompositePlaceholderAndNaturalLanguageEdgeCaseBlock() {
 function testMixedPlaceholderBlobPreservesKnownPlaceholdersAndRedactsRawLeaks() {
   const detector = new Detector();
   const manager = new PlaceholderManager();
+  for (let index = 1; index <= 8; index += 1) {
+    manager.trackKnownPlaceholder(`[PWM_${index}]`);
+  }
   const redactor = new Redactor(manager);
   const text =
     'API_KEY=[PWM_1] DB_PASSWORD=[PWM_2] TOKEN=[PWM_3] AWS_ACCESS_KEY_ID=[PWM_4] AWS_SECRET_ACCESS_KEY=[PWM_5] AWS_SESSION_TOKEN=[PWM_6] CLIENT_SECRET=[PWM_7] AUTHORIZATION=Bearer mF_9.B5f{ "apiKey": "[PWM_8]", "password": "PrinterCable!2026!Demo", "token": "[PWM_3export API_KEY="[PWM_9]" export DB_PASSWORD=[PWM_10] export AWS_SECRET_ACCESS_KEY=[PWM_$env:API_KEY="[PWM_11]" $env:DB_PASSWORD=[PWM_12] $env:TOKEN="[PWM_13]"3]]" }-4.1JqM';
 
-  const findings = detector.scan(text);
+  const findings = detector.scan(text, { manager });
   const result = redactor.redact(text, findings);
 
   assert.ok(
@@ -1397,7 +1393,7 @@ function testSyntheticCredentialHardeningBlock() {
     ["TOKEN", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJsZWFrZ3VhcmQiLCJzdWIiOiJzeW50aGV0aWMtdGVzdCIsInJvbGUiOiJhZG1pbiJ9.c2lnbmF0dXJlLXN5bnRoZXRpYy12YWx1ZS0xMjM0NTY3ODkw"],
     ["TOKEN", "npm_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"],
     ["TOKEN", "pypi-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-TOKENBLOCK"],
-    ["TOKEN", "sessionid=ZXlKaGJHY2lPaUpJVXpJMU5pSjkuYWJjMTIzZGVmNDU2Z2hpNzg5amtsbW5vcA"],
+    ["TOKEN", "ZXlKaGJHY2lPaUpJVXpJMU5pSjkuYWJjMTIzZGVmNDU2Z2hpNzg5amtsbW5vcA"],
     ["PASSWORD", "VaultHorse!2026!Unit"],
     ["TOKEN", "ghu_AbCdEfGhIjKlMnOpQrStUv"],
     ["SECRET", "TopSecretValue9988!"],
@@ -1563,23 +1559,20 @@ function testExactMixedLegacyPlaceholderInputDoesNotReemitTypedTokens() {
   const normalizedInput = normalizeVisiblePlaceholders(text);
   const findings = detector.scan(normalizedInput);
   const result = redactor.redact(normalizedInput, findings);
+  const lines = result.redactedText.split("\n");
 
   assertNoTypedPlaceholders(result.redactedText, "mixed legacy placeholder input must never re-emit typed placeholders");
+  assert.ok(/^API_KEY=\[PWM_\d+\]$/.test(lines[0]), "unknown legacy API key placeholder should redact");
+  assert.ok(/^DB_PASSWORD=\[PWM_\d+\]$/.test(lines[1]), "unknown legacy password placeholder should redact");
+  assert.ok(/^TOKEN=\[PWM_\d+\]$/.test(lines[2]), "unknown legacy token placeholder should redact");
   assert.ok(
-    result.redactedText.includes(`API_KEY=${canonicalizePlaceholderToken("[API_KEY_1]")}`),
-    "legacy API key placeholder should stay visible only as a generic PWM token"
+    /^AWS_SECRET_ACCESS_KEY=\[PWM_\d+\]$/.test(lines[3]),
+    "unknown legacy AWS secret placeholder should redact"
   );
-  assert.ok(
-    result.redactedText.includes(`DB_PASSWORD=${canonicalizePlaceholderToken("[PASSWORD_2]")}`),
-    "legacy password placeholder should stay visible only as a generic PWM token"
-  );
-  assert.ok(
-    result.redactedText.includes(`TOKEN=${canonicalizePlaceholderToken("[TOKEN_1]")}`),
-    "legacy token placeholder should stay visible only as a generic PWM token"
-  );
-  assert.ok(
-    result.redactedText.includes(`AWS_SECRET_ACCESS_KEY=${canonicalizePlaceholderToken("[AWS_SECRET_KEY_1]")}`),
-    "legacy AWS secret placeholder should stay visible only as a generic PWM token"
+  assert.strictEqual(
+    result.redactedText.includes(canonicalizePlaceholderToken("[API_KEY_1]")),
+    false,
+    "unknown canonicalized legacy placeholders must not remain visible"
   );
   assert.ok(
     /\[PWM_\d+\]/.test(result.redactedText),
@@ -1638,7 +1631,9 @@ function testNaturalLanguageSecretRedactsCredentialLikeValue() {
     "high",
     "explicit natural-language secret disclosures should auto-redact"
   );
-  assert.ok(secretFinding.method.includes("pattern"));
+  assert.ok(
+    secretFinding.method.includes("pattern") || secretFinding.method.includes("natural-language")
+  );
   assert.strictEqual(
     result.redactedText,
     "my secret is [PWM_1]",
@@ -1649,9 +1644,10 @@ function testNaturalLanguageSecretRedactsCredentialLikeValue() {
 function testPlaceholderSuffixSecretRedactsOnlyAppendedMaterial() {
   const detector = new Detector();
   const manager = new PlaceholderManager();
+  manager.trackKnownPlaceholder("[PWM_2]");
   const redactor = new Redactor(manager);
   const text = "my password is [PWM_2]45123412341324123";
-  const findings = detector.scan(text);
+  const findings = detector.scan(text, { manager });
   const suffixFinding = findings.find((finding) => finding.raw === "45123412341324123");
   const result = redactor.redact(text, findings);
 

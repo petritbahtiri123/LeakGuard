@@ -8,7 +8,8 @@
     buildNetworkHierarchy,
     NetworkPlaceholderAllocator,
     normalizeVisiblePlaceholders,
-    normalizeTransformMode
+    normalizeTransformMode,
+    isTrustedVisiblePlaceholder
   } = root.PWM;
 
   function buildNetworkUiFindings(text, options = {}) {
@@ -178,10 +179,19 @@
   function transformOutboundPrompt(text, options = {}) {
     const manager = options.manager;
     const normalizedText = normalizeVisiblePlaceholders(String(text || ""));
-    const secretFindings = [...(options.findings || [])];
+    if (manager && typeof manager.reserveVisiblePlaceholdersFromText === "function") {
+      manager.reserveVisiblePlaceholdersFromText(text);
+    }
+    const secretFindings = [...(options.findings || [])].filter(
+      (finding) =>
+        !(
+          isTrustedVisiblePlaceholder &&
+          manager &&
+          isTrustedVisiblePlaceholder(finding?.raw, manager)
+        )
+    );
     const mode = normalizeTransformMode(options.mode);
     const secretReplacements = [];
-    const occupiedRanges = [];
 
     for (const finding of secretFindings.sort((left, right) => left.start - right.start)) {
       const replacement = {
@@ -192,18 +202,34 @@
         )
       };
       secretReplacements.push(replacement);
-      occupiedRanges.push({ start: replacement.start, end: replacement.end });
     }
 
     const reusedSecretReplacements = collectKnownSecretReplacements(
       normalizedText,
       manager,
-      occupiedRanges
-    );
+      []
+    ).filter((replacement) => {
+      const replacementLength = replacement.end - replacement.start;
+      return !secretReplacements.some((finding) => {
+        if (finding.start >= replacement.end || finding.end <= replacement.start) return false;
+        const findingLength = finding.end - finding.start;
+        return findingLength >= replacementLength;
+      });
+    });
+    const filteredSecretReplacements = secretReplacements.filter((replacement) => {
+      const replacementLength = replacement.end - replacement.start;
+      return !reusedSecretReplacements.some((reused) => {
+        if (replacement.start >= reused.end || replacement.end <= reused.start) return false;
+        const reusedLength = reused.end - reused.start;
+        return reusedLength > replacementLength;
+      });
+    });
     const networkReplacements = buildNetworkReplacements(normalizedText, manager, mode);
-    const replacements = [...secretReplacements, ...reusedSecretReplacements, ...networkReplacements].sort(
-      (left, right) => left.start - right.start
-    );
+    const replacements = [
+      ...filteredSecretReplacements,
+      ...reusedSecretReplacements,
+      ...networkReplacements
+    ].sort((left, right) => left.start - right.start);
 
     return {
       redactedText: applyReplacements(normalizedText, replacements),

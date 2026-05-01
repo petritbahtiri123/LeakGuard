@@ -133,6 +133,15 @@
     return matches.map((token) => canonicalizePlaceholderToken(token));
   }
 
+  function normalizePlaceholderSource(source) {
+    if (!source) return [];
+    if (source instanceof Set) return [...source];
+    if (Array.isArray(source)) return source;
+    if (Array.isArray(source.trustedPlaceholders)) return source.trustedPlaceholders;
+    if (Array.isArray(source.knownPlaceholders)) return source.knownPlaceholders;
+    return [];
+  }
+
   function sortPlaceholders(placeholders) {
     return [...new Set((placeholders || []).filter(Boolean).map(canonicalizePlaceholderToken))].sort(
       (left, right) => {
@@ -237,6 +246,35 @@
       return canonical;
     }
 
+    reserveVisiblePlaceholder(placeholder) {
+      const canonical = canonicalizePlaceholderToken(placeholder);
+
+      const index = parsePwmIndex(canonical);
+      if (index !== null && index < LEGACY_ALIAS_OFFSET) {
+        this.counters.PWM = Math.max(Number(this.counters.PWM || 0), index);
+      }
+
+      const semantic = parseSemanticSortKey(canonical);
+      if (semantic) {
+        if (semantic.familyType === 0) {
+          this.counters.NET = Math.max(Number(this.counters.NET || 0), semantic.familyIndex);
+        } else {
+          this.counters.PUB_HOST = Math.max(
+            Number(this.counters.PUB_HOST || 0),
+            semantic.familyIndex
+          );
+        }
+      }
+
+      return canonical;
+    }
+
+    reserveVisiblePlaceholdersFromText(text) {
+      for (const token of extractPlaceholderTokens(text)) {
+        this.reserveVisiblePlaceholder(token);
+      }
+    }
+
     setPublicState(state = {}) {
       this.reset();
       this.sessionId = state.sessionId || null;
@@ -246,7 +284,7 @@
         PUB_HOST: Number(state?.counters?.PUB_HOST || 0)
       };
 
-      for (const placeholder of state.knownPlaceholders || []) {
+      for (const placeholder of state.knownPlaceholders || state.trustedPlaceholders || []) {
         this.trackKnownPlaceholder(placeholder);
       }
     }
@@ -367,9 +405,7 @@
     }
 
     trackKnownPlaceholdersFromText(text) {
-      for (const token of extractPlaceholderTokens(text)) {
-        this.trackKnownPlaceholder(token);
-      }
+      this.reserveVisiblePlaceholdersFromText(text);
     }
 
     getPlaceholder(rawValue) {
@@ -396,6 +432,10 @@
     knowsPlaceholder(placeholder) {
       const canonical = canonicalizePlaceholderToken(placeholder);
       return this.knownPlaceholders.has(canonical) || this.fingerprintByPlaceholder.has(canonical);
+    }
+
+    getKnownPlaceholders() {
+      return sortPlaceholders([...this.knownPlaceholders]);
     }
 
     getRaw(placeholder) {
@@ -501,6 +541,17 @@
   root.PWM.normalizeVisiblePlaceholders = normalizeVisiblePlaceholders;
   root.PWM.extractPlaceholderTokens = extractPlaceholderTokens;
   root.PWM.containsLegacyTypedPlaceholder = containsLegacyTypedPlaceholder;
+  root.PWM.parsePwmIndex = parsePwmIndex;
+  root.PWM.isTrustedVisiblePlaceholder = function isTrustedVisiblePlaceholder(token, source) {
+    const canonical = canonicalizePlaceholderToken(token);
+    if (!isPwmPlaceholder(canonical) && !isSemanticPlaceholder(canonical)) return false;
+
+    if (source && typeof source.knowsPlaceholder === "function") {
+      return source.knowsPlaceholder(canonical);
+    }
+
+    return new Set(normalizePlaceholderSource(source).map(canonicalizePlaceholderToken)).has(canonical);
+  };
   root.PWM.sessionFingerprint = sessionFingerprint;
 
   if (typeof module !== "undefined" && module.exports) {
@@ -517,6 +568,8 @@
     module.exports.normalizeVisiblePlaceholders = normalizeVisiblePlaceholders;
     module.exports.extractPlaceholderTokens = extractPlaceholderTokens;
     module.exports.containsLegacyTypedPlaceholder = containsLegacyTypedPlaceholder;
+    module.exports.parsePwmIndex = parsePwmIndex;
+    module.exports.isTrustedVisiblePlaceholder = root.PWM.isTrustedVisiblePlaceholder;
     module.exports.sessionFingerprint = sessionFingerprint;
   }
 })();
