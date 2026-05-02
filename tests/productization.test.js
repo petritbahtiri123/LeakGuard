@@ -98,6 +98,20 @@ function testPanelAndManagementUiAreWired() {
   assert.ok(contentSource.includes("pwm-panel"), "content script should create the top-center status menu");
   assert.ok(contentSource.includes("Manage Sites"), "panel should expose a settings shortcut");
   assert.ok(overlaySource.includes(".pwm-panel"), "panel styles should live in overlay.css");
+  assert.ok(
+    /\.pwm-panel-header\s*\{[\s\S]*?flex-wrap:\s*wrap;/.test(overlaySource),
+    "panel header should wrap instead of overlapping controls on narrow widths"
+  );
+  assert.ok(
+    /\.pwm-panel-brand\s*\{[\s\S]*?flex:\s*1 1 170px;[\s\S]*?min-width:\s*0;/.test(overlaySource),
+    "panel brand should be allowed to shrink and share space with the toggle"
+  );
+  assert.ok(
+    /\.pwm-panel-toggle\s*\{[\s\S]*?flex:\s*0 0 auto;[\s\S]*?white-space:\s*nowrap;/.test(
+      overlaySource
+    ),
+    "panel toggle should stay readable and clickable without overlapping the title"
+  );
   assert.ok(popupHtml.includes("Open File Scanner"), "popup should expose the file scanner");
   assert.ok(popupJs.includes("scanner/scanner.html"), "popup should open the extension-owned scanner page");
   assert.ok(
