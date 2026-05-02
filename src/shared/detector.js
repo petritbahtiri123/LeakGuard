@@ -2327,7 +2327,7 @@
     scanNaturalLanguageDisclosures(text) {
       const findings = [];
       const labelSource =
-        "(?:(?:this\\s+is\\s+my|here\\s+is\\s+my|here'?s\\s+my|my|the|our|actual|real|prod(?:uction)?|live)\\s+)?(?:(?:db|database)\\s+)?(?:password|passwd|pwd|passcode|passphrase|secret|api\\s*key|apikey|token|access\\s+token|refresh\\s+token|bearer\\s+token|client\\s+secret|private\\s+key|webhook\\s+secret)|(?:again\\s+)?same\\s+(?:key|token|password|secret)|real\\s+value|actual\\s+value";
+        "(?:real|actual)\\s+(?:(?:db|database)\\s+)?(?:password|passwd|pwd|passcode|passphrase|secret|api\\s*key|apikey|token|access\\s+token|refresh\\s+token|bearer\\s+token|client\\s+secret|private\\s+key|webhook\\s+secret)\\s+value|(?:(?:this\\s+is\\s+my|here\\s+is\\s+my|here'?s\\s+my|my|the|our|actual|real|prod(?:uction)?|live)\\s+)?(?:(?:db|database)\\s+)?(?:password|passwd|pwd|passcode|passphrase|secret|api\\s*key|apikey|token|access\\s+token|refresh\\s+token|bearer\\s+token|client\\s+secret|private\\s+key|webhook\\s+secret)|(?:again\\s+)?same\\s+(?:key|token|password|secret)|real\\s+value|actual\\s+value";
       const valueSource =
         "\"([^\"\\r\\n]{6,})\"|'([^'\\r\\n]{6,})'|`([^`\\r\\n]{6,})`|([^\\s,;]{6,})";
       const regex = new RegExp(

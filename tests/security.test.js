@@ -180,6 +180,31 @@ function testHostPageHydrationRequiresPlausibleSessionPlaceholders() {
   );
 }
 
+function testPlaceholderRehydrationStaysBoundedOnLargeDomMutations() {
+  const observerSource = extractFunctionSource(contentSource, "startRehydrationObserver");
+  const urlChangeSource = extractFunctionSource(contentSource, "handleUrlChange");
+
+  assert.ok(
+    observerSource.includes("const containsPlaceholder = PLACEHOLDER_TOKEN_REGEX.test(normalizedText);") &&
+      observerSource.includes("if (!containsPlaceholder) return;") &&
+      observerSource.indexOf("if (!containsPlaceholder) return;") <
+        observerSource.indexOf("rehydrateTree(node);"),
+    "added element subtrees should be skipped before TreeWalker scanning when they contain no placeholders"
+  );
+  assert.ok(
+    contentSource.includes(".pwm-modal-backdrop, .pwm-secret, form, textarea") &&
+      contentSource.includes("[role='textbox']") &&
+      contentSource.includes("[contenteditable='true']"),
+    "already hydrated placeholders and editable composers should be excluded from page-DOM rehydration"
+  );
+  assert.ok(
+    urlChangeSource.includes("if (location.href === currentUrl) return;") &&
+      urlChangeSource.indexOf("if (location.href === currentUrl) return;") <
+        urlChangeSource.indexOf("rehydrateTree(document.body);"),
+    "URL-change polling should return before full-body rehydration when the URL is unchanged"
+  );
+}
+
 function testPageUiNoLongerLeaksClassificationsOrMaskedFragments() {
   assertNotIncludes(
     contentSource,
@@ -244,6 +269,7 @@ async function run() {
   testContentPublicStateIsMinimized();
   testRevealNeverInjectsHostDomContainers();
   testHostPageHydrationRequiresPlausibleSessionPlaceholders();
+  testPlaceholderRehydrationStaysBoundedOnLargeDomMutations();
   testContentRuntimeInvalidationIsHandled();
   testManifestNoLongerExposesRevealUiToWebPages(manifest, runtimeResources);
   testExtensionPagesUseRestrictiveCsp(manifest);
