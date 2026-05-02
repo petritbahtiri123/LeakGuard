@@ -156,8 +156,9 @@
       category: "credential",
       baseScore: 89,
       suppressionNotes:
-        "GitLab personal access tokens have a stable glpat- prefix; shared suppression handles example placeholders.",
-      regex: /\bglpat-[A-Za-z0-9_-]{20,255}\b/g
+        "GitLab token families have stable gl-prefixed markers; require a realistic token body and let shared suppression drop obvious docs placeholders.",
+      regex:
+        /\b(?:glpat|gldt|glrt|glcbt|glptt|glft|glimt|glagent|glwt)-[A-Za-z0-9_-]{20,255}\b/g
     },
     {
       name: "jwt_token",

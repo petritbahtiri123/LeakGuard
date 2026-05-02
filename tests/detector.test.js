@@ -226,6 +226,119 @@ function testNegativeExamples() {
   }
 }
 
+function testProviderTokenFamiliesDetectAndRedact() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const body20 = "A1b2C3d4E5f6G7h8I9j0";
+  const body30 = "A1b2C3d4E5f6G7h8I9j0K1l2M3n4";
+  const cases = [
+    ["GitHub ghp", `ghp_${body30}`],
+    ["GitHub github_pat", `github_pat_${body30}_${body20}`],
+    ["GitHub gho", `gho_${body30}`],
+    ["GitHub ghu", `ghu_${body30}`],
+    ["GitHub ghs", `ghs_${body30}`],
+    ["GitHub ghr", `ghr_${body30}`],
+    ["GitLab glpat", `glpat-${body30}`],
+    ["GitLab gldt", `gldt-${body30}`],
+    ["GitLab glrt", `glrt-${body30}`],
+    ["GitLab glcbt", `glcbt-${body30}`],
+    ["GitLab glptt", `glptt-${body30}`],
+    ["GitLab glft", `glft-${body30}`],
+    ["GitLab glimt", `glimt-${body30}`],
+    ["GitLab glagent", `glagent-${body30}`],
+    ["GitLab glwt", `glwt-${body30}`]
+  ];
+
+  for (const [name, token] of cases) {
+    const text = `PROVIDER_TOKEN=${token}`;
+    const findings = detector.scan(text);
+    const finding = findings.find((entry) => entry.type === "TOKEN" && entry.raw === token);
+
+    assert.ok(finding, `${name}: expected exact raw token finding`);
+    assert.strictEqual(finding.severity, "high", `${name}: expected high severity finding`);
+
+    const result = redactor.redact(text, findings);
+    const redactedLine = result.redactedText.match(/^PROVIDER_TOKEN=(\[PWM_\d+\])$/m);
+    assert.ok(redactedLine, `${name}: expected token to be fully replaced by one placeholder`);
+    assertContainsGenericPlaceholder(result.redactedText, `${name}: expected redaction`);
+    assert.strictEqual(
+      result.redactedText.includes(token),
+      false,
+      `${name}: raw token must not remain after redaction`
+    );
+    assert.strictEqual(
+      result.redactedText,
+      `PROVIDER_TOKEN=${redactedLine[1]}`,
+      `${name}: token prefix/suffix must not remain beside the placeholder`
+    );
+  }
+}
+
+function testProviderTokenShortAndTemplateValuesStayVisible() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const safeValues = [
+    "ghp_demo",
+    "gho_test",
+    "github_pat_example",
+    "glpat-demo",
+    "glrt-test",
+    "glwt-example",
+    "gldt-CHANGE_ME",
+    "template GitLab token glpat-replace-me",
+    "example GitHub token ghp-replace-me",
+    "docs say use github_pat_xxxxx as a placeholder"
+  ];
+
+  for (const text of safeValues) {
+    const findings = detector.scan(text);
+    const result = redactor.redact(text, findings);
+    assert.strictEqual(findings.length, 0, `${text}: expected provider token suppression`);
+    assert.strictEqual(result.redactedText, text, `${text}: safe value should remain visible`);
+  }
+}
+
+function testMixedGitlabRedactionKeepsConfigReadable() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const runnerToken = "glrt-AbCdEfGhIjKlMnOpQrStUvWxYz12";
+  const workloadToken = "glwt-ZyXwVuTsRqPoNmLkJiHgFeDcBa9876";
+  const text = [
+    "[gitlab]",
+    "endpoint = https://gitlab.com/group/project",
+    `runner_token = ${runnerToken}`,
+    "branch = main",
+    `repeat_runner = ${runnerToken}`,
+    `workload_token = ${workloadToken}`,
+    "notes = keep surrounding config readable"
+  ].join("\n");
+
+  const findings = detector.scan(text);
+  const result = redactor.redact(text, findings);
+  const redactedText = result.redactedText;
+  const runnerMatches = redactedText.match(/^runner_token = (\[PWM_\d+\])$/m);
+  const repeatMatches = redactedText.match(/^repeat_runner = (\[PWM_\d+\])$/m);
+
+  assert.ok(runnerMatches, "runner token should redact to a placeholder");
+  assert.ok(repeatMatches, "repeated runner token should redact to a placeholder");
+  assert.strictEqual(
+    repeatMatches[1],
+    runnerMatches[1],
+    "repeated GitLab token should reuse a stable placeholder"
+  );
+  assert.ok(/^workload_token = \[PWM_\d+\]$/m.test(redactedText), "workload token should redact");
+  assert.strictEqual(redactedText.includes(runnerToken), false);
+  assert.strictEqual(redactedText.includes(workloadToken), false);
+  assert.strictEqual(/gl(?:pat|dt|rt|cbt|ptt|ft|imt|agent|wt)-\[PWM_\d+\]/.test(redactedText), false);
+  assert.strictEqual(/\[PWM_\d+\][A-Za-z0-9_-]{4,}/.test(redactedText), false);
+  assert.ok(redactedText.includes("endpoint = https://gitlab.com/group/project"));
+  assert.ok(redactedText.includes("branch = main"));
+  assert.ok(redactedText.includes("notes = keep surrounding config readable"));
+}
+
 function testLegacyPlaceholderNormalizationHelper() {
   const text = [
     "API_KEY=[API_KEY_1]",
@@ -1689,6 +1802,9 @@ function run() {
   testPatternMetadata();
   testPositiveFixtures();
   testNegativeExamples();
+  testProviderTokenFamiliesDetectAndRedact();
+  testProviderTokenShortAndTemplateValuesStayVisible();
+  testMixedGitlabRedactionKeepsConfigReadable();
   testLegacyPlaceholderNormalizationHelper();
   testRepeatedSameSecret();
   testRepeatedAwsAccessKeyWithExampleSubstringStillRedactsAndReusesPlaceholder();
