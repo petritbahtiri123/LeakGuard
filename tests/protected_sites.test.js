@@ -1,12 +1,22 @@
 const assert = require("assert");
+const fs = require("fs");
 const path = require("path");
 
+const repoRoot = path.join(__dirname, "..");
 const {
   BUILTIN_PROTECTED_SITES,
   normalizeProtectedSiteInput,
   normalizeProtectedSiteList,
   getProtectedSiteStatus
-} = require(path.join(__dirname, "../src/shared/protected_sites.js"));
+} = require(path.join(repoRoot, "src/shared/protected_sites.js"));
+
+function extractContentScriptFilesFromBackground() {
+  const source = fs.readFileSync(path.join(repoRoot, "src/background/core.js"), "utf8");
+  const match = /const CONTENT_SCRIPT_FILES = \[([\s\S]*?)\];/.exec(source);
+  assert.ok(match, "expected background CONTENT_SCRIPT_FILES list");
+
+  return [...match[1].matchAll(/"([^"]+)"/g)].map((entry) => entry[1]);
+}
 
 function testNormalizesFullUrlToOriginRule() {
   const normalized = normalizeProtectedSiteInput("https://app.example.com/chat/new?model=gpt#composer");
@@ -93,6 +103,25 @@ function testBuiltInSitesRemainRecognizedWithoutUserRules() {
   );
 }
 
+function testDynamicContentScriptsMatchManifestRuntimeStack() {
+  const manifest = JSON.parse(fs.readFileSync(path.join(repoRoot, "manifests/base.json"), "utf8"));
+  const manifestScripts = manifest.content_scripts?.[0]?.js || [];
+  const dynamicScripts = extractContentScriptFilesFromBackground();
+
+  assert.deepStrictEqual(
+    dynamicScripts,
+    manifestScripts,
+    "dynamic user-site injection should load the same runtime stack as manifest content scripts"
+  );
+  assert.ok(
+    dynamicScripts.includes("vendor/onnxruntime/ort.min.js") &&
+      dynamicScripts.includes("shared/ai/classifier.js") &&
+      dynamicScripts.includes("shared/aiCandidateGate.js") &&
+      dynamicScripts.includes("shared/transformOutboundPromptWithAi.js"),
+    "dynamic user-site injection should include optional local AI assist dependencies"
+  );
+}
+
 function run() {
   testNormalizesFullUrlToOriginRule();
   testNormalizesBareHostnameToHttpsRule();
@@ -101,6 +130,7 @@ function run() {
   testPreventsDuplicatesAcrossNormalizedRules();
   testSafeOriginMatchingStaysExactAndDeterministic();
   testBuiltInSitesRemainRecognizedWithoutUserRules();
+  testDynamicContentScriptsMatchManifestRuntimeStack();
   console.log("PASS protected site normalization and matching regressions");
 }
 

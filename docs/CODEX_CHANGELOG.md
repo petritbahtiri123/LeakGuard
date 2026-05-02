@@ -12,6 +12,24 @@ Use this file as a short handoff log for AI-made changes. Add newest entries fir
 ```
 
 ## Entries
+### 2026-05-02 - Bounded placeholder rehydration
+- Goal: Avoid TreeWalker rescans for large added DOM subtrees that contain no placeholders, while preserving secure reveal hydration boundaries.
+- Files: `src/content/content.js`, `tests/security.test.js`, `docs/CODEX_CHANGELOG.md`
+- Tests: `node tests/security.test.js` -> pass; `npm test` -> pass
+- Notes: Narrow content-script performance guard; no privacy model, reveal, or placeholder trust changes.
+
+### 2026-05-02 - Dynamic protected-site AI assist alignment
+- Goal: Keep dynamic user-added protected-site injection aligned with manifest content scripts so optional local AI assist is available wherever protection is injected.
+- Files: `src/background/core.js`, `tests/protected_sites.test.js`, `docs/CODEX_CHANGELOG.md`
+- Tests: `node tests/protected_sites.test.js` -> pass; `node tests/build_targets.test.js` -> pass; `npm test` -> pass
+- Notes: Preserves local-only AI assist; no remote calls, telemetry, model changes, or generated outputs.
+
+### 2026-05-02 - Natural-language real-value detection audit fix
+- Goal: Catch "real/actual <secret type> value ..." disclosures without broadening source code rewrites or weakening false-positive controls.
+- Files: `src/shared/detector.js`, `tests/natural_language_context.test.js`, `docs/CODEX_CHANGELOG.md`
+- Tests: `node tests/natural_language_context.test.js` -> pass; `npm test` -> pass
+- Notes: Synthetic-only regression cases; preserves deterministic-first detection and local-only processing.
+
 ### 2026-05-02 - Deep research report cleanup
 - Goal: Replace internal citation artifacts with concise repo-grounded Markdown and add an implementation handoff for future detection work.
 - Files: `docs/deep-research-report.md`, `docs/CODEX_CHANGELOG.md`

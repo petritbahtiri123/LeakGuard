@@ -2502,11 +2502,13 @@
             hydrateTextNode(node);
           } else if (node.nodeType === Node.ELEMENT_NODE) {
             const normalizedText = normalizeVisiblePlaceholders(node.textContent || "");
+            const containsPlaceholder = PLACEHOLDER_TOKEN_REGEX.test(normalizedText);
             debugReveal("rehydrate:element-added", {
               tagName: node.tagName,
-              containsPlaceholder: PLACEHOLDER_TOKEN_REGEX.test(normalizedText)
+              containsPlaceholder
             });
             PLACEHOLDER_TOKEN_REGEX.lastIndex = 0;
+            if (!containsPlaceholder) return;
             rehydrateTree(node);
           }
         });
