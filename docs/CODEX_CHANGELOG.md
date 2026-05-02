@@ -12,6 +12,12 @@ Use this file as a short handoff log for AI-made changes. Add newest entries fir
 ```
 
 ## Entries
+### 2026-05-02 - Deep research report cleanup
+- Goal: Replace internal citation artifacts with concise repo-grounded Markdown and add an implementation handoff for future detection work.
+- Files: `docs/deep-research-report.md`, `docs/CODEX_CHANGELOG.md`
+- Tests: docs validation unavailable -> no docs-only validation script exists in `package.json`
+- Notes: Docs-only change; preserves local-only privacy constraints and avoids new feature or enterprise-grade claims.
+
 ### 2026-05-02 - Codex agent guidance refresh
 - Goal: Make repo rules, paths, commands, prompt templates, and final output expectations self-contained for future Codex tasks.
 - Files: `AGENTS.md`, `docs/REPO_MAP.md`, `docs/CODEX_PROMPT_TEMPLATES.md`, `docs/BUG_PLAYBOOK.md`, `docs/CODEX_CHANGELOG.md`
