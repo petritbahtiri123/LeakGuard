@@ -165,6 +165,21 @@ The performance benchmark is part of `npm test` and can also be run directly:
 node tests/performance/redaction-benchmark.mjs
 ```
 
+The default table reports wall-clock time, CPU time from `process.cpuUsage()`, heap deltas from `process.memoryUsage()`, p50/p95/p99 latency, findings count, and average milliseconds per KiB. Heap deltas can be negative when V8 garbage collection runs during an iteration; `avg_heap_growth` is the average of positive heap-growth samples only.
+
+For deeper local profiling, run:
+
+```bash
+npm run bench:redaction:profile
+```
+
+Profile mode sets `LEAKGUARD_BENCH_PROFILE=1` and prints a second table with average stage timings for the current benchmark structure:
+
+- `manager_ms`: placeholder manager setup
+- `detector_construct_ms`: detector construction
+- `scan_ms`: deterministic detector scan
+- `transform_ms`: placeholder allocation, known-secret reuse, network pseudonymization, and replacement application
+
 Set `LEAKGUARD_BENCH_ITERATIONS=<number>` to increase or reduce benchmark iterations during local investigation. Keep thresholds conservative enough for normal developer machines and CI; the benchmark is intended to catch major redaction slowdowns, not to replace profiling.
 
 ### Manual Testing

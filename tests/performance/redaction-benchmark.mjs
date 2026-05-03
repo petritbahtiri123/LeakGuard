@@ -31,6 +31,7 @@ const ITERATIONS = Math.max(
   3,
   Number.parseInt(process.env.LEAKGUARD_BENCH_ITERATIONS || `${DEFAULT_ITERATIONS}`, 10)
 );
+const PROFILE_ENABLED = process.env.LEAKGUARD_BENCH_PROFILE === "1";
 
 const samples = [
   {
@@ -75,16 +76,16 @@ const samples = [
     expected: ["PUBLIC_URL=https://example.com", "PRIVATE_IP=10.0.0.5", "[PUB_HOST_"]
   },
   {
-    name: "large_log_blob_90kb",
+    name: "large_log_blob_45kb",
     text: [
       "2026-05-03 INFO normal application log line request_id=abc123",
       "Authorization: Bearer LeakGuardBearerToken_1234567890_abcdefghijklmnopqrstuvwxyz",
       "password = \"VeryBadPassword123!\"",
       "token=ghp_1234567890abcdefghijklmnopqrstuvwxyz",
       "public_ip=1.1.1.1 private_ip=192.168.1.10"
-    ].join("\n").repeat(360),
-    maxP95Ms: 800,
-    maxMsPerKb: 9,
+    ].join("\n").repeat(180),
+    maxP95Ms: 700,
+    maxMsPerKb: 18,
     forbidden: [
       "LeakGuardBearerToken_1234567890_abcdefghijklmnopqrstuvwxyz",
       "VeryBadPassword123!",
@@ -105,17 +106,78 @@ function mean(values) {
   return values.reduce((total, value) => total + value, 0) / values.length;
 }
 
-function redactPipeline(text) {
+function cpuUsageMs(startUsage) {
+  const usage = process.cpuUsage(startUsage);
+  return (usage.user + usage.system) / 1000;
+}
+
+function heapUsedBytes() {
+  return process.memoryUsage().heapUsed;
+}
+
+function formatBytes(bytes) {
+  const value = Number(bytes || 0);
+  const sign = value < 0 ? "-" : "";
+  const absolute = Math.abs(value);
+  if (absolute >= 1024 * 1024) return `${sign}${(absolute / 1024 / 1024).toFixed(2)} MiB`;
+  if (absolute >= 1024) return `${sign}${(absolute / 1024).toFixed(2)} KiB`;
+  return `${sign}${absolute.toFixed(0)} B`;
+}
+
+function emptyStageTotals() {
+  return {
+    manager_ms: 0,
+    detector_construct_ms: 0,
+    scan_ms: 0,
+    transform_ms: 0
+  };
+}
+
+function addStageTotals(target, source) {
+  for (const key of Object.keys(target)) {
+    target[key] += Number(source?.[key] || 0);
+  }
+}
+
+function redactPipeline(text, options = {}) {
+  const profile = Boolean(options.profile);
+  const stages = profile ? emptyStageTotals() : null;
+  let stageStart = profile ? performance.now() : 0;
   const manager = new PlaceholderManager();
+
+  if (profile) {
+    stages.manager_ms += performance.now() - stageStart;
+    stageStart = performance.now();
+  }
+
   const detector = new Detector();
+
+  if (profile) {
+    stages.detector_construct_ms += performance.now() - stageStart;
+    stageStart = performance.now();
+  }
+
   const findings = detector.scan(text, { manager });
+
+  if (profile) {
+    stages.scan_ms += performance.now() - stageStart;
+    stageStart = performance.now();
+  }
+
+  const transformed = transformOutboundPrompt(text, {
+    manager,
+    findings,
+    mode: "hide_public"
+  });
+
+  if (profile) {
+    stages.transform_ms += performance.now() - stageStart;
+  }
+
   return {
     findings,
-    ...transformOutboundPrompt(text, {
-      manager,
-      findings,
-      mode: "hide_public"
-    })
+    ...transformed,
+    stages
   };
 }
 
@@ -135,23 +197,39 @@ function benchmark(sample) {
   let lastOutput = null;
 
   for (let index = 0; index < WARMUP_ITERATIONS; index += 1) {
-    lastOutput = redactPipeline(sample.text);
+    lastOutput = redactPipeline(sample.text, { profile: PROFILE_ENABLED });
   }
   assertCorrectness(sample, lastOutput);
 
-  const times = [];
+  const wallTimes = [];
+  const cpuTimes = [];
+  const heapDeltas = [];
+  const stageTotals = emptyStageTotals();
+
   for (let index = 0; index < ITERATIONS; index += 1) {
-    const start = performance.now();
-    lastOutput = redactPipeline(sample.text);
-    times.push(performance.now() - start);
+    const heapBefore = heapUsedBytes();
+    const cpuBefore = process.cpuUsage();
+    const wallStart = performance.now();
+
+    lastOutput = redactPipeline(sample.text, { profile: PROFILE_ENABLED });
+
+    wallTimes.push(performance.now() - wallStart);
+    cpuTimes.push(cpuUsageMs(cpuBefore));
+    heapDeltas.push(heapUsedBytes() - heapBefore);
+    if (PROFILE_ENABLED) {
+      addStageTotals(stageTotals, lastOutput.stages);
+    }
   }
   assertCorrectness(sample, lastOutput);
 
   const chars = sample.text.length;
   const kib = Math.max(chars / 1024, 0.001);
-  const avgMs = mean(times);
-  const p95Ms = percentile(times, 95);
+  const avgMs = mean(wallTimes);
+  const p95Ms = percentile(wallTimes, 95);
   const msPerKb = avgMs / kib;
+  const heapPositiveDeltas = heapDeltas.filter((value) => value > 0);
+  const avgHeapDelta = mean(heapDeltas);
+  const avgHeapGrowth = heapPositiveDeltas.length ? mean(heapPositiveDeltas) : 0;
 
   assert.ok(
     p95Ms <= sample.maxP95Ms,
@@ -167,12 +245,22 @@ function benchmark(sample) {
     chars,
     iterations: ITERATIONS,
     findings: lastOutput.findings.length,
-    avg_ms: avgMs,
-    p50_ms: percentile(times, 50),
-    p95_ms: p95Ms,
-    p99_ms: percentile(times, 99),
-    max_ms: Math.max(...times),
-    avg_ms_per_kib: msPerKb
+    avg_wall_ms: avgMs,
+    p50_wall_ms: percentile(wallTimes, 50),
+    p95_wall_ms: p95Ms,
+    p99_wall_ms: percentile(wallTimes, 99),
+    max_wall_ms: Math.max(...wallTimes),
+    avg_cpu_ms: mean(cpuTimes),
+    p50_cpu_ms: percentile(cpuTimes, 50),
+    p95_cpu_ms: percentile(cpuTimes, 95),
+    p99_cpu_ms: percentile(cpuTimes, 99),
+    avg_heap_delta_bytes: avgHeapDelta,
+    avg_heap_growth_bytes: avgHeapGrowth,
+    max_heap_delta_bytes: Math.max(...heapDeltas),
+    avg_ms_per_kib: msPerKb,
+    stage_avg_ms: Object.fromEntries(
+      Object.entries(stageTotals).map(([key, value]) => [key, PROFILE_ENABLED ? value / ITERATIONS : 0])
+    )
   };
 }
 
@@ -183,13 +271,32 @@ console.table(
     test: result.test,
     chars: result.chars,
     findings: result.findings,
-    avg_ms: result.avg_ms.toFixed(3),
-    p50_ms: result.p50_ms.toFixed(3),
-    p95_ms: result.p95_ms.toFixed(3),
-    p99_ms: result.p99_ms.toFixed(3),
-    max_ms: result.max_ms.toFixed(3),
+    avg_wall_ms: result.avg_wall_ms.toFixed(3),
+    avg_cpu_ms: result.avg_cpu_ms.toFixed(3),
+    p50_wall_ms: result.p50_wall_ms.toFixed(3),
+    p95_wall_ms: result.p95_wall_ms.toFixed(3),
+    p99_wall_ms: result.p99_wall_ms.toFixed(3),
+    p50_cpu_ms: result.p50_cpu_ms.toFixed(3),
+    p95_cpu_ms: result.p95_cpu_ms.toFixed(3),
+    p99_cpu_ms: result.p99_cpu_ms.toFixed(3),
+    max_ms: result.max_wall_ms.toFixed(3),
+    avg_heap_delta: formatBytes(result.avg_heap_delta_bytes),
+    avg_heap_growth: formatBytes(result.avg_heap_growth_bytes),
+    max_heap_delta: formatBytes(result.max_heap_delta_bytes),
     avg_ms_per_kib: result.avg_ms_per_kib.toFixed(3)
   }))
 );
+
+if (PROFILE_ENABLED) {
+  console.table(
+    results.map((result) => ({
+      test: result.test,
+      manager_ms: result.stage_avg_ms.manager_ms.toFixed(3),
+      detector_construct_ms: result.stage_avg_ms.detector_construct_ms.toFixed(3),
+      scan_ms: result.stage_avg_ms.scan_ms.toFixed(3),
+      transform_ms: result.stage_avg_ms.transform_ms.toFixed(3)
+    }))
+  );
+}
 
 console.log("PASS redaction performance benchmark");

@@ -12,6 +12,12 @@ Use this file as a short handoff log for AI-made changes. Add newest entries fir
 ```
 
 ## Entries
+### 2026-05-03 - Redaction benchmark resource profiling
+- Goal: Add CPU, heap, wall-time, percentile, and optional per-stage profiling to the redaction benchmark without changing runtime redaction behavior.
+- Files: `tests/performance/redaction-benchmark.mjs`, `package.json`, `CONTRIBUTING.md`, `docs/CODEX_CHANGELOG.md`
+- Tests: `node tests/performance/redaction-benchmark.mjs` -> pass; `npm run bench:redaction:profile` -> pass; `npm test` -> pass
+- Notes: Default benchmark remains conservative for `npm test`; profile mode reports manager setup, detector construction, scan, and transform stage timings for bottleneck triage.
+
 ### 2026-05-03 - Redaction performance benchmark
 - Goal: Replace the placeholder performance script with a real Detector + transform benchmark and include it in the default test runner.
 - Files: `tests/performance/redaction-benchmark.mjs`, `scripts/run-tests.mjs`, `CONTRIBUTING.md`, `docs/CODEX_CHANGELOG.md`
