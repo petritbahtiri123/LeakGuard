@@ -46,9 +46,11 @@ const CONTENT_SCRIPT_FILES = [
   "shared/transformOutboundPrompt.js",
   "shared/transformOutboundPromptWithAi.js",
   "shared/redactor.js",
+  "shared/fileScanner.js",
   "shared/protected_sites.js",
   "shared/policy.js",
   "content/composer_helpers.js",
+  "content/file_paste_helpers.js",
   "content/content.js"
 ];
 const CONTENT_STYLE_FILES = ["content/overlay.css"];

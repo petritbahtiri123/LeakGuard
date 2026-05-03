@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "LeakGuard",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Local-only prompt protection for secrets and sensitive network data before they reach AI chat sites.",
   "permissions": ["storage", "scripting", "activeTab"],
   "optional_host_permissions": ["https://*/*", "http://*/*"],
@@ -58,9 +58,11 @@
         "shared/transformOutboundPrompt.js",
         "shared/transformOutboundPromptWithAi.js",
         "shared/redactor.js",
+        "shared/fileScanner.js",
         "shared/protected_sites.js",
         "shared/policy.js",
         "content/composer_helpers.js",
+        "content/file_paste_helpers.js",
         "content/content.js"
       ],
       "css": ["content/overlay.css"],

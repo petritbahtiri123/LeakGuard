@@ -164,6 +164,133 @@ function testJsonCredentialRedacted() {
   assert.ok(result.redactedText.includes('"safe":true'), "surrounding JSON should remain readable");
 }
 
+function testSanitizedScannerReportExcludesRawSecretBoundaries() {
+  const repeatedSecret = "ScannerBoundaryApiKey1234567890";
+  const urlPassword = "ScannerUrlPass!2026";
+  const text = [
+    `API_KEY=${repeatedSecret}`,
+    `Authorization: Bearer ${repeatedSecret}`,
+    `DATABASE_URL=postgres://app:${urlPassword}@db.example.com:5432/app`,
+    "PUBLIC_URL=https://example.com"
+  ].join("\n");
+  const result = scanSample(text, "boundary.env");
+  const report = buildSanitizedReport(result);
+  const reportJson = JSON.stringify(report);
+
+  assert.strictEqual(result.redactedText.includes(repeatedSecret), false, "redacted text leaked repeated secret");
+  assert.strictEqual(result.redactedText.includes(urlPassword), false, "redacted text leaked URL password");
+  assert.strictEqual(reportJson.includes(repeatedSecret), false, "sanitized report leaked repeated secret");
+  assert.strictEqual(reportJson.includes(urlPassword), false, "sanitized report leaked URL password");
+  assert.strictEqual(reportJson.includes(`postgres://app:${urlPassword}`), false, "report leaked raw URI credential prefix");
+  assert.ok(result.redactedText.includes("Authorization: Bearer "), "header label should remain visible");
+  assert.ok(
+    /DATABASE_URL=postgres:\/\/\[PWM_\d+\]:\[PWM_\d+\]@db\.example\.com:5432\/(?:app|\[PWM_\d+\])/.test(result.redactedText),
+    "database URL shape should remain visible with separate credential placeholders"
+  );
+  assert.ok(result.redactedText.includes("PUBLIC_URL=https://example.com"), "safe public URL should remain visible");
+
+  const placeholders = result.redactedText.match(/\[PWM_\d+\]/g) || [];
+  assert.ok(placeholders.length >= 4, "expected redacted placeholders for repeated secret and URL credentials");
+  assert.strictEqual(
+    result.redactedText.includes(`ApiKey${placeholders[0]}`),
+    false,
+    "known raw secret reuse should not leave raw prefixes attached to placeholders"
+  );
+}
+
+function testSupportedTextFormatFixturesRedactSecrets() {
+  const fixtures = [
+    {
+      fileName: ".env",
+      text: [
+        "PUBLIC_URL=https://example.com",
+        "API_KEY=LeakGuardEnvApiKey1234567890",
+        "PASSWORD=LeakGuardEnvPassword123!",
+        "FEATURE_FLAG=true"
+      ].join("\n"),
+      secrets: ["LeakGuardEnvApiKey1234567890", "LeakGuardEnvPassword123!"],
+      safeValues: ["PUBLIC_URL=https://example.com", "FEATURE_FLAG=true"]
+    },
+    {
+      fileName: "settings.json",
+      text: JSON.stringify({
+        public_url: "https://example.com",
+        token: "LeakGuardJsonToken1234567890",
+        password: "LeakGuardJsonPassword123!",
+        safe: true
+      }),
+      secrets: ["LeakGuardJsonToken1234567890", "LeakGuardJsonPassword123!"],
+      safeValues: ['"public_url":"https://example.com"', '"safe":true']
+    },
+    {
+      fileName: "deployment.yaml",
+      text: [
+        "public_url: https://example.com",
+        "api_token: LeakGuardYamlToken1234567890",
+        "db_password: LeakGuardYamlPassword123!",
+        "sample_token: example-token-for-docs-only"
+      ].join("\n"),
+      secrets: ["LeakGuardYamlToken1234567890", "LeakGuardYamlPassword123!"],
+      safeValues: [
+        "public_url: https://example.com",
+        "sample_token: example-token-for-docs-only"
+      ]
+    },
+    {
+      fileName: "application.log",
+      text: [
+        "INFO healthcheck=https://example.com/health status=200",
+        "WARN Authorization: Bearer LeakGuardLogBearerToken1234567890",
+        "INFO private_client=192.168.1.1"
+      ].join("\n"),
+      secrets: ["LeakGuardLogBearerToken1234567890"],
+      safeValues: ["https://example.com/health", "192.168.1.1"]
+    },
+    {
+      fileName: "deploy.sh",
+      text: [
+        "#!/usr/bin/env sh",
+        "PUBLIC_URL=https://example.com",
+        "export API_TOKEN=LeakGuardShellToken1234567890",
+        "echo \"$PUBLIC_URL\""
+      ].join("\n"),
+      secrets: ["LeakGuardShellToken1234567890"],
+      safeValues: ["PUBLIC_URL=https://example.com", "echo \"$PUBLIC_URL\""]
+    },
+    {
+      fileName: "deploy.ps1",
+      text: [
+        "$PublicUrl = \"https://example.com\"",
+        "$Env:API_KEY = \"LeakGuardPowerShellApiKey1234567890\"",
+        "Write-Output $PublicUrl"
+      ].join("\n"),
+      secrets: ["LeakGuardPowerShellApiKey1234567890"],
+      safeValues: ["$PublicUrl = \"https://example.com\"", "Write-Output $PublicUrl"]
+    }
+  ];
+
+  for (const fixture of fixtures) {
+    const result = scanSample(fixture.text, fixture.fileName);
+    const report = buildSanitizedReport(result);
+    const reportJson = JSON.stringify(report);
+
+    assert.ok(result.summary.findingsCount >= fixture.secrets.length, `${fixture.fileName}: expected findings`);
+    assert.ok(/\[(?:PWM|PUB_HOST)_\d+\]/.test(result.redactedText), `${fixture.fileName}: expected placeholders`);
+
+    for (const secret of fixture.secrets) {
+      assert.strictEqual(result.redactedText.includes(secret), false, `${fixture.fileName}: redacted text leaked ${secret}`);
+      assert.strictEqual(reportJson.includes(secret), false, `${fixture.fileName}: report leaked ${secret}`);
+    }
+
+    for (const safeValue of fixture.safeValues) {
+      assert.ok(
+        result.redactedText.includes(safeValue),
+        `${fixture.fileName}: safe value should remain visible: ${safeValue}`
+      );
+    }
+  }
+}
+
 function testPublicIpRedactedPrivateIpVisible() {
   const result = scanSample("public=8.8.8.8 private=192.168.1.1", "network.log");
 
@@ -193,6 +320,8 @@ testNullHeavyContentRejected();
 testOversizedFileRejectedBeforeScanning();
 testEnvSecretsRedacted();
 testJsonCredentialRedacted();
+testSanitizedScannerReportExcludesRawSecretBoundaries();
+testSupportedTextFormatFixturesRedactSecrets();
 testPublicIpRedactedPrivateIpVisible();
 testLineColumnMapping();
 

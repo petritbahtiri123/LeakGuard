@@ -19,6 +19,7 @@ LeakGuard does not use a backend service or cloud processing. It is designed for
 - A deterministic-first redaction layer for likely secrets and sensitive public IPv4 data
 - A session-scoped placeholder system for replacing raw values with tokens such as `[PWM_1]`, `[PUB_HOST_1]`, and `[NET_1]`
 - A local text-file scanner for selected text files
+- Local text-file paste/drop redaction for supported UTF-8 text files in protected AI composers
 - An optional local AI assist layer over leftover suspicious candidate windows after deterministic detection
 
 ## What LeakGuard Is Not
@@ -48,11 +49,13 @@ If you want to support development and upcoming features like:
 👉 You can support here:
 https://ko-fi.com/petritbahtiri
 
-## v1.3.0 Snapshot
+## v1.4.0 Snapshot
 
 - Built-in protection for `chatgpt.com`, `chat.openai.com`, `claude.ai`, `gemini.google.com`, `grok.com`, and `x.com`
 - User-managed protection for additional exact `http://` or `https://` origins
 - Local-only detection and redaction in the browser
+- Supported local UTF-8 text files pasted, dropped, or selected in protected AI composers can be locally validated, redacted, and replaced with sanitized in-memory files where browser/site handoff works
+- If sanitized file handoff fails or the file is unsupported/invalid, LeakGuard blocks raw upload and shows a local message
 - Trust-aware placeholder preservation and reuse for session-known `[PWM_N]`, `[NET_N]`, and `[PUB_HOST_N]` tokens
 - Full-value redaction for sensitive HTTP headers such as `Authorization`, `X-API-Key`, auth token headers, `Cookie`, and `Set-Cookie`
 - Local File Scanner for text-based files with redacted-copy and sanitized-report exports
@@ -64,7 +67,7 @@ https://ko-fi.com/petritbahtiri
 
 ## How LeakGuard Works
 
-1. On a protected site, LeakGuard watches supported chat composers for paste, typing, and send events.
+1. On a protected site, LeakGuard watches supported chat composers for paste, typing, send, and supported local text-file paste/drop events.
 2. If it finds likely secrets or sensitive public IPv4 hosts/CIDRs, it shows an `Allow once` or `Redact` decision flow.
 3. If you choose `Redact`, it rewrites the composer with stable placeholders such as `[PWM_1]`, `[PUB_HOST_1]`, and `[NET_1]`.
 4. Private raw-to-placeholder mappings stay in the background service worker and `chrome.storage.session` for the active browser session only.
@@ -75,6 +78,8 @@ https://ko-fi.com/petritbahtiri
 LeakGuard includes an extension-owned File Scanner page for local text files. It reads files only after you choose them, scans them in the browser with the same deterministic detector used for prompts, and can export a redacted text copy or a sanitized JSON findings report.
 
 Supported scanner files for this release: `.txt`, `.env`, `.log`, `.json`, `.yaml`, `.yml`, `.xml`, `.csv`, `.md`, `.ini`, `.conf`, `.ps1`, `.sh`, `.py`, `.js`, `.ts`, `.html`, and `.css`.
+
+In v1.4.0, supported local UTF-8 text files pasted, dropped, or selected in protected AI composers can also be locally validated, redacted through the same background-owned placeholder flow, and replaced with sanitized in-memory `File`/`Blob` objects where browser and site upload flows accept synthetic file handoff. This is limited to supported text files and does not guarantee support for every editor or upload control. Unsupported or invalid files, oversized files, and failed sanitized file handoff are blocked from raw upload with a local message.
 
 File scanner limits:
 
@@ -110,6 +115,7 @@ Training, export, browser smoke tests, and enterprise disable guidance live in [
 - Raw secrets are not sent to external services by the extension.
 - Raw secrets are not persisted in `chrome.storage.local`.
 - Selected file contents are scanned locally and are not stored in extension storage.
+- Supported local text-file paste/drop/file-select content is intercepted locally before raw upload and is not stored in extension storage.
 - Persistent local storage is limited to normalized protected-site rules.
 - Raw values are kept only in session-scoped background storage so secure reveal can work during the active tab session.
 - Secure reveal is restricted to extension-owned UI.

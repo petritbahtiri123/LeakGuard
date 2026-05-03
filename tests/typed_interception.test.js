@@ -21,6 +21,7 @@ const {
   PlaceholderManager,
   normalizeVisiblePlaceholders,
   buildNetworkUiFindings,
+  transformOutboundPrompt,
   ComposerHelpers
 } = globalThis.PWM;
 const {
@@ -199,6 +200,36 @@ function testTypedTrustedPlaceholderTailTargetsOnlyTailBeforeCommit() {
   assert.ok(relevant[0].method.includes("placeholder-suffix"));
 }
 
+function testTypedRepeatedSecretRewriteDoesNotLeakRawBoundaries() {
+  const repeatedSecret = "TypedBoundaryApiKey1234567890";
+  const currentText = "";
+  const inserted = [
+    `API_KEY=${repeatedSecret}`,
+    `Again same key: ${repeatedSecret}`,
+    `Plain repeat: ${repeatedSecret}`
+  ].join("\n");
+  const selection = { start: 0, end: 0 };
+  const next = spliceSelectionText(currentText, selection, inserted);
+  const findings = analyze(next.text);
+  const relevant = selectFindingsOverlappingInsertion(findings, selection, inserted);
+  const manager = new PlaceholderManager();
+  const result = transformOutboundPrompt(next.text, {
+    manager,
+    findings,
+    mode: "hide_public"
+  });
+  const placeholders = result.redactedText.match(/\[PWM_\d+\]/g) || [];
+
+  assert.ok(relevant.length > 0, "typed repeated secret should be detected before commit");
+  assert.strictEqual(result.redactedText.includes(repeatedSecret), false, "redacted typed text leaked raw repeated secret");
+  assert.strictEqual(new Set(placeholders).size, 1, "same typed raw secret should reuse one placeholder");
+  assert.ok(/^API_KEY=\[PWM_\d+\]$/m.test(result.redactedText), "assignment should redact to a clean placeholder");
+  assert.ok(/^Again same key: \[PWM_\d+\]$/m.test(result.redactedText), "labelled repeat should redact cleanly");
+  assert.ok(/^Plain repeat: \[PWM_\d+\]$/m.test(result.redactedText), "known raw repeat should redact cleanly");
+  assert.strictEqual(/\b[A-Za-z]+\[PWM_\d+\]/.test(result.redactedText), false, "raw prefixes must not attach to placeholders");
+  assert.strictEqual(/\[PWM_\d+\][A-Za-z0-9]/.test(result.redactedText), false, "raw suffixes must not attach to placeholders");
+}
+
 function testCaretDerivationPrefersOriginalSuffixAnchor() {
   const expectedText = "prefix [PWM_1] suffix";
   const caretOffset = deriveRewriteCaretOffset(expectedText, " suffix");
@@ -214,6 +245,7 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   const applyComposerTextSource = extractFunctionSource(contentSource, "applyComposerText");
   const typedRewriteSource = extractFunctionSource(contentSource, "applyTypedInterceptionRewrite");
   const beforeInputSource = extractFunctionSource(contentSource, "maybeHandleBeforeInput");
+  const fileInsertSource = extractFunctionSource(contentSource, "maybeHandleLocalFileInsert");
   const pasteSource = extractFunctionSource(contentSource, "maybeHandlePaste");
   const submitSource = extractFunctionSource(contentSource, "maybeHandleSubmit");
   const fallbackSendSource = extractFunctionSource(contentSource, "maybeHandleFallbackSendKey");
@@ -221,6 +253,64 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   assert.ok(
     contentSource.includes('"beforeinput"'),
     "content script should bind a beforeinput listener for early typed interception"
+  );
+  assert.ok(
+    contentSource.includes('"drop"') &&
+      contentSource.includes('"dragenter"') &&
+      contentSource.includes('"dragover"') &&
+      contentSource.includes('"change"') &&
+      contentSource.includes("readLocalTextFileFromDataTransfer") &&
+      contentSource.includes("createSanitizedTextFile"),
+    "content script should intercept local file paste/drop/file-input before host pages receive raw files"
+  );
+  assert.ok(
+    contentSource.includes("function maybeHandleFileDrag") &&
+      contentSource.includes("consumeInterceptionEvent(event);") &&
+      contentSource.includes("event.dataTransfer.dropEffect = \"copy\""),
+    "file dragenter/dragover should stop host upload overlays for composer file drags"
+  );
+  assert.ok(
+    contentSource.includes("async function maybeHandleFileInputChange") &&
+      contentSource.includes("event.target.value = \"\"") &&
+      contentSource.includes('"file-input"'),
+    "file input changes should be captured, cleared, and routed through local redaction"
+  );
+  assert.ok(
+    pasteSource.indexOf("dataTransferHasFiles(event.clipboardData)") <
+      pasteSource.indexOf('event.clipboardData?.getData("text/plain")'),
+    "file paste handling should run before ordinary text paste extraction"
+  );
+  assert.ok(
+    fileInsertSource.includes("consumeInterceptionEvent(event);") &&
+      fileInsertSource.indexOf("consumeInterceptionEvent(event);") <
+        fileInsertSource.indexOf("readLocalTextFileFromDataTransfer(dataTransfer)") &&
+      fileInsertSource.includes("requestRedaction(analysis.normalizedText, analysis.secretFindings)") &&
+      fileInsertSource.includes("createSanitizedTextFile(localFile.file, result.redactedText)") &&
+      fileInsertSource.includes("handOffSanitizedLocalFile(event, input, sanitizedFile, context)") &&
+      !fileInsertSource.includes("scanTextContent"),
+    "local file handoff should consume first, use background redaction, and avoid independent scanner managers"
+  );
+  assert.ok(
+    contentSource.includes("function handOffSanitizedLocalFile") &&
+      contentSource.includes("fileInput.files = transfer.files") &&
+      contentSource.includes('dispatchSanitizedFileEvent(target, "drop", transfer)') &&
+      contentSource.includes('dispatchSanitizedFileEvent(target, "paste", transfer)'),
+    "local file handling should hand off sanitized files instead of composer text"
+  );
+  assert.ok(
+    !contentSource.includes("async function applyLocalFileRedactedText") &&
+      !contentSource.includes("setInputTextDirect(input, next.text") &&
+      !contentSource.includes("insertContentEditableTextCommand(input, next.text"),
+    "local file handling must not fall back to dumping sanitized file contents into the composer"
+  );
+  assert.ok(
+    fileInsertSource.includes("sanitized_file_handoff_failed") &&
+      fileInsertSource.includes("LeakGuard blocked raw file upload. Sanitized file handoff failed"),
+    "local file handoff failure should block raw upload with a clear local message"
+  );
+  assert.ok(
+    fileInsertSource.includes("LeakGuard attached a sanitized local file."),
+    "local file handling should show the sanitized attachment status"
   );
   assert.ok(
     contentSource.includes("suppressInputScanUntil"),
@@ -325,6 +415,7 @@ function run() {
   testPlaceholderNormalizationCanHappenBeforeCommit();
   testTypedUnknownPlaceholderLikeSecretIsCaughtBeforeCommit();
   testTypedTrustedPlaceholderTailTargetsOnlyTailBeforeCommit();
+  testTypedRepeatedSecretRewriteDoesNotLeakRawBoundaries();
   testCaretDerivationPrefersOriginalSuffixAnchor();
   testContentScriptBindsBeforeInputAndKeepsFallbackGuard();
   console.log("PASS typed beforeinput interception regressions");

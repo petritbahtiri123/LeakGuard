@@ -160,10 +160,25 @@
   }
 
   function hasFalseDisclosureContext(text, start, end, { source, key, patternName } = {}) {
-    const line = getLineWindow(text, start, end).toLowerCase();
+    const input = String(text || "");
+    const lineStart = input.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
+    const lineEndIndex = input.indexOf("\n", Math.max(0, end));
+    const lineEnd = lineEndIndex >= 0 ? lineEndIndex : input.length;
+    const line = input.slice(lineStart, lineEnd).toLowerCase();
+    const beforeRaw = line.slice(0, Math.max(0, start - lineStart));
     const normalizedKey = normalizeAssignmentKey(key);
+    const falseContextPattern =
+      /\b(?:regex|regular expression|password policy|password strength|policy|validator|validation|generator|generate|generated|docs?|documentation|tutorial|example|sample|dummy|fake|template|mock|redacted|masked|sanitized|replace[_ -]?me|changeme|token limit|api version|build id|region|environment|secret santa)\b/i;
+    const normalizedFalseContextPattern =
+      /(?:^|_)(?:regex|regular_expression|password_policy|password_strength|policy|validator|validation|generator|generate|generated|docs?|documentation|tutorial|example|sample|dummy|fake|template|mock|redacted|masked|sanitized|replace_me|changeme|token_limit|api_version|build_id|region|environment|secret_santa)(?:_|$)/i;
 
     if (SAFE_ASSIGNMENT_KEYS.has(normalizedKey)) return true;
+    if (
+      source === "assignment" &&
+      (falseContextPattern.test(beforeRaw) || normalizedFalseContextPattern.test(normalizedKey))
+    ) {
+      return true;
+    }
     if (source === "assignment" && isSensitiveAssignmentKey(key)) return false;
     if (
       /(?:openai_api_key|github_token|github_pat|aws_|stripe_|google_|sendgrid_|pypi_|npm_|jwt|bearer|basic_auth)/i.test(
@@ -173,9 +188,22 @@
       return false;
     }
 
-    return /\b(?:regex|regular expression|password policy|password strength|policy|validator|validation|generator|generate|docs?|documentation|tutorial|example|sample|dummy|fake|template|mock|redacted|masked|sanitized|replace[_ -]?me|changeme|token limit|api version|build id|region|environment)\b/i.test(
-      line
-    );
+    return falseContextPattern.test(line);
+  }
+
+  function hasAssignmentFalseProseContext(text, start, end, key) {
+    const input = String(text || "");
+    const lineStart = input.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
+    const lineEndIndex = input.indexOf("\n", Math.max(0, end));
+    const lineEnd = lineEndIndex >= 0 ? lineEndIndex : input.length;
+    const beforeRaw = input.slice(lineStart, Math.max(lineStart, start));
+    const normalizedKey = normalizeAssignmentKey(key);
+    const falseContextPattern =
+      /\b(?:regex|regular expression|password policy|password strength|policy|validator|validation|generator|generate|generated|docs?|documentation|tutorial|example|sample|dummy|fake|template|mock|redacted|masked|sanitized|replace[_ -]?me|changeme|token limit|api version|build id|region|environment|secret santa)\b/i;
+    const normalizedFalseContextPattern =
+      /(?:^|_)(?:regex|regular_expression|password_policy|password_strength|policy|validator|validation|generator|generate|generated|docs?|documentation|tutorial|example|sample|dummy|fake|template|mock|redacted|masked|sanitized|replace_me|changeme|token_limit|api_version|build_id|region|environment|secret_santa)(?:_|$)/i;
+
+    return falseContextPattern.test(beforeRaw) || normalizedFalseContextPattern.test(normalizedKey);
   }
 
   function likelyTemplateValue(value) {
@@ -1361,6 +1389,13 @@
         return true;
       }
       if (
+        source === "assignment" &&
+        !["DB_URI", "CONNECTION_STRING"].includes(String(placeholderType || "")) &&
+        hasAssignmentFalseProseContext(text, start, end, key)
+      ) {
+        return true;
+      }
+      if (
         (patternName === "db_uri" || patternName === "generic_uri_credentials") &&
         this.uriCredentialsAreTrustedPlaceholders(raw)
       ) {
@@ -1440,7 +1475,7 @@
             const line = getLineWindow(text, start, end);
             const beforeRaw = line.slice(0, Math.max(0, start - (String(text || "").lastIndexOf("\n", Math.max(0, start - 1)) + 1))).toLowerCase();
             if (
-              /\b(?:regex|regular expression|password policy|password strength|validator|validation|generator|documentation|example|sample|dummy|fake|template|mock|redacted|masked|sanitized|replace[_ -]?me|changeme)\b/i.test(
+              /\b(?:regex|regular expression|password policy|password strength|validator|validation|generator|generate|generated|documentation|example|sample|dummy|fake|template|mock|redacted|masked|sanitized|replace[_ -]?me|changeme|secret santa)\b/i.test(
                 beforeRaw
               )
             ) {
@@ -2327,11 +2362,11 @@
     scanNaturalLanguageDisclosures(text) {
       const findings = [];
       const labelSource =
-        "(?:real|actual)\\s+(?:(?:db|database)\\s+)?(?:password|passwd|pwd|passcode|passphrase|secret|api\\s*key|apikey|token|access\\s+token|refresh\\s+token|bearer\\s+token|client\\s+secret|private\\s+key|webhook\\s+secret)\\s+value|(?:(?:this\\s+is\\s+my|here\\s+is\\s+my|here'?s\\s+my|my|the|our|actual|real|prod(?:uction)?|live)\\s+)?(?:(?:db|database)\\s+)?(?:password|passwd|pwd|passcode|passphrase|secret|api\\s*key|apikey|token|access\\s+token|refresh\\s+token|bearer\\s+token|client\\s+secret|private\\s+key|webhook\\s+secret)|(?:again\\s+)?same\\s+(?:key|token|password|secret)|real\\s+value|actual\\s+value";
+        "(?:real|actual)\\s+(?:(?:db|database)\\s+)?(?:password|passwd|pwd|passcode|passphrase|secret|api\\s*key|apikey|token|access\\s+token|refresh\\s+token|bearer\\s+token|client\\s+secret|private\\s+key|webhook\\s+secret)\\s+value|(?:(?:this\\s+is\\s+my|here\\s+is\\s+my|here\\s+is\\s+the|here'?s\\s+my|my|the|our|use\\s+this)\\s+)?(?:(?:real|actual|prod(?:uction)?|live)\\s+)?(?:(?:db|database)\\s+)?(?:password|passwd|pwd|passcode|passphrase|secret|api\\s*key|apikey|token|access\\s+token|refresh\\s+token|bearer\\s+token|client\\s+secret|private\\s+key|webhook\\s+secret)|(?:again\\s+(?:the\\s+)?)?same\\s+(?:key|token|password|secret)|real\\s+value|actual\\s+value";
       const valueSource =
         "\"([^\"\\r\\n]{6,})\"|'([^'\\r\\n]{6,})'|`([^`\\r\\n]{6,})`|([^\\s,;]{6,})";
       const regex = new RegExp(
-        `\\b(${labelSource})\\s*(?:is|=|:|->|→|equals|set\\s+to|should\\s+be|becomes)?\\s*(?:${valueSource})`,
+        `\\b(${labelSource})\\s*(?:(?:is|equals|set\\s+to|should\\s+be|becomes)\\s*)?(?:=|:|->|→)?\\s*(?:${valueSource})`,
         "gi"
       );
       let match;

@@ -11,7 +11,8 @@
     normalizeVisiblePlaceholders,
     buildNetworkUiFindings,
     evaluateDestinationPolicy,
-    ComposerHelpers
+    ComposerHelpers,
+    FilePasteHelpers
   } = globalThis.PWM;
   const {
     normalizeComposerText,
@@ -28,6 +29,11 @@
     setInputText,
     forceRewriteInputText
   } = ComposerHelpers;
+  const {
+    dataTransferHasFiles,
+    readLocalTextFileFromDataTransfer,
+    createSanitizedTextFile
+  } = FilePasteHelpers || {};
 
   const COMPOSER_SELECTORS = [
     "#prompt-textarea",
@@ -104,6 +110,7 @@
   let statusPanelComposerValueEl = null;
   let statusPanelSessionValueEl = null;
   let extensionRuntimeAvailable = true;
+  const sanitizedFileInputHandoffs = new WeakSet();
   const PROGRAMMATIC_INPUT_SUPPRESS_MS = 500;
 
   function isExtensionContextInvalidatedError(error) {
@@ -1498,9 +1505,15 @@
 
   async function maybeHandlePaste(event) {
     if (!extensionRuntimeAvailable || modalOpen || event.defaultPrevented) return;
+    if (isSanitizedFileHandoffEvent(event)) return;
 
     const input = findComposer(event.target);
     if (!input) return;
+
+    if (typeof dataTransferHasFiles === "function" && dataTransferHasFiles(event.clipboardData)) {
+      await maybeHandleLocalFileInsert(event, input, event.clipboardData, "paste");
+      return;
+    }
 
     const pasted =
       event.clipboardData?.getData("text/plain") || event.clipboardData?.getData("text") || "";
@@ -1634,6 +1647,276 @@
     setBadge("Content redacted");
     hideBadgeSoon();
     refreshBadgeFromCurrentInput();
+  }
+
+  function isSanitizedFileHandoffEvent(event) {
+    return Boolean(event?.__PWM_SANITIZED_FILE_HANDOFF__);
+  }
+
+  function markSanitizedFileHandoffEvent(event) {
+    try {
+      Object.defineProperty(event, "__PWM_SANITIZED_FILE_HANDOFF__", {
+        value: true,
+        configurable: true
+      });
+    } catch {
+      event.__PWM_SANITIZED_FILE_HANDOFF__ = true;
+    }
+  }
+
+  function createSanitizedDataTransfer(sanitizedFile) {
+    if (!sanitizedFile || typeof DataTransfer !== "function") {
+      return null;
+    }
+
+    try {
+      const transfer = new DataTransfer();
+      if (typeof transfer.items?.add !== "function") return null;
+      transfer.items.add(sanitizedFile);
+      return Number(transfer.files?.length || 0) > 0 ? transfer : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function attachEventDataTransfer(event, propertyName, transfer) {
+    try {
+      Object.defineProperty(event, propertyName, {
+        value: transfer,
+        configurable: true
+      });
+      return true;
+    } catch {
+      try {
+        event[propertyName] = transfer;
+        return true;
+      } catch {
+        return false;
+      }
+    }
+  }
+
+  function dispatchSanitizedFileEvent(target, type, transfer) {
+    if (!target || !transfer) return false;
+
+    let handoffEvent = null;
+    try {
+      if (type === "drop" && typeof DragEvent === "function") {
+        handoffEvent = new DragEvent("drop", {
+          bubbles: true,
+          cancelable: true,
+          dataTransfer: transfer
+        });
+      } else if (type === "paste" && typeof ClipboardEvent === "function") {
+        handoffEvent = new ClipboardEvent("paste", {
+          bubbles: true,
+          cancelable: true,
+          clipboardData: transfer
+        });
+      }
+    } catch {
+      handoffEvent = null;
+    }
+
+    if (!handoffEvent) {
+      handoffEvent = new Event(type, {
+        bubbles: true,
+        cancelable: true
+      });
+    }
+
+    markSanitizedFileHandoffEvent(handoffEvent);
+    const propertyName = type === "paste" ? "clipboardData" : "dataTransfer";
+    attachEventDataTransfer(handoffEvent, propertyName, transfer);
+
+    try {
+      target.dispatchEvent(handoffEvent);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function handOffSanitizedLocalFile(event, input, sanitizedFile, context) {
+    const transfer = createSanitizedDataTransfer(sanitizedFile);
+    if (!transfer) return false;
+
+    if (context === "file-input") {
+      const fileInput = event?.target;
+      if (
+        !fileInput ||
+        fileInput.tagName !== "INPUT" ||
+        String(fileInput.type || "").toLowerCase() !== "file"
+      ) {
+        return false;
+      }
+
+      try {
+        sanitizedFileInputHandoffs.add(fileInput);
+        fileInput.files = transfer.files;
+        fileInput.dispatchEvent(
+          new Event("change", {
+            bubbles: true,
+            cancelable: true
+          })
+        );
+        return true;
+      } catch {
+        sanitizedFileInputHandoffs.delete(fileInput);
+        try {
+          fileInput.value = "";
+        } catch {
+          // The original raw file must remain blocked if sanitized file assignment fails.
+        }
+        return false;
+      }
+    }
+
+    const target = event?.target || input;
+    if (context === "drop") {
+      try {
+        transfer.dropEffect = "copy";
+      } catch {
+        // Some synthetic DataTransfer objects expose dropEffect as read-only.
+      }
+      return dispatchSanitizedFileEvent(target, "drop", transfer);
+    }
+
+    if (context === "paste") {
+      return dispatchSanitizedFileEvent(target, "paste", transfer);
+    }
+
+    return false;
+  }
+
+  async function maybeHandleLocalFileInsert(event, input, dataTransfer, context) {
+    if (
+      !extensionRuntimeAvailable ||
+      modalOpen ||
+      event.defaultPrevented ||
+      typeof readLocalTextFileFromDataTransfer !== "function" ||
+      typeof createSanitizedTextFile !== "function" ||
+      !dataTransferHasFiles(dataTransfer)
+    ) {
+      return false;
+    }
+
+    consumeInterceptionEvent(event);
+
+    const localFile = await readLocalTextFileFromDataTransfer(dataTransfer);
+    if (event?.target?.tagName === "INPUT" && String(event.target.type || "").toLowerCase() === "file") {
+      event.target.value = "";
+    }
+    if (!localFile.handled) return false;
+
+    if (!localFile.ok) {
+      setBadge("Local file not attached");
+      hideBadgeSoon(3200);
+      await showMessageModal("Local file not attached", localFile.message);
+      refreshBadgeFromCurrentInput();
+      return true;
+    }
+
+    const analysis = analyzeText(localFile.text);
+    const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
+    const sanitizedFile = createSanitizedTextFile(localFile.file, result.redactedText);
+    const handedOff = handOffSanitizedLocalFile(event, input, sanitizedFile, context);
+
+    if (!handedOff) {
+      setBadge("Raw file upload blocked");
+      hideBadgeSoon(4200);
+      await showMessageModal(
+        "Raw file upload blocked",
+        "LeakGuard blocked raw file upload. Sanitized file handoff failed; use File Scanner or paste redacted text manually."
+      );
+      refreshBadgeFromCurrentInput();
+      return {
+        handled: true,
+        ok: false,
+        reason: "sanitized_file_handoff_failed"
+      };
+    }
+
+    setBadge("LeakGuard attached a sanitized local file.");
+    hideBadgeSoon(3200);
+    refreshBadgeFromCurrentInput();
+    return {
+      handled: true,
+      ok: true,
+      strategy: "sanitized-file-handoff"
+    };
+  }
+
+  async function maybeHandleDrop(event) {
+    if (
+      !extensionRuntimeAvailable ||
+      modalOpen ||
+      event.defaultPrevented ||
+      isSanitizedFileHandoffEvent(event) ||
+      typeof dataTransferHasFiles !== "function" ||
+      !dataTransferHasFiles(event.dataTransfer)
+    ) {
+      return;
+    }
+
+    const input = findComposer(event.target);
+    if (!input) return;
+
+    await maybeHandleLocalFileInsert(event, input, event.dataTransfer, "drop");
+  }
+
+  function maybeHandleFileDrag(event) {
+    if (
+      !extensionRuntimeAvailable ||
+      modalOpen ||
+      event.defaultPrevented ||
+      typeof dataTransferHasFiles !== "function" ||
+      !dataTransferHasFiles(event.dataTransfer)
+    ) {
+      return;
+    }
+
+    const input = findComposer(event.target);
+    if (!input) return;
+
+    consumeInterceptionEvent(event);
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = "copy";
+    }
+  }
+
+  async function maybeHandleFileInputChange(event) {
+    if (
+      !extensionRuntimeAvailable ||
+      modalOpen ||
+      event.defaultPrevented ||
+      !event.target ||
+      event.target.tagName !== "INPUT" ||
+      String(event.target.type || "").toLowerCase() !== "file" ||
+      typeof dataTransferHasFiles !== "function" ||
+      !dataTransferHasFiles({ files: event.target.files, types: ["Files"], items: [] })
+    ) {
+      return;
+    }
+
+    if (sanitizedFileInputHandoffs.has(event.target)) {
+      sanitizedFileInputHandoffs.delete(event.target);
+      return;
+    }
+
+    const input = findComposer(event.target);
+    if (!input) return;
+
+    await maybeHandleLocalFileInsert(
+      event,
+      input,
+      {
+        files: Array.from(event.target.files || []),
+        types: ["Files"],
+        items: []
+      },
+      "file-input"
+    );
   }
 
   async function maybeHandleSubmit(event) {
@@ -2589,6 +2872,34 @@
       "paste",
       (event) => {
         maybeHandlePaste(event).catch(handleContentError);
+      },
+      true
+    );
+
+    document.addEventListener(
+      "dragenter",
+      maybeHandleFileDrag,
+      true
+    );
+
+    document.addEventListener(
+      "dragover",
+      maybeHandleFileDrag,
+      true
+    );
+
+    document.addEventListener(
+      "drop",
+      (event) => {
+        maybeHandleDrop(event).catch(handleContentError);
+      },
+      true
+    );
+
+    document.addEventListener(
+      "change",
+      (event) => {
+        maybeHandleFileInputChange(event).catch(handleContentError);
       },
       true
     );

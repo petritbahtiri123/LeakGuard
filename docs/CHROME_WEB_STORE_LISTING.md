@@ -26,6 +26,8 @@ Before text is sent from a protected site, LeakGuard can:
 
 LeakGuard also includes a local File Scanner page for text-based files such as `.env`, `.json`, `.log`, `.md`, source files, and config files. It can export redacted text copies and sanitized JSON findings reports without storing file contents or uploading them.
 
+For protected AI composers, supported local UTF-8 text files pasted, dropped, or selected in the page can be locally validated, redacted, and replaced with sanitized in-memory `File`/`Blob` objects where the browser and site upload flow accept synthetic file handoff. If the file is unsupported or invalid, or if sanitized file handoff fails, LeakGuard blocks raw upload and shows a local message.
+
 LeakGuard is designed for risk reduction, not as a complete data-loss-prevention product.
 
 ### Current launch scope
@@ -34,6 +36,8 @@ LeakGuard is designed for risk reduction, not as a complete data-loss-prevention
 - user-managed exact-site protection for additional sites
 - local-only detection and redaction
 - local text-file scanning with redacted-copy and sanitized-report exports
+- local text-file paste/drop redaction for supported UTF-8 text files in protected AI composers
+- fail-closed blocking on unsupported files or failed sanitized file handoff
 - Manifest V3 service-worker architecture
 - deterministic per-session placeholder mapping
 - secure reveal only inside extension-owned UI
@@ -45,7 +49,7 @@ LeakGuard is designed for risk reduction, not as a complete data-loss-prevention
 - no backend service
 - no promise of perfect privacy or complete secret protection
 - no PDF, DOCX, image OCR, or visual image redaction in this release
-- no support for every editor, upload flow, or browser
+- no support for every editor, upload flow, browser, or synthetic `DataTransfer` file handoff path
 
 ## Store Category Suggestion
 
@@ -64,7 +68,7 @@ Productivity
 
 ### `storage`
 
-Used to store normalized protected-site rules and session-scoped prompt placeholder maps locally in the browser. File Scanner contents are not stored in extension storage.
+Used to store normalized protected-site rules and session-scoped prompt placeholder maps locally in the browser. File Scanner and local file paste/drop contents are not stored in extension storage.
 
 ### `scripting`
 
@@ -93,6 +97,7 @@ Use real extension screenshots with production copy. Avoid showing raw real cred
 
 - The extension processes text locally in the browser.
 - The File Scanner processes explicitly selected text files locally and does not upload or store file contents.
+- Supported local text files pasted, dropped, or selected in protected AI composers are processed locally, and raw uploads are blocked if sanitized file handoff cannot complete.
 - Raw secrets are not sent to external services by the extension.
 - Sanitized File Scanner JSON reports do not include raw secrets by default.
 - User-managed sites are exact origin rules, not wildcard rules.

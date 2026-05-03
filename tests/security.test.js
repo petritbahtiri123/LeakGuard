@@ -1,13 +1,19 @@
 const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
+const vm = require("vm");
 const { pathToFileURL } = require("url");
 
 const repoRoot = path.join(__dirname, "..");
 require(path.join(repoRoot, "src/shared/placeholders.js"));
+require(path.join(repoRoot, "src/shared/sessionMapStore.js"));
 const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
 const backgroundSource = fs.readFileSync(
   path.join(repoRoot, "src/background/core.js"),
+  "utf8"
+);
+const filePasteHelperSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/file_paste_helpers.js"),
   "utf8"
 );
 const popupSource = fs.readFileSync(path.join(repoRoot, "src/popup/popup.js"), "utf8");
@@ -17,6 +23,11 @@ const harnessSource = fs.readFileSync(
 );
 const {
   PLACEHOLDER_TOKEN_REGEX,
+  PlaceholderManager,
+  createSessionState,
+  migrateSessionState,
+  normalizeTransformMode,
+  DEFAULT_TRANSFORM_MODE,
   normalizeVisiblePlaceholders,
   canonicalizePlaceholderToken,
   containsLegacyTypedPlaceholder
@@ -30,6 +41,119 @@ function extractFunctionSource(source, name) {
   const match = source.match(new RegExp(`function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n\\}`));
   assert.ok(match, `expected to find function ${name}`);
   return match[0];
+}
+
+function createStorageArea(store) {
+  return {
+    async get(keys) {
+      if (keys === null || keys === undefined) return { ...store };
+      const requested = Array.isArray(keys) ? keys : [keys];
+      return requested.reduce((output, key) => {
+        if (Object.prototype.hasOwnProperty.call(store, key)) output[key] = store[key];
+        return output;
+      }, {});
+    },
+    async set(values) {
+      Object.assign(store, values);
+    },
+    async remove(keys) {
+      const requested = Array.isArray(keys) ? keys : [keys];
+      requested.forEach((key) => {
+        delete store[key];
+      });
+    }
+  };
+}
+
+function createBackgroundSecuritySandbox({ allowReveal = true, auditMode = "metadata-only" } = {}) {
+  const storageState = {};
+  const storageArea = createStorageArea(storageState);
+  const noopEvent = { addListener() {} };
+  const ext = {
+    action: {},
+    permissions: {
+      contains: async () => true,
+      remove: async () => true,
+      onAdded: noopEvent,
+      onRemoved: noopEvent
+    },
+    runtime: {
+      id: "security-test-extension",
+      getURL: (relativePath = "") => `chrome-extension://security-test/${relativePath}`,
+      onInstalled: noopEvent,
+      onMessage: noopEvent,
+      onStartup: noopEvent,
+      openOptionsPage: async () => {}
+    },
+    storage: {
+      local: storageArea,
+      onChanged: noopEvent
+    },
+    scripting: {
+      executeScript: async () => {},
+      getRegisteredContentScripts: async () => [],
+      insertCSS: async () => {},
+      registerContentScripts: async () => {},
+      unregisterContentScripts: async () => {}
+    },
+    tabs: {
+      onRemoved: noopEvent,
+      reload: async () => {},
+      sendMessage: async () => ({ ok: true })
+    }
+  };
+  const sandbox = {
+    URL,
+    Promise,
+    console,
+    setTimeout,
+    clearTimeout,
+    queueMicrotask,
+    crypto: {
+      randomUUID: () => `security-${Object.keys(storageState).length + 1}`
+    }
+  };
+
+  sandbox.globalThis = sandbox;
+  sandbox.PWM = {
+    PlaceholderManager,
+    canonicalizePlaceholderToken,
+    createSessionState,
+    migrateSessionState,
+    normalizeTransformMode,
+    DEFAULT_TRANSFORM_MODE,
+    Detector: null,
+    transformOutboundPrompt: () => ({ redactedText: "", replacements: [] }),
+    BUILTIN_PROTECTED_SITES: [],
+    USER_PROTECTED_SITES_STORAGE_KEY: "security:sites",
+    normalizeProtectedSiteInput: () => ({ ok: false, error: "not used" }),
+    normalizeProtectedSiteList: (rules) => (Array.isArray(rules) ? rules : []),
+    isBuiltinProtectedSiteRule: () => false,
+    loadPolicy: async () => ({
+      policy: {
+        allowReveal,
+        allowSiteRemoval: true,
+        allowUserAddedSites: true,
+        managedProtectedSites: []
+      }
+    }),
+    getPolicySummary: async () => ({
+      auditMode,
+      enterpriseMode: true
+    }),
+    evaluateDestinationPolicy: () => ({ blocked: false }),
+    invalidatePolicyCache: () => {},
+    ext,
+    supportsDynamicContentScripts: true,
+    supportsStorageSession: false,
+    getSessionStorageArea: () => storageArea
+  };
+
+  vm.runInNewContext(backgroundSource, sandbox, {
+    filename: "core.js"
+  });
+
+  return { sandbox, storageState };
 }
 
 function testUnsafeContentRevealPathRemoved() {
@@ -79,6 +203,201 @@ function testSafeRevealUiExists() {
   assert.ok(
     popupSource.includes("secretValueEl.textContent = response.raw"),
     "raw secret rendering should be confined to the extension-owned popup UI"
+  );
+}
+
+function testAuditMetadataObjectsExcludeRawSecrets() {
+  const { sandbox } = createBackgroundSecuritySandbox();
+  const rawSecret = "AuditBoundarySecret123!";
+  const rawApiKey = "AuditApiKeyBoundary123456";
+  const entry = sandbox.buildAuditEventEntry({
+    action: "blocked",
+    reason: "destination_not_approved",
+    url: `https://chat.example.com/path?token=${rawSecret}`,
+    findings: [
+      {
+        type: "PASSWORD",
+        placeholderType: "PASSWORD",
+        raw: rawSecret
+      },
+      {
+        type: "API_KEY",
+        placeholderType: "API_KEY",
+        raw: rawApiKey
+      }
+    ],
+    policySummary: {
+      auditMode: "metadata-only",
+      enterpriseMode: true
+    }
+  });
+  const serialized = JSON.stringify(entry);
+
+  assert.strictEqual(serialized.includes(rawSecret), false, "audit metadata must exclude raw password text");
+  assert.strictEqual(serialized.includes(rawApiKey), false, "audit metadata must exclude raw API key text");
+  assert.strictEqual(serialized.includes(`/path?token=${rawSecret}`), false, "audit metadata must exclude full URLs");
+  assert.strictEqual(entry.urlOrigin, "https://chat.example.com");
+  assert.strictEqual(entry.siteHost, "chat.example.com");
+  assert.deepStrictEqual(Array.from(entry.findingTypes).sort(), ["api_key", "password"]);
+}
+
+async function testSecureRevealRemainsBoundedToRequestSessionAndExtensionUi() {
+  const { sandbox, storageState } = createBackgroundSecuritySandbox();
+  const rawSecret = "RevealBoundarySecret123!";
+  const tabId = 7;
+  const state = createSessionState("https://chat.example.com/thread");
+  const manager = new PlaceholderManager();
+  manager.setPrivateState(state);
+  const placeholder = manager.getPlaceholder(rawSecret);
+  const privateState = {
+    ...state,
+    ...manager.exportPrivateState()
+  };
+
+  storageState[`pwm:tab:${tabId}`] = privateState;
+
+  const requestId = await sandbox.createRevealRequest(tabId, placeholder);
+  const requestKey = `pwm:reveal:${requestId}`;
+  const requestJson = JSON.stringify(storageState[requestKey]);
+  const context = await sandbox.getRevealContext(requestId);
+
+  assert.strictEqual(requestJson.includes(rawSecret), false, "reveal request metadata must not store raw secret text");
+  assert.strictEqual(context.available, true, "known placeholder should be revealable in the matching session");
+  assert.strictEqual(JSON.stringify(context).includes(rawSecret), false, "reveal context must not include raw secret text");
+  assert.strictEqual(await sandbox.revealSecret(requestId), rawSecret, "extension reveal flow should recover the raw value");
+
+  storageState[requestKey] = {
+    ...storageState[requestKey],
+    sessionId: "wrong-session"
+  };
+
+  assert.strictEqual(await sandbox.revealSecret(requestId), null, "mismatched sessions must not reveal raw values");
+}
+
+function testPlaceholderLabelsDoNotExposeRawValues() {
+  const createSecretSpanSource = extractFunctionSource(contentSource, "createSecretSpan");
+  const renderRevealContextSource = extractFunctionSource(popupSource, "renderRevealContext");
+
+  assert.ok(
+    createSecretSpanSource.includes("span.textContent = placeholder"),
+    "page placeholder labels should render only the placeholder token"
+  );
+  assert.ok(
+    createSecretSpanSource.includes(
+      'span.setAttribute("aria-label", "LeakGuard redacted sensitive content. Open secure reveal in LeakGuard.")'
+    ),
+    "page placeholder aria labels should stay generic"
+  );
+  assertNotIncludes(
+    createSecretSpanSource,
+    ".raw",
+    "page placeholder labels must not read raw secret fields"
+  );
+  assert.ok(
+    renderRevealContextSource.includes('revealPlaceholderEl.textContent = context?.placeholder || "[PWM]"'),
+    "popup reveal context should label the selected placeholder, not the raw value"
+  );
+  assertNotIncludes(
+    renderRevealContextSource,
+    "context.raw",
+    "popup reveal context must not render raw values before explicit reveal"
+  );
+}
+
+function testLocalFilePasteDoesNotExposeRawFileContent() {
+  const fileInsertSource = extractFunctionSource(contentSource, "maybeHandleLocalFileInsert");
+  const localFileSource = `${filePasteHelperSource}\n${fileInsertSource}`;
+
+  assert.ok(
+    localFileSource.includes("validateFileForTextScan") &&
+      localFileSource.includes("decodeUtf8Text"),
+    "local file paste/drop should reuse file scanner validation and UTF-8 decoding"
+  );
+  assert.ok(
+    fileInsertSource.includes("consumeInterceptionEvent(event);") &&
+      fileInsertSource.indexOf("consumeInterceptionEvent(event);") <
+        fileInsertSource.indexOf("readLocalTextFileFromDataTransfer(dataTransfer)"),
+    "local file paste/drop should prevent host delivery before reading local file bytes"
+  );
+  assert.ok(
+    localFileSource.includes("requestRedaction(analysis.normalizedText, analysis.secretFindings)"),
+    "local file paste/drop should use background-owned placeholder redaction"
+  );
+  assert.ok(
+    localFileSource.includes("createSanitizedTextFile(localFile.file, result.redactedText)") &&
+      localFileSource.includes("handOffSanitizedLocalFile(event, input, sanitizedFile, context)") &&
+      contentSource.includes("function handOffSanitizedLocalFile") &&
+      contentSource.includes("fileInput.files = transfer.files"),
+    "local file paste/drop should create and hand off sanitized in-memory files"
+  );
+  assert.ok(
+    localFileSource.includes("sanitized_file_handoff_failed") &&
+      localFileSource.includes("LeakGuard blocked raw file upload. Sanitized file handoff failed"),
+    "local file paste/drop should fail closed when sanitized handoff cannot be completed"
+  );
+  assert.ok(
+    localFileSource.includes("LOCAL_FILE_TEXT_INSERTION_FALLBACK_ENABLED = false") &&
+      !contentSource.includes("async function applyLocalFileRedactedText") &&
+      !contentSource.includes("setInputTextDirect(input, next.text") &&
+      !contentSource.includes("insertContentEditableTextCommand(input, next.text"),
+    "local file paste/drop must not dump file contents into composer text"
+  );
+  assertNotIncludes(
+    localFileSource,
+    "scanTextContent(",
+    "composer file insertion must not use the scanner's independent PlaceholderManager"
+  );
+  assertNotIncludes(
+    localFileSource,
+    "console.log",
+    "local file paste/drop helper must not log local file contents"
+  );
+  assertNotIncludes(
+    localFileSource,
+    "console.error",
+    "local file paste/drop helper must not log local file contents on errors"
+  );
+  assertNotIncludes(
+    localFileSource,
+    "localStorage",
+    "local file paste/drop helper must not persist local file contents"
+  );
+  assertNotIncludes(
+    localFileSource,
+    "sessionStorage",
+    "local file paste/drop helper must not persist local file contents"
+  );
+}
+
+function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
+  const baseManifest = JSON.parse(fs.readFileSync(path.join(repoRoot, "manifests/base.json"), "utf8"));
+  const staticScripts = baseManifest.content_scripts[0].js;
+  const dynamicScripts = Array.from(
+    backgroundSource.matchAll(/"([^"]+(?:fileScanner|file_paste_helpers|content)\.js)"/g)
+  ).map((match) => match[1]);
+
+  const staticFileScanner = staticScripts.indexOf("shared/fileScanner.js");
+  const staticFilePaste = staticScripts.indexOf("content/file_paste_helpers.js");
+  const staticContent = staticScripts.indexOf("content/content.js");
+  const dynamicFileScanner = dynamicScripts.indexOf("shared/fileScanner.js");
+  const dynamicFilePaste = dynamicScripts.indexOf("content/file_paste_helpers.js");
+  const dynamicContent = dynamicScripts.indexOf("content/content.js");
+
+  assert.ok(
+    staticFileScanner > -1 && staticFilePaste > -1 && staticContent > -1,
+    "static manifest should include scanner, file paste helper, and content script"
+  );
+  assert.ok(
+    dynamicFileScanner > -1 && dynamicFilePaste > -1 && dynamicContent > -1,
+    "dynamic injection should include scanner, file paste helper, and content script"
+  );
+  assert.ok(
+    staticFileScanner < staticFilePaste && staticFilePaste < staticContent,
+    "static manifest file paste order should load dependencies before content.js"
+  );
+  assert.ok(
+    dynamicFileScanner < dynamicFilePaste && dynamicFilePaste < dynamicContent,
+    "dynamic injection file paste order should load dependencies before content.js"
   );
 }
 
@@ -265,6 +584,11 @@ async function run() {
 
   testUnsafeContentRevealPathRemoved();
   testSafeRevealUiExists();
+  testAuditMetadataObjectsExcludeRawSecrets();
+  await testSecureRevealRemainsBoundedToRequestSessionAndExtensionUi();
+  testPlaceholderLabelsDoNotExposeRawValues();
+  testLocalFilePasteDoesNotExposeRawFileContent();
+  testStaticAndDynamicFilePasteInjectionOrderStaysAligned();
   testBackgroundDeterministicRescanBackstopExists();
   testContentPublicStateIsMinimized();
   testRevealNeverInjectsHostDomContainers();
