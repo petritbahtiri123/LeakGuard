@@ -56,9 +56,28 @@
   }
 
   function applyReplacements(text, replacements) {
-    let output = String(text || "");
+    const input = String(text || "");
+    const sorted = [...replacements].sort((left, right) => left.start - right.start);
+    const hasOverlaps = sorted.some((replacement, index) => {
+      if (index === 0) return false;
+      return replacement.start < sorted[index - 1].end;
+    });
 
-    for (const replacement of [...replacements].sort((left, right) => right.start - left.start)) {
+    if (!hasOverlaps) {
+      const chunks = [];
+      let cursor = 0;
+
+      for (const replacement of sorted) {
+        chunks.push(input.slice(cursor, replacement.start), replacement.placeholder);
+        cursor = replacement.end;
+      }
+
+      chunks.push(input.slice(cursor));
+      return chunks.join("");
+    }
+
+    let output = input;
+    for (const replacement of sorted.sort((left, right) => right.start - left.start)) {
       output =
         output.slice(0, replacement.start) + replacement.placeholder + output.slice(replacement.end);
     }

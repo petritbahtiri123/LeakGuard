@@ -24,6 +24,25 @@ const repoRoot = path.join(__dirname, "..", "..");
 });
 
 const { Detector, PlaceholderManager, transformOutboundPrompt } = globalThis.PWM;
+const DETECTOR_PROFILE_METHODS = [
+  "scanSensitiveHttpHeaders",
+  "scanStructuredAssignments",
+  "scanUrlCredentials",
+  "scanPatterns",
+  "scanAssignments",
+  "scanExplicitCredentialAssignments",
+  "scanAdversarialAssignments",
+  "scanIdentityAssignments",
+  "scanJsonIdentityFields",
+  "scanUnknownPlaceholderTokens",
+  "scanNaturalLanguageDisclosures",
+  "scanExtraAtUriCredentialSecrets",
+  "scanPlaceholderSuffixSecrets",
+  "scanBarePasswordCandidates",
+  "scanEntropyFallback",
+  "dedupe",
+  "resolveOverlaps"
+];
 
 const DEFAULT_ITERATIONS = 8;
 const WARMUP_ITERATIONS = 2;
@@ -84,8 +103,9 @@ const samples = [
       "token=ghp_1234567890abcdefghijklmnopqrstuvwxyz",
       "public_ip=1.1.1.1 private_ip=192.168.1.10"
     ].join("\n").repeat(180),
-    maxP95Ms: 700,
+    maxP95Ms: 150,
     maxMsPerKb: 18,
+    assertEquivalentToBaseline: true,
     forbidden: [
       "LeakGuardBearerToken_1234567890_abcdefghijklmnopqrstuvwxyz",
       "VeryBadPassword123!",
@@ -133,15 +153,59 @@ function emptyStageTotals() {
   };
 }
 
+function emptyDetectorMethodTotals() {
+  return Object.fromEntries(
+    DETECTOR_PROFILE_METHODS.map((method) => [
+      method,
+      {
+        ms: 0,
+        calls: 0,
+        findings: 0
+      }
+    ])
+  );
+}
+
 function addStageTotals(target, source) {
   for (const key of Object.keys(target)) {
     target[key] += Number(source?.[key] || 0);
   }
 }
 
+function addDetectorMethodTotals(target, source) {
+  for (const [method, value] of Object.entries(source || {})) {
+    if (!target[method]) {
+      target[method] = { ms: 0, calls: 0, findings: 0 };
+    }
+    target[method].ms += Number(value?.ms || 0);
+    target[method].calls += Number(value?.calls || 0);
+    target[method].findings += Number(value?.findings || 0);
+  }
+}
+
+function wrapDetectorForProfiling(detector, totals) {
+  for (const method of DETECTOR_PROFILE_METHODS) {
+    const original = detector[method];
+    if (typeof original !== "function") continue;
+
+    detector[method] = function profiledDetectorMethod(...args) {
+      const start = performance.now();
+      const output = original.apply(this, args);
+      const elapsed = performance.now() - start;
+      totals[method].ms += elapsed;
+      totals[method].calls += 1;
+      if (Array.isArray(output)) {
+        totals[method].findings += output.length;
+      }
+      return output;
+    };
+  }
+}
+
 function redactPipeline(text, options = {}) {
   const profile = Boolean(options.profile);
   const stages = profile ? emptyStageTotals() : null;
+  const detectorMethods = profile ? emptyDetectorMethodTotals() : null;
   let stageStart = profile ? performance.now() : 0;
   const manager = new PlaceholderManager();
 
@@ -151,13 +215,19 @@ function redactPipeline(text, options = {}) {
   }
 
   const detector = new Detector();
+  if (profile) {
+    wrapDetectorForProfiling(detector, detectorMethods);
+  }
 
   if (profile) {
     stages.detector_construct_ms += performance.now() - stageStart;
     stageStart = performance.now();
   }
 
-  const findings = detector.scan(text, { manager });
+  const findings = detector.scan(text, {
+    manager,
+    disableRepeatedLineCache: Boolean(options.disableRepeatedLineCache)
+  });
 
   if (profile) {
     stages.scan_ms += performance.now() - stageStart;
@@ -177,7 +247,8 @@ function redactPipeline(text, options = {}) {
   return {
     findings,
     ...transformed,
-    stages
+    stages,
+    detectorMethods
   };
 }
 
@@ -193,8 +264,29 @@ function assertCorrectness(sample, output) {
   }
 }
 
+function assertEquivalentToBaseline(sample) {
+  if (!sample.assertEquivalentToBaseline) return;
+
+  const optimized = redactPipeline(sample.text);
+  const baseline = redactPipeline(sample.text, {
+    disableRepeatedLineCache: true
+  });
+
+  assert.equal(
+    optimized.redactedText,
+    baseline.redactedText,
+    `${sample.name}: repeated-line fast path changed redacted output`
+  );
+  assert.equal(
+    optimized.findings.length,
+    baseline.findings.length,
+    `${sample.name}: repeated-line fast path changed replacement count`
+  );
+}
+
 function benchmark(sample) {
   let lastOutput = null;
+  assertEquivalentToBaseline(sample);
 
   for (let index = 0; index < WARMUP_ITERATIONS; index += 1) {
     lastOutput = redactPipeline(sample.text, { profile: PROFILE_ENABLED });
@@ -205,6 +297,7 @@ function benchmark(sample) {
   const cpuTimes = [];
   const heapDeltas = [];
   const stageTotals = emptyStageTotals();
+  const detectorMethodTotals = emptyDetectorMethodTotals();
 
   for (let index = 0; index < ITERATIONS; index += 1) {
     const heapBefore = heapUsedBytes();
@@ -218,6 +311,7 @@ function benchmark(sample) {
     heapDeltas.push(heapUsedBytes() - heapBefore);
     if (PROFILE_ENABLED) {
       addStageTotals(stageTotals, lastOutput.stages);
+      addDetectorMethodTotals(detectorMethodTotals, lastOutput.detectorMethods);
     }
   }
   assertCorrectness(sample, lastOutput);
@@ -260,6 +354,16 @@ function benchmark(sample) {
     avg_ms_per_kib: msPerKb,
     stage_avg_ms: Object.fromEntries(
       Object.entries(stageTotals).map(([key, value]) => [key, PROFILE_ENABLED ? value / ITERATIONS : 0])
+    ),
+    detector_method_avg_ms: Object.fromEntries(
+      Object.entries(detectorMethodTotals).map(([key, value]) => [
+        key,
+        {
+          ms: PROFILE_ENABLED ? value.ms / ITERATIONS : 0,
+          calls: PROFILE_ENABLED ? value.calls / ITERATIONS : 0,
+          findings: PROFILE_ENABLED ? value.findings / ITERATIONS : 0
+        }
+      ])
     )
   };
 }
@@ -297,6 +401,20 @@ if (PROFILE_ENABLED) {
       transform_ms: result.stage_avg_ms.transform_ms.toFixed(3)
     }))
   );
+  for (const result of results) {
+    console.log(`Detector method profile: ${result.test}`);
+    console.table(
+      Object.entries(result.detector_method_avg_ms)
+        .map(([method, value]) => ({
+          method,
+          avg_ms: value.ms.toFixed(3),
+          avg_calls: value.calls.toFixed(1),
+          avg_findings: value.findings.toFixed(1)
+        }))
+        .filter((row) => Number(row.avg_calls) > 0)
+        .sort((left, right) => Number(right.avg_ms) - Number(left.avg_ms))
+    );
+  }
 }
 
 console.log("PASS redaction performance benchmark");

@@ -12,6 +12,12 @@ Use this file as a short handoff log for AI-made changes. Add newest entries fir
 ```
 
 ## Entries
+### 2026-05-03 - Large-input redaction optimization
+- Goal: Reduce CPU-bound redaction time for duplicate-heavy large inputs without changing placeholder or detection behavior.
+- Files: `src/shared/detector.js`, `src/shared/transformOutboundPrompt.js`, `tests/performance/redaction-benchmark.mjs`, `docs/CODEX_CHANGELOG.md`
+- Tests: `node tests/break_pack.test.js` -> pass; `node tests/synthetic_pack.test.js` -> pass; `node tests/adversarial_redaction.test.js` -> pass; `node tests/performance/redaction-benchmark.mjs` -> pass; `npm run bench:redaction:profile` -> pass; `npm test` -> pass
+- Notes: Added per-scan context-score caching, repeated-line detector caching for large duplicate-heavy inputs, and single-pass non-overlapping replacement application. Benchmark asserts large fast-path output matches the uncached baseline.
+
 ### 2026-05-03 - Redaction benchmark resource profiling
 - Goal: Add CPU, heap, wall-time, percentile, and optional per-stage profiling to the redaction benchmark without changing runtime redaction behavior.
 - Files: `tests/performance/redaction-benchmark.mjs`, `package.json`, `CONTRIBUTING.md`, `docs/CODEX_CHANGELOG.md`

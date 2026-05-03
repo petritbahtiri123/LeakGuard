@@ -72,6 +72,141 @@
     return new Set();
   }
 
+  const KEYWORD_CONTEXT_REGEXES = KEYWORDS.map(
+    (keyword) => new RegExp(`\\b${escapeRegex(keyword)}\\b`, "i")
+  );
+  const NEGATIVE_CONTEXT_REGEXES = NEGATIVE_CONTEXT_WORDS.map(
+    (keyword) => new RegExp(`\\b${escapeRegex(keyword)}\\b`, "i")
+  );
+  let activeContextScoreCache = null;
+  let activeContextScoreText = null;
+  let activeLineBounds = null;
+  const PATTERN_REQUIRED_MARKERS = {
+    pem_private_key_block: ["-----begin"],
+    openssh_private_key_block: ["-----begin openssh private key-----"],
+    pem_block: ["-----begin"],
+    placeholder_composite_value: ["["],
+    aws_secret_access_key_assignment: ["aws_secret_access_key"],
+    aws_session_token_assignment: ["aws_session_token"],
+    aws_access_key_id_assignment: ["aws_access_key_id"],
+    aws_access_key: ["akia"],
+    azure_storage_account_key_assignment: ["azure_storage_account_key", "azurewebjobsstorage__accountkey", "accountkey", "account_key", "account-key"],
+    openai_api_key: ["sk-"],
+    anthropic_api_key: ["sk-ant-"],
+    github_pat: ["github_pat_"],
+    slack_token: ["xox", "xapp-"],
+    slack_webhook: ["hooks.slack.com/services"],
+    discord_webhook: ["discord.com/api/webhooks", "discordapp.com/api/webhooks"],
+    github_token: ["ghp_", "gho_", "ghu_", "ghs_", "ghr_"],
+    gitlab_pat: ["glpat-", "gldt-", "glrt-", "glcbt-", "glptt-", "glft-", "glimt-", "glagent-", "glwt-"],
+    jwt_token: ["eyj"],
+    stripe_secret_key: ["sk_live_", "sk_test_"],
+    stripe_webhook_secret: ["whsec_"],
+    google_api_key: ["aiza"],
+    google_oauth_client_secret: ["gocspx-"],
+    google_refresh_token_assignment: ["refresh_token", "refresh-token", "refreshtoken"],
+    sendgrid_api_key: ["sg."],
+    json_api_key_field: ['"apikey"', '"api_key"'],
+    json_password_field: ['"password"', '"dbpassword"', '"db_password"'],
+    json_token_field: ['"token"', '"accesstoken"', '"access_token"', '"sessiontoken"', '"session_token"', '"refreshtoken"', '"refresh_token"', '"idtoken"', '"id_token"'],
+    json_client_secret_field: ['"clientsecret"', '"client_secret"', '"secret"'],
+    natural_language_api_key: ["api key", "apikey"],
+    natural_language_openai_key: ["openai"],
+    natural_language_password: ["password"],
+    natural_language_secret: ["secret"],
+    labelled_password_value: ["password"],
+    labelled_openai_key_value: ["key"],
+    real_value_label: ["real value"],
+    quoted_secret_label: ["secret"],
+    natural_language_token: ["token"],
+    google_service_account_private_key: ['"private_key"'],
+    authorization_bearer_value: ["authorization"],
+    bearer_token: ["bearer"],
+    basic_auth_header: ["basic"],
+    db_uri: ["postgres://", "postgresql://", "mysql://", "mariadb://", "mongodb://", "mongodb+srv://", "redis://", "amqp://", "mssql://"],
+    generic_uri_credentials: ["://"],
+    azure_servicebus_connection_string: ["endpoint=sb://"],
+    azure_storage_connection_string: ["defaultendpointsprotocol=https"],
+    npm_token: ["npm_"],
+    pypi_token: ["pypi-"],
+    docker_auth_config: ['"auth"'],
+    cookie_session_token: ["cookie"],
+    query_param_api_key: ["?api", "&api"],
+    query_param_token: ["?token", "&token", "?access_token", "&access_token", "?accesstoken", "&accesstoken", "?auth_token", "&auth_token", "?refresh_token", "&refresh_token", "?refreshtoken", "&refreshtoken"]
+  };
+
+  function patternCanMatch(pattern, lowerText) {
+    const markers = PATTERN_REQUIRED_MARKERS[pattern?.name];
+    if (!markers || !markers.length) return true;
+    return markers.some((marker) => lowerText.includes(marker));
+  }
+
+  function buildLineBounds(text) {
+    const input = String(text || "");
+    const bounds = [];
+    let start = 0;
+
+    for (let index = 0; index <= input.length; index += 1) {
+      if (index === input.length || input[index] === "\n") {
+        bounds.push({
+          start,
+          end: input[index - 1] === "\r" ? index - 1 : index
+        });
+        start = index + 1;
+      }
+    }
+
+    return bounds;
+  }
+
+  function findLineBoundsForOffset(offset) {
+    if (!activeLineBounds?.length) return null;
+
+    let low = 0;
+    let high = activeLineBounds.length - 1;
+    const target = Math.max(0, Number(offset) || 0);
+
+    while (low <= high) {
+      const mid = (low + high) >> 1;
+      const bounds = activeLineBounds[mid];
+
+      if (target < bounds.start) {
+        high = mid - 1;
+      } else if (target > bounds.end) {
+        low = mid + 1;
+      } else {
+        return bounds;
+      }
+    }
+
+    return activeLineBounds[Math.max(0, Math.min(activeLineBounds.length - 1, low))] || null;
+  }
+
+  function buildRepeatedLinePlan(text) {
+    const input = String(text || "");
+    if (input.length < 16000 || input.includes("-----BEGIN")) return null;
+
+    const lines = [];
+    const seen = new Set();
+    let start = 0;
+
+    for (let index = 0; index <= input.length; index += 1) {
+      if (index === input.length || input[index] === "\n") {
+        const end = input[index - 1] === "\r" ? index - 1 : index;
+        const line = input.slice(start, end);
+        lines.push({ line, offset: start });
+        if (line) seen.add(line);
+        start = index + 1;
+      }
+    }
+
+    if (lines.length < 40 || seen.size / Math.max(1, lines.length) > 0.65) {
+      return null;
+    }
+
+    return lines;
+  }
+
   function inferPlaceholderTypeFromKey(key) {
     const value = String(key || "").toLowerCase();
 
@@ -117,9 +252,16 @@
 
   function getContextWindow(text, start, end, radius = 64) {
     const input = String(text || "");
-    const lineStart = input.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
-    const nextLineBreak = input.indexOf("\n", Math.max(0, end));
-    const lineEnd = nextLineBreak >= 0 ? nextLineBreak : input.length;
+    const cachedBounds = activeContextScoreText === input ? findLineBoundsForOffset(start) : null;
+    const lineStart = cachedBounds
+      ? cachedBounds.start
+      : input.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
+    const lineEnd = cachedBounds
+      ? cachedBounds.end
+      : (() => {
+          const nextLineBreak = input.indexOf("\n", Math.max(0, end));
+          return nextLineBreak >= 0 ? nextLineBreak : input.length;
+        })();
     const left = Math.max(lineStart, start - radius);
     const right = Math.min(lineEnd, end + radius);
     const before = input.slice(left, start);
@@ -128,15 +270,22 @@
   }
 
   function contextScore(text, start, end) {
+    const input = String(text || "");
+    const cacheKey =
+      activeContextScoreCache && activeContextScoreText === input ? `${start}:${end}` : null;
+    if (cacheKey && activeContextScoreCache.has(cacheKey)) {
+      return activeContextScoreCache.get(cacheKey);
+    }
+
     const windowText = getContextWindow(text, start, end);
     let score = 0;
 
-    for (const keyword of KEYWORDS) {
-      if (new RegExp(`\\b${escapeRegex(keyword)}\\b`, "i").test(windowText)) score += 6;
+    for (const regex of KEYWORD_CONTEXT_REGEXES) {
+      if (regex.test(windowText)) score += 6;
     }
 
-    for (const keyword of NEGATIVE_CONTEXT_WORDS) {
-      if (new RegExp(`\\b${escapeRegex(keyword)}\\b`, "i").test(windowText)) score -= 14;
+    for (const regex of NEGATIVE_CONTEXT_REGEXES) {
+      if (regex.test(windowText)) score -= 14;
     }
 
     if (/\bauthorization\b/.test(windowText) && /\bbearer\b/.test(windowText)) {
@@ -147,7 +296,11 @@
       score += 5;
     }
 
-    return Math.max(-36, Math.min(24, score));
+    const bounded = Math.max(-36, Math.min(24, score));
+    if (cacheKey) {
+      activeContextScoreCache.set(cacheKey, bounded);
+    }
+    return bounded;
   }
 
   function getLineWindow(text, start, end) {
@@ -1322,7 +1475,8 @@
 
       return {
         manager,
-        trustedPlaceholders: normalizeTrustedPlaceholderSet(source)
+        trustedPlaceholders: normalizeTrustedPlaceholderSet(source),
+        disableRepeatedLineCache: Boolean(options.disableRepeatedLineCache)
       };
     }
 
@@ -1457,10 +1611,57 @@
       };
     }
 
-    scanPatterns(text) {
+    cloneFindingAtOffset(finding, offset) {
+      return {
+        ...finding,
+        id: this.nextId(),
+        start: finding.start + offset,
+        end: finding.end + offset
+      };
+    }
+
+    scanRepeatedLines(text, scanner) {
+      if (this.scanContext?.disableRepeatedLineCache) return null;
+      const plan = buildRepeatedLinePlan(text);
+      if (!plan) return null;
+
+      const cache = new Map();
       const findings = [];
 
+      for (const { line, offset } of plan) {
+        if (!line) continue;
+
+        let lineFindings = cache.get(line);
+        if (!lineFindings) {
+          lineFindings = scanner(line).map((finding) => ({
+            ...finding,
+            id: null
+          }));
+          cache.set(line, lineFindings);
+        }
+
+        for (const finding of lineFindings) {
+          findings.push(this.cloneFindingAtOffset(finding, offset));
+        }
+      }
+
+      return findings;
+    }
+
+    scanPatterns(text, options = {}) {
+      if (!options.lineCache) {
+        const lineCached = this.scanRepeatedLines(text, (line) =>
+          this.scanPatterns(line, { lineCache: true })
+        );
+        if (lineCached) return lineCached;
+      }
+
+      const findings = [];
+      const lowerText = String(text || "").toLowerCase();
+
       for (const pattern of PATTERNS) {
+        if (!patternCanMatch(pattern, lowerText)) continue;
+
         const regex = cloneRegex(pattern.regex);
         let match;
 
@@ -1527,7 +1728,14 @@
       return findings;
     }
 
-    scanSensitiveHttpHeaders(text) {
+    scanSensitiveHttpHeaders(text, options = {}) {
+      if (!options.lineCache) {
+        const lineCached = this.scanRepeatedLines(text, (line) =>
+          this.scanSensitiveHttpHeaders(line, { lineCache: true })
+        );
+        if (lineCached) return lineCached;
+      }
+
       const findings = [];
       const lines = String(text || "").split("\n");
       let lineOffset = 0;
@@ -1688,7 +1896,14 @@
       return findings;
     }
 
-    scanStructuredAssignments(text) {
+    scanStructuredAssignments(text, options = {}) {
+      if (!options.lineCache) {
+        const lineCached = this.scanRepeatedLines(text, (line) =>
+          this.scanStructuredAssignments(line, { lineCache: true })
+        );
+        if (lineCached) return lineCached;
+      }
+
       const findings = [];
       const regex =
         /([A-Za-z_][A-Za-z0-9_.-]{0,80})\s*[:=]\s*(?:"([^"\r\n]+)"|'([^'\r\n]+)'|`([^`\r\n]+)`|([^\s\r\n]+))/gim;
@@ -1840,7 +2055,14 @@
       return findings;
     }
 
-    scanAssignments(text) {
+    scanAssignments(text, options = {}) {
+      if (!options.lineCache) {
+        const lineCached = this.scanRepeatedLines(text, (line) =>
+          this.scanAssignments(line, { lineCache: true })
+        );
+        if (lineCached) return lineCached;
+      }
+
       const findings = [];
       const regex = cloneRegex(ASSIGNMENT_REGEX);
       let match;
@@ -1950,7 +2172,14 @@
       return findings;
     }
 
-    scanExplicitCredentialAssignments(text) {
+    scanExplicitCredentialAssignments(text, options = {}) {
+      if (!options.lineCache) {
+        const lineCached = this.scanRepeatedLines(text, (line) =>
+          this.scanExplicitCredentialAssignments(line, { lineCache: true })
+        );
+        if (lineCached) return lineCached;
+      }
+
       const findings = [];
       const regex =
         /([A-Za-z_][A-Za-z0-9_.-]{0,80})\s*[:=]\s*(?:"([^"\r\n]+)"|'([^'\r\n]+)'|`([^`\r\n]+)`|([^\s\r\n]+))/gim;
@@ -2120,7 +2349,14 @@
       return findings;
     }
 
-    scanIdentityAssignments(text) {
+    scanIdentityAssignments(text, options = {}) {
+      if (!options.lineCache) {
+        const lineCached = this.scanRepeatedLines(text, (line) =>
+          this.scanIdentityAssignments(line, { lineCache: true })
+        );
+        if (lineCached) return lineCached;
+      }
+
       const findings = [];
       const regex =
         /([A-Za-z_][A-Za-z0-9_.-]{0,80})\s*[:=]\s*(?:"([^"\r\n]+)"|'([^'\r\n]+)'|`([^`\r\n]+)`|([^\s\r\n]+))/gim;
@@ -2271,7 +2507,14 @@
       return findings;
     }
 
-    scanEntropyFallback(text) {
+    scanEntropyFallback(text, options = {}) {
+      if (!options.lineCache) {
+        const lineCached = this.scanRepeatedLines(text, (line) =>
+          this.scanEntropyFallback(line, { lineCache: true })
+        );
+        if (lineCached) return lineCached;
+      }
+
       const findings = [];
       const regex = /\b[A-Za-z0-9+/_-]{16,}={0,2}\b/g;
       let match;
@@ -2359,7 +2602,14 @@
       return findings;
     }
 
-    scanNaturalLanguageDisclosures(text) {
+    scanNaturalLanguageDisclosures(text, options = {}) {
+      if (!options.lineCache) {
+        const lineCached = this.scanRepeatedLines(text, (line) =>
+          this.scanNaturalLanguageDisclosures(line, { lineCache: true })
+        );
+        if (lineCached) return lineCached;
+      }
+
       const findings = [];
       const labelSource =
         "(?:real|actual)\\s+(?:(?:db|database)\\s+)?(?:password|passwd|pwd|passcode|passphrase|secret|api\\s*key|apikey|token|access\\s+token|refresh\\s+token|bearer\\s+token|client\\s+secret|private\\s+key|webhook\\s+secret)\\s+value|(?:(?:this\\s+is\\s+my|here\\s+is\\s+my|here\\s+is\\s+the|here'?s\\s+my|my|the|our|use\\s+this)\\s+)?(?:(?:real|actual|prod(?:uction)?|live)\\s+)?(?:(?:db|database)\\s+)?(?:password|passwd|pwd|passcode|passphrase|secret|api\\s*key|apikey|token|access\\s+token|refresh\\s+token|bearer\\s+token|client\\s+secret|private\\s+key|webhook\\s+secret)|(?:again\\s+(?:the\\s+)?)?same\\s+(?:key|token|password|secret)|real\\s+value|actual\\s+value";
@@ -2508,7 +2758,14 @@
       return findings;
     }
 
-    scanAdversarialAssignments(text) {
+    scanAdversarialAssignments(text, options = {}) {
+      if (!options.lineCache) {
+        const lineCached = this.scanRepeatedLines(text, (line) =>
+          this.scanAdversarialAssignments(line, { lineCache: true })
+        );
+        if (lineCached) return lineCached;
+      }
+
       const findings = [];
       const regex =
         /([A-Za-z](?:[\u200B-\u200D\uFEFF\s._$@-]*[A-Za-z0-9$@]){1,80})\s*[:=]\s*(?:"([^"\r\n]+)"|'([^'\r\n]+)'|`([^`\r\n]+)`|([^\s\r\n]+))/gim;
@@ -2635,6 +2892,9 @@
     scan(text, options = {}) {
       this._seq = 0;
       const previousContext = this.scanContext;
+      const previousContextScoreCache = activeContextScoreCache;
+      const previousContextScoreText = activeContextScoreText;
+      const previousLineBounds = activeLineBounds;
       this.scanContext = this.normalizeScanContext(options);
 
       const input = String(text || "");
@@ -2644,6 +2904,9 @@
       }
 
       try {
+        activeContextScoreCache = new Map();
+        activeContextScoreText = input;
+        activeLineBounds = buildLineBounds(input);
         const findings = [
           ...this.scanSensitiveHttpHeaders(input),
           ...this.scanStructuredAssignments(input),
@@ -2665,6 +2928,9 @@
         return this.resolveOverlaps(this.dedupe(findings));
       } finally {
         this.scanContext = previousContext;
+        activeContextScoreCache = previousContextScoreCache;
+        activeContextScoreText = previousContextScoreText;
+        activeLineBounds = previousLineBounds;
       }
     }
 
