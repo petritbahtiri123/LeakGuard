@@ -807,6 +807,36 @@ function testExplicitAssignmentsStillRedactWhenAdjacentLinesContainExampleLikeVa
   );
 }
 
+function testGenericKeyAssignmentWithProviderPrefixRedactsShortProjectKey() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const text = "another_key=sk-proj-BBB222";
+
+  const findings = detector.scan(text);
+  const result = redactor.redact(text, findings);
+
+  assert.ok(
+    findings.some(
+      (finding) =>
+        finding.type === "API_KEY" &&
+        finding.raw === "sk-proj-BBB222" &&
+        finding.method.includes("explicit-key")
+    ),
+    "generic *_key assignments with OpenAI project-key prefixes should be detected"
+  );
+  assert.strictEqual(
+    result.redactedText,
+    "another_key=[PWM_1]",
+    "short provider-prefixed key assignment should redact only the value"
+  );
+  assert.strictEqual(
+    result.redactedText.includes("sk-proj-BBB222"),
+    false,
+    "short provider-prefixed key should not survive redaction"
+  );
+}
+
 function testAwsSecretAssignmentWithExamplePrefixStillFailsClosedButDocsPlaceholderStaysVisible() {
   const detector = new Detector();
   const manager = new PlaceholderManager();
@@ -1825,6 +1855,7 @@ function run() {
   testAllowlist();
   testExampleValuesDoNotTrigger();
   testExplicitAssignmentsStillRedactWhenAdjacentLinesContainExampleLikeValues();
+  testGenericKeyAssignmentWithProviderPrefixRedactsShortProjectKey();
   testAwsSecretAssignmentWithExamplePrefixStillFailsClosedButDocsPlaceholderStaysVisible();
   testConcatenatedPlaceholderAssignmentsDoNotCreateCompositeFalsePositives();
   testUserStressEdgeCasesRedactSecretsButKeepSafeLiterals();

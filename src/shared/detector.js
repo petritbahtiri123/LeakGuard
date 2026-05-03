@@ -735,6 +735,16 @@
     );
   }
 
+  function isGenericKeyAssignmentWithProviderToken(key, value) {
+    const normalizedKey = normalizeAssignmentKey(key);
+    const raw = String(value || "").trim();
+
+    if (!/(?:^|_)key$/.test(normalizedKey)) return false;
+    if (likelyTemplateValue(raw) || isCleanPlaceholder(raw)) return false;
+
+    return /^sk-(?:proj|live|test|org|svcacct|admin)-[A-Za-z0-9_-]{6,}$/.test(raw);
+  }
+
   const SENSITIVE_HTTP_HEADERS = new Set([
     "authorization",
     "x-api-key",
@@ -2188,9 +2198,6 @@
       while ((match = regex.exec(text)) !== null) {
         const key = match[1];
         if (match.index > 0 && /[?&]/.test(String(text || "")[match.index - 1])) continue;
-        if (isSafeAssignmentKey(key)) continue;
-        if (isDbUriAssignmentKey(key) || isConnectionStringAssignmentKey(key)) continue;
-        if (!isSensitiveAssignmentKey(key)) continue;
 
         const rawCandidate = [match[2], match[3], match[4], match[5]].find(
           (candidate) => typeof candidate === "string"
@@ -2198,7 +2205,12 @@
         if (!rawCandidate) continue;
 
         const raw = normalizeCandidate(rawCandidate);
-        if (!looksCredentialLikeAssignmentValue(raw)) continue;
+        const providerKeyAssignment = isGenericKeyAssignmentWithProviderToken(key, raw);
+
+        if (isSafeAssignmentKey(key)) continue;
+        if (isDbUriAssignmentKey(key) || isConnectionStringAssignmentKey(key)) continue;
+        if (!isSensitiveAssignmentKey(key) && !providerKeyAssignment) continue;
+        if (!looksCredentialLikeAssignmentValue(raw) && !providerKeyAssignment) continue;
         if (looksLikeUnsupportedVendorHexAssignment(key, raw)) continue;
         if (containsPlaceholder(raw) && isBenignPlaceholderComposite(raw)) continue;
         if (this.shouldDeferTrustedPlaceholderTail(raw, text, match.index + match[0].indexOf(rawCandidate))) {
@@ -2220,7 +2232,7 @@
 
         const start = match.index + valueIndex;
         const end = start + rawCandidate.length;
-        const placeholderType = inferPlaceholderTypeFromKey(key);
+        const placeholderType = providerKeyAssignment ? "API_KEY" : inferPlaceholderTypeFromKey(key);
 
         if (
           this.shouldSuppress({
@@ -2240,6 +2252,7 @@
         const score =
           62 +
           (isExactCredentialAssignmentKey(key) ? 12 : 4) +
+          (providerKeyAssignment ? 16 : 0) +
           (entropy >= 3.6 ? 4 : 0) +
           (countClassVariety(raw) >= 3 ? 2 : 0);
 

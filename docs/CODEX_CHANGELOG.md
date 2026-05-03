@@ -12,6 +12,12 @@ Use this file as a short handoff log for AI-made changes. Add newest entries fir
 ```
 
 ## Entries
+### 2026-05-03 - Short provider key assignment redaction
+- Goal: Redact generic `*_key` assignments when their value uses a provider key prefix such as `sk-proj-`, including shorter project-key fixtures.
+- Files: `src/shared/detector.js`, `tests/detector.test.js`, `docs/CODEX_CHANGELOG.md`
+- Tests: `node tests/detector.test.js` -> pass
+- Notes: Kept the rule assignment-scoped so standalone short `sk-proj-*` text does not become a broad global pattern match.
+
 ### 2026-05-03 - Large-input redaction optimization
 - Goal: Reduce CPU-bound redaction time for duplicate-heavy large inputs without changing placeholder or detection behavior.
 - Files: `src/shared/detector.js`, `src/shared/transformOutboundPrompt.js`, `tests/performance/redaction-benchmark.mjs`, `docs/CODEX_CHANGELOG.md`
