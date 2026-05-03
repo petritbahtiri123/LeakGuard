@@ -72,14 +72,16 @@
 
 - Build and load the Chrome extension, then open ChatGPT and confirm LeakGuard shows the site as protected.
 - Create a supported `.env` UTF-8 text file with synthetic values such as `API_KEY=LeakGuardFileApiKey1234567890`, `DB_PASSWORD=LeakGuardDbPassword123!`, `token_limit=4096`, `PUBLIC_IP=8.8.8.8`, and `PRIVATE_IP=10.0.0.5`.
-- Paste the supported `.env` text file into the ChatGPT composer.
-- Drop the supported `.env` text file into the ChatGPT composer.
-- Confirm `API_KEY` and `DB_PASSWORD` are redacted with `[PWM_N]` placeholders.
-- Confirm `token_limit=4096` remains visible.
-- Confirm the public IP is pseudonymized with a `[PUB_HOST_N]` placeholder.
-- Confirm the private IP remains visible.
-- Confirm unsupported PDF, DOCX, ZIP, image, binary, oversized, and invalid UTF-8 files insert nothing raw.
-- Confirm the composer remains usable after unsupported-file or failed-insertion handling.
+- Paste the supported `.env` text file into the ChatGPT composer and confirm the site receives a sanitized file attachment/upload where that handoff path is supported.
+- Drop the supported `.env` text file into the ChatGPT composer and confirm the site receives a sanitized file attachment/upload where that handoff path is supported.
+- Select the supported `.env` text file through a site file picker, when available, and confirm the selected file is replaced with a sanitized in-memory file where browser/site handoff works.
+- Confirm the sanitized attached/uploaded file redacts `API_KEY` and `DB_PASSWORD` with `[PWM_N]` placeholders.
+- Confirm the sanitized attached/uploaded file keeps `token_limit=4096` visible.
+- Confirm the sanitized attached/uploaded file pseudonymizes the public IP with a `[PUB_HOST_N]` placeholder.
+- Confirm the sanitized attached/uploaded file keeps the private IP visible.
+- Confirm unsupported PDF, DOCX, ZIP, image, binary, oversized, and invalid UTF-8 files do not upload raw content.
+- Confirm raw upload is blocked and a local message appears if sanitized file handoff fails because the browser or site does not accept synthetic `DataTransfer`/file handoff.
+- Confirm the composer remains usable after unsupported-file or sanitized-handoff failure handling.
 - Confirm no raw synthetic secret appears in the DOM or browser console.
 
 ## Regression Checks

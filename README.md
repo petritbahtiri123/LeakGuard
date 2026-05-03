@@ -54,8 +54,8 @@ https://ko-fi.com/petritbahtiri
 - Built-in protection for `chatgpt.com`, `chat.openai.com`, `claude.ai`, `gemini.google.com`, `grok.com`, and `x.com`
 - User-managed protection for additional exact `http://` or `https://` origins
 - Local-only detection and redaction in the browser
-- Supported local UTF-8 text files pasted or dropped into protected AI composers can be locally validated, redacted, and inserted as redacted text
-- If safe insertion fails or the file is unsupported/invalid, LeakGuard blocks raw insertion/upload and shows a local message
+- Supported local UTF-8 text files pasted, dropped, or selected in protected AI composers can be locally validated, redacted, and replaced with sanitized in-memory files where browser/site handoff works
+- If sanitized file handoff fails or the file is unsupported/invalid, LeakGuard blocks raw upload and shows a local message
 - Trust-aware placeholder preservation and reuse for session-known `[PWM_N]`, `[NET_N]`, and `[PUB_HOST_N]` tokens
 - Full-value redaction for sensitive HTTP headers such as `Authorization`, `X-API-Key`, auth token headers, `Cookie`, and `Set-Cookie`
 - Local File Scanner for text-based files with redacted-copy and sanitized-report exports
@@ -79,7 +79,7 @@ LeakGuard includes an extension-owned File Scanner page for local text files. It
 
 Supported scanner files for this release: `.txt`, `.env`, `.log`, `.json`, `.yaml`, `.yml`, `.xml`, `.csv`, `.md`, `.ini`, `.conf`, `.ps1`, `.sh`, `.py`, `.js`, `.ts`, `.html`, and `.css`.
 
-In v1.4.0, supported local UTF-8 text files pasted or dropped into protected AI composers can also be locally validated, redacted through the same background-owned placeholder flow, and inserted as redacted text. This is limited to supported text files; unsupported or invalid files, oversized files, and failed safe insertion are blocked from raw insertion/upload with a local message.
+In v1.4.0, supported local UTF-8 text files pasted, dropped, or selected in protected AI composers can also be locally validated, redacted through the same background-owned placeholder flow, and replaced with sanitized in-memory `File`/`Blob` objects where browser and site upload flows accept synthetic file handoff. This is limited to supported text files and does not guarantee support for every editor or upload control. Unsupported or invalid files, oversized files, and failed sanitized file handoff are blocked from raw upload with a local message.
 
 File scanner limits:
 
@@ -115,7 +115,7 @@ Training, export, browser smoke tests, and enterprise disable guidance live in [
 - Raw secrets are not sent to external services by the extension.
 - Raw secrets are not persisted in `chrome.storage.local`.
 - Selected file contents are scanned locally and are not stored in extension storage.
-- Supported local text-file paste/drop content is intercepted locally before raw insertion/upload and is not stored in extension storage.
+- Supported local text-file paste/drop/file-select content is intercepted locally before raw upload and is not stored in extension storage.
 - Persistent local storage is limited to normalized protected-site rules.
 - Raw values are kept only in session-scoped background storage so secure reveal can work during the active tab session.
 - Secure reveal is restricted to extension-owned UI.
