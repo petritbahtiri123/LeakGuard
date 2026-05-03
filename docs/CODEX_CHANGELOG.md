@@ -12,6 +12,12 @@ Use this file as a short handoff log for AI-made changes. Add newest entries fir
 ```
 
 ## Entries
+### 2026-05-03 - Deep research report refresh
+- Goal: Replace the deep research report with a repo- and GitHub-history-verified status update for v1.3.0 redaction hardening, local AI assist, file scanner, build targets, and remaining gaps.
+- Files: `docs/deep-research-report.md`, `docs/CODEX_CHANGELOG.md`
+- Tests: docs validation unavailable -> no docs-only validation script exists in `package.json`
+- Notes: Docs-only change; records README AI-assist wording drift and avoids enterprise-grade or remote-scanning claims.
+
 ### 2026-05-02 - Bounded placeholder rehydration
 - Goal: Avoid TreeWalker rescans for large added DOM subtrees that contain no placeholders, while preserving secure reveal hydration boundaries.
 - Files: `src/content/content.js`, `tests/security.test.js`, `docs/CODEX_CHANGELOG.md`
