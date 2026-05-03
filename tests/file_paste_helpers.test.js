@@ -8,9 +8,11 @@ require(path.join(repoRoot, "src/content/file_paste_helpers.js"));
 
 const {
   LOCAL_FILE_MULTI_MESSAGE,
+  LOCAL_FILE_TEXT_INSERTION_FALLBACK_ENABLED,
   dataTransferHasFiles,
   listDataTransferFiles,
-  readLocalTextFileFromDataTransfer
+  readLocalTextFileFromDataTransfer,
+  createSanitizedTextFile
 } = globalThis.PWM.FilePasteHelpers;
 
 function bufferFromText(text) {
@@ -57,6 +59,35 @@ async function testSupportedEnvFileDecodesLocally() {
   assert.strictEqual(result.ok, true);
   assert.strictEqual(result.text, text);
   assert.strictEqual(result.file.extension, ".env");
+}
+
+async function readFileLikeText(fileLike) {
+  const buffer = await fileLike.arrayBuffer();
+  return new TextDecoder().decode(buffer);
+}
+
+async function testSanitizedFileProducedForHandoff() {
+  const rawSecret = "LeakGuardFileApiKey1234567890";
+  const redactedText = "API_KEY=[PWM_1]\ntoken_limit=4096";
+  const sanitizedFile = createSanitizedTextFile(
+    {
+      name: "secrets.env",
+      type: "text/plain"
+    },
+    redactedText
+  );
+  const sanitizedText = await readFileLikeText(sanitizedFile);
+
+  assert.ok(sanitizedFile, "expected an in-memory sanitized File/Blob");
+  assert.strictEqual(sanitizedFile.name, "secrets.env");
+  assert.strictEqual(sanitizedFile.type, "text/plain");
+  assert.strictEqual(sanitizedText, redactedText);
+  assert.strictEqual(sanitizedText.includes(rawSecret), false);
+  assert.strictEqual(
+    LOCAL_FILE_TEXT_INSERTION_FALLBACK_ENABLED,
+    false,
+    "file-to-text insertion fallback should stay disabled by default"
+  );
 }
 
 async function testClipboardFilesArrayPathDecodesLocally() {
@@ -134,6 +165,7 @@ async function testNoFileTransferIgnored() {
 
 (async () => {
   await testSupportedEnvFileDecodesLocally();
+  await testSanitizedFileProducedForHandoff();
   await testClipboardFilesArrayPathDecodesLocally();
   await testClipboardItemsFilePathDecodesLocally();
   await testMultipleFilesRejectedWithoutReading();

@@ -3,9 +3,10 @@
   root.PWM = root.PWM || {};
 
   const LOCAL_FILE_MULTI_MESSAGE =
-    "LeakGuard did not insert these files. Paste or drop one supported text file at a time.";
+    "LeakGuard did not attach these files. Paste or drop one supported text file at a time.";
   const LOCAL_FILE_READ_MESSAGE =
-    "LeakGuard could not read this local file, so nothing was inserted.";
+    "LeakGuard could not read this local file, so nothing was attached.";
+  const LOCAL_FILE_TEXT_INSERTION_FALLBACK_ENABLED = false;
 
   function dataTransferHasFiles(dataTransfer) {
     if (!dataTransfer) return false;
@@ -109,7 +110,7 @@
         handled: true,
         ok: false,
         code: "invalid_utf8",
-        message: "This file is not valid UTF-8 text, so LeakGuard did not insert it."
+        message: "This file is not valid UTF-8 text, so LeakGuard did not attach it."
       };
     }
 
@@ -126,12 +127,51 @@
     };
   }
 
+  function createSanitizedTextFile(fileInfo, redactedText) {
+    const FileScanner = root.PWM.FileScanner || {};
+    const normalizedName = String(fileInfo?.name || "").split(/[\\/]/).pop() || "leakguard-redacted.txt";
+    const mimeType =
+      FileScanner.normalizeMimeType?.(fileInfo?.type) ||
+      String(fileInfo?.type || "").split(";")[0].trim().toLowerCase() ||
+      "text/plain";
+    const options = {
+      type: mimeType || "text/plain",
+      lastModified: Date.now()
+    };
+    const text = String(redactedText || "");
+
+    if (typeof root.File === "function") {
+      return new root.File([text], normalizedName, options);
+    }
+
+    if (typeof root.Blob === "function") {
+      const blob = new root.Blob([text], { type: options.type });
+      try {
+        Object.defineProperty(blob, "name", {
+          value: normalizedName,
+          configurable: true
+        });
+        Object.defineProperty(blob, "lastModified", {
+          value: options.lastModified,
+          configurable: true
+        });
+      } catch {
+        // Some Blob implementations expose non-configurable metadata; the bytes remain sanitized.
+      }
+      return blob;
+    }
+
+    return null;
+  }
+
   root.PWM.FilePasteHelpers = {
     LOCAL_FILE_MULTI_MESSAGE,
     LOCAL_FILE_READ_MESSAGE,
+    LOCAL_FILE_TEXT_INSERTION_FALLBACK_ENABLED,
     dataTransferHasFiles,
     listDataTransferFiles,
-    readLocalTextFileFromDataTransfer
+    readLocalTextFileFromDataTransfer,
+    createSanitizedTextFile
   };
 
   if (typeof module !== "undefined" && module.exports) {

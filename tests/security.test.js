@@ -324,9 +324,23 @@ function testLocalFilePasteDoesNotExposeRawFileContent() {
     "local file paste/drop should use background-owned placeholder redaction"
   );
   assert.ok(
-    localFileSource.includes("redacted_insertion_failed") &&
-      localFileSource.includes("LeakGuard blocked raw file upload. Redacted insertion failed"),
-    "local file paste/drop should fail closed when redacted insertion cannot be verified"
+    localFileSource.includes("createSanitizedTextFile(localFile.file, result.redactedText)") &&
+      localFileSource.includes("handOffSanitizedLocalFile(event, input, sanitizedFile, context)") &&
+      contentSource.includes("function handOffSanitizedLocalFile") &&
+      contentSource.includes("fileInput.files = transfer.files"),
+    "local file paste/drop should create and hand off sanitized in-memory files"
+  );
+  assert.ok(
+    localFileSource.includes("sanitized_file_handoff_failed") &&
+      localFileSource.includes("LeakGuard blocked raw file upload. Sanitized file handoff failed"),
+    "local file paste/drop should fail closed when sanitized handoff cannot be completed"
+  );
+  assert.ok(
+    localFileSource.includes("LOCAL_FILE_TEXT_INSERTION_FALLBACK_ENABLED = false") &&
+      !contentSource.includes("async function applyLocalFileRedactedText") &&
+      !contentSource.includes("setInputTextDirect(input, next.text") &&
+      !contentSource.includes("insertContentEditableTextCommand(input, next.text"),
+    "local file paste/drop must not dump file contents into composer text"
   );
   assertNotIncludes(
     localFileSource,

@@ -27,13 +27,12 @@
     selectFindingsOverlappingInsertion,
     deriveRewriteCaretOffset,
     setInputText,
-    forceRewriteInputText,
-    insertContentEditableTextCommand,
-    setInputTextDirect
+    forceRewriteInputText
   } = ComposerHelpers;
   const {
     dataTransferHasFiles,
-    readLocalTextFileFromDataTransfer
+    readLocalTextFileFromDataTransfer,
+    createSanitizedTextFile
   } = FilePasteHelpers || {};
 
   const COMPOSER_SELECTORS = [
@@ -111,6 +110,7 @@
   let statusPanelComposerValueEl = null;
   let statusPanelSessionValueEl = null;
   let extensionRuntimeAvailable = true;
+  const sanitizedFileInputHandoffs = new WeakSet();
   const PROGRAMMATIC_INPUT_SUPPRESS_MS = 500;
 
   function isExtensionContextInvalidatedError(error) {
@@ -1288,77 +1288,6 @@
     return true;
   }
 
-  function verifyComposerText(input, expectedText) {
-    return matchesComposerPlan(buildComposerWritePlan(input, expectedText), getInputText(input));
-  }
-
-  async function applyLocalFileRedactedText(input, originalText, selection, redactedText) {
-    const next = spliceSelectionText(originalText, selection, redactedText);
-    const restoreCaretOffset = Math.max(0, Number(selection?.end) || 0);
-    const insertionCaretOffset = next.caretOffset;
-    const restoreOptions = {
-      restoreText: originalText,
-      restoreCaretOffset
-    };
-
-    const primary = await applyComposerText(input, next.text, {
-      caretOffset: insertionCaretOffset,
-      ...restoreOptions
-    });
-
-    if (primary.ok && (await ensureExactComposerState(input, next.text))) {
-      return { ok: true, strategy: primary.strategy || "verified-rewrite", text: next.text };
-    }
-
-    if (typeof setInputTextDirect === "function") {
-      setInputTextDirect(input, originalText, {
-        caretOffset: restoreCaretOffset
-      });
-      await readStableComposerText(input, 1);
-    }
-
-    if (typeof insertContentEditableTextCommand === "function") {
-      const commandInserted = insertContentEditableTextCommand(input, next.text, {
-        caretOffset: insertionCaretOffset
-      });
-      const commandActual = await readStableComposerText(input, 2);
-      if (commandInserted && verifyComposerText(input, next.text)) {
-        return { ok: true, strategy: "exec-command-insert-text", text: next.text };
-      }
-      debugLogSnapshot("local-file:exec-command-fallback", input, next.text, next.text);
-      if (commandActual && typeof setInputTextDirect === "function") {
-        setInputTextDirect(input, originalText, {
-          caretOffset: restoreCaretOffset
-        });
-        await readStableComposerText(input, 1);
-      }
-    }
-
-    if (typeof setInputTextDirect === "function") {
-      setInputTextDirect(input, next.text, {
-        caretOffset: insertionCaretOffset
-      });
-      const directActual = await readStableComposerText(input, 2);
-      if (verifyComposerText(input, next.text)) {
-        return { ok: true, strategy: "direct-rewrite", text: next.text };
-      }
-
-      return {
-        ok: false,
-        strategy: "failed",
-        text: next.text,
-        actual: directActual
-      };
-    }
-
-    return {
-      ok: false,
-      strategy: "failed",
-      text: next.text,
-      actual: getInputText(input)
-    };
-  }
-
   async function applyTypedInterceptionRewrite(
     input,
     expectedText,
@@ -1576,6 +1505,7 @@
 
   async function maybeHandlePaste(event) {
     if (!extensionRuntimeAvailable || modalOpen || event.defaultPrevented) return;
+    if (isSanitizedFileHandoffEvent(event)) return;
 
     const input = findComposer(event.target);
     if (!input) return;
@@ -1719,19 +1649,158 @@
     refreshBadgeFromCurrentInput();
   }
 
+  function isSanitizedFileHandoffEvent(event) {
+    return Boolean(event?.__PWM_SANITIZED_FILE_HANDOFF__);
+  }
+
+  function markSanitizedFileHandoffEvent(event) {
+    try {
+      Object.defineProperty(event, "__PWM_SANITIZED_FILE_HANDOFF__", {
+        value: true,
+        configurable: true
+      });
+    } catch {
+      event.__PWM_SANITIZED_FILE_HANDOFF__ = true;
+    }
+  }
+
+  function createSanitizedDataTransfer(sanitizedFile) {
+    if (!sanitizedFile || typeof DataTransfer !== "function") {
+      return null;
+    }
+
+    try {
+      const transfer = new DataTransfer();
+      if (typeof transfer.items?.add !== "function") return null;
+      transfer.items.add(sanitizedFile);
+      return Number(transfer.files?.length || 0) > 0 ? transfer : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function attachEventDataTransfer(event, propertyName, transfer) {
+    try {
+      Object.defineProperty(event, propertyName, {
+        value: transfer,
+        configurable: true
+      });
+      return true;
+    } catch {
+      try {
+        event[propertyName] = transfer;
+        return true;
+      } catch {
+        return false;
+      }
+    }
+  }
+
+  function dispatchSanitizedFileEvent(target, type, transfer) {
+    if (!target || !transfer) return false;
+
+    let handoffEvent = null;
+    try {
+      if (type === "drop" && typeof DragEvent === "function") {
+        handoffEvent = new DragEvent("drop", {
+          bubbles: true,
+          cancelable: true,
+          dataTransfer: transfer
+        });
+      } else if (type === "paste" && typeof ClipboardEvent === "function") {
+        handoffEvent = new ClipboardEvent("paste", {
+          bubbles: true,
+          cancelable: true,
+          clipboardData: transfer
+        });
+      }
+    } catch {
+      handoffEvent = null;
+    }
+
+    if (!handoffEvent) {
+      handoffEvent = new Event(type, {
+        bubbles: true,
+        cancelable: true
+      });
+    }
+
+    markSanitizedFileHandoffEvent(handoffEvent);
+    const propertyName = type === "paste" ? "clipboardData" : "dataTransfer";
+    attachEventDataTransfer(handoffEvent, propertyName, transfer);
+
+    try {
+      target.dispatchEvent(handoffEvent);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function handOffSanitizedLocalFile(event, input, sanitizedFile, context) {
+    const transfer = createSanitizedDataTransfer(sanitizedFile);
+    if (!transfer) return false;
+
+    if (context === "file-input") {
+      const fileInput = event?.target;
+      if (
+        !fileInput ||
+        fileInput.tagName !== "INPUT" ||
+        String(fileInput.type || "").toLowerCase() !== "file"
+      ) {
+        return false;
+      }
+
+      try {
+        sanitizedFileInputHandoffs.add(fileInput);
+        fileInput.files = transfer.files;
+        fileInput.dispatchEvent(
+          new Event("change", {
+            bubbles: true,
+            cancelable: true
+          })
+        );
+        return true;
+      } catch {
+        sanitizedFileInputHandoffs.delete(fileInput);
+        try {
+          fileInput.value = "";
+        } catch {
+          // The original raw file must remain blocked if sanitized file assignment fails.
+        }
+        return false;
+      }
+    }
+
+    const target = event?.target || input;
+    if (context === "drop") {
+      try {
+        transfer.dropEffect = "copy";
+      } catch {
+        // Some synthetic DataTransfer objects expose dropEffect as read-only.
+      }
+      return dispatchSanitizedFileEvent(target, "drop", transfer);
+    }
+
+    if (context === "paste") {
+      return dispatchSanitizedFileEvent(target, "paste", transfer);
+    }
+
+    return false;
+  }
+
   async function maybeHandleLocalFileInsert(event, input, dataTransfer, context) {
     if (
       !extensionRuntimeAvailable ||
       modalOpen ||
       event.defaultPrevented ||
       typeof readLocalTextFileFromDataTransfer !== "function" ||
+      typeof createSanitizedTextFile !== "function" ||
       !dataTransferHasFiles(dataTransfer)
     ) {
       return false;
     }
 
-    const originalText = getInputText(input);
-    const selection = getSelectionOffsets(input);
     consumeInterceptionEvent(event);
 
     const localFile = await readLocalTextFileFromDataTransfer(dataTransfer);
@@ -1741,49 +1810,40 @@
     if (!localFile.handled) return false;
 
     if (!localFile.ok) {
-      setBadge("Local file not inserted");
+      setBadge("Local file not attached");
       hideBadgeSoon(3200);
-      await showMessageModal("Local file not inserted", localFile.message);
+      await showMessageModal("Local file not attached", localFile.message);
       refreshBadgeFromCurrentInput();
       return true;
     }
 
     const analysis = analyzeText(localFile.text);
     const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
-    const latestInput = findComposer(input);
-    if (!latestInput) return true;
+    const sanitizedFile = createSanitizedTextFile(localFile.file, result.redactedText);
+    const handedOff = handOffSanitizedLocalFile(event, input, sanitizedFile, context);
 
-    const latestText = getInputText(latestInput);
-    const baseText = latestText === originalText ? latestText : originalText;
-    const inserted = await applyLocalFileRedactedText(
-      latestInput,
-      baseText,
-      selection,
-      result.redactedText
-    );
-
-    if (!inserted.ok) {
+    if (!handedOff) {
       setBadge("Raw file upload blocked");
       hideBadgeSoon(4200);
       await showMessageModal(
         "Raw file upload blocked",
-        "LeakGuard blocked raw file upload. Redacted insertion failed; use File Scanner or paste redacted text manually."
+        "LeakGuard blocked raw file upload. Sanitized file handoff failed; use File Scanner or paste redacted text manually."
       );
       refreshBadgeFromCurrentInput();
       return {
         handled: true,
         ok: false,
-        reason: "redacted_insertion_failed"
+        reason: "sanitized_file_handoff_failed"
       };
     }
 
-    setBadge("LeakGuard redacted local file before insert.");
+    setBadge("LeakGuard attached a sanitized local file.");
     hideBadgeSoon(3200);
     refreshBadgeFromCurrentInput();
     return {
       handled: true,
       ok: true,
-      strategy: inserted.strategy
+      strategy: "sanitized-file-handoff"
     };
   }
 
@@ -1792,6 +1852,7 @@
       !extensionRuntimeAvailable ||
       modalOpen ||
       event.defaultPrevented ||
+      isSanitizedFileHandoffEvent(event) ||
       typeof dataTransferHasFiles !== "function" ||
       !dataTransferHasFiles(event.dataTransfer)
     ) {
@@ -1835,6 +1896,11 @@
       typeof dataTransferHasFiles !== "function" ||
       !dataTransferHasFiles({ files: event.target.files, types: ["Files"], items: [] })
     ) {
+      return;
+    }
+
+    if (sanitizedFileInputHandoffs.has(event.target)) {
+      sanitizedFileInputHandoffs.delete(event.target);
       return;
     }
 

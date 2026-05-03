@@ -259,7 +259,8 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
       contentSource.includes('"dragenter"') &&
       contentSource.includes('"dragover"') &&
       contentSource.includes('"change"') &&
-      contentSource.includes("readLocalTextFileFromDataTransfer"),
+      contentSource.includes("readLocalTextFileFromDataTransfer") &&
+      contentSource.includes("createSanitizedTextFile"),
     "content script should intercept local file paste/drop/file-input before host pages receive raw files"
   );
   assert.ok(
@@ -284,23 +285,32 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
       fileInsertSource.indexOf("consumeInterceptionEvent(event);") <
         fileInsertSource.indexOf("readLocalTextFileFromDataTransfer(dataTransfer)") &&
       fileInsertSource.includes("requestRedaction(analysis.normalizedText, analysis.secretFindings)") &&
+      fileInsertSource.includes("createSanitizedTextFile(localFile.file, result.redactedText)") &&
+      fileInsertSource.includes("handOffSanitizedLocalFile(event, input, sanitizedFile, context)") &&
       !fileInsertSource.includes("scanTextContent"),
-    "local file insertion should consume first, use background redaction, and avoid independent scanner managers"
+    "local file handoff should consume first, use background redaction, and avoid independent scanner managers"
   );
   assert.ok(
-    contentSource.includes("async function applyLocalFileRedactedText") &&
-      contentSource.includes("insertContentEditableTextCommand(input, next.text") &&
-      contentSource.includes("setInputTextDirect(input, next.text"),
-    "local file insertion should have verified rewrite, execCommand, and direct redacted text fallbacks"
+    contentSource.includes("function handOffSanitizedLocalFile") &&
+      contentSource.includes("fileInput.files = transfer.files") &&
+      contentSource.includes('dispatchSanitizedFileEvent(target, "drop", transfer)') &&
+      contentSource.includes('dispatchSanitizedFileEvent(target, "paste", transfer)'),
+    "local file handling should hand off sanitized files instead of composer text"
   );
   assert.ok(
-    fileInsertSource.includes("redacted_insertion_failed") &&
-      fileInsertSource.includes("LeakGuard blocked raw file upload. Redacted insertion failed"),
-    "local file insertion failure should block raw upload with a clear local message"
+    !contentSource.includes("async function applyLocalFileRedactedText") &&
+      !contentSource.includes("setInputTextDirect(input, next.text") &&
+      !contentSource.includes("insertContentEditableTextCommand(input, next.text"),
+    "local file handling must not fall back to dumping sanitized file contents into the composer"
   );
   assert.ok(
-    fileInsertSource.includes("LeakGuard redacted local file before insert."),
-    "local file insertion should show the requested local redaction status"
+    fileInsertSource.includes("sanitized_file_handoff_failed") &&
+      fileInsertSource.includes("LeakGuard blocked raw file upload. Sanitized file handoff failed"),
+    "local file handoff failure should block raw upload with a clear local message"
+  );
+  assert.ok(
+    fileInsertSource.includes("LeakGuard attached a sanitized local file."),
+    "local file handling should show the sanitized attachment status"
   );
   assert.ok(
     contentSource.includes("suppressInputScanUntil"),
