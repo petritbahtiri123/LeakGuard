@@ -22,6 +22,7 @@ const testFiles = [
   "tests/security.test.js",
   "tests/synthetic_pack.test.js",
   "tests/adversarial_redaction.test.js",
+  "tests/performance/redaction-benchmark.mjs",
   "tests/build_targets.test.js"
 ];
 

@@ -12,6 +12,12 @@ Use this file as a short handoff log for AI-made changes. Add newest entries fir
 ```
 
 ## Entries
+### 2026-05-03 - Redaction performance benchmark
+- Goal: Replace the placeholder performance script with a real Detector + transform benchmark and include it in the default test runner.
+- Files: `tests/performance/redaction-benchmark.mjs`, `scripts/run-tests.mjs`, `CONTRIBUTING.md`, `docs/CODEX_CHANGELOG.md`
+- Tests: `node tests/performance/redaction-benchmark.mjs` -> pass; `npm test` -> pass
+- Notes: Benchmark includes correctness checks and conservative p95/ms-per-KiB guardrails to catch major slowdowns without turning normal machine variance into release blockers.
+
 ### 2026-05-03 - Sanitized file handoff docs
 - Goal: Replace stale v1.4.0 file paste/drop wording about dumping file contents into composers with sanitized in-memory file handoff and fail-closed raw-upload blocking language.
 - Files: `README.md`, `docs/CHROME_WEB_STORE_LISTING.md`, `docs/RELEASE_QA_CHECKLIST.md`, `docs/deep-research-report.md`, `docs/CODEX_CHANGELOG.md`

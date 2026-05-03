@@ -155,8 +155,17 @@ This runs:
 - Network transformations
 - Composer helpers
 - Protected-site management
+- Redaction performance guardrails for representative prompt, env-file, and log inputs
 - Productization checks
 - Security regressions
+
+The performance benchmark is part of `npm test` and can also be run directly:
+
+```bash
+node tests/performance/redaction-benchmark.mjs
+```
+
+Set `LEAKGUARD_BENCH_ITERATIONS=<number>` to increase or reduce benchmark iterations during local investigation. Keep thresholds conservative enough for normal developer machines and CI; the benchmark is intended to catch major redaction slowdowns, not to replace profiling.
 
 ### Manual Testing
 
