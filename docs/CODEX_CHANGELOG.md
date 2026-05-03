@@ -12,6 +12,12 @@ Use this file as a short handoff log for AI-made changes. Add newest entries fir
 ```
 
 ## Entries
+### 2026-05-03 - Public docs non-goals cleanup
+- Goal: Align README AI-assist wording with the candidate-gated local architecture and add a public non-goals page.
+- Files: `README.md`, `docs/NON_GOALS.md`, `docs/CODEX_CHANGELOG.md`
+- Tests: docs validation unavailable -> no docs-only validation script exists in `package.json`
+- Notes: Docs-only change; no source, tests, generated outputs, model artifacts, or package lock changes.
+
 ### 2026-05-03 - Deep research report refresh
 - Goal: Replace the deep research report with a repo- and GitHub-history-verified status update for v1.3.0 redaction hardening, local AI assist, file scanner, build targets, and remaining gaps.
 - Files: `docs/deep-research-report.md`, `docs/CODEX_CHANGELOG.md`

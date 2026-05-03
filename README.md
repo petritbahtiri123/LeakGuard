@@ -3,7 +3,7 @@
 [![Support me on Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/petritbahtiri)
 
 
-LeakGuard is a local-only browser extension for reducing accidental prompt leaks on AI chat sites.
+LeakGuard is a local-first browser privacy guard that reduces accidental AI prompt leaks.
 
 The public product name is LeakGuard.
 
@@ -12,6 +12,24 @@ It watches supported composers for typed or pasted content, detects likely secre
 LeakGuard does not use a backend service or cloud processing. It is designed for practical risk reduction, not perfect privacy or full enterprise DLP.
 
 > Local-only. No backend. No telemetry. Secure reveal stays inside extension-owned UI..
+
+## What LeakGuard Is
+
+- A local-first browser privacy guard for supported AI chat composers
+- A deterministic-first redaction layer for likely secrets and sensitive public IPv4 data
+- A session-scoped placeholder system for replacing raw values with tokens such as `[PWM_1]`, `[PUB_HOST_1]`, and `[NET_1]`
+- A local text-file scanner for selected text files
+- An optional local AI assist layer over leftover suspicious candidate windows after deterministic detection
+
+## What LeakGuard Is Not
+
+- Full enterprise DLP or a guarantee that all sensitive-data leaks are prevented
+- Remote secret verification, credential rotation, or a secrets manager
+- Repository-history scanning, CI push protection, or a replacement for tools such as GitHub Secret Scanning, Gitleaks, detect-secrets, or TruffleHog
+- Cloud AI scanning, remote model inference, telemetry, or backend secret processing
+- PDF, DOCX, screenshot, image OCR, clipboard-history, malware, or endpoint protection
+
+See [docs/NON_GOALS.md](docs/NON_GOALS.md) for the maintained non-goals list.
 
 ## ❤️ Support LeakGuard
 
@@ -83,7 +101,7 @@ The detector is heuristic by design. It is tuned to catch realistic mistakes whi
 
 ### Local AI Assist
 
-LeakGuard can optionally run a tiny local ONNX classifier on medium-confidence deterministic findings. This AI layer is only an assist: it can upgrade uncertain findings or keep them as warnings, but it cannot downgrade high-confidence deterministic detections.
+LeakGuard can optionally run a tiny local ONNX classifier over leftover suspicious candidate windows after deterministic detection. Deterministic detection remains authoritative: AI assist does not receive the full prompt, cannot downgrade deterministic findings, and is not a replacement for the deterministic redaction path.
 
 Training, export, browser smoke tests, and enterprise disable guidance live in [docs/AI_ASSIST.md](docs/AI_ASSIST.md).
 
@@ -262,6 +280,7 @@ The manual smoke block contains synthetic secrets, passwords, tokens, connection
 - [docs/BUILD_TARGETS.md](docs/BUILD_TARGETS.md)
 - [docs/ENTERPRISE_DEPLOYMENT.md](docs/ENTERPRISE_DEPLOYMENT.md)
 - [docs/AI_ASSIST.md](docs/AI_ASSIST.md)
+- [docs/NON_GOALS.md](docs/NON_GOALS.md)
 - [docs/CHROME_WEB_STORE_LISTING.md](docs/CHROME_WEB_STORE_LISTING.md)
 - [docs/PRIVACY_POLICY.md](docs/PRIVACY_POLICY.md)
 - [docs/RELEASE_QA_CHECKLIST.md](docs/RELEASE_QA_CHECKLIST.md)
@@ -269,9 +288,4 @@ The manual smoke block contains synthetic secrets, passwords, tokens, connection
 
 ## Non-Goals
 
-LeakGuard does not currently try to cover:
-
-- File uploads, screenshots, drag-and-drop payloads, or every editor implementation
-- Every browser or every website
-- Malware, hostile extensions, compromised browsers, or OS-level clipboard/history exposure
-- Full enterprise DLP or guaranteed prevention of all sensitive-data leaks
+LeakGuard's non-goals are maintained in [docs/NON_GOALS.md](docs/NON_GOALS.md).
