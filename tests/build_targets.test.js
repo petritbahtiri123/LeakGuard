@@ -48,6 +48,20 @@ async function run() {
   const chromeEnterpriseManifest = JSON.parse(
     fs.readFileSync(path.join(repoRoot, "dist/chrome-enterprise/manifest.json"), "utf8")
   );
+  const chromeManifest = JSON.parse(
+    fs.readFileSync(path.join(repoRoot, "dist/chrome/manifest.json"), "utf8")
+  );
+  const contentScripts = chromeManifest.content_scripts[0].js;
+  const fileScannerIndex = contentScripts.indexOf("shared/fileScanner.js");
+  const filePasteHelperIndex = contentScripts.indexOf("content/file_paste_helpers.js");
+  const contentIndex = contentScripts.indexOf("content/content.js");
+
+  assert.ok(fileScannerIndex > -1, "content scripts should include shared file scanner helpers");
+  assert.ok(filePasteHelperIndex > -1, "content scripts should include local file paste helpers");
+  assert.ok(
+    fileScannerIndex < filePasteHelperIndex && filePasteHelperIndex < contentIndex,
+    "file scanner, file paste helper, and content script injection order should stay aligned"
+  );
   assert.strictEqual(
     chromeEnterpriseManifest.storage?.managed_schema,
     "config/managed_policy_schema.json",

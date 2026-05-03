@@ -68,6 +68,20 @@
 - Select unsupported files such as `.pdf`, `.docx`, `.png`, `.jpg`, `.zip`, and `.exe` and confirm the text-only release message appears.
 - Confirm PDF, DOCX, and image redaction are not claimed as supported.
 
+## Local Text-File Paste/Drop Composer Flow
+
+- Build and load the Chrome extension, then open ChatGPT and confirm LeakGuard shows the site as protected.
+- Create a supported `.env` UTF-8 text file with synthetic values such as `API_KEY=LeakGuardFileApiKey1234567890`, `DB_PASSWORD=LeakGuardDbPassword123!`, `token_limit=4096`, `PUBLIC_IP=8.8.8.8`, and `PRIVATE_IP=10.0.0.5`.
+- Paste the supported `.env` text file into the ChatGPT composer.
+- Drop the supported `.env` text file into the ChatGPT composer.
+- Confirm `API_KEY` and `DB_PASSWORD` are redacted with `[PWM_N]` placeholders.
+- Confirm `token_limit=4096` remains visible.
+- Confirm the public IP is pseudonymized with a `[PUB_HOST_N]` placeholder.
+- Confirm the private IP remains visible.
+- Confirm unsupported PDF, DOCX, ZIP, image, binary, oversized, and invalid UTF-8 files insert nothing raw.
+- Confirm the composer remains usable after unsupported-file or failed-insertion handling.
+- Confirm no raw synthetic secret appears in the DOM or browser console.
+
 ## Regression Checks
 
 - Confirm there is no duplicate dynamic script ID error when adding or removing protected sites.

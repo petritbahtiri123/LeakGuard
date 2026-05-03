@@ -164,6 +164,11 @@
     el.dispatchEvent(event);
   }
 
+  function dispatchPlainInput(el) {
+    el.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+  }
+
   function setTextareaValue(el, value, options = {}) {
     const nextValue = normalizeComposerText(value);
     const setter = lookupValueSetter(el);
@@ -388,6 +393,24 @@
     return true;
   }
 
+  function insertContentEditableTextCommand(el, value, options = {}) {
+    const normalized = normalizeComposerText(value);
+    const selection = selectContentEditableContents(el);
+    if (!selection) return false;
+
+    if (!runEditableCommand("delete", null)) return false;
+    if (normalized && !runEditableCommand("insertText", normalized)) return false;
+
+    if (Number.isFinite(options.caretOffset)) {
+      placeCaretAtOffset(el, options.caretOffset);
+    } else {
+      placeCaretAtEnd(el);
+    }
+
+    dispatchPlainInput(el);
+    return true;
+  }
+
   function rewriteContentEditableHtml(el, value, options = {}) {
     const normalized = normalizeComposerText(value);
     const selection = selectContentEditableContents(el);
@@ -425,6 +448,44 @@
 
     if (isContentEditable(el)) {
       return rewriteContentEditableNative(el, value, options);
+    }
+
+    return false;
+  }
+
+  function setInputTextDirect(el, value, options = {}) {
+    if (!el) return false;
+
+    const normalized = normalizeComposerText(value);
+    if (isTextArea(el)) {
+      const setter = lookupValueSetter(el);
+      if (setter) {
+        setter.call(el, normalized);
+      } else {
+        el.value = normalized;
+      }
+
+      if (Number.isFinite(options.caretOffset)) {
+        const caret = Math.max(0, Math.min(options.caretOffset, normalized.length));
+        el.setSelectionRange(caret, caret);
+      }
+
+      dispatchPlainInput(el);
+      return true;
+    }
+
+    if (isContentEditable(el)) {
+      el.focus();
+      el.textContent = normalized;
+
+      if (Number.isFinite(options.caretOffset)) {
+        placeCaretAtOffset(el, options.caretOffset);
+      } else {
+        placeCaretAtEnd(el);
+      }
+
+      dispatchPlainInput(el);
+      return true;
     }
 
     return false;
@@ -584,6 +645,8 @@
     selectFindingsOverlappingInsertion,
     deriveRewriteCaretOffset,
     textToBlockFragment,
+    insertContentEditableTextCommand,
+    setInputTextDirect,
     setInputText,
     forceRewriteInputText
   };

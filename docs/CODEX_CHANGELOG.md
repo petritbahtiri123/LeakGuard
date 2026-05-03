@@ -12,6 +12,12 @@ Use this file as a short handoff log for AI-made changes. Add newest entries fir
 ```
 
 ## Entries
+### 2026-05-03 - v1.4.0 release prep
+- Goal: Bump release metadata and align public release docs for automatic local text-file paste/drop redaction in protected AI composers.
+- Files: `package.json`, `manifests/base.json`, `README.md`, `docs/CHROME_WEB_STORE_LISTING.md`, `docs/RELEASE_QA_CHECKLIST.md`, `docs/deep-research-report.md`, `docs/CODEX_CHANGELOG.md`
+- Tests: `node tests/file_paste_helpers.test.js` -> pass; `node tests/file_scanner.test.js` -> pass; `node tests/protected_sites.test.js` -> pass; `node tests/build_targets.test.js` -> pass; `node tests/security.test.js` -> pass; `node tests/typed_interception.test.js` -> pass; `node tests/composer_helpers.test.js` -> pass; `npm test` -> pass; `npm run build:chrome` -> pass; `npm run build:firefox` -> pass; `npm run build:chrome-enterprise` -> pass; `npm run build:firefox-enterprise` -> pass
+- Notes: Release-prep wording keeps local-only deterministic redaction, safe blocking, supported UTF-8 text-file scope, file paste/drop helper tests, build target/content script alignment, and security checks for no raw file insertion, logging, or persistence.
+
 ### 2026-05-03 - Deep research report alignment
 - Goal: Remove stale README AI-assist drift notes from the research report and align it with the new public non-goals documentation.
 - Files: `docs/deep-research-report.md`, `docs/CODEX_CHANGELOG.md`

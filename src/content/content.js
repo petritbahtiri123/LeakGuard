@@ -11,7 +11,8 @@
     normalizeVisiblePlaceholders,
     buildNetworkUiFindings,
     evaluateDestinationPolicy,
-    ComposerHelpers
+    ComposerHelpers,
+    FilePasteHelpers
   } = globalThis.PWM;
   const {
     normalizeComposerText,
@@ -26,8 +27,14 @@
     selectFindingsOverlappingInsertion,
     deriveRewriteCaretOffset,
     setInputText,
-    forceRewriteInputText
+    forceRewriteInputText,
+    insertContentEditableTextCommand,
+    setInputTextDirect
   } = ComposerHelpers;
+  const {
+    dataTransferHasFiles,
+    readLocalTextFileFromDataTransfer
+  } = FilePasteHelpers || {};
 
   const COMPOSER_SELECTORS = [
     "#prompt-textarea",
@@ -1281,6 +1288,77 @@
     return true;
   }
 
+  function verifyComposerText(input, expectedText) {
+    return matchesComposerPlan(buildComposerWritePlan(input, expectedText), getInputText(input));
+  }
+
+  async function applyLocalFileRedactedText(input, originalText, selection, redactedText) {
+    const next = spliceSelectionText(originalText, selection, redactedText);
+    const restoreCaretOffset = Math.max(0, Number(selection?.end) || 0);
+    const insertionCaretOffset = next.caretOffset;
+    const restoreOptions = {
+      restoreText: originalText,
+      restoreCaretOffset
+    };
+
+    const primary = await applyComposerText(input, next.text, {
+      caretOffset: insertionCaretOffset,
+      ...restoreOptions
+    });
+
+    if (primary.ok && (await ensureExactComposerState(input, next.text))) {
+      return { ok: true, strategy: primary.strategy || "verified-rewrite", text: next.text };
+    }
+
+    if (typeof setInputTextDirect === "function") {
+      setInputTextDirect(input, originalText, {
+        caretOffset: restoreCaretOffset
+      });
+      await readStableComposerText(input, 1);
+    }
+
+    if (typeof insertContentEditableTextCommand === "function") {
+      const commandInserted = insertContentEditableTextCommand(input, next.text, {
+        caretOffset: insertionCaretOffset
+      });
+      const commandActual = await readStableComposerText(input, 2);
+      if (commandInserted && verifyComposerText(input, next.text)) {
+        return { ok: true, strategy: "exec-command-insert-text", text: next.text };
+      }
+      debugLogSnapshot("local-file:exec-command-fallback", input, next.text, next.text);
+      if (commandActual && typeof setInputTextDirect === "function") {
+        setInputTextDirect(input, originalText, {
+          caretOffset: restoreCaretOffset
+        });
+        await readStableComposerText(input, 1);
+      }
+    }
+
+    if (typeof setInputTextDirect === "function") {
+      setInputTextDirect(input, next.text, {
+        caretOffset: insertionCaretOffset
+      });
+      const directActual = await readStableComposerText(input, 2);
+      if (verifyComposerText(input, next.text)) {
+        return { ok: true, strategy: "direct-rewrite", text: next.text };
+      }
+
+      return {
+        ok: false,
+        strategy: "failed",
+        text: next.text,
+        actual: directActual
+      };
+    }
+
+    return {
+      ok: false,
+      strategy: "failed",
+      text: next.text,
+      actual: getInputText(input)
+    };
+  }
+
   async function applyTypedInterceptionRewrite(
     input,
     expectedText,
@@ -1502,6 +1580,11 @@
     const input = findComposer(event.target);
     if (!input) return;
 
+    if (typeof dataTransferHasFiles === "function" && dataTransferHasFiles(event.clipboardData)) {
+      await maybeHandleLocalFileInsert(event, input, event.clipboardData, "paste");
+      return;
+    }
+
     const pasted =
       event.clipboardData?.getData("text/plain") || event.clipboardData?.getData("text") || "";
 
@@ -1634,6 +1717,140 @@
     setBadge("Content redacted");
     hideBadgeSoon();
     refreshBadgeFromCurrentInput();
+  }
+
+  async function maybeHandleLocalFileInsert(event, input, dataTransfer, context) {
+    if (
+      !extensionRuntimeAvailable ||
+      modalOpen ||
+      event.defaultPrevented ||
+      typeof readLocalTextFileFromDataTransfer !== "function" ||
+      !dataTransferHasFiles(dataTransfer)
+    ) {
+      return false;
+    }
+
+    const originalText = getInputText(input);
+    const selection = getSelectionOffsets(input);
+    consumeInterceptionEvent(event);
+
+    const localFile = await readLocalTextFileFromDataTransfer(dataTransfer);
+    if (event?.target?.tagName === "INPUT" && String(event.target.type || "").toLowerCase() === "file") {
+      event.target.value = "";
+    }
+    if (!localFile.handled) return false;
+
+    if (!localFile.ok) {
+      setBadge("Local file not inserted");
+      hideBadgeSoon(3200);
+      await showMessageModal("Local file not inserted", localFile.message);
+      refreshBadgeFromCurrentInput();
+      return true;
+    }
+
+    const analysis = analyzeText(localFile.text);
+    const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
+    const latestInput = findComposer(input);
+    if (!latestInput) return true;
+
+    const latestText = getInputText(latestInput);
+    const baseText = latestText === originalText ? latestText : originalText;
+    const inserted = await applyLocalFileRedactedText(
+      latestInput,
+      baseText,
+      selection,
+      result.redactedText
+    );
+
+    if (!inserted.ok) {
+      setBadge("Raw file upload blocked");
+      hideBadgeSoon(4200);
+      await showMessageModal(
+        "Raw file upload blocked",
+        "LeakGuard blocked raw file upload. Redacted insertion failed; use File Scanner or paste redacted text manually."
+      );
+      refreshBadgeFromCurrentInput();
+      return {
+        handled: true,
+        ok: false,
+        reason: "redacted_insertion_failed"
+      };
+    }
+
+    setBadge("LeakGuard redacted local file before insert.");
+    hideBadgeSoon(3200);
+    refreshBadgeFromCurrentInput();
+    return {
+      handled: true,
+      ok: true,
+      strategy: inserted.strategy
+    };
+  }
+
+  async function maybeHandleDrop(event) {
+    if (
+      !extensionRuntimeAvailable ||
+      modalOpen ||
+      event.defaultPrevented ||
+      typeof dataTransferHasFiles !== "function" ||
+      !dataTransferHasFiles(event.dataTransfer)
+    ) {
+      return;
+    }
+
+    const input = findComposer(event.target);
+    if (!input) return;
+
+    await maybeHandleLocalFileInsert(event, input, event.dataTransfer, "drop");
+  }
+
+  function maybeHandleFileDrag(event) {
+    if (
+      !extensionRuntimeAvailable ||
+      modalOpen ||
+      event.defaultPrevented ||
+      typeof dataTransferHasFiles !== "function" ||
+      !dataTransferHasFiles(event.dataTransfer)
+    ) {
+      return;
+    }
+
+    const input = findComposer(event.target);
+    if (!input) return;
+
+    consumeInterceptionEvent(event);
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = "copy";
+    }
+  }
+
+  async function maybeHandleFileInputChange(event) {
+    if (
+      !extensionRuntimeAvailable ||
+      modalOpen ||
+      event.defaultPrevented ||
+      !event.target ||
+      event.target.tagName !== "INPUT" ||
+      String(event.target.type || "").toLowerCase() !== "file" ||
+      typeof dataTransferHasFiles !== "function" ||
+      !dataTransferHasFiles({ files: event.target.files, types: ["Files"], items: [] })
+    ) {
+      return;
+    }
+
+    const input = findComposer(event.target);
+    if (!input) return;
+
+    await maybeHandleLocalFileInsert(
+      event,
+      input,
+      {
+        files: Array.from(event.target.files || []),
+        types: ["Files"],
+        items: []
+      },
+      "file-input"
+    );
   }
 
   async function maybeHandleSubmit(event) {
@@ -2589,6 +2806,34 @@
       "paste",
       (event) => {
         maybeHandlePaste(event).catch(handleContentError);
+      },
+      true
+    );
+
+    document.addEventListener(
+      "dragenter",
+      maybeHandleFileDrag,
+      true
+    );
+
+    document.addEventListener(
+      "dragover",
+      maybeHandleFileDrag,
+      true
+    );
+
+    document.addEventListener(
+      "drop",
+      (event) => {
+        maybeHandleDrop(event).catch(handleContentError);
+      },
+      true
+    );
+
+    document.addEventListener(
+      "change",
+      (event) => {
+        maybeHandleFileInputChange(event).catch(handleContentError);
       },
       true
     );

@@ -152,6 +152,32 @@ function testContentEditableRewritePathsSyncHostState() {
   );
 }
 
+function testLocalFileFallbackHelpersUsePlainEvents() {
+  const commandSource = composerHelperSource.match(
+    /function insertContentEditableTextCommand\([^)]*\) \{[\s\S]*?\n  \}/
+  )?.[0];
+  const directSource = composerHelperSource.match(
+    /function setInputTextDirect\([^)]*\) \{[\s\S]*?\n  \}/
+  )?.[0];
+
+  assert.ok(
+    commandSource?.includes('runEditableCommand("insertText", normalized)'),
+    "local file fallback should use execCommand insertText after verified rewrite failure"
+  );
+  assert.ok(
+    commandSource?.includes("dispatchPlainInput(el);"),
+    "execCommand fallback should dispatch plain input/change events"
+  );
+  assert.ok(
+    directSource?.includes("el.textContent = normalized"),
+    "direct contenteditable fallback should use textContent for redacted text only"
+  );
+  assert.ok(
+    directSource?.includes("dispatchPlainInput(el);"),
+    "direct fallback should notify host editors without synthetic raw file payloads"
+  );
+}
+
 function run() {
   testPreservesSingleIntentionalBlankLine();
   testCollapsesExcessBlankRunsToOneEmptyLine();
@@ -159,6 +185,7 @@ function run() {
   testTrimsEditorGeneratedTrailingBlankLines();
   testSerializesTopLevelBreakRunsAsBlankLines();
   testContentEditableRewritePathsSyncHostState();
+  testLocalFileFallbackHelpersUsePlainEvents();
   console.log("PASS composer helper multiline normalization regressions");
 }
 
