@@ -4,6 +4,8 @@
   }
   globalThis.__PWM_CONTENT_BOOTSTRAPPED__ = true;
   const ext = globalThis.PWM?.ext || globalThis.browser || globalThis.chrome;
+  const isTopFrame = window.top === window;
+  const fileDragGuard = globalThis.__PWM_FILE_DRAG_GUARD__ || null;
 
   const {
     Detector,
@@ -111,6 +113,8 @@
   let statusPanelSessionValueEl = null;
   let extensionRuntimeAvailable = true;
   const sanitizedFileInputHandoffs = new WeakSet();
+  const rawFileDropInterceptions = new WeakSet();
+  const fileDragEventRoots = new WeakSet();
   const PROGRAMMATIC_INPUT_SUPPRESS_MS = 500;
 
   function isExtensionContextInvalidatedError(error) {
@@ -238,6 +242,23 @@
     if (typeof event.stopImmediatePropagation === "function") {
       event.stopImmediatePropagation();
     }
+  }
+
+  function dataTransferLooksLikeFiles(dataTransfer) {
+    if (typeof fileDragGuard?.dataTransferLooksLikeFiles === "function") {
+      return fileDragGuard.dataTransferLooksLikeFiles(dataTransfer);
+    }
+
+    if (!dataTransfer) return false;
+    if (typeof dataTransferHasFiles === "function" && dataTransferHasFiles(dataTransfer)) return true;
+
+    const types = Array.from(dataTransfer.types || []);
+    if (types.includes("Files")) return true;
+    if (Number(dataTransfer.files?.length || 0) > 0) return true;
+
+    return Array.from(dataTransfer.items || []).some(
+      (item) => String(item?.kind || "").toLowerCase() === "file"
+    );
   }
 
   function buildComposerWritePlan(input, text) {
@@ -1737,43 +1758,83 @@
     }
   }
 
+  function isGeminiHost() {
+    return location.hostname === "gemini.google.com";
+  }
+
+  function isFileInputElement(el) {
+    return (
+      !!el &&
+      el.tagName === "INPUT" &&
+      String(el.type || "").toLowerCase() === "file"
+    );
+  }
+
+  function resolveFileInputForHandoff(event, input) {
+    const target = normalizeTarget(event?.target);
+    if (isFileInputElement(target)) return target;
+
+    const candidates = [];
+    const addCandidate = (candidate) => {
+      if (isFileInputElement(candidate) && !candidate.disabled) {
+        candidates.push(candidate);
+      }
+    };
+
+    target?.closest?.("form")?.querySelectorAll?.("input[type='file']").forEach(addCandidate);
+    input?.closest?.("form")?.querySelectorAll?.("input[type='file']").forEach(addCandidate);
+    document.querySelectorAll("input[type='file']").forEach(addCandidate);
+
+    return candidates[0] || null;
+  }
+
+  function handOffSanitizedFileInput(fileInput, transfer) {
+    if (!isFileInputElement(fileInput) || !transfer?.files) return false;
+
+    try {
+      sanitizedFileInputHandoffs.add(fileInput);
+      fileInput.files = transfer.files;
+      fileInput.dispatchEvent(
+        new Event("input", {
+          bubbles: true,
+          cancelable: true
+        })
+      );
+      fileInput.dispatchEvent(
+        new Event("change", {
+          bubbles: true,
+          cancelable: true
+        })
+      );
+      return true;
+    } catch {
+      sanitizedFileInputHandoffs.delete(fileInput);
+      try {
+        fileInput.value = "";
+      } catch {
+        // The original raw file must remain blocked if sanitized file assignment fails.
+      }
+      return false;
+    }
+  }
+
   function handOffSanitizedLocalFile(event, input, sanitizedFile, context) {
     const transfer = createSanitizedDataTransfer(sanitizedFile);
     if (!transfer) return false;
 
     if (context === "file-input") {
-      const fileInput = event?.target;
-      if (
-        !fileInput ||
-        fileInput.tagName !== "INPUT" ||
-        String(fileInput.type || "").toLowerCase() !== "file"
-      ) {
-        return false;
-      }
-
-      try {
-        sanitizedFileInputHandoffs.add(fileInput);
-        fileInput.files = transfer.files;
-        fileInput.dispatchEvent(
-          new Event("change", {
-            bubbles: true,
-            cancelable: true
-          })
-        );
-        return true;
-      } catch {
-        sanitizedFileInputHandoffs.delete(fileInput);
-        try {
-          fileInput.value = "";
-        } catch {
-          // The original raw file must remain blocked if sanitized file assignment fails.
-        }
-        return false;
-      }
+      return handOffSanitizedFileInput(event?.target, transfer);
     }
 
     const target = event?.target || input;
     if (context === "drop") {
+      if (isGeminiHost()) {
+        const fileInput = resolveFileInputForHandoff(event, input);
+        if (handOffSanitizedFileInput(fileInput, transfer)) {
+          return true;
+        }
+      }
+
       try {
         transfer.dropEffect = "copy";
       } catch {
@@ -1793,7 +1854,7 @@
     if (
       !extensionRuntimeAvailable ||
       modalOpen ||
-      event.defaultPrevented ||
+      (event.defaultPrevented && context !== "drop") ||
       typeof readLocalTextFileFromDataTransfer !== "function" ||
       typeof createSanitizedTextFile !== "function" ||
       !dataTransferHasFiles(dataTransfer)
@@ -1849,39 +1910,39 @@
 
   async function maybeHandleDrop(event) {
     if (
-      !extensionRuntimeAvailable ||
-      modalOpen ||
-      event.defaultPrevented ||
       isSanitizedFileHandoffEvent(event) ||
-      typeof dataTransferHasFiles !== "function" ||
-      !dataTransferHasFiles(event.dataTransfer)
+      rawFileDropInterceptions.has(event) ||
+      !dataTransferLooksLikeFiles(event.dataTransfer)
     ) {
       return;
     }
 
-    const input = findComposer(event.target);
-    if (!input) return;
+    rawFileDropInterceptions.add(event);
+    consumeInterceptionEvent(event);
+
+    if (!extensionRuntimeAvailable || modalOpen) {
+      return;
+    }
+
+    const input = findComposer(event.target) || findComposer(document.activeElement);
 
     await maybeHandleLocalFileInsert(event, input, event.dataTransfer, "drop");
   }
 
   function maybeHandleFileDrag(event) {
-    if (
-      !extensionRuntimeAvailable ||
-      modalOpen ||
-      event.defaultPrevented ||
-      typeof dataTransferHasFiles !== "function" ||
-      !dataTransferHasFiles(event.dataTransfer)
-    ) {
+    if (!dataTransferLooksLikeFiles(event.dataTransfer)) {
       return;
     }
 
-    const input = findComposer(event.target);
-    if (!input) return;
+    event.preventDefault();
+    event.stopPropagation();
 
-    consumeInterceptionEvent(event);
     if (event.dataTransfer) {
       event.dataTransfer.dropEffect = "copy";
+    }
+
+    if (!extensionRuntimeAvailable || modalOpen) {
+      return;
     }
   }
 
@@ -2847,6 +2908,18 @@
     }, 1500);
   }
 
+  function bindFileDragEvents(root, onFileDrop) {
+    if (!root || typeof root.addEventListener !== "function" || fileDragEventRoots.has(root)) {
+      return;
+    }
+
+    fileDragEventRoots.add(root);
+    fileDragGuard?.bind?.(root);
+    root.addEventListener("dragenter", maybeHandleFileDrag, true);
+    root.addEventListener("dragover", maybeHandleFileDrag, true);
+    root.addEventListener("drop", onFileDrop, true);
+  }
+
   function bindEvents() {
     ext.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (message?.type === "PWM_CONTENT_PING") {
@@ -2859,6 +2932,15 @@
         sendResponse({ ok: true });
       }
     });
+    const onFileDrop = (event) => {
+      maybeHandleDrop(event).catch(handleContentError);
+    };
+    fileDragGuard?.setDropHandler?.(onFileDrop);
+
+    bindFileDragEvents(window, onFileDrop);
+    bindFileDragEvents(document, onFileDrop);
+    bindFileDragEvents(document.documentElement, onFileDrop);
+    bindFileDragEvents(document.body, onFileDrop);
 
     document.addEventListener(
       "beforeinput",
@@ -2872,26 +2954,6 @@
       "paste",
       (event) => {
         maybeHandlePaste(event).catch(handleContentError);
-      },
-      true
-    );
-
-    document.addEventListener(
-      "dragenter",
-      maybeHandleFileDrag,
-      true
-    );
-
-    document.addEventListener(
-      "dragover",
-      maybeHandleFileDrag,
-      true
-    );
-
-    document.addEventListener(
-      "drop",
-      (event) => {
-        maybeHandleDrop(event).catch(handleContentError);
       },
       true
     );
@@ -2923,13 +2985,31 @@
     document.addEventListener("input", scheduleInputScan, true);
   }
 
-  async function boot() {
-    await initState();
-    ensureStatusPanel();
-    bindEvents();
-    installNavigationWatchers();
+  function finishBodyReadyBoot() {
+    if (isTopFrame) {
+      ensureStatusPanel();
+    }
+    bindFileDragEvents(document.documentElement, (event) => {
+      maybeHandleDrop(event).catch(handleContentError);
+    });
+    bindFileDragEvents(document.body, (event) => {
+      maybeHandleDrop(event).catch(handleContentError);
+    });
     startRehydrationObserver();
-    refreshBadgeFromCurrentInput();
+    if (isTopFrame) {
+      refreshBadgeFromCurrentInput();
+    }
+  }
+
+  async function boot() {
+    bindEvents();
+    await initState();
+    finishBodyReadyBoot();
+    installNavigationWatchers();
+
+    if (!document.body) {
+      document.addEventListener("DOMContentLoaded", finishBodyReadyBoot, { once: true });
+    }
   }
 
   boot().catch(handleContentError);

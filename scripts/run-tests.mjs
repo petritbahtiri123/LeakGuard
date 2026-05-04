@@ -13,6 +13,8 @@ const testFiles = [
   "tests/ip_child_first_audit.test.js",
   "tests/composer_helpers.test.js",
   "tests/typed_interception.test.js",
+  "tests/file_drag_guard.test.js",
+  "tests/content_file_drop_interception.test.js",
   "tests/protected_sites.test.js",
   "tests/enterprise_policy.test.js",
   "tests/ai_assist.test.js",
