@@ -305,12 +305,17 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   assert.ok(
     fileDragSource.includes("event.preventDefault();") &&
       fileDragSource.includes("event.stopPropagation();") &&
+      fileDragSource.includes("event.stopImmediatePropagation();") &&
       fileDragSource.includes("event.dataTransfer.dropEffect = \"copy\"") &&
       fileDragSource.includes("dataTransferLooksLikeFiles(event.dataTransfer)") &&
       !fileDragSource.includes("findComposer(") &&
       !fileDragSource.includes("consumeInterceptionEvent(event);") &&
-      !fileDragSource.includes("stopImmediatePropagation"),
-    "file dragenter/dragover should own file drags without composer detection or immediate propagation stops"
+      !fileDragSource.includes("querySelectorAll") &&
+      !fileDragSource.includes("getBoundingClientRect") &&
+      !fileDragSource.includes("getClientRects") &&
+      !fileDragSource.includes("offsetWidth") &&
+      !fileDragSource.includes("offsetHeight"),
+    "file dragenter/dragover should synchronously own file drags without composer detection, DOM traversal, or layout reads"
   );
   assert.ok(
     dropSource.indexOf("consumeInterceptionEvent(event);") <

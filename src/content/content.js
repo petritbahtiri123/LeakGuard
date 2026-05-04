@@ -116,6 +116,14 @@
   const rawFileDropInterceptions = new WeakSet();
   const fileDragEventRoots = new WeakSet();
   const PROGRAMMATIC_INPUT_SUPPRESS_MS = 500;
+  const FILE_DRAG_SESSION_RESET_MS = 5000;
+  let lastDiscoveredFileInput = null;
+  let fileDragDiscoveryCompleted = false;
+  let fileDragDiscoveryScheduled = false;
+  let fileDragDiscoveryTimer = 0;
+  let fileDragSessionResetTimer = 0;
+  let fileDragSessionId = 0;
+  let fileDragDetectedLogged = false;
 
   function isExtensionContextInvalidatedError(error) {
     const message = String(error?.message || error || "");
@@ -1770,22 +1778,173 @@
     );
   }
 
-  function resolveFileInputForHandoff(event, input) {
-    const target = normalizeTarget(event?.target);
-    if (isFileInputElement(target)) return target;
+  function describeFileForDebug(file) {
+    if (!file) return null;
+    return {
+      name: file.name || "",
+      type: file.type || "",
+      size: Number(file.size || 0)
+    };
+  }
 
-    const candidates = [];
-    const addCandidate = (candidate) => {
-      if (isFileInputElement(candidate) && !candidate.disabled) {
-        candidates.push(candidate);
+  function describeFileInputForDebug(fileInput, source = "") {
+    if (!isFileInputElement(fileInput)) return null;
+    return {
+      source,
+      disabled: Boolean(fileInput.disabled),
+      hidden: Boolean(fileInput.hidden),
+      accept: fileInput.accept || "",
+      multiple: Boolean(fileInput.multiple),
+      filesLength: Number(fileInput.files?.length || 0)
+    };
+  }
+
+  function clearFileDragSession() {
+    fileDragSessionId += 1;
+    lastDiscoveredFileInput = null;
+    fileDragDiscoveryCompleted = false;
+    fileDragDiscoveryScheduled = false;
+    fileDragDetectedLogged = false;
+
+    if (fileDragDiscoveryTimer) {
+      clearTimeout(fileDragDiscoveryTimer);
+      fileDragDiscoveryTimer = 0;
+    }
+
+    if (fileDragSessionResetTimer) {
+      clearTimeout(fileDragSessionResetTimer);
+      fileDragSessionResetTimer = 0;
+    }
+  }
+
+  function scheduleFileDragSessionReset() {
+    if (fileDragSessionResetTimer) {
+      clearTimeout(fileDragSessionResetTimer);
+    }
+    fileDragSessionResetTimer = setTimeout(clearFileDragSession, FILE_DRAG_SESSION_RESET_MS);
+  }
+
+  function collectFileInputsFromAncestry(target, addCandidate) {
+    let node = normalizeTarget(target);
+    const visited = new WeakSet();
+
+    while (node && !visited.has(node)) {
+      visited.add(node);
+      addCandidate(node, "target-ancestry");
+
+      try {
+        node.querySelectorAll?.("input[type='file']").forEach((candidate) => {
+          addCandidate(candidate, "target-ancestry");
+        });
+      } catch {
+        // Host-controlled elements can reject selectors; keep the fail-closed path intact.
       }
+
+      const rootNode = node.getRootNode?.();
+      node = node.parentElement || rootNode?.host || null;
+    }
+  }
+
+  function collectFileInputsFromRoot(root, addCandidate, visitedRoots) {
+    if (!root || visitedRoots.has(root)) return;
+    visitedRoots.add(root);
+
+    try {
+      root.querySelectorAll?.("input[type='file']").forEach((candidate) => {
+        addCandidate(candidate, root === document ? "document" : "shadow-root");
+      });
+    } catch {
+      // Some host-controlled roots can reject selectors; skip them and keep scanning others.
+    }
+
+    let elements = [];
+    try {
+      elements = Array.from(root.querySelectorAll?.("*") || []);
+    } catch {
+      elements = [];
+    }
+
+    elements.forEach((element) => {
+      if (element?.shadowRoot) {
+        collectFileInputsFromRoot(element.shadowRoot, addCandidate, visitedRoots);
+      }
+    });
+  }
+
+  function discoverFileInputForHandoff(event, input) {
+    const candidates = [];
+    const seen = new WeakSet();
+    const addCandidate = (candidate, source = "") => {
+      if (!isFileInputElement(candidate) || seen.has(candidate)) return;
+      seen.add(candidate);
+      candidates.push({ input: candidate, source });
     };
 
-    target?.closest?.("form")?.querySelectorAll?.("input[type='file']").forEach(addCandidate);
-    input?.closest?.("form")?.querySelectorAll?.("input[type='file']").forEach(addCandidate);
-    document.querySelectorAll("input[type='file']").forEach(addCandidate);
+    collectFileInputsFromAncestry(event?.target, addCandidate);
 
-    return candidates[0] || null;
+    const target = normalizeTarget(event?.target);
+    target?.closest?.("form")?.querySelectorAll?.("input[type='file']").forEach((candidate) => {
+      addCandidate(candidate, "target-form");
+    });
+    input?.closest?.("form")?.querySelectorAll?.("input[type='file']").forEach((candidate) => {
+      addCandidate(candidate, "composer-form");
+    });
+    collectFileInputsFromRoot(document, addCandidate, new WeakSet());
+
+    const fileInput = candidates.find(({ input: candidate }) => !candidate.disabled)?.input || null;
+    debugReveal(`file-drag:input-${fileInput ? "found" : "not-found"}`, {
+      targetTag: target?.tagName || "",
+      candidateCount: candidates.length,
+      candidates: candidates.map(({ input: candidate, source }) =>
+        describeFileInputForDebug(candidate, source)
+      )
+    });
+
+    return fileInput;
+  }
+
+  function resolveFileInputForHandoff(event, input) {
+    if (fileDragDiscoveryCompleted) {
+      return isFileInputElement(lastDiscoveredFileInput) && !lastDiscoveredFileInput.disabled
+        ? lastDiscoveredFileInput
+        : null;
+    }
+
+    const fileInput = discoverFileInputForHandoff(event, input);
+    lastDiscoveredFileInput = fileInput;
+    fileDragDiscoveryCompleted = true;
+    fileDragDiscoveryScheduled = false;
+    return fileInput;
+  }
+
+  function scheduleFileInputDiscovery(event, input = null) {
+    if (fileDragDiscoveryCompleted || fileDragDiscoveryScheduled) return;
+
+    const sessionId = fileDragSessionId;
+    const target = event?.target || null;
+    fileDragDiscoveryScheduled = true;
+    debugReveal("file-drag:discovery-started", {
+      trigger: event?.type || "",
+      targetTag: normalizeTarget(target)?.tagName || ""
+    });
+
+    fileDragDiscoveryTimer = setTimeout(() => {
+      fileDragDiscoveryTimer = 0;
+      if (sessionId !== fileDragSessionId) return;
+      resolveFileInputForHandoff({ target }, input);
+    }, 0);
+  }
+
+  function handleFileDragDetected(event) {
+    scheduleFileDragSessionReset();
+    if (!fileDragDetectedLogged) {
+      fileDragDetectedLogged = true;
+      debugReveal("file-drag:detected", {
+        type: event?.type || "",
+        targetTag: normalizeTarget(event?.target)?.tagName || ""
+      });
+    }
+    scheduleFileInputDiscovery(event);
   }
 
   function handOffSanitizedFileInput(fileInput, transfer) {
@@ -1806,8 +1965,17 @@
           cancelable: true
         })
       );
+      debugReveal("file-handoff:assignment-success", {
+        input: describeFileInputForDebug(fileInput, "resolved"),
+        files: Array.from(fileInput.files || []).map(describeFileForDebug),
+        events: ["input", "change"]
+      });
       return true;
     } catch {
+      debugReveal("file-handoff:assignment-failure", {
+        input: describeFileInputForDebug(fileInput, "resolved"),
+        files: Array.from(transfer.files || []).map(describeFileForDebug)
+      });
       sanitizedFileInputHandoffs.delete(fileInput);
       try {
         fileInput.value = "";
@@ -1820,7 +1988,13 @@
 
   function handOffSanitizedLocalFile(event, input, sanitizedFile, context) {
     const transfer = createSanitizedDataTransfer(sanitizedFile);
-    if (!transfer) return false;
+    if (!transfer) {
+      debugReveal("file-handoff:data-transfer-create-failed", {
+        context,
+        sanitizedFile: describeFileForDebug(sanitizedFile)
+      });
+      return false;
+    }
 
     if (context === "file-input") {
       return handOffSanitizedFileInput(event?.target, transfer);
@@ -1833,6 +2007,12 @@
         if (handOffSanitizedFileInput(fileInput, transfer)) {
           return true;
         }
+        debugReveal("file-handoff:file-input-fallback-failed", {
+          context,
+          targetTag: event?.target?.tagName || "",
+          sanitizedFile: describeFileForDebug(sanitizedFile)
+        });
+        return false;
       }
 
       try {
@@ -1881,9 +2061,21 @@
     const analysis = analyzeText(localFile.text);
     const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
     const sanitizedFile = createSanitizedTextFile(localFile.file, result.redactedText);
+    debugReveal("file-handoff:sanitized-file-created", {
+      context,
+      originalFile: describeFileForDebug(localFile.file),
+      sanitizedFile: describeFileForDebug(sanitizedFile),
+      findingsCount: analysis.secretFindings.length,
+      redactedLength: result.redactedText.length
+    });
     const handedOff = handOffSanitizedLocalFile(event, input, sanitizedFile, context);
 
     if (!handedOff) {
+      debugReveal("file-handoff:fail-closed", {
+        context,
+        reason: "sanitized_file_handoff_failed",
+        sanitizedFile: describeFileForDebug(sanitizedFile)
+      });
       setBadge("Raw file upload blocked");
       hideBadgeSoon(4200);
       await showMessageModal(
@@ -1919,14 +2111,20 @@
 
     rawFileDropInterceptions.add(event);
     consumeInterceptionEvent(event);
+    handleFileDragDetected(event);
 
     if (!extensionRuntimeAvailable || modalOpen) {
+      clearFileDragSession();
       return;
     }
 
     const input = findComposer(event.target) || findComposer(document.activeElement);
 
-    await maybeHandleLocalFileInsert(event, input, event.dataTransfer, "drop");
+    try {
+      await maybeHandleLocalFileInsert(event, input, event.dataTransfer, "drop");
+    } finally {
+      clearFileDragSession();
+    }
   }
 
   function maybeHandleFileDrag(event) {
@@ -1936,10 +2134,18 @@
 
     event.preventDefault();
     event.stopPropagation();
+    if (typeof event.stopImmediatePropagation === "function") {
+      event.stopImmediatePropagation();
+    }
 
     if (event.dataTransfer) {
-      event.dataTransfer.dropEffect = "copy";
+      try {
+        event.dataTransfer.dropEffect = "copy";
+      } catch {
+        // Some DataTransfer implementations expose dropEffect as read-only.
+      }
     }
+    handleFileDragDetected(event);
 
     if (!extensionRuntimeAvailable || modalOpen) {
       return;
@@ -2914,10 +3120,15 @@
     }
 
     fileDragEventRoots.add(root);
-    fileDragGuard?.bind?.(root);
-    root.addEventListener("dragenter", maybeHandleFileDrag, true);
-    root.addEventListener("dragover", maybeHandleFileDrag, true);
-    root.addEventListener("drop", onFileDrop, true);
+    if (fileDragGuard?.bind) {
+      fileDragGuard.bind(root);
+      return;
+    }
+
+    root.addEventListener("dragenter", maybeHandleFileDrag, { capture: true, passive: false });
+    root.addEventListener("dragover", maybeHandleFileDrag, { capture: true, passive: false });
+    root.addEventListener("drop", onFileDrop, { capture: true, passive: false });
+    root.addEventListener("dragend", clearFileDragSession, { capture: true, passive: false });
   }
 
   function bindEvents() {
@@ -2936,6 +3147,12 @@
       maybeHandleDrop(event).catch(handleContentError);
     };
     fileDragGuard?.setDropHandler?.(onFileDrop);
+    fileDragGuard?.setDragHandler?.(handleFileDragDetected);
+    fileDragGuard?.setDragEndHandler?.(clearFileDragSession);
+    debugReveal("file-drag:guard-initialized", {
+      singleton: Boolean(fileDragGuard?.initialized),
+      marker: Boolean(window.__LEAKGUARD_FILE_DRAG_GUARD_INIT__)
+    });
 
     bindFileDragEvents(window, onFileDrop);
     bindFileDragEvents(document, onFileDrop);

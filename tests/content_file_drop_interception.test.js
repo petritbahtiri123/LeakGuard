@@ -159,7 +159,9 @@ function createHarness(overrides = {}) {
     badges: [],
     hideBadgeSoon: 0,
     refreshBadge: 0,
-    modals: []
+    modals: [],
+    dragDetections: 0,
+    clearedDragSessions: 0
   };
   const activeElement = { tagName: "TEXTAREA" };
   const dependencies = {
@@ -209,6 +211,13 @@ function createHarness(overrides = {}) {
     showMessageModal: async (...args) => {
       calls.modals.push(args);
     },
+    debugReveal: () => {},
+    handleFileDragDetected: () => {
+      calls.dragDetections += 1;
+    },
+    clearFileDragSession: () => {
+      calls.clearedDragSessions += 1;
+    },
     findComposer: () => null,
     document: { activeElement }
   };
@@ -220,6 +229,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "consumeInterceptionEvent"),
       extractFunctionSource(contentSource, "dataTransferLooksLikeFiles"),
       extractFunctionSource(contentSource, "isSanitizedFileHandoffEvent"),
+      extractFunctionSource(contentSource, "describeFileForDebug"),
       extractFunctionSource(contentSource, "maybeHandleLocalFileInsert"),
       extractFunctionSource(contentSource, "maybeHandleDrop"),
       extractFunctionSource(contentSource, "maybeHandleFileDrag"),
@@ -232,6 +242,119 @@ function createHarness(overrides = {}) {
     ...handlers,
     calls,
     activeElement
+  };
+}
+
+function createFileInput({ source = "light-dom", disabled = false } = {}) {
+  const events = [];
+  return {
+    tagName: "INPUT",
+    type: "file",
+    disabled,
+    hidden: source !== "light-dom",
+    accept: ".env,text/plain",
+    multiple: false,
+    files: [],
+    events,
+    dispatchEvent(event) {
+      events.push(event.type);
+      return true;
+    }
+  };
+}
+
+function createHandoffHarness({ hostname = "gemini.google.com", fileInputs = [], shadowInputs = [] } = {}) {
+  const debugEvents = [];
+  const fallbackDrops = [];
+  const stats = {
+    documentQueries: 0
+  };
+  class TestEvent {
+    constructor(type, init = {}) {
+      this.type = type;
+      this.bubbles = Boolean(init.bubbles);
+      this.cancelable = Boolean(init.cancelable);
+    }
+  }
+
+  class TestDataTransfer {
+    constructor() {
+      this.files = [];
+      this.items = {
+        add: (file) => {
+          this.files.push(file);
+        }
+      };
+      this.dropEffect = "none";
+    }
+  }
+
+  const shadowHosts = shadowInputs.map((input) => ({
+    shadowRoot: {
+      querySelectorAll(selector) {
+        if (selector === "input[type='file']") return [input];
+        if (selector === "*") return [];
+        return [];
+      }
+    }
+  }));
+  const documentRoot = {
+    querySelectorAll(selector) {
+      stats.documentQueries += 1;
+      if (selector === "input[type='file']") return fileInputs;
+      if (selector === "*") return shadowHosts;
+      return [];
+    }
+  };
+
+  const dependencies = {
+    Node: { ELEMENT_NODE: 1 },
+    Event: TestEvent,
+    DragEvent: undefined,
+    ClipboardEvent: undefined,
+    DataTransfer: TestDataTransfer,
+    location: { hostname },
+    document: documentRoot,
+    sanitizedFileInputHandoffs: new WeakSet(),
+    fallbackDrops,
+    debugReveal: (label, payload) => debugEvents.push({ label, payload })
+  };
+
+  const factory = new Function(
+    ...Object.keys(dependencies),
+    [
+      "let lastDiscoveredFileInput = null;",
+      "let fileDragDiscoveryCompleted = false;",
+      "let fileDragDiscoveryScheduled = false;",
+      extractFunctionSource(contentSource, "normalizeTarget"),
+      extractFunctionSource(contentSource, "isSanitizedFileHandoffEvent"),
+      extractFunctionSource(contentSource, "markSanitizedFileHandoffEvent"),
+      extractFunctionSource(contentSource, "createSanitizedDataTransfer"),
+      extractFunctionSource(contentSource, "attachEventDataTransfer"),
+      extractFunctionSource(contentSource, "dispatchSanitizedFileEvent").replace(
+        "target.dispatchEvent(handoffEvent);",
+        "fallbackDrops.push({ target, handoffEvent }); target.dispatchEvent(handoffEvent);"
+      ),
+      extractFunctionSource(contentSource, "isGeminiHost"),
+      extractFunctionSource(contentSource, "isFileInputElement"),
+      extractFunctionSource(contentSource, "describeFileForDebug"),
+      extractFunctionSource(contentSource, "describeFileInputForDebug"),
+      extractFunctionSource(contentSource, "collectFileInputsFromAncestry"),
+      extractFunctionSource(contentSource, "collectFileInputsFromRoot"),
+      extractFunctionSource(contentSource, "discoverFileInputForHandoff"),
+      extractFunctionSource(contentSource, "resolveFileInputForHandoff"),
+      extractFunctionSource(contentSource, "handOffSanitizedFileInput"),
+      extractFunctionSource(contentSource, "handOffSanitizedLocalFile"),
+      "return { handOffSanitizedLocalFile, resolveFileInputForHandoff };"
+    ].join("\n\n")
+  );
+
+  const handlers = factory(...Object.values(dependencies));
+  return {
+    ...handlers,
+    debugEvents,
+    fallbackDrops,
+    stats
   };
 }
 
@@ -251,7 +374,7 @@ async function testFileDragoverIsAcceptedWithoutComposerTarget() {
 
   assert.strictEqual(calls.preventDefault, 1);
   assert.strictEqual(calls.stopPropagation, 1);
-  assert.strictEqual(calls.stopImmediatePropagation, 0);
+  assert.strictEqual(calls.stopImmediatePropagation, 1);
   assert.strictEqual(event.defaultPrevented, true);
   assert.strictEqual(dataTransfer.dropEffect, "copy");
 }
@@ -270,7 +393,7 @@ async function testFileDragoverIsAcceptedWithoutHelperLoaded() {
 
   assert.strictEqual(calls.preventDefault, 1);
   assert.strictEqual(calls.stopPropagation, 1);
-  assert.strictEqual(calls.stopImmediatePropagation, 0);
+  assert.strictEqual(calls.stopImmediatePropagation, 1);
   assert.strictEqual(dataTransfer.dropEffect, "copy");
 }
 
@@ -295,9 +418,11 @@ async function testFileDropIsHandledWithoutComposerTarget() {
   assert.strictEqual(calls.reads.length, 1);
   assert.strictEqual(calls.reads[0], dataTransfer);
   assert.strictEqual(calls.redactions.length, 1);
+  assert.strictEqual(calls.createdFiles.length, 1);
   assert.strictEqual(calls.handoffs.length, 1);
   assert.strictEqual(calls.handoffs[0].input, null);
   assert.strictEqual(calls.handoffs[0].context, "drop");
+  assert.strictEqual(calls.createdFiles[0].text.includes("LeakGuardDropApiKey"), false);
   assert.strictEqual(calls.handoffs[0].sanitizedFile.text.includes("LeakGuardDropApiKey"), false);
   assert.strictEqual(event.defaultPrevented, true);
   assert.strictEqual(eventCalls.stopImmediatePropagation, 2);
@@ -438,6 +563,131 @@ async function testComposerTargetDropStillPassesComposer() {
   assert.strictEqual(calls.handoffs[0].context, "drop");
 }
 
+async function testGeminiDropAssignsSanitizedFileToShadowInput() {
+  const rawFile = {
+    name: "secrets.env",
+    type: "text/plain",
+    size: 49,
+    text: "API_KEY=LeakGuardDropApiKey1234567890"
+  };
+  const sanitizedFile = {
+    name: "secrets.env",
+    type: "text/plain",
+    size: 18,
+    text: "API_KEY=[PWM_1]"
+  };
+  const shadowInput = createFileInput({ source: "shadow-root" });
+  const { handOffSanitizedLocalFile, debugEvents, fallbackDrops } = createHandoffHarness({
+    shadowInputs: [shadowInput]
+  });
+  const event = {
+    target: {
+      nodeType: 1,
+      tagName: "P",
+      dispatchEvent() {
+        throw new Error("Gemini input handoff should not fall back to synthetic raw-target drop");
+      }
+    },
+    dataTransfer: { files: [rawFile] }
+  };
+
+  const handedOff = handOffSanitizedLocalFile(event, null, sanitizedFile, "drop");
+
+  assert.strictEqual(handedOff, true);
+  assert.deepStrictEqual(shadowInput.events, ["input", "change"]);
+  assert.strictEqual(shadowInput.files.length, 1);
+  assert.strictEqual(shadowInput.files[0], sanitizedFile);
+  assert.strictEqual(shadowInput.files[0].text.includes("LeakGuardDropApiKey"), false);
+  assert.strictEqual(fallbackDrops.length, 0);
+  assert.ok(
+    debugEvents.some((entry) => entry.label === "file-drag:input-found"),
+    "expected privacy-safe file input discovery debug breadcrumb"
+  );
+  assert.ok(
+    debugEvents.some((entry) => entry.label === "file-handoff:assignment-success"),
+    "expected privacy-safe file input assignment debug breadcrumb"
+  );
+}
+
+async function testGeminiDropPrefersEnabledDiscoveredInput() {
+  const disabledInput = createFileInput({ disabled: true });
+  const shadowInput = createFileInput({ source: "shadow-root" });
+  const sanitizedFile = {
+    name: "secrets.env",
+    type: "text/plain",
+    size: 18,
+    text: "API_KEY=[PWM_1]"
+  };
+  const { handOffSanitizedLocalFile } = createHandoffHarness({
+    fileInputs: [disabledInput],
+    shadowInputs: [shadowInput]
+  });
+  const event = {
+    target: { nodeType: 1, tagName: "DIV", dispatchEvent: () => true },
+    dataTransfer: createDataTransfer()
+  };
+
+  const handedOff = handOffSanitizedLocalFile(event, null, sanitizedFile, "drop");
+
+  assert.strictEqual(handedOff, true);
+  assert.strictEqual(disabledInput.files.length, 0);
+  assert.strictEqual(shadowInput.files[0], sanitizedFile);
+  assert.deepStrictEqual(shadowInput.events, ["input", "change"]);
+}
+
+async function testGeminiDiscoveryRunsOncePerDragSession() {
+  const shadowInput = createFileInput({ source: "shadow-root" });
+  const sanitizedFile = {
+    name: "secrets.env",
+    type: "text/plain",
+    size: 18,
+    text: "API_KEY=[PWM_1]"
+  };
+  const { handOffSanitizedLocalFile, stats } = createHandoffHarness({
+    shadowInputs: [shadowInput]
+  });
+  const event = {
+    target: { nodeType: 1, tagName: "DIV", dispatchEvent: () => true },
+    dataTransfer: createDataTransfer()
+  };
+
+  assert.strictEqual(handOffSanitizedLocalFile(event, null, sanitizedFile, "drop"), true);
+  const queriesAfterFirstDrop = stats.documentQueries;
+  assert.strictEqual(handOffSanitizedLocalFile(event, null, sanitizedFile, "drop"), true);
+
+  assert.ok(queriesAfterFirstDrop > 0, "expected first drop to discover file inputs");
+  assert.strictEqual(stats.documentQueries, queriesAfterFirstDrop);
+}
+
+async function testGeminiDropFailsClosedWhenNoInputExists() {
+  const sanitizedFile = {
+    name: "secrets.env",
+    type: "text/plain",
+    size: 18,
+    text: "API_KEY=[PWM_1]"
+  };
+  const { handOffSanitizedLocalFile, debugEvents, fallbackDrops } = createHandoffHarness();
+  const event = {
+    target: {
+      nodeType: 1,
+      tagName: "P",
+      dispatchEvent() {
+        throw new Error("Gemini missing-input handoff must not replay a synthetic drop");
+      }
+    },
+    dataTransfer: createDataTransfer()
+  };
+
+  const handedOff = handOffSanitizedLocalFile(event, null, sanitizedFile, "drop");
+
+  assert.strictEqual(handedOff, false);
+  assert.strictEqual(fallbackDrops.length, 0);
+  assert.ok(
+    debugEvents.some((entry) => entry.label === "file-drag:input-not-found"),
+    "expected privacy-safe missing-input debug breadcrumb"
+  );
+}
+
 (async () => {
   await testFileDragoverIsAcceptedWithoutComposerTarget();
   await testFileDragoverIsAcceptedWithoutHelperLoaded();
@@ -449,6 +699,10 @@ async function testComposerTargetDropStillPassesComposer() {
   await testNonFileDragoverIsIgnored();
   await testSanitizedFileHandoffDropIsIgnored();
   await testComposerTargetDropStillPassesComposer();
+  await testGeminiDropAssignsSanitizedFileToShadowInput();
+  await testGeminiDropPrefersEnabledDiscoveredInput();
+  await testGeminiDiscoveryRunsOncePerDragSession();
+  await testGeminiDropFailsClosedWhenNoInputExists();
   console.log("PASS content file drop interception regressions");
 })().catch((error) => {
   console.error(error);
