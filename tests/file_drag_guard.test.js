@@ -37,6 +37,21 @@ function createDataTransfer({ files = true } = {}) {
   };
 }
 
+function createNamedFileDataTransfer(name) {
+  const file = { name, type: "application/octet-stream", size: 8 };
+  return {
+    types: ["Files"],
+    files: [file],
+    items: [
+      {
+        kind: "file",
+        getAsFile: () => file
+      }
+    ],
+    dropEffect: "none"
+  };
+}
+
 function createEvent({ dataTransfer = createDataTransfer(), sanitized = false } = {}) {
   let defaultPrevented = false;
   const calls = {
@@ -288,6 +303,44 @@ async function testSanitizedHandoffIsIgnored() {
   assert.strictEqual(calls.stopImmediatePropagation, 0);
 }
 
+async function testUnsupportedBinaryDropPassesThroughByDefault() {
+  const { windowTarget } = createSandbox();
+  let nativePageHandlerCalls = 0;
+  windowTarget.addEventListener("drop", () => {
+    nativePageHandlerCalls += 1;
+  });
+  const { event, calls } = createEvent({
+    dataTransfer: createNamedFileDataTransfer("brief.pdf")
+  });
+
+  dispatch(windowTarget, "drop", event);
+
+  assert.strictEqual(event.defaultPrevented, false);
+  assert.strictEqual(calls.preventDefault, 0);
+  assert.strictEqual(calls.stopImmediatePropagation, 0);
+  assert.strictEqual(nativePageHandlerCalls, 1);
+}
+
+async function testStrictPolicyResolverBlocksUnknownBinaryDrop() {
+  const { sandbox, windowTarget } = createSandbox();
+  let nativePageHandlerCalls = 0;
+  sandbox.__PWM_FILE_DRAG_GUARD__.setFilePolicyResolver(() => ({
+    action: "block",
+    reason: "unknown_binary_strict"
+  }));
+  windowTarget.addEventListener("drop", () => {
+    nativePageHandlerCalls += 1;
+  });
+  const { event } = createEvent({
+    dataTransfer: createNamedFileDataTransfer("payload.bin")
+  });
+
+  dispatch(windowTarget, "drop", event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(nativePageHandlerCalls, 0);
+}
+
 (async () => {
   await testDragoverPreventsFileDragBeforeRuntimeLoads();
   await testDragoverListenersAreExplicitlyNonPassive();
@@ -299,6 +352,8 @@ async function testSanitizedHandoffIsIgnored() {
   await testRawDroppedFileCannotReachNativePageHandlers();
   await testNonFileDragIsIgnored();
   await testSanitizedHandoffIsIgnored();
+  await testUnsupportedBinaryDropPassesThroughByDefault();
+  await testStrictPolicyResolverBlocksUnknownBinaryDrop();
   console.log("PASS early file drag guard regressions");
 })().catch((error) => {
   console.error(error);

@@ -33,7 +33,67 @@
   let dropHandler = null;
   let dragHandler = null;
   let dragEndHandler = null;
+  let filePolicyResolver = null;
   let fileDragActive = false;
+  const TEXT_EXTENSIONS = new Set([
+    ".txt",
+    ".md",
+    ".markdown",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".ini",
+    ".env",
+    ".conf",
+    ".cfg",
+    ".xml",
+    ".csv",
+    ".log",
+    ".sh",
+    ".bash",
+    ".zsh",
+    ".ps1",
+    ".bat",
+    ".cmd",
+    ".py",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".html",
+    ".css",
+    ".scss",
+    ".java",
+    ".c",
+    ".cpp",
+    ".h",
+    ".hpp",
+    ".cs",
+    ".go",
+    ".rs",
+    ".rb",
+    ".php",
+    ".sql"
+  ]);
+  const TEXT_BASENAMES = new Set(["dockerfile", "makefile"]);
+  const PASS_THROUGH_EXTENSIONS = new Set([
+    ".pdf",
+    ".doc",
+    ".docx",
+    ".xls",
+    ".xlsx",
+    ".ppt",
+    ".pptx",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+    ".gif",
+    ".bmp",
+    ".ico",
+    ".svg"
+  ]);
 
   function dataTransferLooksLikeFiles(dataTransfer) {
     if (!dataTransfer) return false;
@@ -45,6 +105,56 @@
     return Array.from(dataTransfer.items || []).some(
       (item) => String(item?.kind || "").toLowerCase() === "file"
     );
+  }
+
+  function getFileExtension(fileName) {
+    const name = String(fileName || "").split(/[\\/]/).pop().toLowerCase();
+    if (!name) return "";
+    if (name === ".env") return ".env";
+    const index = name.lastIndexOf(".");
+    if (index <= 0 || index === name.length - 1) return "";
+    return name.slice(index);
+  }
+
+  function getFileBasename(fileName) {
+    return String(fileName || "").split(/[\\/]/).pop().toLowerCase();
+  }
+
+  function listTransferFiles(dataTransfer) {
+    const files = Array.from(dataTransfer?.files || []).filter(Boolean);
+    if (files.length) return files;
+
+    return Array.from(dataTransfer?.items || [])
+      .filter((item) => String(item?.kind || "").toLowerCase() === "file")
+      .map((item) => (typeof item.getAsFile === "function" ? item.getAsFile() : null))
+      .filter(Boolean);
+  }
+
+  function classifyFile(file) {
+    const extension = getFileExtension(file?.name || "");
+    if (TEXT_BASENAMES.has(getFileBasename(file?.name || "")) || TEXT_EXTENSIONS.has(extension)) {
+      return "text";
+    }
+    if (PASS_THROUGH_EXTENSIONS.has(extension)) {
+      return "pass";
+    }
+    return "unknown";
+  }
+
+  function resolveTransferPolicy(dataTransfer) {
+    if (typeof filePolicyResolver === "function") {
+      try {
+        const policy = filePolicyResolver(dataTransfer);
+        if (policy?.action) return policy;
+      } catch {
+        // Fall back to the local conservative classifier.
+      }
+    }
+
+    const files = listTransferFiles(dataTransfer);
+    if (!files.length) return { action: "block" };
+    if (files.some((file) => classifyFile(file) === "text")) return { action: "block" };
+    return { action: "allow" };
   }
 
   function isSanitizedFileHandoffEvent(event) {
@@ -83,6 +193,10 @@
       return false;
     }
 
+    if (resolveTransferPolicy(event.dataTransfer).action === "allow") {
+      return false;
+    }
+
     blockFileEvent(event, true);
     notifyFileDragDetected(event);
     return true;
@@ -90,6 +204,10 @@
 
   function consumeFileDrop(event) {
     if (isSanitizedFileHandoffEvent(event) || !dataTransferLooksLikeFiles(event.dataTransfer)) {
+      return;
+    }
+
+    if (resolveTransferPolicy(event.dataTransfer).action === "allow") {
       return;
     }
 
@@ -163,6 +281,9 @@
     },
     setDragEndHandler(handler) {
       dragEndHandler = typeof handler === "function" ? handler : null;
+    },
+    setFilePolicyResolver(handler) {
+      filePolicyResolver = typeof handler === "function" ? handler : null;
     },
     bind
   };

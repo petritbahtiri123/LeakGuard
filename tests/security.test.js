@@ -327,8 +327,9 @@ function testLocalFilePasteDoesNotExposeRawFileContent() {
     localFileSource.includes("createSanitizedTextFile(localFile.file, result.redactedText)") &&
       localFileSource.includes("handOffSanitizedLocalFile(event, input, sanitizedFile, context)") &&
       contentSource.includes("function handOffSanitizedLocalFile") &&
-      contentSource.includes("fileInput.files = transfer.files"),
-    "local file paste/drop should create and hand off sanitized in-memory files"
+      contentSource.includes("fileInput.files = transfer.files") &&
+      contentSource.includes("file-handoff:gemini-file-upload-skipped"),
+    "local file paste/drop should create sanitized in-memory files while Gemini drop skips upload handoff"
   );
   assert.ok(
     localFileSource.includes("sanitized_file_handoff_failed") &&
@@ -337,10 +338,13 @@ function testLocalFilePasteDoesNotExposeRawFileContent() {
   );
   assert.ok(
     localFileSource.includes("LOCAL_FILE_TEXT_INSERTION_FALLBACK_ENABLED = false") &&
+      contentSource.includes("async function applyGeminiSanitizedTextFallback") &&
+      contentSource.includes("Sanitized content inserted as text because Gemini rejected sanitized file upload.") &&
+      contentSource.includes("isGeminiHost()") &&
       !contentSource.includes("async function applyLocalFileRedactedText") &&
       !contentSource.includes("setInputTextDirect(input, next.text") &&
       !contentSource.includes("insertContentEditableTextCommand(input, next.text"),
-    "local file paste/drop must not dump file contents into composer text"
+    "local file paste/drop text fallback should stay limited to Gemini sanitized handoff failures"
   );
   assertNotIncludes(
     localFileSource,

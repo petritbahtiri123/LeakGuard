@@ -353,15 +353,19 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
       contentSource.includes("function handOffSanitizedFileInput") &&
       contentSource.includes("resolveFileInputForHandoff(event, input)") &&
       contentSource.includes("isGeminiHost()") &&
+      contentSource.includes("file-handoff:gemini-file-upload-skipped") &&
       contentSource.includes('dispatchSanitizedFileEvent(target, "drop", transfer)') &&
       contentSource.includes('dispatchSanitizedFileEvent(target, "paste", transfer)'),
-    "local file handling should hand off sanitized files instead of composer text, with Gemini using file-input fallback"
+    "local file handling should hand off sanitized files on non-Gemini sites while Gemini skips file-upload handoff"
   );
   assert.ok(
-    !contentSource.includes("async function applyLocalFileRedactedText") &&
+    contentSource.includes("async function applyGeminiSanitizedTextFallback") &&
+      contentSource.includes("Sanitized content inserted as text because Gemini rejected sanitized file upload.") &&
+      contentSource.includes("isGeminiHost()") &&
+      !contentSource.includes("async function applyLocalFileRedactedText") &&
       !contentSource.includes("setInputTextDirect(input, next.text") &&
       !contentSource.includes("insertContentEditableTextCommand(input, next.text"),
-    "local file handling must not fall back to dumping sanitized file contents into the composer"
+    "local file handling should only fall back to sanitized composer text for Gemini handoff rejection"
   );
   assert.ok(
     fileInsertSource.includes("sanitized_file_handoff_failed") &&

@@ -117,6 +117,8 @@
   const fileDragEventRoots = new WeakSet();
   const PROGRAMMATIC_INPUT_SUPPRESS_MS = 500;
   const FILE_DRAG_SESSION_RESET_MS = 5000;
+  const GEMINI_SANITIZED_TEXT_FALLBACK_MESSAGE =
+    "Sanitized content inserted as text because Gemini rejected sanitized file upload.";
   let lastDiscoveredFileInput = null;
   let fileDragDiscoveryCompleted = false;
   let fileDragDiscoveryScheduled = false;
@@ -267,6 +269,98 @@
     return Array.from(dataTransfer.items || []).some(
       (item) => String(item?.kind || "").toLowerCase() === "file"
     );
+  }
+
+  function listLocalTransferFiles(dataTransfer) {
+    if (typeof FilePasteHelpers?.listDataTransferFiles === "function") {
+      return FilePasteHelpers.listDataTransferFiles(dataTransfer);
+    }
+
+    const files = Array.from(dataTransfer?.files || []).filter(Boolean);
+    if (files.length) return files;
+
+    return Array.from(dataTransfer?.items || [])
+      .filter(
+        (item) =>
+          String(item?.kind || "").toLowerCase() === "file" &&
+          typeof item.getAsFile === "function"
+      )
+      .map((item) => item.getAsFile())
+      .filter(Boolean);
+  }
+
+  function isStrictUnsupportedFileMode() {
+    const policy = getActivePolicy();
+    return Boolean(
+      policy.strictUnsupportedFileBlocking ||
+        policy.blockUnsupportedFileUploads ||
+        policy.fileUploadMode === "strict"
+    );
+  }
+
+  function classifyLocalFile(file) {
+    const FileScanner = globalThis.PWM?.FileScanner || {};
+    if (typeof FileScanner.classifyFileForTextScan === "function") {
+      return FileScanner.classifyFileForTextScan({
+        fileName: file?.name || "",
+        mimeType: file?.type || ""
+      });
+    }
+
+    return {
+      kind: "unknown",
+      action: "allow",
+      message: "LeakGuard does not inspect this file type yet. Upload allowed."
+    };
+  }
+
+  function resolveLocalFileTransferPolicy(dataTransfer) {
+    const files = listLocalTransferFiles(dataTransfer);
+    if (!files.length) {
+      return { action: "scan" };
+    }
+
+    const classifications = files.map(classifyLocalFile);
+    if (classifications.some((classification) => classification.action === "scan")) {
+      return { action: "scan", files, classifications };
+    }
+
+    if (
+      isStrictUnsupportedFileMode() &&
+      classifications.some((classification) => classification.kind === "unknown")
+    ) {
+      return {
+        action: "block",
+        reason: "unknown_binary_strict",
+        files,
+        classifications,
+        message: "LeakGuard blocked this unsupported file type because strict file handling is enabled."
+      };
+    }
+
+    return {
+      action: "allow",
+      reason: "unsupported_file_pass_through",
+      files,
+      classifications,
+      message:
+        classifications.find((classification) => classification.message)?.message ||
+        "LeakGuard does not inspect this file type yet. Upload allowed."
+    };
+  }
+
+  function resolveFileDragGuardPolicy(dataTransfer) {
+    const policy = resolveLocalFileTransferPolicy(dataTransfer);
+    return {
+      action: policy.action === "allow" ? "allow" : "block",
+      reason: policy.reason || policy.action
+    };
+  }
+
+  function showUnsupportedFilePassThroughNotice(policy) {
+    if (!policy?.message) return;
+    setBadge(policy.message);
+    hideBadgeSoon(3200);
   }
 
   function buildComposerWritePlan(input, text) {
@@ -1536,6 +1630,10 @@
     if (!extensionRuntimeAvailable || modalOpen || event.defaultPrevented) return;
     if (isSanitizedFileHandoffEvent(event)) return;
 
+    if (await maybeHandleGeminiEditorPaste(event)) {
+      return;
+    }
+
     const input = findComposer(event.target);
     if (!input) return;
 
@@ -1770,6 +1868,195 @@
     return location.hostname === "gemini.google.com";
   }
 
+  function resolveGeminiEditorTarget(target) {
+    if (!isGeminiHost()) return null;
+    const el = normalizeTarget(target);
+    if (!el?.closest) return null;
+    return el.closest(".ql-editor") || el.closest('[contenteditable="true"]');
+  }
+
+  async function redactGeminiEditorText(text) {
+    const analysis = analyzeText(String(text || ""));
+    const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
+    return String(result.redactedText || "");
+  }
+
+  function insertGeminiEditorText(editor, sanitizedText) {
+    const text = String(sanitizedText || "");
+    if (!editor || typeof editor.focus !== "function") return false;
+
+    try {
+      suppressFollowupInputScan();
+      editor.focus();
+      if (document.execCommand?.("insertText", false, text)) {
+        dispatchGeminiEditorInput(editor, text);
+        return true;
+      }
+    } catch {
+      // Fall through to the verified rewrite path for contenteditable editors.
+    }
+
+    return false;
+  }
+
+  function dispatchGeminiEditorInput(editor, sanitizedText) {
+    try {
+      editor.dispatchEvent(
+        new InputEvent("input", {
+          bubbles: true,
+          cancelable: false,
+          inputType: "insertText",
+          data: String(sanitizedText || "")
+        })
+      );
+      return;
+    } catch {
+      // Older browser/event shims may not expose constructible InputEvent.
+    }
+
+    try {
+      editor.dispatchEvent(
+        new Event("input", {
+          bubbles: true,
+          cancelable: false
+        })
+      );
+    } catch {
+      // Event notification is best-effort after the sanitized text is inserted.
+    }
+  }
+
+  async function applyGeminiEditorText(editor, sanitizedText, context) {
+    if (insertGeminiEditorText(editor, sanitizedText)) {
+      setBadge("Content redacted");
+      hideBadgeSoon();
+      refreshBadgeFromCurrentInput();
+      return true;
+    }
+
+    const originalText = getInputText(editor);
+    const selection = getSelectionOffsets(editor);
+    const inserted = await applyPasteDecision(
+      editor,
+      originalText,
+      selection,
+      String(sanitizedText || ""),
+      context
+    );
+
+    if (inserted) {
+      setBadge("Content redacted");
+      hideBadgeSoon();
+      refreshBadgeFromCurrentInput();
+    }
+
+    return inserted;
+  }
+
+  async function blockGeminiEditorRawContent(event, title, message) {
+    consumeInterceptionEvent(event);
+    setBadge(title);
+    hideBadgeSoon(4200);
+    await showMessageModal(title, message);
+    refreshBadgeFromCurrentInput();
+    return true;
+  }
+
+  async function maybeHandleGeminiEditorPaste(event) {
+    const editor = resolveGeminiEditorTarget(event?.target);
+    if (!editor) return false;
+
+    const pasted = event.clipboardData?.getData("text/plain") || "";
+    if (!pasted) return false;
+
+    consumeInterceptionEvent(event);
+
+    try {
+      const sanitizedText = await redactGeminiEditorText(pasted);
+      if (await applyGeminiEditorText(editor, sanitizedText, "gemini-paste")) {
+        return true;
+      }
+    } catch (error) {
+      handleContentError(error);
+    }
+
+    setBadge("Raw paste blocked");
+    hideBadgeSoon(4200);
+    await showMessageModal(
+      "Raw paste blocked",
+      "LeakGuard blocked raw pasted content because sanitized insertion failed."
+    );
+    refreshBadgeFromCurrentInput();
+    return true;
+  }
+
+  function listGeminiDropFiles(dataTransfer) {
+    return Array.from(dataTransfer?.files || []).filter(Boolean);
+  }
+
+  function isSupportedGeminiTextFile(file) {
+    return classifyLocalFile(file).action === "scan";
+  }
+
+  async function readGeminiTextFile(file) {
+    if (!isSupportedGeminiTextFile(file) || typeof file?.text !== "function") {
+      return {
+        ok: false,
+        message: "This release safely redacts text-based files only. PDF/DOCX/image redaction is planned but not enabled yet."
+      };
+    }
+
+    try {
+      return {
+        ok: true,
+        text: await file.text()
+      };
+    } catch {
+      return {
+        ok: false,
+        message: "LeakGuard could not read this local file, so nothing was attached."
+      };
+    }
+  }
+
+  async function maybeHandleGeminiEditorDrop(event) {
+    const editor = resolveGeminiEditorTarget(event?.target);
+    if (!editor) return false;
+
+    const files = listLocalTransferFiles(event.dataTransfer);
+    if (files.length !== 1 || !isSupportedGeminiTextFile(files[0])) {
+      return false;
+    }
+
+    consumeInterceptionEvent(event);
+    const localFile =
+      typeof readLocalTextFileFromDataTransfer === "function"
+        ? await readLocalTextFileFromDataTransfer(event.dataTransfer)
+        : await readGeminiTextFile(files[0]);
+    if (!localFile.ok) {
+      return blockGeminiEditorRawContent(
+        event,
+        "Raw file upload blocked",
+        localFile.message || "LeakGuard could not read this local file, so nothing was attached."
+      );
+    }
+
+    try {
+      const sanitizedText = await redactGeminiEditorText(localFile.text);
+      if (await applyGeminiEditorText(editor, sanitizedText, "gemini-drop")) {
+        return true;
+      }
+    } catch (error) {
+      handleContentError(error);
+    }
+
+    return blockGeminiEditorRawContent(
+      event,
+      "Raw file upload blocked",
+      "LeakGuard blocked raw file upload because sanitized insertion failed."
+    );
+  }
+
   function isFileInputElement(el) {
     return (
       !!el &&
@@ -1936,6 +2223,10 @@
   }
 
   function handleFileDragDetected(event) {
+    if (isGeminiHost()) {
+      return;
+    }
+
     scheduleFileDragSessionReset();
     if (!fileDragDetectedLogged) {
       fileDragDetectedLogged = true;
@@ -2003,11 +2294,7 @@
     const target = event?.target || input;
     if (context === "drop") {
       if (isGeminiHost()) {
-        const fileInput = resolveFileInputForHandoff(event, input);
-        if (handOffSanitizedFileInput(fileInput, transfer)) {
-          return true;
-        }
-        debugReveal("file-handoff:file-input-fallback-failed", {
+        debugReveal("file-handoff:gemini-file-upload-skipped", {
           context,
           targetTag: event?.target?.tagName || "",
           sanitizedFile: describeFileForDebug(sanitizedFile)
@@ -2030,6 +2317,95 @@
     return false;
   }
 
+  async function applyGeminiSanitizedTextFallback(event, input, redactedText) {
+    if (!isGeminiHost()) {
+      return false;
+    }
+
+    const editor = resolveGeminiEditorTarget(event?.target) || resolveGeminiEditorTarget(input);
+    if (editor) {
+      const inserted = await applyGeminiEditorText(
+        editor,
+        String(redactedText || ""),
+        "file-text-fallback"
+      );
+      if (inserted) {
+        setBadge(GEMINI_SANITIZED_TEXT_FALLBACK_MESSAGE);
+        hideBadgeSoon(5200);
+        await showMessageModal("Sanitized content inserted as text", GEMINI_SANITIZED_TEXT_FALLBACK_MESSAGE);
+        refreshBadgeFromCurrentInput();
+        return true;
+      }
+    }
+
+    const targetInput = input || findComposer(event?.target) || findComposer(document.activeElement);
+    if (!targetInput) {
+      debugReveal("file-handoff:text-fallback-unavailable", {
+        context: event?.type || "",
+        reason: "composer_not_found"
+      });
+      return false;
+    }
+
+    const originalText = getInputText(targetInput);
+    const selection = getSelectionOffsets(targetInput);
+    const inserted = await applyPasteDecision(
+      targetInput,
+      originalText,
+      selection,
+      String(redactedText || ""),
+      "file-text-fallback"
+    );
+
+    if (!inserted) {
+      debugReveal("file-handoff:text-fallback-failed", {
+        context: event?.type || "",
+        reason: "composer_rewrite_failed"
+      });
+      return false;
+    }
+
+    debugReveal("file-handoff:text-fallback-success", {
+      context: event?.type || "",
+      redactedLength: String(redactedText || "").length
+    });
+    setBadge(GEMINI_SANITIZED_TEXT_FALLBACK_MESSAGE);
+    hideBadgeSoon(5200);
+    await showMessageModal("Sanitized content inserted as text", GEMINI_SANITIZED_TEXT_FALLBACK_MESSAGE);
+    refreshBadgeFromCurrentInput();
+    return true;
+  }
+
+  async function insertGeminiLocalFileText(event, input, redactedText) {
+    if (!isGeminiHost()) {
+      return false;
+    }
+
+    const editor = resolveGeminiEditorTarget(event?.target) || resolveGeminiEditorTarget(input);
+    if (editor) {
+      return applyGeminiEditorText(editor, String(redactedText || ""), "gemini-file-text");
+    }
+
+    const targetInput = input || findComposer(event?.target) || findComposer(document.activeElement);
+    if (!targetInput) {
+      debugReveal("file-handoff:gemini-text-direct-unavailable", {
+        context: event?.type || "",
+        reason: "composer_not_found"
+      });
+      return false;
+    }
+
+    const originalText = getInputText(targetInput);
+    const selection = getSelectionOffsets(targetInput);
+    return applyPasteDecision(
+      targetInput,
+      originalText,
+      selection,
+      String(redactedText || ""),
+      "gemini-file-text"
+    );
+  }
+
   async function maybeHandleLocalFileInsert(event, input, dataTransfer, context) {
     if (
       !extensionRuntimeAvailable ||
@@ -2040,6 +2416,25 @@
       !dataTransferHasFiles(dataTransfer)
     ) {
       return false;
+    }
+
+    const transferPolicy = resolveLocalFileTransferPolicy(dataTransfer);
+    if (transferPolicy.action === "allow") {
+      showUnsupportedFilePassThroughNotice(transferPolicy);
+      return false;
+    }
+
+    if (transferPolicy.action === "block") {
+      consumeInterceptionEvent(event);
+      setBadge("Raw file upload blocked");
+      hideBadgeSoon(4200);
+      await showMessageModal("Raw file upload blocked", transferPolicy.message);
+      refreshBadgeFromCurrentInput();
+      return {
+        handled: true,
+        ok: false,
+        reason: transferPolicy.reason
+      };
     }
 
     consumeInterceptionEvent(event);
@@ -2060,6 +2455,33 @@
 
     const analysis = analyzeText(localFile.text);
     const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
+
+    if (context === "drop" && isGeminiHost()) {
+      if (await insertGeminiLocalFileText(event, input, result.redactedText)) {
+        setBadge("Sanitized content inserted as text");
+        hideBadgeSoon(4200);
+        refreshBadgeFromCurrentInput();
+        return {
+          handled: true,
+          ok: true,
+          strategy: "gemini-direct-text"
+        };
+      }
+
+      setBadge("Raw file upload blocked");
+      hideBadgeSoon(4200);
+      await showMessageModal(
+        "Raw file upload blocked",
+        "LeakGuard blocked raw file upload because sanitized text insertion failed."
+      );
+      refreshBadgeFromCurrentInput();
+      return {
+        handled: true,
+        ok: false,
+        reason: "gemini_direct_text_failed"
+      };
+    }
+
     const sanitizedFile = createSanitizedTextFile(localFile.file, result.redactedText);
     debugReveal("file-handoff:sanitized-file-created", {
       context,
@@ -2071,6 +2493,14 @@
     const handedOff = handOffSanitizedLocalFile(event, input, sanitizedFile, context);
 
     if (!handedOff) {
+      if (await applyGeminiSanitizedTextFallback(event, input, result.redactedText)) {
+        return {
+          handled: true,
+          ok: true,
+          strategy: "gemini-sanitized-text-fallback"
+        };
+      }
+
       debugReveal("file-handoff:fail-closed", {
         context,
         reason: "sanitized_file_handoff_failed",
@@ -2109,18 +2539,38 @@
       return;
     }
 
+    const transferPolicy = resolveLocalFileTransferPolicy(event.dataTransfer);
+    if (transferPolicy.action === "allow") {
+      showUnsupportedFilePassThroughNotice(transferPolicy);
+      return;
+    }
+
+    if (transferPolicy.action === "block") {
+      rawFileDropInterceptions.add(event);
+      consumeInterceptionEvent(event);
+      setBadge("Raw file upload blocked");
+      hideBadgeSoon(4200);
+      await showMessageModal("Raw file upload blocked", transferPolicy.message);
+      refreshBadgeFromCurrentInput();
+      clearFileDragSession();
+      return;
+    }
+
     rawFileDropInterceptions.add(event);
     consumeInterceptionEvent(event);
-    handleFileDragDetected(event);
 
     if (!extensionRuntimeAvailable || modalOpen) {
       clearFileDragSession();
       return;
     }
 
-    const input = findComposer(event.target) || findComposer(document.activeElement);
-
     try {
+      if (await maybeHandleGeminiEditorDrop(event)) {
+        return;
+      }
+
+      handleFileDragDetected(event);
+      const input = findComposer(event.target) || findComposer(document.activeElement);
       await maybeHandleLocalFileInsert(event, input, event.dataTransfer, "drop");
     } finally {
       clearFileDragSession();
@@ -2145,7 +2595,10 @@
         // Some DataTransfer implementations expose dropEffect as read-only.
       }
     }
-    handleFileDragDetected(event);
+
+    if (!isGeminiHost()) {
+      handleFileDragDetected(event);
+    }
 
     if (!extensionRuntimeAvailable || modalOpen) {
       return;
@@ -3149,6 +3602,7 @@
     fileDragGuard?.setDropHandler?.(onFileDrop);
     fileDragGuard?.setDragHandler?.(handleFileDragDetected);
     fileDragGuard?.setDragEndHandler?.(clearFileDragSession);
+    fileDragGuard?.setFilePolicyResolver?.(resolveFileDragGuardPolicy);
     debugReveal("file-drag:guard-initialized", {
       singleton: Boolean(fileDragGuard?.initialized),
       marker: Boolean(window.__LEAKGUARD_FILE_DRAG_GUARD_INIT__)
