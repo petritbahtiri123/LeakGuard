@@ -290,9 +290,9 @@ MVP detection rules:
 
 Recommended MVP limit:
 
-- Default max file size: 2 MiB per file.
+- Current max supported text-file size: 50 MB per file.
 - Hard stop: reject larger files with clear UI copy.
-- Rationale: current detector scans whole strings and reports absolute offsets. A 2 MiB cap keeps UI responsive and avoids expensive memory growth while still covering typical config, source, markdown, JSON, and log snippets.
+- Rationale: current release keeps file protection text-only, blocks files above the local streaming limit, and uses streaming/chunked redaction for protected composer upload paths above 4 MiB. The extension-owned scanner still scans locally and should remain conservative about UI responsiveness and memory growth.
 - Later configurable limit: 5-10 MiB with chunked scanning and cross-chunk boundary handling.
 
 ## Dependency Strategy
@@ -438,7 +438,7 @@ Manual QA workflow:
 
 - Land this plan.
 - Decide final scanner entry point: popup action only, options link, or both.
-- Confirm MVP file size cap, recommended at 2 MiB.
+- Confirm current file size cap and streaming policy: protected composer text-file paths stream above 4 MiB up to 50 MB, and files above 50 MB are blocked.
 - Confirm whether Phase 1 uses deterministic-only scanning or also local AI assist. Recommendation: deterministic-only for MVP.
 
 ### Phase 1B: Text Scanner MVP

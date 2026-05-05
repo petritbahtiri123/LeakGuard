@@ -1,14 +1,14 @@
 # LeakGuard Deep Research Report
 
-Updated: 2026-05-03
+Updated: 2026-05-05
 
-Scope: repo inspection of the current `main` checkout, the previous `docs/deep-research-report.md`, recent local git history, merged GitHub PRs/commits from roughly 2026-04-21 through 2026-05-02, and the public docs cleanup that added `docs/NON_GOALS.md`.
+Scope: repo inspection of the current release branch, the previous `docs/deep-research-report.md`, recent local git history, merged GitHub PRs/commits from roughly 2026-04-21 through 2026-05-05, and the public docs cleanup that added `docs/NON_GOALS.md`.
 
 ## 1. Executive Summary
 
 LeakGuard is a local-first browser privacy guard that reduces accidental AI prompt leaks. Its strongest current design choice is that deterministic detection remains authoritative: provider and context patterns, entropy checks, URL/header parsers, public IPv4 handling, placeholder trust, and right-to-left redaction run locally before text reaches protected chat composers.
 
-The current repo supports the v1.3.0 hardening goals in the critical deterministic areas: trust-aware placeholder handling, sensitive HTTP header ranges, URL credential redaction, repeated raw secret placeholder reuse, and targeted natural-language/labelled disclosures. v1.4.0 release prep adds release-facing coverage for local text-file paste/drop/file-select redaction in protected AI composers: supported UTF-8 text files are validated locally, redacted through the background-owned placeholder flow, and replaced with sanitized in-memory `File`/`Blob` objects where browser and site upload flows accept synthetic file handoff. Unsupported files and sanitized handoff failures are blocked fail-closed so raw uploads do not proceed. The optional AI assist is implemented as a local ONNX/classifier layer over leftover suspicious candidates, not as full-prompt cloud AI and not as a replacement for deterministic detection.
+The current repo supports the v1.3.0 hardening goals in the critical deterministic areas: trust-aware placeholder handling, sensitive HTTP header ranges, URL credential redaction, repeated raw secret placeholder reuse, and targeted natural-language/labelled disclosures. v1.4.0 release prep adds release-facing coverage for local text-file paste/drop/file-select redaction in protected AI composers: supported UTF-8 text files are validated locally, redacted through the background-owned placeholder flow, and replaced with sanitized in-memory `File`/`Blob` objects where browser and site upload flows accept synthetic file handoff. Supported text-file composer uploads above 4 MiB and up to 50 MB use streaming/chunked local redaction before sanitized handoff. Unsupported files, files above 50 MB, and sanitized handoff failures are blocked fail-closed so raw uploads do not proceed. The optional AI assist is implemented as a local ONNX/classifier layer over leftover suspicious candidates, not as full-prompt cloud AI and not as a replacement for deterministic detection.
 
 LeakGuard should continue to describe itself as local-first risk reduction, not full enterprise DLP. It does not perform remote secret verification, organization-wide discovery, SIEM integration, credential revocation, historical repository scanning, or managed endpoint hardening. The public non-goals list now lives in `docs/NON_GOALS.md`.
 
@@ -37,7 +37,7 @@ Recent verified GitHub history:
 | Redaction and placeholder reuse | `src/shared/redactor.js`, `src/shared/placeholders.js`, `src/shared/transformOutboundPrompt.js` |
 | Placeholder/session state | `src/shared/sessionMapStore.js`, `src/background/core.js` |
 | Browser interception | `src/content/content.js`, `src/content/composer_helpers.js` |
-| Local file sanitized handoff | `src/content/file_paste_helpers.js`, `src/content/content.js`, `src/shared/fileScanner.js`, `src/background/core.js` |
+| Local file sanitized handoff | `src/content/file_paste_helpers.js`, `src/content/content.js`, `src/shared/fileScanner.js`, `src/shared/streamingFileRedactor.js`, `src/background/core.js` |
 | Optional local AI assist | `src/shared/aiCandidateGate.js`, `src/shared/ai/classifier.js`, `src/shared/transformOutboundPromptWithAi.js`, `ai/models/*` |
 | Public IPv4 and CIDR pseudonymization | `src/shared/ipClassification.js`, `src/shared/ipDetection.js`, `src/shared/networkHierarchy.js`, `src/shared/placeholderAllocator.js` |
 | Local file scanner | `src/shared/fileScanner.js`, `src/scanner/scanner.js`, `src/scanner/scanner.html`, `src/scanner/scanner.css` |
@@ -117,7 +117,8 @@ No docs-only validation script exists in `package.json`.
 - Deterministic detection is authoritative and has focused tests around provider tokens, headers, URL credentials, repeated secrets, placeholders, safe literals, and public IPv4 data.
 - Placeholder behavior is mature enough for current v1.3.0 claims: session-known placeholders are preserved, unknown placeholder-like tokens in sensitive contexts are candidates, and known raw secrets reuse placeholders.
 - Browser composer safety has explicit interception and rewrite verification coverage for textarea/contenteditable and modal-block states.
-- File scanner extends the same local deterministic redaction model to selected text files without storing raw file contents in extension storage.
+- File scanner and protected composer file paths extend the same local deterministic redaction model to selected text files without storing raw file contents in extension storage.
+- Protected composer text-file paths support streaming/chunked local redaction above 4 MiB and up to 50 MB, with fail-closed behavior if sanitized file handoff cannot complete.
 - Chrome and Firefox consumer/enterprise build targets are represented in commands, manifests, and tests.
 
 ### Realistic Limitations
@@ -143,7 +144,7 @@ No docs-only validation script exists in `package.json`.
 2. No repo-history scanner workflow: LeakGuard can reduce prompt/file leakage but does not replace GitHub Secret Scanning, Gitleaks, detect-secrets, or TruffleHog for source control.
 3. No remote verification by design: this is correct for local-only privacy, but it means LeakGuard cannot distinguish live from revoked secrets the way verification-first tools can.
 4. Natural-language detection remains partial: tests cover targeted examples and false-positive suppressions, not broad natural prose.
-5. File scanner scope is text-only and 2 MiB-limited. README and `docs/NON_GOALS.md` correctly say PDF, DOCX, and image redaction are not enabled.
+5. File scanner and protected composer file scope remain text-only. Protected composer text-file paths stream larger supported text files up to 50 MB, while PDF, DOCX, and image redaction are still not enabled.
 6. Enterprise posture should remain carefully worded. The repo has enterprise modes/policy hooks, but not enough for an enterprise-grade DLP claim.
 
 ## 8. Recommended Next Steps

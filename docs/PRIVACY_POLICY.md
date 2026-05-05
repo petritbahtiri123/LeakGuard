@@ -1,6 +1,6 @@
 # LeakGuard Privacy Policy
 
-Last updated: 2026-04-29
+Last updated: 2026-05-05
 
 ## Summary
 
@@ -18,7 +18,9 @@ LeakGuard may access text you type, paste, or submit in protected site composers
 - replace sensitive values with placeholders
 - reveal placeholders later only inside extension-owned UI
 
-LeakGuard may also access a local text file only after you choose it in the File Scanner page. This release supports text-based files only and can export a redacted text copy or a sanitized JSON findings report.
+LeakGuard may also access a local text file only after you choose it in the File Scanner page or paste, drop, or select it through a protected AI composer. This release supports text-based files only and can export a redacted text copy or a sanitized JSON findings report from the File Scanner page.
+
+For protected AI composers, larger supported text files may be redacted with streaming/chunked local processing before LeakGuard hands off a sanitized in-memory file to the site. This avoids sending raw text-file content through protected upload paths while keeping processing local to your browser.
 
 ## What LeakGuard Stores
 
@@ -27,7 +29,7 @@ LeakGuard stores only the following extension data:
 - normalized user-managed protected-site rules in extension `storage.local`
 - session-scoped placeholder mappings and reveal state in `chrome.storage.session`
 
-LeakGuard does not intentionally persist raw prompts, selected file contents, raw secrets, or raw public IPv4 values in long-term extension storage. File Scanner scan results stay in memory on the scanner page until you clear the scan or close the page.
+LeakGuard does not intentionally persist raw prompts, selected file contents, raw secrets, or raw public IPv4 values in long-term extension storage. File Scanner scan results stay in memory on the scanner page until you clear the scan or close the page. Protected composer file redaction uses in-memory text, chunks, and sanitized `File`/`Blob` objects only as needed for local redaction and handoff.
 
 ## What LeakGuard Does Not Send
 
@@ -39,6 +41,7 @@ LeakGuard does not send the following to our servers because the extension does 
 - raw network values
 - placeholder maps
 - browsing telemetry
+- streaming redaction chunks
 
 Sanitized File Scanner JSON reports do not include raw secret values by default. Redacted file copies and reports are created only after you click the export buttons.
 
@@ -71,7 +74,7 @@ LeakGuard is a risk-reduction tool, not a guarantee of secrecy or privacy. It do
 - websites or editors whose DOM changes break interception logic
 - raw values that you intentionally reveal or manually send
 
-PDF, DOCX, and image redaction are planned but not enabled in this release. The current File Scanner safely redacts text-based files only.
+PDF, DOCX, and image redaction are planned but not enabled in this release. The current file protection paths safely redact text-based files only. Supported text files above the current local streaming limit are blocked rather than uploaded raw through protected text-file paths.
 
 ## Data Retention
 

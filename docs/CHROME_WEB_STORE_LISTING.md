@@ -26,7 +26,9 @@ Before text is sent from a protected site, LeakGuard can:
 
 LeakGuard also includes a local File Scanner page for text-based files such as `.env`, `.json`, `.log`, `.md`, source files, and config files. It can export redacted text copies and sanitized JSON findings reports without storing file contents or uploading them.
 
-For protected AI composers, supported local UTF-8 text files pasted, dropped, or selected in the page can be locally validated, redacted, and replaced with sanitized in-memory `File`/`Blob` objects where the browser and site upload flow accept synthetic file handoff. If the file is unsupported or invalid, or if sanitized file handoff fails, LeakGuard blocks raw upload and shows a local message.
+For protected AI composers, supported local UTF-8 text files pasted, dropped, or selected in the page can be locally validated, redacted, and replaced with sanitized in-memory `File`/`Blob` objects where the browser and site upload flow accept synthetic file handoff. Larger supported text files above 4 MiB and up to 50 MB are redacted locally with streaming/chunked processing before sanitized handoff. If the file is unsupported or invalid, if it is above 50 MB, or if sanitized file handoff fails, LeakGuard blocks raw upload and shows a local message.
+
+LeakGuard also protects ChatGPT large-paste flows that can become generated `Plain Text` attachments, and includes Gemini-specific mitigations for sanitized file handoff and large text fallback behavior.
 
 LeakGuard is designed for risk reduction, not as a complete data-loss-prevention product.
 
@@ -36,8 +38,11 @@ LeakGuard is designed for risk reduction, not as a complete data-loss-prevention
 - user-managed exact-site protection for additional sites
 - local-only detection and redaction
 - local text-file scanning with redacted-copy and sanitized-report exports
-- local text-file paste/drop redaction for supported UTF-8 text files in protected AI composers
-- fail-closed blocking on unsupported files or failed sanitized file handoff
+- local text-file paste/drop/file-select redaction for supported UTF-8 text files in protected AI composers
+- streaming local redaction for supported text-file composer uploads above 4 MiB and up to 50 MB
+- ChatGPT large paste / generated Plain Text attachment protection
+- Gemini sanitized file handoff and large text fallback protection
+- fail-closed blocking on unsupported files, files above 50 MB, or failed sanitized file handoff
 - Manifest V3 service-worker architecture
 - deterministic per-session placeholder mapping
 - secure reveal only inside extension-owned UI
@@ -97,7 +102,8 @@ Use real extension screenshots with production copy. Avoid showing raw real cred
 
 - The extension processes text locally in the browser.
 - The File Scanner processes explicitly selected text files locally and does not upload or store file contents.
-- Supported local text files pasted, dropped, or selected in protected AI composers are processed locally, and raw uploads are blocked if sanitized file handoff cannot complete.
+- Supported local text files pasted, dropped, or selected in protected AI composers are processed locally, including streaming/chunked local redaction for supported text files above 4 MiB and up to 50 MB.
+- Raw text-file uploads are blocked if sanitized file handoff cannot complete.
 - Raw secrets are not sent to external services by the extension.
 - Sanitized File Scanner JSON reports do not include raw secrets by default.
 - User-managed sites are exact origin rules, not wildcard rules.

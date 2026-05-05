@@ -12,6 +12,12 @@ Use this file as a short handoff log for AI-made changes. Add newest entries fir
 ```
 
 ## Entries
+### 2026-05-05 - Streaming large-file release docs
+- Goal: Align release, store, privacy, and research docs with streaming local redaction for supported text-file composer uploads up to 50 MB.
+- Files: `README.md`, `docs/RELEASE_QA_CHECKLIST.md`, `docs/CHROME_WEB_STORE_LISTING.md`, `docs/PRIVACY_POLICY.md`, `docs/deep-research-report.md`, `src/scanner/scanner.js`, `docs/CODEX_CHANGELOG.md`
+- Tests: `git diff --check` -> pass
+- Notes: Docs preserve local-only wording, fail-closed raw-upload blocking, unsupported PDF/DOCX/image boundaries, and Gemini/ChatGPT large-file caveats.
+
 ### 2026-05-03 - Short provider key assignment redaction
 - Goal: Redact generic `*_key` assignments when their value uses a provider key prefix such as `sk-proj-`, including shorter project-key fixtures.
 - Files: `src/shared/detector.js`, `tests/detector.test.js`, `docs/CODEX_CHANGELOG.md`
