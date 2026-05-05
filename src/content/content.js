@@ -116,6 +116,8 @@
   const rawFileDropInterceptions = new WeakSet();
   const fileDragEventRoots = new WeakSet();
   const PROGRAMMATIC_INPUT_SUPPRESS_MS = 500;
+  const GEMINI_DIRECT_TEXT_INSERT_THRESHOLD = 16 * 1024;
+  const GEMINI_LARGE_TEXT_SUPPRESS_MS = 2500;
   const FILE_DRAG_SESSION_RESET_MS = 5000;
   const GEMINI_SANITIZED_TEXT_FALLBACK_MESSAGE =
     "Sanitized content inserted as text because Gemini rejected sanitized file upload.";
@@ -1288,8 +1290,8 @@
     return previous;
   }
 
-  function suppressFollowupInputScan() {
-    suppressInputScanUntil = Date.now() + PROGRAMMATIC_INPUT_SUPPRESS_MS;
+  function suppressFollowupInputScan(durationMs = PROGRAMMATIC_INPUT_SUPPRESS_MS) {
+    suppressInputScanUntil = Date.now() + Math.max(PROGRAMMATIC_INPUT_SUPPRESS_MS, Number(durationMs) || 0);
   }
 
   function isProgrammaticInputScanSuppressed() {
@@ -1881,9 +1883,64 @@
     return String(result.redactedText || "");
   }
 
+  function placeGeminiEditorCaretAtEnd(editor) {
+    try {
+      const selection = window.getSelection?.();
+      const range = document.createRange?.();
+      if (!selection || !range) return;
+      range.selectNodeContents(editor);
+      range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    } catch {
+      // Caret placement is best-effort after a safe direct text rewrite.
+    }
+  }
+
+  function setGeminiEditorTextDirect(editor, nextText) {
+    const normalized = normalizeComposerText(nextText);
+    if (!editor) return false;
+
+    try {
+      editor.textContent = normalized;
+      placeGeminiEditorCaretAtEnd(editor);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function insertLargeGeminiEditorText(editor, sanitizedText) {
+    const text = String(sanitizedText || "");
+    if (!editor || typeof editor.focus !== "function") return false;
+
+    const originalText = getInputText(editor);
+    const selection = getSelectionOffsets(editor);
+    const next = spliceSelectionText(originalText, selection, text);
+
+    suppressFollowupInputScan(GEMINI_LARGE_TEXT_SUPPRESS_MS);
+    editor.focus();
+    if (!setGeminiEditorTextDirect(editor, next.text)) return false;
+    // Gemini/Quill observes the DOM mutation; this event only announces that sanitized content changed.
+    dispatchGeminiEditorInput(editor, "", {
+      inputType: "insertReplacementText",
+      includeData: false
+    });
+    debugReveal("gemini-text:direct-large-insert", {
+      originalLength: originalText.length,
+      insertedLength: text.length,
+      finalLength: next.text.length
+    });
+    return true;
+  }
+
   function insertGeminiEditorText(editor, sanitizedText) {
     const text = String(sanitizedText || "");
     if (!editor || typeof editor.focus !== "function") return false;
+
+    if (text.length >= GEMINI_DIRECT_TEXT_INSERT_THRESHOLD) {
+      return insertLargeGeminiEditorText(editor, text);
+    }
 
     try {
       suppressFollowupInputScan();
@@ -1899,14 +1956,16 @@
     return false;
   }
 
-  function dispatchGeminiEditorInput(editor, sanitizedText) {
+  function dispatchGeminiEditorInput(editor, sanitizedText, options) {
+    const eventOptions = options || {};
+    const includeData = eventOptions.includeData !== false;
     try {
       editor.dispatchEvent(
         new InputEvent("input", {
           bubbles: true,
           cancelable: false,
-          inputType: "insertText",
-          data: String(sanitizedText || "")
+          inputType: eventOptions.inputType || "insertText",
+          data: includeData ? String(sanitizedText || "") : null
         })
       );
       return;

@@ -6,6 +6,7 @@ const repoRoot = path.join(__dirname, "..");
 const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
 
 require(path.join(repoRoot, "src/content/file_paste_helpers.js"));
+require(path.join(repoRoot, "src/content/composer_helpers.js"));
 require(path.join(repoRoot, "src/shared/fileScanner.js"));
 
 const { dataTransferHasFiles } = globalThis.PWM.FilePasteHelpers;
@@ -209,6 +210,14 @@ function createGeminiEditor(initialText = "") {
       return null;
     }
   };
+  Object.defineProperty(editor, "textContent", {
+    get() {
+      return this.text;
+    },
+    set(value) {
+      this.text = String(value || "");
+    }
+  });
   const child = {
     nodeType: 1,
     tagName: "SPAN",
@@ -253,9 +262,14 @@ function createHarness(overrides = {}) {
     Node: { ELEMENT_NODE: 1 },
     Event,
     InputEvent: typeof InputEvent === "function" ? InputEvent : Event,
+    window: {
+      getSelection: () => null
+    },
     fileDragGuard: null,
     rawFileDropInterceptions: new WeakSet(),
     FilePasteHelpers: globalThis.PWM.FilePasteHelpers,
+    normalizeComposerText: globalThis.PWM.ComposerHelpers.normalizeComposerText,
+    spliceSelectionText: globalThis.PWM.ComposerHelpers.spliceSelectionText,
     dataTransferHasFiles,
     readLocalTextFileFromDataTransfer: async (transfer) => {
       calls.reads.push(transfer);
@@ -330,7 +344,8 @@ function createHarness(overrides = {}) {
     findComposer: () => null,
     document: {
       activeElement,
-      execCommand: () => false
+      execCommand: () => false,
+      createRange: () => null
     },
     location: { hostname: "chatgpt.com" }
   };
@@ -340,6 +355,10 @@ function createHarness(overrides = {}) {
     ...Object.keys(dependencies),
     [
       'const GEMINI_SANITIZED_TEXT_FALLBACK_MESSAGE = "Sanitized content inserted as text because Gemini rejected sanitized file upload.";',
+      "const PROGRAMMATIC_INPUT_SUPPRESS_MS = 500;",
+      "const GEMINI_DIRECT_TEXT_INSERT_THRESHOLD = 16 * 1024;",
+      "const GEMINI_LARGE_TEXT_SUPPRESS_MS = 2500;",
+      "let suppressInputScanUntil = 0;",
       extractFunctionSource(contentSource, "consumeInterceptionEvent"),
       extractFunctionSource(contentSource, "dataTransferLooksLikeFiles"),
       extractFunctionSource(contentSource, "listLocalTransferFiles"),
@@ -353,6 +372,10 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "isGeminiHost"),
       extractFunctionSource(contentSource, "resolveGeminiEditorTarget"),
       extractFunctionSource(contentSource, "redactGeminiEditorText"),
+      extractFunctionSource(contentSource, "suppressFollowupInputScan"),
+      extractFunctionSource(contentSource, "placeGeminiEditorCaretAtEnd"),
+      extractFunctionSource(contentSource, "setGeminiEditorTextDirect"),
+      extractFunctionSource(contentSource, "insertLargeGeminiEditorText"),
       extractFunctionSource(contentSource, "insertGeminiEditorText"),
       extractFunctionSource(contentSource, "dispatchGeminiEditorInput"),
       extractFunctionSource(contentSource, "applyGeminiEditorText"),
@@ -889,6 +912,79 @@ async function testGeminiQlEditorDropTextFileIsSanitizedAndInserted() {
   assert.strictEqual(calls.redactions.length, 1);
 }
 
+async function testLargeGeminiDropUsesDirectSanitizedInsertion() {
+  const rawSecret = "LeakGuardFileApiKey1234567890";
+  const filler = "safe_line=0123456789abcdef\n".repeat(850);
+  const largeText = [
+    "Before the secret",
+    `API_KEY=${rawSecret}`,
+    filler,
+    `SECOND_API_KEY=${rawSecret}`
+  ].join("\n");
+  const file = createTextFile({
+    name: "large.env",
+    text: largeText
+  });
+  const { editor, child } = createGeminiEditor("Review this:\n");
+  editor.selection = { start: "Review this:\n".length, end: "Review this:\n".length };
+  class TestInputEvent extends Event {
+    constructor(type, init = {}) {
+      super(type, init);
+      this.inputType = init.inputType;
+      this.data = init.data;
+    }
+  }
+  let execCommandCalls = 0;
+  const { maybeHandleDrop, calls } = createHarness({
+    location: { hostname: "gemini.google.com" },
+    InputEvent: TestInputEvent,
+    readLocalTextFileFromDataTransfer: async (transfer) => {
+      calls.reads.push(transfer);
+      return {
+        handled: true,
+        ok: true,
+        text: largeText,
+        file: {
+          name: "large.env",
+          type: "text/plain"
+        }
+      };
+    },
+    document: {
+      activeElement: editor,
+      execCommand() {
+        execCommandCalls += 1;
+        throw new Error("large Gemini insertion should bypass execCommand");
+      },
+      createRange: () => null
+    }
+  });
+  const { event } = createEvent({
+    dataTransfer: {
+      types: ["Files"],
+      files: [file],
+      items: [],
+      dropEffect: "none"
+    },
+    target: child
+  });
+
+  await maybeHandleDrop(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(execCommandCalls, 0);
+  assert.strictEqual(calls.redactions.length, 1);
+  assert.strictEqual(editor.inputEvents.length, 1);
+  assert.strictEqual(editor.inputEvents[0].inputType, "insertReplacementText");
+  assert.strictEqual(editor.inputEvents[0].data, null);
+  assert.strictEqual(editor.text.includes(rawSecret), false);
+  assert.strictEqual((editor.text.match(/\[PWM_1\]/g) || []).length, 2);
+  assert.strictEqual(editor.text.includes("[PWM_2]"), false);
+  assert.strictEqual(editor.text.startsWith("Review this:\nBefore the secret"), true);
+  assert.strictEqual(calls.textFallbacks.length, 0);
+  assert.strictEqual(calls.handoffs.length, 0);
+}
+
 async function testGeminiTextLikeFileExtensionsAreSanitized() {
   for (const name of ["secrets.env", "notes.txt", "payload.json"]) {
     const rawSecret = "LeakGuardFileApiKey1234567890";
@@ -1325,6 +1421,7 @@ async function testChatGptAndClaudeStillUseSanitizedFileHandoffOnly() {
   await testGeminiDropWithoutInputSkipsUploadHandoff();
   await testGeminiQlEditorPasteIsSanitizedBeforePageHandlers();
   await testGeminiQlEditorDropTextFileIsSanitizedAndInserted();
+  await testLargeGeminiDropUsesDirectSanitizedInsertion();
   await testGeminiTextLikeFileExtensionsAreSanitized();
   await testGeminiTextLikeSanitizerFailureBlocksRawFile();
   await testUnsupportedDocumentAndImageFilesPassThroughByDefault();
