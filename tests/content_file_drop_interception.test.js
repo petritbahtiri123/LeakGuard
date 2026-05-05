@@ -287,13 +287,29 @@ function createHarness(overrides = {}) {
     Event,
     InputEvent: typeof InputEvent === "function" ? InputEvent : Event,
     window: {
-      getSelection: () => null
+      getSelection: () => null,
+      setTimeout: (callback) => {
+        callback();
+        return 0;
+      },
+      requestAnimationFrame: (callback) => {
+        callback();
+        return 0;
+      }
     },
     fileDragGuard: null,
     rawFileDropInterceptions: new WeakSet(),
     FilePasteHelpers: globalThis.PWM.FilePasteHelpers,
     normalizeComposerText: globalThis.PWM.ComposerHelpers.normalizeComposerText,
     spliceSelectionText: globalThis.PWM.ComposerHelpers.spliceSelectionText,
+    buildComposerWritePlan: (input, text) => ({
+      canonical: globalThis.PWM.ComposerHelpers.normalizeComposerText(text),
+      writeText: globalThis.PWM.ComposerHelpers.normalizeComposerText(text)
+    }),
+    matchesComposerPlan: (plan, actual) =>
+      globalThis.PWM.ComposerHelpers.normalizeComposerText(actual) === plan.canonical,
+    collectFailureDetails: () => ({}),
+    showRewriteFailure: async () => {},
     dataTransferHasFiles,
     readLocalTextFileFromDataTransfer: async (transfer) => {
       calls.reads.push(transfer);
@@ -342,6 +358,12 @@ function createHarness(overrides = {}) {
       input.text = `${originalText.slice(0, selection.start)}${insertedText}${originalText.slice(selection.end)}`;
       return true;
     },
+    setInputTextDirect: (input, text, options = {}) => {
+      calls.directTextWrites = calls.directTextWrites || [];
+      calls.directTextWrites.push({ input, text, options });
+      input.text = String(text || "");
+      return true;
+    },
     setBadge: (...args) => calls.badges.push(args),
     hideBadgeSoon: () => {
       calls.hideBadgeSoon += 1;
@@ -382,6 +404,8 @@ function createHarness(overrides = {}) {
     [
       'const GEMINI_SANITIZED_TEXT_FALLBACK_MESSAGE = "Sanitized content inserted as text because Gemini rejected sanitized file upload.";',
       "const PROGRAMMATIC_INPUT_SUPPRESS_MS = 500;",
+      "const CHATGPT_LARGE_PASTE_FILE_THRESHOLD = 16 * 1024;",
+      'const CHATGPT_SANITIZED_PASTE_FILE_NAME = "leakguard-redacted-paste.txt";',
       "const GEMINI_DIRECT_TEXT_INSERT_THRESHOLD = 16 * 1024;",
       "const GEMINI_LARGE_TEXT_SUPPRESS_MS = 2500;",
       "let suppressInputScanUntil = 0;",
@@ -395,9 +419,16 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "showUnsupportedFilePassThroughNotice"),
       extractFunctionSource(contentSource, "isSanitizedFileHandoffEvent"),
       extractFunctionSource(contentSource, "normalizeTarget"),
+      extractFunctionSource(contentSource, "isChatGptHost"),
       extractFunctionSource(contentSource, "isGeminiHost"),
+      extractFunctionSource(contentSource, "shouldHandleChatGptLargeTextPaste"),
+      extractFunctionSource(contentSource, "createSanitizedChatGptPasteFile"),
+      extractFunctionSource(contentSource, "applyChatGptLargePasteTextFallback"),
+      extractFunctionSource(contentSource, "maybeHandleChatGptLargeTextPaste"),
       extractFunctionSource(contentSource, "resolveGeminiEditorTarget"),
       extractFunctionSource(contentSource, "redactGeminiEditorText"),
+      extractFunctionSource(contentSource, "settleComposer"),
+      extractFunctionSource(contentSource, "readStableComposerText"),
       extractFunctionSource(contentSource, "suppressFollowupInputScan"),
       extractFunctionSource(contentSource, "isProgrammaticInputScanSuppressed"),
       extractFunctionSource(contentSource, "placeGeminiEditorCaretAtEnd"),
@@ -419,7 +450,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "maybeHandlePaste"),
       extractFunctionSource(contentSource, "maybeHandleDrop"),
       extractFunctionSource(contentSource, "maybeHandleFileDrag"),
-      "return { maybeHandlePaste, maybeHandleDrop, maybeHandleFileDrag, getSuppressInputScanUntil: () => suppressInputScanUntil, isProgrammaticInputScanSuppressed };"
+      "return { maybeHandleChatGptLargeTextPaste, maybeHandlePaste, maybeHandleDrop, maybeHandleFileDrag, getSuppressInputScanUntil: () => suppressInputScanUntil, isProgrammaticInputScanSuppressed };"
     ].join("\n\n")
   );
   const handlers = factory(...Object.values(dependencies));
@@ -1334,6 +1365,233 @@ async function testGeminiEditorResolvesContenteditableFallback() {
   assert.strictEqual(editor.text.includes(rawSecret), false);
 }
 
+function buildLargeChatGptPastePayload() {
+  const repeatedKey = "sk-proj-CHATGPTPASTE111111111111111111111111111111111111111111";
+  const dbPassword = "SuperSecretPassword123";
+  const awsSecret = "ChatGptPasteSecret1234567890abcdefFAKE";
+  const header = [
+    `OPENAI_API_KEY=${repeatedKey}`,
+    `backup_key=${repeatedKey}`,
+    `DATABASE_URL=postgres://admin:${dbPassword}@db.example.com:5432/app`,
+    "AWS_ACCESS_KEY_ID=AKIACHATGPTPASTE1234",
+    `AWS_SECRET_ACCESS_KEY=${awsSecret}`
+  ].join("\n");
+  const fillerLine =
+    "safe_chatgpt_large_paste_line=0123456789abcdef0123456789abcdef0123456789abcdef\n";
+  let filler = "";
+
+  while (Buffer.byteLength(`${header}\n${filler}`, "utf8") < 20 * 1024) {
+    filler += fillerLine;
+  }
+
+  return {
+    text: `${header}\n${filler}`,
+    repeatedKey,
+    dbPassword,
+    awsSecret
+  };
+}
+
+function redactChatGptPasteFixture(text, repeatedKey, dbPassword, awsSecret) {
+  return String(text || "")
+    .replaceAll(repeatedKey, "[PWM_1]")
+    .replace("postgres://admin:", "postgres://[PWM_2]:")
+    .replace(dbPassword, "[PWM_3]")
+    .replace(awsSecret, "[PWM_4]");
+}
+
+async function testChatGptLargePasteCreatesSanitizedPlainTextFileHandoff() {
+  const { text, repeatedKey, dbPassword, awsSecret } = buildLargeChatGptPastePayload();
+  const redactedText = redactChatGptPasteFixture(text, repeatedKey, dbPassword, awsSecret);
+  const composer = {
+    tagName: "TEXTAREA",
+    text: "",
+    selection: { start: 0, end: 0 }
+  };
+  let redactionCompleted = false;
+  const { maybeHandlePaste, calls } = createHarness({
+    location: { hostname: "chatgpt.com" },
+    findComposer: () => composer,
+    analyzeText: (input) => ({
+      normalizedText: input,
+      secretFindings:
+        input.includes(repeatedKey) || input.includes(dbPassword) || input.includes(awsSecret)
+          ? [{ raw: repeatedKey }]
+          : [],
+      findings:
+        input.includes(repeatedKey) || input.includes(dbPassword) || input.includes(awsSecret)
+          ? [{ raw: repeatedKey }]
+          : [],
+      placeholderNormalized: false
+    }),
+    requestRedaction: async (input, findings) => {
+      calls.redactions.push({ text: input, findings });
+      redactionCompleted = true;
+      return { redactedText };
+    },
+    handOffSanitizedLocalFile: (event, input, sanitizedFile, context) => {
+      assert.strictEqual(redactionCompleted, true, "redaction must finish before ChatGPT handoff");
+      assert.strictEqual(sanitizedFile.text.includes(repeatedKey), false);
+      assert.strictEqual(sanitizedFile.text.includes(dbPassword), false);
+      assert.strictEqual(sanitizedFile.text.includes(awsSecret), false);
+      calls.handoffs.push({ event, input, sanitizedFile, context });
+      return true;
+    }
+  });
+  const { event, calls: eventCalls } = createClipboardEvent({
+    text,
+    target: composer
+  });
+
+  await maybeHandlePaste(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.ok(eventCalls.stopImmediatePropagation >= 1);
+  assert.strictEqual(calls.redactions.length, 1);
+  assert.strictEqual(calls.createdFiles.length, 1);
+  assert.strictEqual(calls.createdFiles[0].file.name, "leakguard-redacted-paste.txt");
+  assert.strictEqual(calls.createdFiles[0].file.type, "text/plain");
+  assert.strictEqual(calls.createdFiles[0].text, redactedText);
+  assert.strictEqual(calls.createdFiles[0].text.includes(repeatedKey), false);
+  assert.strictEqual(calls.createdFiles[0].text.includes(dbPassword), false);
+  assert.strictEqual(calls.createdFiles[0].text.includes(awsSecret), false);
+  assert.ok(calls.createdFiles[0].text.includes("OPENAI_API_KEY=[PWM_1]"));
+  assert.ok(calls.createdFiles[0].text.includes("backup_key=[PWM_1]"));
+  assert.ok(
+    /DATABASE_URL=postgres:\/\/\[PWM_2\]:\[PWM_3\]@db\.example\.com:5432\/app/.test(
+      calls.createdFiles[0].text
+    )
+  );
+  assert.ok(calls.createdFiles[0].text.includes("AWS_SECRET_ACCESS_KEY=[PWM_4]"));
+  assert.strictEqual(calls.handoffs.length, 1);
+  assert.strictEqual(calls.handoffs[0].context, "paste");
+  assert.strictEqual(calls.handoffs[0].input, composer);
+  assert.strictEqual(calls.handoffs[0].sanitizedFile.name, "leakguard-redacted-paste.txt");
+  assert.strictEqual(calls.handoffs[0].sanitizedFile.type, "text/plain");
+  assert.strictEqual(calls.textFallbacks.length, 0);
+  assert.strictEqual(calls.directTextWrites?.length || 0, 0);
+  assert.strictEqual(composer.text, "");
+  assert.ok(
+    calls.badges.some(([message]) => message === "LeakGuard redacted pasted text before attachment.")
+  );
+}
+
+async function testChatGptLargePasteFallsBackToSanitizedTextOnlyWhenFileHandoffFails() {
+  const { text, repeatedKey, dbPassword, awsSecret } = buildLargeChatGptPastePayload();
+  const redactedText = redactChatGptPasteFixture(text, repeatedKey, dbPassword, awsSecret);
+  const composer = {
+    tagName: "TEXTAREA",
+    text: "Before:\n",
+    selection: { start: "Before:\n".length, end: "Before:\n".length }
+  };
+  const { maybeHandlePaste, calls } = createHarness({
+    location: { hostname: "chat.openai.com" },
+    findComposer: () => composer,
+    analyzeText: (input) => ({
+      normalizedText: input,
+      secretFindings:
+        input.includes(repeatedKey) || input.includes(dbPassword) || input.includes(awsSecret)
+          ? [{ raw: repeatedKey }]
+          : [],
+      findings:
+        input.includes(repeatedKey) || input.includes(dbPassword) || input.includes(awsSecret)
+          ? [{ raw: repeatedKey }]
+          : [],
+      placeholderNormalized: false
+    }),
+    requestRedaction: async (input, findings) => {
+      calls.redactions.push({ text: input, findings });
+      return { redactedText };
+    },
+    handOffSanitizedLocalFile: (event, input, sanitizedFile, context) => {
+      calls.handoffs.push({ event, input, sanitizedFile, context });
+      return false;
+    }
+  });
+  const { event } = createClipboardEvent({
+    text,
+    target: composer
+  });
+
+  await maybeHandlePaste(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(calls.redactions.length, 1);
+  assert.strictEqual(calls.handoffs.length, 1);
+  assert.strictEqual(calls.textFallbacks.length, 0, "large fallback should avoid paste-decision event data");
+  assert.strictEqual(calls.directTextWrites.length, 1);
+  assert.strictEqual(calls.directTextWrites[0].text.includes(repeatedKey), false);
+  assert.strictEqual(calls.directTextWrites[0].text.includes(dbPassword), false);
+  assert.strictEqual(calls.directTextWrites[0].text.includes(awsSecret), false);
+  assert.strictEqual(composer.text.includes(repeatedKey), false);
+  assert.strictEqual(composer.text.includes(dbPassword), false);
+  assert.strictEqual(composer.text.includes(awsSecret), false);
+  assert.ok(composer.text.startsWith("Before:\n"));
+  assert.ok(composer.text.includes("OPENAI_API_KEY=[PWM_1]"));
+  assert.ok(composer.text.includes("backup_key=[PWM_1]"));
+}
+
+async function testNonChatGptLargePasteDoesNotUsePlainTextFileHandoff() {
+  const { text, repeatedKey, dbPassword, awsSecret } = buildLargeChatGptPastePayload();
+  const composer = {
+    tagName: "TEXTAREA",
+    text: "",
+    selection: { start: 0, end: 0 }
+  };
+  const { maybeHandleChatGptLargeTextPaste, calls } = createHarness({
+    location: { hostname: "claude.ai" },
+    findComposer: () => composer,
+    analyzeText: (input) => ({
+      normalizedText: input,
+      secretFindings:
+        input.includes(repeatedKey) || input.includes(dbPassword) || input.includes(awsSecret)
+          ? [{ raw: repeatedKey }]
+          : [],
+      findings:
+        input.includes(repeatedKey) || input.includes(dbPassword) || input.includes(awsSecret)
+          ? [{ raw: repeatedKey }]
+          : [],
+      placeholderNormalized: false
+    })
+  });
+  const { event } = createClipboardEvent({
+    text,
+    target: composer
+  });
+  const handled = await maybeHandleChatGptLargeTextPaste(event, composer, text, {
+    findings: [{ raw: repeatedKey }],
+    secretFindings: [{ raw: repeatedKey }],
+    placeholderNormalized: false
+  });
+
+  assert.strictEqual(handled, false);
+  assert.strictEqual(event.defaultPrevented, false);
+  assert.strictEqual(calls.createdFiles.length, 0);
+  assert.strictEqual(calls.handoffs.length, 0);
+  assert.strictEqual(calls.directTextWrites?.length || 0, 0);
+}
+
+async function testSmallChatGptPasteDoesNotUsePlainTextFileHandoff() {
+  const composer = {
+    tagName: "TEXTAREA",
+    text: "",
+    selection: { start: 0, end: 0 }
+  };
+  const { maybeHandlePaste, calls } = createHarness({
+    location: { hostname: "chatgpt.com" },
+    findComposer: () => composer
+  });
+  const { event } = createClipboardEvent({
+    text: "Small safe paste",
+    target: composer
+  });
+
+  await maybeHandlePaste(event);
+
+  assert.strictEqual(calls.createdFiles.length, 0);
+  assert.strictEqual(calls.handoffs.length, 0);
+}
+
 async function testGeminiNonEditorPasteAndDropAreIgnoredByEditorHandler() {
   const { maybeHandlePaste, maybeHandleDrop, calls } = createHarness({
     location: { hostname: "gemini.google.com" }
@@ -1561,6 +1819,10 @@ async function testChatGptAndClaudeStillUseSanitizedFileHandoffOnly() {
   await testGeminiDropSkipsDiscoveryPerDragSession();
   await testGeminiDropWithoutInputSkipsUploadHandoff();
   await testGeminiQlEditorPasteIsSanitizedBeforePageHandlers();
+  await testChatGptLargePasteCreatesSanitizedPlainTextFileHandoff();
+  await testChatGptLargePasteFallsBackToSanitizedTextOnlyWhenFileHandoffFails();
+  await testNonChatGptLargePasteDoesNotUsePlainTextFileHandoff();
+  await testSmallChatGptPasteDoesNotUsePlainTextFileHandoff();
   await testGeminiQlEditorDropTextFileIsSanitizedAndInserted();
   await testLargeGeminiDropUsesDirectSanitizedInsertion();
   await testVeryLargeGeminiDropDoesNotUseEventOrCommandLoops();
