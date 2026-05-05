@@ -122,6 +122,30 @@ function testPanelAndManagementUiAreWired() {
   );
 }
 
+function testHydratedPlaceholdersStayVisibleAcrossThemes() {
+  assert.ok(
+    contentSource.includes("span.dataset.pwmTone"),
+    "hydrated placeholder chips should receive deterministic tone attributes"
+  );
+  assert.ok(
+    /\.pwm-secret\s*\{[\s\S]*?color:\s*#0f172a;[\s\S]*?background:\s*linear-gradient/.test(
+      overlaySource
+    ),
+    "placeholder chips should use high-contrast foreground and filled backgrounds"
+  );
+  for (const tone of ["amber", "violet", "rose", "emerald"]) {
+    assert.ok(
+      overlaySource.includes(`.pwm-secret[data-pwm-tone="${tone}"]`),
+      `placeholder chip tone ${tone} should be styled`
+    );
+  }
+  assert.ok(
+    overlaySource.includes("0 0 0 2px var(--pwm-secret-ring)") &&
+      overlaySource.includes("text-shadow: 0 1px 0"),
+    "placeholder chips should keep contrast on both light and dark host pages"
+  );
+}
+
 function testDynamicSiteSupportIsDeclaredMinimally(manifest) {
   assert.ok(
     manifest.permissions.includes("scripting") && manifest.permissions.includes("activeTab"),
@@ -170,6 +194,7 @@ async function run() {
   testLeakGuardBrandingShowsUpInUiAndDocs();
   testBuiltInProtectedSitesRemainStaticAndAligned(manifest);
   testPanelAndManagementUiAreWired();
+  testHydratedPlaceholdersStayVisibleAcrossThemes();
   testDynamicSiteSupportIsDeclaredMinimally(manifest);
   testPublishReadinessDocsCoverStorePrivacyAndQa();
   console.log("PASS productization static regressions");

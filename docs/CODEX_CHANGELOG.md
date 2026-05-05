@@ -12,6 +12,48 @@ Use this file as a short handoff log for AI-made changes. Add newest entries fir
 ```
 
 ## Entries
+### 2026-05-05 - High-contrast placeholder chips
+- Goal: Make hydrated LeakGuard placeholders visible on light and dark AI chat themes, with rotating accent colors instead of a single blue treatment.
+- Files: `src/content/content.js`, `src/content/overlay.css`, `tests/productization.test.js`, `docs/CODEX_CHANGELOG.md`
+- Tests: `node tests/productization.test.js` -> pass; `node tests/security.test.js` -> pass; `npm test` -> pass; `npm run build:chrome` -> pass
+- Notes: Page placeholders still render only the placeholder token and a generic aria label; no raw secret data is added to styling attributes.
+
+### 2026-05-05 - Prose-label short project-key redaction
+- Goal: Fix `05-partial-and-half-keys` so prose labels ending with `:` do not swallow following `another_key=sk-proj-*` assignments, while labelled half-looking `sk-proj-*` key values still redact.
+- Files: `src/shared/detector.js`, `tests/detector.test.js`, `docs/CODEX_CHANGELOG.md`
+- Tests: `node tests/detector.test.js` -> pass; `node tests/streaming_file_redactor.test.js` -> pass; `node tests/content_file_drop_interception.test.js` -> pass; `node tests/break_pack.test.js` -> pass; `node tests/synthetic_pack.test.js` -> pass; `node tests/adversarial_redaction.test.js` -> pass; `npm test` -> pass; `npm run build:chrome` -> pass
+- Notes: Assignment regexes no longer cross line breaks around separators; a narrow labelled provider-key scanner covers `key:` labels followed by supported `sk-*` values on the next line.
+
+### 2026-05-05 - Exact short project-key upload regression
+- Goal: Cover 5 MB upload streaming redaction for short assignment-scoped `sk-proj-*` values such as `another_key=sk-proj-BBB222`.
+- Files: `tests/content_file_drop_interception.test.js`, `tests/streaming_file_redactor.test.js`, `docs/CODEX_CHANGELOG.md`
+- Tests: `node tests/content_file_drop_interception.test.js` -> pass; `node tests/streaming_file_redactor.test.js` -> pass; `node tests/detector.test.js` -> pass; `npm run build:chrome` -> pass; `npm test` -> pass
+- Notes: Source redaction already detected the short key; rebuilt `dist/chrome` so the unpacked browser extension uses the current path.
+
+### 2026-05-05 - Gemini file-input raw-change interception
+- Goal: Stop Gemini upload-button file input `change` events before native handlers can read raw files, then redispatch one sanitized `change`.
+- Files: `src/content/content.js`, `tests/content_file_drop_interception.test.js`, `docs/CODEX_CHANGELOG.md`
+- Tests: `node tests/content_file_drop_interception.test.js` -> pass; `node tests/detector.test.js` -> pass; `node tests/break_pack.test.js` -> pass; `node tests/placeholder_trust.test.js` -> pass; `node tests/streaming_file_redactor.test.js` -> pass; `npm test` -> pass
+- Notes: Scoped to Gemini file-input uploads; existing drag/drop and paste paths stay covered by focused regressions.
+
+### 2026-05-05 - Friendly invalid UTF-8 streaming file block
+- Goal: Replace raw `TextDecoder` errors for invalid large text-file uploads with a clear fail-closed UTF-8 message.
+- Files: `src/shared/streamingFileRedactor.js`, `tests/streaming_file_redactor.test.js`, `docs/CODEX_CHANGELOG.md`
+- Tests: `node tests/streaming_file_redactor.test.js` -> pass; `node tests/content_file_drop_interception.test.js` -> pass; `npm test` -> pass
+- Notes: Raw uploads still fail closed when large-file streaming cannot safely decode the file as UTF-8.
+
+### 2026-05-05 - Gemini upload-button large file handoff
+- Goal: Allow Gemini file-select uploads from hidden/detached file inputs to be locally redacted and handed off as sanitized files without composer text insertion.
+- Files: `src/content/content.js`, `tests/content_file_drop_interception.test.js`, `docs/CODEX_CHANGELOG.md`
+- Tests: `node tests/content_file_drop_interception.test.js` -> pass; `node tests/file_paste_helpers.test.js` -> pass; `node tests/file_scanner.test.js` -> pass; `node tests/streaming_file_redactor.test.js` -> pass; `node tests/protected_sites.test.js` -> pass; `npm test` -> pass
+- Notes: Scoped to the upload button/file-input path; drag/drop behavior remains unchanged.
+
+### 2026-05-05 - ONNX runtime package size reduction
+- Goal: Debloat extension builds by packaging only LeakGuard's CPU WASM ONNX Runtime sidecar files.
+- Files: `scripts/build-extension.mjs`, `src/shared/ai/classifier.js`, `tests/ai_assist.test.js`, `docs/CODEX_CHANGELOG.md`
+- Tests: `node tests/ai_assist.test.js` -> pass; `node tests/build_targets.test.js` -> pass; `npm run build:chrome` -> pass; `git diff --check` -> pass with existing LF-to-CRLF normalization warnings
+- Notes: Classifier sessions now request the `wasm` execution provider explicitly; browser AI Assist smoke test still needed after loading the rebuilt extension.
+
 ### 2026-05-05 - v1.5.0 version bump
 - Goal: Bump LeakGuard release/version metadata to `1.5.0`.
 - Files: `package.json`, `package-lock.json`, `manifests/base.json`, `README.md`, `docs/CODEX_CHANGELOG.md`

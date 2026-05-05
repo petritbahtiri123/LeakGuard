@@ -2928,28 +2928,35 @@
     scheduleFileInputDiscovery(event);
   }
 
-  function handOffSanitizedFileInput(fileInput, transfer) {
+  function handOffSanitizedFileInput(fileInput, transfer, options) {
     if (!isFileInputElement(fileInput) || !transfer?.files) return false;
 
+    const handoffOptions = options || {};
+    const dispatchInputEvent = handoffOptions.dispatchInput !== false;
+    const events = [];
     try {
       sanitizedFileInputHandoffs.add(fileInput);
       fileInput.files = transfer.files;
-      fileInput.dispatchEvent(
-        new Event("input", {
-          bubbles: true,
-          cancelable: true
-        })
-      );
+      if (dispatchInputEvent) {
+        fileInput.dispatchEvent(
+          new Event("input", {
+            bubbles: true,
+            cancelable: true
+          })
+        );
+        events.push("input");
+      }
       fileInput.dispatchEvent(
         new Event("change", {
           bubbles: true,
           cancelable: true
         })
       );
+      events.push("change");
       debugReveal("file-handoff:assignment-success", {
         input: describeFileInputForDebug(fileInput, "resolved"),
         files: Array.from(fileInput.files || []).map(describeFileForDebug),
-        events: ["input", "change"]
+        events
       });
       return true;
     } catch {
@@ -2978,7 +2985,9 @@
     }
 
     if (context === "file-input") {
-      return handOffSanitizedFileInput(event?.target, transfer);
+      return handOffSanitizedFileInput(event?.target, transfer, {
+        dispatchInput: !isGeminiHost()
+      });
     }
 
     const target = event?.target || input;
@@ -3026,7 +3035,9 @@
       return false;
     }
 
-    return handOffSanitizedFileInput(fileInput, transfer);
+    return handOffSanitizedFileInput(fileInput, transfer, {
+      dispatchInput: false
+    });
   }
 
   async function applyGeminiSanitizedTextFallback(event, input, redactedText) {
@@ -3139,7 +3150,7 @@
     if (
       !extensionRuntimeAvailable ||
       modalOpen ||
-      (event.defaultPrevented && context !== "drop") ||
+      (event.defaultPrevented && context !== "drop" && !(context === "file-input" && isGeminiHost())) ||
       typeof readLocalTextFileFromDataTransfer !== "function" ||
       typeof createSanitizedTextFile !== "function" ||
       !dataTransferHasFiles(dataTransfer)
@@ -3149,12 +3160,35 @@
 
     const transferPolicy = resolveLocalFileTransferPolicy(dataTransfer);
     if (transferPolicy.action === "allow") {
+      if (context === "file-input" && isGeminiHost()) {
+        if (event?.target?.tagName === "INPUT" && String(event.target.type || "").toLowerCase() === "file") {
+          try {
+            event.target.value = "";
+          } catch {
+            // The raw FileList has already been stopped from reaching Gemini.
+          }
+        }
+        setBadge("Raw file upload blocked");
+        hideBadgeSoon(4200);
+        await showMessageModal(
+          "Raw file upload blocked",
+          transferPolicy.message || "LeakGuard blocked this unsupported file type for Gemini upload."
+        );
+        refreshBadgeFromCurrentInput();
+        return {
+          handled: true,
+          ok: false,
+          reason: transferPolicy.reason || "unsupported_file_blocked_for_gemini"
+        };
+      }
       showUnsupportedFilePassThroughNotice(transferPolicy);
       return false;
     }
 
     if (transferPolicy.action === "block") {
-      consumeInterceptionEvent(event);
+      if (!event.defaultPrevented) {
+        consumeInterceptionEvent(event);
+      }
       setBadge("Raw file upload blocked");
       hideBadgeSoon(4200);
       await showMessageModal("Raw file upload blocked", transferPolicy.message);
@@ -3166,7 +3200,9 @@
       };
     }
 
-    consumeInterceptionEvent(event);
+    if (!(event.defaultPrevented && context === "file-input" && isGeminiHost())) {
+      consumeInterceptionEvent(event);
+    }
 
     const localFile = await readLocalTextFileFromDataTransfer(dataTransfer);
     if (event?.target?.tagName === "INPUT" && String(event.target.type || "").toLowerCase() === "file") {
@@ -3452,14 +3488,19 @@
       return;
     }
 
+    const selectedFiles = Array.from(event.target.files || []);
+    if (isGeminiHost()) {
+      consumeInterceptionEvent(event);
+    }
+
     const input = findComposer(event.target);
-    if (!input) return;
+    if (!input && !isGeminiHost()) return;
 
     await maybeHandleLocalFileInsert(
       event,
       input,
       {
-        files: Array.from(event.target.files || []),
+        files: selectedFiles,
         types: ["Files"],
         items: []
       },
@@ -4150,7 +4191,10 @@
 
   function createSecretSpan(placeholder) {
     const span = document.createElement("span");
+    const tones = ["aqua", "amber", "violet", "rose", "emerald"];
+    const index = placeholderSessionIndex(placeholder);
     span.className = "pwm-secret";
+    span.dataset.pwmTone = tones[index ? (index - 1) % tones.length : 0];
     span.textContent = placeholder;
     span.tabIndex = 0;
     span.setAttribute("role", "button");
