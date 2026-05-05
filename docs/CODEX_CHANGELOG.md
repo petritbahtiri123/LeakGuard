@@ -12,6 +12,12 @@ Use this file as a short handoff log for AI-made changes. Add newest entries fir
 ```
 
 ## Entries
+### 2026-05-05 - v1.5.0 version bump
+- Goal: Bump LeakGuard release/version metadata to `1.5.0`.
+- Files: `package.json`, `package-lock.json`, `manifests/base.json`, `README.md`, `docs/CODEX_CHANGELOG.md`
+- Tests: `node tests/build_targets.test.js` -> pass; `git diff --check` -> pass with existing LF-to-CRLF normalization warnings
+- Notes: Generated `dist/` output remains excluded.
+
 ### 2026-05-05 - Streaming large-file release docs
 - Goal: Align release, store, privacy, and research docs with streaming local redaction for supported text-file composer uploads up to 50 MB.
 - Files: `README.md`, `docs/RELEASE_QA_CHECKLIST.md`, `docs/CHROME_WEB_STORE_LISTING.md`, `docs/PRIVACY_POLICY.md`, `docs/deep-research-report.md`, `src/scanner/scanner.js`, `docs/CODEX_CHANGELOG.md`

@@ -50,7 +50,7 @@ If you want to support development and upcoming features like:
 👉 You can support here:
 https://ko-fi.com/petritbahtiri
 
-## v1.4.0 Snapshot
+## v1.5.0 Snapshot
 
 - Built-in protection for `chatgpt.com`, `chat.openai.com`, `claude.ai`, `gemini.google.com`, `grok.com`, and `x.com`
 - User-managed protection for additional exact `http://` or `https://` origins
@@ -84,7 +84,7 @@ LeakGuard includes an extension-owned File Scanner page for local text files. It
 
 Supported scanner files for this release: `.txt`, `.md`, `.markdown`, `.env`, `.log`, `.json`, `.yaml`, `.yml`, `.toml`, `.xml`, `.csv`, `.ini`, `.conf`, `.cfg`, `.ps1`, `.sh`, `.bash`, `.zsh`, `.bat`, `.cmd`, `.py`, `.js`, `.jsx`, `.ts`, `.tsx`, `.html`, `.css`, `.scss`, `.java`, `.c`, `.cpp`, `.h`, `.hpp`, `.cs`, `.go`, `.rs`, `.rb`, `.php`, `.sql`, `Dockerfile`, and `Makefile`.
 
-In v1.4.0, supported local UTF-8 text files pasted, dropped, or selected in protected AI composers can also be locally validated, redacted through the same background-owned placeholder flow, and replaced with sanitized in-memory `File`/`Blob` objects where browser and site upload flows accept synthetic file handoff. Files above 4 MiB and up to 50 MB use streaming/chunked local redaction so LeakGuard does not need to read the full raw file into one string before sanitizing it. This is limited to supported text files and does not guarantee support for every editor or upload control. Unsupported files, invalid UTF-8 files, text files above 50 MB, and failed sanitized file handoff are blocked from raw upload with a local message.
+In v1.5.0, supported local UTF-8 text files pasted, dropped, or selected in protected AI composers can also be locally validated, redacted through the same background-owned placeholder flow, and replaced with sanitized in-memory `File`/`Blob` objects where browser and site upload flows accept synthetic file handoff. Files above 4 MiB and up to 50 MB use streaming/chunked local redaction so LeakGuard does not need to read the full raw file into one string before sanitizing it. This is limited to supported text files and does not guarantee support for every editor or upload control. Unsupported files, invalid UTF-8 files, text files above 50 MB, and failed sanitized file handoff are blocked from raw upload with a local message.
 
 File scanner limits:
 
