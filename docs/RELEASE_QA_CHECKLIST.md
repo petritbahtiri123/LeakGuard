@@ -64,7 +64,8 @@
 - Confirm the redacted preview uses placeholders and does not show detected raw secrets.
 - Download the redacted copy and confirm raw secrets are absent.
 - Download the JSON report and confirm raw secrets are absent from the report.
-- Select an oversized file above 2 MiB and confirm it is rejected before scanning.
+- Select a supported text file between 2 MiB and 4 MiB and confirm it is accepted for local scanning.
+- Select an oversized file above 4 MiB and confirm it is rejected before scanning.
 - Select unsupported files such as `.pdf`, `.docx`, `.png`, `.jpg`, `.zip`, and `.exe` and confirm the text-only release message appears.
 - Confirm PDF, DOCX, and image redaction are not claimed as supported.
 
@@ -83,6 +84,19 @@
 - Confirm raw upload is blocked and a local message appears if sanitized file handoff fails because the browser or site does not accept synthetic `DataTransfer`/file handoff.
 - Confirm the composer remains usable after unsupported-file or sanitized-handoff failure handling.
 - Confirm no raw synthetic secret appears in the DOM or browser console.
+
+## Size-Aware Local Payload Flow
+
+- Test a supported local text/config payload at or below 2 MiB and confirm it processes without the optimization status.
+- Test supported local text/log payloads between 2 MiB and 4 MiB, such as 2.5 MiB and 3.9 MiB, and confirm LeakGuard shows `Optimizing redaction...` while processing locally.
+- Confirm 2-4 MiB payloads still redact locally and hand off only sanitized content.
+- Test a supported local text payload above 4 MiB, such as 4.1 MiB, and confirm LeakGuard blocks it with `Large payload blocked for browser stability`.
+- Confirm blocked payloads are not inserted, attached, uploaded, handed off, or truncated.
+- Confirm the block message tells the user to split the file or sanitize separately before upload.
+- Confirm ChatGPT large paste that becomes a Plain Text attachment still produces only sanitized file/text content for allowed sizes.
+- Confirm ChatGPT paste above 4 MiB is blocked before raw clipboard text reaches the page.
+- Confirm Gemini 9 KiB and 14.7 KiB text files use the direct editor path and avoid `execCommand`.
+- Confirm Gemini payloads above 256 KiB still require confirmation before editor insertion.
 
 ## Regression Checks
 

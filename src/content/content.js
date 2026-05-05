@@ -122,6 +122,15 @@
   const GEMINI_DIRECT_TEXT_INSERT_THRESHOLD = 8 * 1024;
   const GEMINI_AUTO_INSERT_TEXT_LIMIT = 256 * 1024;
   const GEMINI_LARGE_TEXT_SUPPRESS_MS = 2500;
+  const LOCAL_TEXT_FAST_MAX_BYTES =
+    globalThis.PWM?.FileScanner?.LOCAL_TEXT_FAST_MAX_BYTES || 2 * 1024 * 1024;
+  const LOCAL_TEXT_OPTIMIZED_MAX_BYTES =
+    globalThis.PWM?.FileScanner?.LOCAL_TEXT_OPTIMIZED_MAX_BYTES || 4 * 1024 * 1024;
+  const LOCAL_TEXT_HARD_BLOCK_BYTES =
+    globalThis.PWM?.FileScanner?.LOCAL_TEXT_HARD_BLOCK_BYTES || 4 * 1024 * 1024;
+  const LOCAL_TEXT_HARD_BLOCK_TITLE = "Large payload blocked for browser stability";
+  const LOCAL_TEXT_HARD_BLOCK_MESSAGE =
+    "This content is over 4 MB. LeakGuard did not process or send it automatically to avoid browser instability. Split the file into smaller parts, or sanitize it separately before upload.";
   const FILE_DRAG_SESSION_RESET_MS = 5000;
   const GEMINI_SANITIZED_TEXT_FALLBACK_MESSAGE =
     "Sanitized content inserted as text because Gemini rejected sanitized file upload.";
@@ -367,6 +376,76 @@
     if (!policy?.message) return;
     setBadge(policy.message);
     hideBadgeSoon(3200);
+  }
+
+  function getLocalTextPayloadByteLength(text, fallbackBytes = 0) {
+    if (typeof text !== "string") {
+      return Math.max(0, Number(fallbackBytes) || 0);
+    }
+
+    try {
+      if (typeof TextEncoder === "function") {
+        return new TextEncoder().encode(text).byteLength;
+      }
+    } catch {
+      // Fall through to a conservative UTF-16 estimate.
+    }
+
+    return text.length * 2;
+  }
+
+  function classifyLocalTextPayloadSize(payload) {
+    const input = payload || {};
+    const bytes = getLocalTextPayloadByteLength(input.text || "", input.sizeBytes || 0);
+    if (bytes > LOCAL_TEXT_HARD_BLOCK_BYTES) {
+      return { zone: "blocked", bytes };
+    }
+
+    if (bytes > LOCAL_TEXT_FAST_MAX_BYTES && bytes <= LOCAL_TEXT_OPTIMIZED_MAX_BYTES) {
+      return { zone: "optimized", bytes };
+    }
+
+    return { zone: "fast", bytes };
+  }
+
+  function showLocalPayloadOptimizationStatus(sizeInfo) {
+    debugReveal("local-payload:optimization-started", {
+      bytes: sizeInfo?.bytes || 0,
+      fastMaxBytes: LOCAL_TEXT_FAST_MAX_BYTES,
+      optimizedMaxBytes: LOCAL_TEXT_OPTIMIZED_MAX_BYTES
+    });
+    setBadge("Optimizing redaction... LeakGuard is processing a larger payload locally.");
+  }
+
+  function clearLocalPayloadOptimizationStatus(sizeInfo, outcome = "complete") {
+    debugReveal("local-payload:optimization-finished", {
+      outcome,
+      bytes: sizeInfo?.bytes || 0
+    });
+    if (outcome === "complete") {
+      setBadge("Redaction complete. Sanitized content is ready.");
+      hideBadgeSoon(3200);
+    } else {
+      hideBadgeSoon(1600);
+    }
+  }
+
+  function blockLargeLocalTextPayload(event, sizeInfo) {
+    consumeInterceptionEvent(event);
+    debugReveal("local-payload:blocked", {
+      bytes: sizeInfo?.bytes || 0,
+      hardBlockBytes: LOCAL_TEXT_HARD_BLOCK_BYTES
+    });
+    setBadge(LOCAL_TEXT_HARD_BLOCK_TITLE);
+    hideBadgeSoon(4200);
+    return showMessageModal(LOCAL_TEXT_HARD_BLOCK_TITLE, LOCAL_TEXT_HARD_BLOCK_MESSAGE).then(() => {
+      refreshBadgeFromCurrentInput();
+      return {
+        handled: true,
+        ok: false,
+        reason: "local_text_payload_too_large"
+      };
+    });
   }
 
   function buildComposerWritePlan(input, text) {
@@ -1985,7 +2064,7 @@
   function shouldHandleChatGptLargeTextPaste(pasted, quickAnalysis) {
     return Boolean(
       isChatGptHost() &&
-        String(pasted || "").length >= CHATGPT_LARGE_PASTE_FILE_THRESHOLD &&
+        getLocalTextPayloadByteLength(String(pasted || "")) >= CHATGPT_LARGE_PASTE_FILE_THRESHOLD &&
         ((quickAnalysis?.findings || []).length || quickAnalysis?.placeholderNormalized)
     );
   }
@@ -2023,6 +2102,11 @@
   }
 
   async function maybeHandleChatGptLargeTextPaste(event, input, pasted, quickAnalysis) {
+    if (isChatGptHost() && getLocalTextPayloadByteLength(String(pasted || "")) > LOCAL_TEXT_HARD_BLOCK_BYTES) {
+      await blockLargeLocalTextPayload(event, classifyLocalTextPayloadSize({ text: pasted }));
+      return true;
+    }
+
     if (!shouldHandleChatGptLargeTextPaste(pasted, quickAnalysis)) {
       return false;
     }
@@ -2030,49 +2114,70 @@
     const originalText = getInputText(input);
     const selection = getSelectionOffsets(input);
     consumeInterceptionEvent(event);
-
-    const analysis = analyzeText(pasted);
-    const result = analysis.findings.length
-      ? await requestRedaction(analysis.normalizedText, analysis.secretFindings)
-      : { redactedText: analysis.normalizedText };
-    const redactedText = String(result.redactedText || "");
-    const sanitizedFile = createSanitizedChatGptPasteFile(redactedText);
-
-    debugReveal("chatgpt-large-paste:sanitized-file-created", {
-      redactedLength: redactedText.length,
-      findingsCount: analysis.secretFindings.length,
-      file: describeFileForDebug(sanitizedFile)
-    });
-
-    if (sanitizedFile && handOffSanitizedLocalFile(event, input, sanitizedFile, "paste")) {
-      setBadge("LeakGuard redacted pasted text before attachment.");
-      hideBadgeSoon(4200);
-      refreshBadgeFromCurrentInput();
-      return true;
+    const sizeInfo = classifyLocalTextPayloadSize({ text: pasted });
+    const optimizedStatus = sizeInfo.zone === "optimized";
+    if (optimizedStatus) {
+      showLocalPayloadOptimizationStatus(sizeInfo);
     }
 
-    if (await applyChatGptLargePasteTextFallback(input, originalText, selection, redactedText)) {
-      debugReveal("chatgpt-large-paste:text-fallback-success", {
-        redactedLength: redactedText.length
+    try {
+      const analysis = analyzeText(pasted);
+      const result = analysis.findings.length
+        ? await requestRedaction(analysis.normalizedText, analysis.secretFindings)
+        : { redactedText: analysis.normalizedText };
+      const redactedText = String(result.redactedText || "");
+      const sanitizedFile = createSanitizedChatGptPasteFile(redactedText);
+
+      debugReveal("chatgpt-large-paste:sanitized-file-created", {
+        redactedLength: redactedText.length,
+        findingsCount: analysis.secretFindings.length,
+        file: describeFileForDebug(sanitizedFile)
       });
-      setBadge("LeakGuard redacted pasted text before attachment.");
+
+      if (sanitizedFile && handOffSanitizedLocalFile(event, input, sanitizedFile, "paste")) {
+        if (optimizedStatus) {
+          clearLocalPayloadOptimizationStatus(sizeInfo, "complete");
+        }
+        setBadge("LeakGuard redacted pasted text before attachment.");
+        hideBadgeSoon(4200);
+        refreshBadgeFromCurrentInput();
+        return true;
+      }
+
+      if (await applyChatGptLargePasteTextFallback(input, originalText, selection, redactedText)) {
+        debugReveal("chatgpt-large-paste:text-fallback-success", {
+          redactedLength: redactedText.length
+        });
+        if (optimizedStatus) {
+          clearLocalPayloadOptimizationStatus(sizeInfo, "complete");
+        }
+        setBadge("LeakGuard redacted pasted text before attachment.");
+        hideBadgeSoon(4200);
+        refreshBadgeFromCurrentInput();
+        return true;
+      }
+
+      debugReveal("chatgpt-large-paste:fail-closed", {
+        redactedLength: redactedText.length,
+        file: describeFileForDebug(sanitizedFile)
+      });
+      if (optimizedStatus) {
+        clearLocalPayloadOptimizationStatus(sizeInfo, "failed");
+      }
+      setBadge("Raw paste blocked");
       hideBadgeSoon(4200);
+      await showMessageModal(
+        "Raw paste blocked",
+        "LeakGuard blocked raw pasted text because sanitized ChatGPT handoff failed."
+      );
       refreshBadgeFromCurrentInput();
       return true;
+    } catch (error) {
+      if (optimizedStatus) {
+        clearLocalPayloadOptimizationStatus(sizeInfo, "failed");
+      }
+      throw error;
     }
-
-    debugReveal("chatgpt-large-paste:fail-closed", {
-      redactedLength: redactedText.length,
-      file: describeFileForDebug(sanitizedFile)
-    });
-    setBadge("Raw paste blocked");
-    hideBadgeSoon(4200);
-    await showMessageModal(
-      "Raw paste blocked",
-      "LeakGuard blocked raw pasted text because sanitized ChatGPT handoff failed."
-    );
-    refreshBadgeFromCurrentInput();
-    return true;
   }
 
   function resolveGeminiEditorTarget(target) {
@@ -2362,17 +2467,36 @@
     if (!pasted) return false;
 
     consumeInterceptionEvent(event);
+    const sizeInfo = classifyLocalTextPayloadSize({ text: pasted });
+    if (sizeInfo.zone === "blocked") {
+      await blockLargeLocalTextPayload(event, sizeInfo);
+      return true;
+    }
+
+    const optimizedStatus = sizeInfo.zone === "optimized";
+    if (optimizedStatus) {
+      showLocalPayloadOptimizationStatus(sizeInfo);
+    }
 
     try {
       const sanitizedText = await redactGeminiEditorText(pasted);
       const applied = await applyGeminiEditorText(editor, sanitizedText, "gemini-paste");
       if (applied === true || applied === "cancelled") {
+        if (optimizedStatus) {
+          clearLocalPayloadOptimizationStatus(sizeInfo, applied === true ? "complete" : "cancelled");
+        }
         return true;
       }
     } catch (error) {
+      if (optimizedStatus) {
+        clearLocalPayloadOptimizationStatus(sizeInfo, "failed");
+      }
       handleContentError(error);
     }
 
+    if (optimizedStatus) {
+      clearLocalPayloadOptimizationStatus(sizeInfo, "failed");
+    }
     setBadge("Raw paste blocked");
     hideBadgeSoon(4200);
     await showMessageModal(
@@ -2434,16 +2558,39 @@
       );
     }
 
+    const sizeInfo = classifyLocalTextPayloadSize({
+      text: localFile.text,
+      sizeBytes: localFile.file?.sizeBytes
+    });
+    if (sizeInfo.zone === "blocked") {
+      await blockLargeLocalTextPayload(event, sizeInfo);
+      return true;
+    }
+
+    const optimizedStatus = sizeInfo.zone === "optimized";
+    if (optimizedStatus) {
+      showLocalPayloadOptimizationStatus(sizeInfo);
+    }
+
     try {
       const sanitizedText = await redactGeminiEditorText(localFile.text);
       const applied = await applyGeminiEditorText(editor, sanitizedText, "gemini-drop");
       if (applied === true || applied === "cancelled") {
+        if (optimizedStatus) {
+          clearLocalPayloadOptimizationStatus(sizeInfo, applied === true ? "complete" : "cancelled");
+        }
         return true;
       }
     } catch (error) {
+      if (optimizedStatus) {
+        clearLocalPayloadOptimizationStatus(sizeInfo, "failed");
+      }
       handleContentError(error);
     }
 
+    if (optimizedStatus) {
+      clearLocalPayloadOptimizationStatus(sizeInfo, "failed");
+    }
     return blockGeminiEditorRawContent(
       event,
       "Raw file upload blocked",
@@ -2857,11 +3004,31 @@
     if (!localFile.handled) return false;
 
     if (!localFile.ok) {
-      setBadge("Local file not attached");
-      hideBadgeSoon(3200);
-      await showMessageModal("Local file not attached", localFile.message);
+      if (localFile.code === "file_too_large") {
+        setBadge(LOCAL_TEXT_HARD_BLOCK_TITLE);
+        hideBadgeSoon(4200);
+        await showMessageModal(LOCAL_TEXT_HARD_BLOCK_TITLE, LOCAL_TEXT_HARD_BLOCK_MESSAGE);
+      } else {
+        setBadge("Local file not attached");
+        hideBadgeSoon(3200);
+        await showMessageModal("Local file not attached", localFile.message);
+      }
       refreshBadgeFromCurrentInput();
       return true;
+    }
+
+    const sizeInfo = classifyLocalTextPayloadSize({
+      text: localFile.text,
+      sizeBytes: localFile.file?.sizeBytes
+    });
+    if (sizeInfo.zone === "blocked") {
+      await blockLargeLocalTextPayload(event, sizeInfo);
+      return true;
+    }
+
+    const optimizedStatus = sizeInfo.zone === "optimized";
+    if (optimizedStatus) {
+      showLocalPayloadOptimizationStatus(sizeInfo);
     }
 
     const analysis = analyzeText(localFile.text);
@@ -2870,6 +3037,9 @@
     if (context === "drop" && isGeminiHost()) {
       const geminiTextResult = await insertGeminiLocalFileText(event, input, result.redactedText);
       if (geminiTextResult === true) {
+        if (optimizedStatus) {
+          clearLocalPayloadOptimizationStatus(sizeInfo, "complete");
+        }
         setBadge("Sanitized content inserted as text");
         hideBadgeSoon(4200);
         refreshBadgeFromCurrentInput();
@@ -2881,6 +3051,9 @@
       }
 
       if (geminiTextResult === "cancelled") {
+        if (optimizedStatus) {
+          clearLocalPayloadOptimizationStatus(sizeInfo, "cancelled");
+        }
         return {
           handled: true,
           ok: false,
@@ -2888,6 +3061,9 @@
         };
       }
 
+      if (optimizedStatus) {
+        clearLocalPayloadOptimizationStatus(sizeInfo, "failed");
+      }
       setBadge("Raw file upload blocked");
       hideBadgeSoon(4200);
       await showMessageModal(
@@ -2915,6 +3091,9 @@
     if (!handedOff) {
       const fallbackResult = await applyGeminiSanitizedTextFallback(event, input, result.redactedText);
       if (fallbackResult === true) {
+        if (optimizedStatus) {
+          clearLocalPayloadOptimizationStatus(sizeInfo, "complete");
+        }
         return {
           handled: true,
           ok: true,
@@ -2923,6 +3102,9 @@
       }
 
       if (fallbackResult === "cancelled") {
+        if (optimizedStatus) {
+          clearLocalPayloadOptimizationStatus(sizeInfo, "cancelled");
+        }
         return {
           handled: true,
           ok: false,
@@ -2930,6 +3112,9 @@
         };
       }
 
+      if (optimizedStatus) {
+        clearLocalPayloadOptimizationStatus(sizeInfo, "failed");
+      }
       debugReveal("file-handoff:fail-closed", {
         context,
         reason: "sanitized_file_handoff_failed",
@@ -2949,6 +3134,9 @@
       };
     }
 
+    if (optimizedStatus) {
+      clearLocalPayloadOptimizationStatus(sizeInfo, "complete");
+    }
     setBadge("LeakGuard attached a sanitized local file.");
     hideBadgeSoon(3200);
     refreshBadgeFromCurrentInput();

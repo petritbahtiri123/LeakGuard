@@ -164,6 +164,24 @@ async function testNoFileTransferIgnored() {
   assert.strictEqual(result.handled, false);
 }
 
+async function testOptimizedZoneFileStillDecodesAndOversizedFileBlocks() {
+  const optimizedText = "x".repeat(2 * 1024 * 1024 + 1024);
+  const optimized = await readLocalTextFileFromDataTransfer(
+    createDataTransfer([createFile({ name: "optimized.log", text: optimizedText })])
+  );
+  const oversized = await readLocalTextFileFromDataTransfer(
+    createDataTransfer([createFile({ name: "oversized.log", text: "x".repeat(4 * 1024 * 1024 + 1) })])
+  );
+
+  assert.strictEqual(optimized.handled, true);
+  assert.strictEqual(optimized.ok, true);
+  assert.strictEqual(optimized.text.length, optimizedText.length);
+  assert.strictEqual(oversized.handled, true);
+  assert.strictEqual(oversized.ok, false);
+  assert.strictEqual(oversized.code, "file_too_large");
+  assert.ok(oversized.message.includes("over 4 MB"));
+}
+
 (async () => {
   await testSupportedEnvFileDecodesLocally();
   await testSanitizedFileProducedForHandoff();
@@ -172,6 +190,7 @@ async function testNoFileTransferIgnored() {
   await testMultipleFilesRejectedWithoutReading();
   await testUnsupportedFilesPassThroughAndTextBinaryFilesRejected();
   await testNoFileTransferIgnored();
+  await testOptimizedZoneFileStillDecodesAndOversizedFileBlocks();
   console.log("PASS local file paste helper regressions");
 })().catch((error) => {
   console.error(error);
