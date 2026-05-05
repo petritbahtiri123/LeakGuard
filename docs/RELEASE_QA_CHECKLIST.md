@@ -65,7 +65,7 @@
 - Download the redacted copy and confirm raw secrets are absent.
 - Download the JSON report and confirm raw secrets are absent from the report.
 - Select a supported text file between 2 MiB and 4 MiB and confirm it is accepted for local scanning.
-- Select an oversized file above 4 MiB and confirm it is rejected before scanning.
+- Select a supported text file above 50 MB and confirm it is rejected before scanning.
 - Select unsupported files such as `.pdf`, `.docx`, `.png`, `.jpg`, `.zip`, and `.exe` and confirm the text-only release message appears.
 - Confirm PDF, DOCX, and image redaction are not claimed as supported.
 
@@ -80,7 +80,7 @@
 - Confirm the sanitized attached/uploaded file keeps `token_limit=4096` visible.
 - Confirm the sanitized attached/uploaded file pseudonymizes the public IP with a `[PUB_HOST_N]` placeholder.
 - Confirm the sanitized attached/uploaded file keeps the private IP visible.
-- Confirm unsupported PDF, DOCX, ZIP, image, binary, oversized, and invalid UTF-8 files do not upload raw content.
+- Confirm unsupported PDF, DOCX, ZIP, image, binary, files above 50 MB, and invalid UTF-8 files do not upload raw content.
 - Confirm raw upload is blocked and a local message appears if sanitized file handoff fails because the browser or site does not accept synthetic `DataTransfer`/file handoff.
 - Confirm the composer remains usable after unsupported-file or sanitized-handoff failure handling.
 - Confirm no raw synthetic secret appears in the DOM or browser console.
@@ -90,13 +90,19 @@
 - Test a supported local text/config payload at or below 2 MiB and confirm it processes without the optimization status.
 - Test supported local text/log payloads between 2 MiB and 4 MiB, such as 2.5 MiB and 3.9 MiB, and confirm LeakGuard shows `Optimizing redaction...` while processing locally.
 - Confirm 2-4 MiB payloads still redact locally and hand off only sanitized content.
-- Test a supported local text payload above 4 MiB, such as 4.1 MiB, and confirm LeakGuard blocks it with `Large payload blocked for browser stability`.
+- Test supported local text files above 4 MiB and up to 50 MB, such as 5 MB, 10 MB, 25 MB, and 50 MB, and confirm LeakGuard shows `Streaming redaction...`.
+- Confirm streaming payloads are sanitized locally and handed off only as sanitized files where the site/browser file handoff accepts the replacement.
+- Confirm streaming redaction preserves repeated-placeholder consistency across chunks.
+- Confirm secrets near chunk boundaries, database URLs, bearer-style tokens, and private-key blocks are redacted in the sanitized file.
+- Test a supported local text payload above 50 MB and confirm LeakGuard blocks it with `File too large for local redaction`.
 - Confirm blocked payloads are not inserted, attached, uploaded, handed off, or truncated.
-- Confirm the block message tells the user to split the file or sanitize separately before upload.
+- Confirm the block message says LeakGuard blocked the upload because it cannot safely sanitize the file yet.
 - Confirm ChatGPT large paste that becomes a Plain Text attachment still produces only sanitized file/text content for allowed sizes.
-- Confirm ChatGPT paste above 4 MiB is blocked before raw clipboard text reaches the page.
+- Confirm ChatGPT paste above 4 MiB uses streaming redaction where possible, or blocks fail-closed if sanitized handoff cannot complete.
 - Confirm Gemini 9 KiB and 14.7 KiB text files use the direct editor path and avoid `execCommand`.
 - Confirm Gemini payloads above 256 KiB still require confirmation before editor insertion.
+- Confirm Gemini 10 MB text-file upload uses sanitized file handoff after streaming redaction and does not fall back to raw upload.
+- Confirm Gemini blocks or asks instead of dumping very large sanitized text into the visible editor when sanitized file handoff is unavailable.
 
 ## Regression Checks
 

@@ -167,7 +167,7 @@
     if (file.size > scanner.MAX_TEXT_FILE_SIZE_BYTES) {
       return {
         ok: false,
-        message: "This release scans text files up to 2 MiB. Choose a smaller file or split it before scanning."
+        message: "This release scans text files up to 50 MB. Choose a smaller file or split it before scanning."
       };
     }
 

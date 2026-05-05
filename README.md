@@ -20,6 +20,7 @@ LeakGuard does not use a backend service or cloud processing. It is designed for
 - A session-scoped placeholder system for replacing raw values with tokens such as `[PWM_1]`, `[PUB_HOST_1]`, and `[NET_1]`
 - A local text-file scanner for selected text files
 - Local text-file paste/drop redaction for supported UTF-8 text files in protected AI composers
+- Streaming local redaction for larger supported text-file uploads in protected AI composers
 - An optional local AI assist layer over leftover suspicious candidate windows after deterministic detection
 
 ## What LeakGuard Is Not
@@ -55,6 +56,10 @@ https://ko-fi.com/petritbahtiri
 - User-managed protection for additional exact `http://` or `https://` origins
 - Local-only detection and redaction in the browser
 - Supported local UTF-8 text files pasted, dropped, or selected in protected AI composers can be locally validated, redacted, and replaced with sanitized in-memory files where browser/site handoff works
+- Large supported text-file uploads above 4 MiB and up to 50 MB use streaming/chunked local redaction before sanitized handoff
+- Supported text files above 50 MB are blocked instead of being uploaded raw
+- ChatGPT large paste flows that can become generated `Plain Text` attachments are intercepted and redacted before sanitized text/file handoff
+- Gemini file-to-text fallback uses size-aware insertion, avoids slow `execCommand` paths for medium text, and asks before inserting very large sanitized text into the editor
 - If sanitized file handoff fails or the file is unsupported/invalid, LeakGuard blocks raw upload and shows a local message
 - Trust-aware placeholder preservation and reuse for session-known `[PWM_N]`, `[NET_N]`, and `[PUB_HOST_N]` tokens
 - Full-value redaction for sensitive HTTP headers such as `Authorization`, `X-API-Key`, auth token headers, `Cookie`, and `Set-Cookie`
@@ -67,7 +72,7 @@ https://ko-fi.com/petritbahtiri
 
 ## How LeakGuard Works
 
-1. On a protected site, LeakGuard watches supported chat composers for paste, typing, send, and supported local text-file paste/drop events.
+1. On a protected site, LeakGuard watches supported chat composers for paste, typing, send, and supported local text-file paste/drop/file-select events.
 2. If it finds likely secrets or sensitive public IPv4 hosts/CIDRs, it shows an `Allow once` or `Redact` decision flow.
 3. If you choose `Redact`, it rewrites the composer with stable placeholders such as `[PWM_1]`, `[PUB_HOST_1]`, and `[NET_1]`.
 4. Private raw-to-placeholder mappings stay in the background service worker and `chrome.storage.session` for the active browser session only.
@@ -77,13 +82,14 @@ https://ko-fi.com/petritbahtiri
 
 LeakGuard includes an extension-owned File Scanner page for local text files. It reads files only after you choose them, scans them in the browser with the same deterministic detector used for prompts, and can export a redacted text copy or a sanitized JSON findings report.
 
-Supported scanner files for this release: `.txt`, `.env`, `.log`, `.json`, `.yaml`, `.yml`, `.xml`, `.csv`, `.md`, `.ini`, `.conf`, `.ps1`, `.sh`, `.py`, `.js`, `.ts`, `.html`, and `.css`.
+Supported scanner files for this release: `.txt`, `.md`, `.markdown`, `.env`, `.log`, `.json`, `.yaml`, `.yml`, `.toml`, `.xml`, `.csv`, `.ini`, `.conf`, `.cfg`, `.ps1`, `.sh`, `.bash`, `.zsh`, `.bat`, `.cmd`, `.py`, `.js`, `.jsx`, `.ts`, `.tsx`, `.html`, `.css`, `.scss`, `.java`, `.c`, `.cpp`, `.h`, `.hpp`, `.cs`, `.go`, `.rs`, `.rb`, `.php`, `.sql`, `Dockerfile`, and `Makefile`.
 
-In v1.4.0, supported local UTF-8 text files pasted, dropped, or selected in protected AI composers can also be locally validated, redacted through the same background-owned placeholder flow, and replaced with sanitized in-memory `File`/`Blob` objects where browser and site upload flows accept synthetic file handoff. This is limited to supported text files and does not guarantee support for every editor or upload control. Unsupported or invalid files, oversized files, and failed sanitized file handoff are blocked from raw upload with a local message.
+In v1.4.0, supported local UTF-8 text files pasted, dropped, or selected in protected AI composers can also be locally validated, redacted through the same background-owned placeholder flow, and replaced with sanitized in-memory `File`/`Blob` objects where browser and site upload flows accept synthetic file handoff. Files above 4 MiB and up to 50 MB use streaming/chunked local redaction so LeakGuard does not need to read the full raw file into one string before sanitizing it. This is limited to supported text files and does not guarantee support for every editor or upload control. Unsupported files, invalid UTF-8 files, text files above 50 MB, and failed sanitized file handoff are blocked from raw upload with a local message.
 
 File scanner limits:
 
-- 2 MiB maximum file size
+- 50 MB maximum supported text-file size for local scanner validation and protected composer upload paths
+- streaming/chunked redaction is used for protected composer upload paths above 4 MiB and up to 50 MB
 - single-file scan
 - deterministic detection only
 - raw file contents are not stored in extension storage
@@ -116,6 +122,7 @@ Training, export, browser smoke tests, and enterprise disable guidance live in [
 - Raw secrets are not persisted in `chrome.storage.local`.
 - Selected file contents are scanned locally and are not stored in extension storage.
 - Supported local text-file paste/drop/file-select content is intercepted locally before raw upload and is not stored in extension storage.
+- Large supported text files are streamed/chunked locally for redaction before sanitized file handoff; raw large text is not uploaded by LeakGuard through protected text-file paths.
 - Persistent local storage is limited to normalized protected-site rules.
 - Raw values are kept only in session-scoped background storage so secure reveal can work during the active tab session.
 - Secure reveal is restricted to extension-owned UI.
