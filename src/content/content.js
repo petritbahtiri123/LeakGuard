@@ -29,6 +29,7 @@
     selectFindingsOverlappingInsertion,
     deriveRewriteCaretOffset,
     setInputText,
+    setInputTextDirect,
     forceRewriteInputText
   } = ComposerHelpers;
   const {
@@ -116,6 +117,8 @@
   const rawFileDropInterceptions = new WeakSet();
   const fileDragEventRoots = new WeakSet();
   const PROGRAMMATIC_INPUT_SUPPRESS_MS = 500;
+  const CHATGPT_LARGE_PASTE_FILE_THRESHOLD = 16 * 1024;
+  const CHATGPT_SANITIZED_PASTE_FILE_NAME = "leakguard-redacted-paste.txt";
   const GEMINI_DIRECT_TEXT_INSERT_THRESHOLD = 16 * 1024;
   const GEMINI_AUTO_INSERT_TEXT_LIMIT = 256 * 1024;
   const GEMINI_LARGE_TEXT_SUPPRESS_MS = 2500;
@@ -1733,7 +1736,7 @@
     if (!extensionRuntimeAvailable || modalOpen || event.defaultPrevented) return;
     if (isSanitizedFileHandoffEvent(event)) return;
 
-    if (await maybeHandleGeminiEditorPaste(event)) {
+    if (isGeminiHost() && await maybeHandleGeminiEditorPaste(event)) {
       return;
     }
 
@@ -1751,6 +1754,10 @@
     if (!pasted) return;
 
     const quickAnalysis = analyzeText(pasted);
+    if (await maybeHandleChatGptLargeTextPaste(event, input, pasted, quickAnalysis)) {
+      return;
+    }
+
     if (!quickAnalysis.findings.length && !quickAnalysis.placeholderNormalized) return;
 
     const originalText = getInputText(input);
@@ -1967,8 +1974,105 @@
     }
   }
 
+  function isChatGptHost() {
+    return location.hostname === "chatgpt.com" || location.hostname === "chat.openai.com";
+  }
+
   function isGeminiHost() {
     return location.hostname === "gemini.google.com";
+  }
+
+  function shouldHandleChatGptLargeTextPaste(pasted, quickAnalysis) {
+    return Boolean(
+      isChatGptHost() &&
+        String(pasted || "").length >= CHATGPT_LARGE_PASTE_FILE_THRESHOLD &&
+        ((quickAnalysis?.findings || []).length || quickAnalysis?.placeholderNormalized)
+    );
+  }
+
+  function createSanitizedChatGptPasteFile(redactedText) {
+    if (typeof createSanitizedTextFile !== "function") return null;
+    return createSanitizedTextFile(
+      {
+        name: CHATGPT_SANITIZED_PASTE_FILE_NAME,
+        type: "text/plain"
+      },
+      redactedText
+    );
+  }
+
+  async function applyChatGptLargePasteTextFallback(input, originalText, selection, redactedText) {
+    if (!input || typeof setInputTextDirect !== "function") return false;
+
+    const next = spliceSelectionText(originalText, selection, String(redactedText || ""));
+    const plan = buildComposerWritePlan(input, next.text);
+
+    suppressFollowupInputScan(GEMINI_LARGE_TEXT_SUPPRESS_MS);
+    if (!setInputTextDirect(input, plan.writeText, { caretOffset: next.caretOffset })) {
+      return false;
+    }
+
+    const actual = await readStableComposerText(input);
+    if (matchesComposerPlan(plan, actual)) {
+      return true;
+    }
+
+    await showRewriteFailure("paste", collectFailureDetails(input, next.text, actual, "paste"));
+    refreshBadgeFromCurrentInput();
+    return false;
+  }
+
+  async function maybeHandleChatGptLargeTextPaste(event, input, pasted, quickAnalysis) {
+    if (!shouldHandleChatGptLargeTextPaste(pasted, quickAnalysis)) {
+      return false;
+    }
+
+    const originalText = getInputText(input);
+    const selection = getSelectionOffsets(input);
+    consumeInterceptionEvent(event);
+
+    const analysis = analyzeText(pasted);
+    const result = analysis.findings.length
+      ? await requestRedaction(analysis.normalizedText, analysis.secretFindings)
+      : { redactedText: analysis.normalizedText };
+    const redactedText = String(result.redactedText || "");
+    const sanitizedFile = createSanitizedChatGptPasteFile(redactedText);
+
+    debugReveal("chatgpt-large-paste:sanitized-file-created", {
+      redactedLength: redactedText.length,
+      findingsCount: analysis.secretFindings.length,
+      file: describeFileForDebug(sanitizedFile)
+    });
+
+    if (sanitizedFile && handOffSanitizedLocalFile(event, input, sanitizedFile, "paste")) {
+      setBadge("LeakGuard redacted pasted text before attachment.");
+      hideBadgeSoon(4200);
+      refreshBadgeFromCurrentInput();
+      return true;
+    }
+
+    if (await applyChatGptLargePasteTextFallback(input, originalText, selection, redactedText)) {
+      debugReveal("chatgpt-large-paste:text-fallback-success", {
+        redactedLength: redactedText.length
+      });
+      setBadge("LeakGuard redacted pasted text before attachment.");
+      hideBadgeSoon(4200);
+      refreshBadgeFromCurrentInput();
+      return true;
+    }
+
+    debugReveal("chatgpt-large-paste:fail-closed", {
+      redactedLength: redactedText.length,
+      file: describeFileForDebug(sanitizedFile)
+    });
+    setBadge("Raw paste blocked");
+    hideBadgeSoon(4200);
+    await showMessageModal(
+      "Raw paste blocked",
+      "LeakGuard blocked raw pasted text because sanitized ChatGPT handoff failed."
+    );
+    refreshBadgeFromCurrentInput();
+    return true;
   }
 
   function resolveGeminiEditorTarget(target) {
