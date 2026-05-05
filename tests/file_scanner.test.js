@@ -20,6 +20,7 @@ const {
   getFileExtension,
   isSupportedTextFile,
   validateFileForTextScan,
+  classifyFileForTextScan,
   decodeUtf8Text,
   getLineColumnFromOffset,
   scanTextContent,
@@ -55,15 +56,36 @@ function testSupportedExtensionsAccepted() {
     ".xml",
     ".csv",
     ".md",
+    ".markdown",
+    ".toml",
     ".ini",
     ".conf",
+    ".cfg",
     ".ps1",
     ".sh",
+    ".bash",
+    ".zsh",
+    ".bat",
+    ".cmd",
     ".py",
     ".js",
+    ".jsx",
     ".ts",
+    ".tsx",
     ".html",
-    ".css"
+    ".css",
+    ".scss",
+    ".java",
+    ".c",
+    ".cpp",
+    ".h",
+    ".hpp",
+    ".cs",
+    ".go",
+    ".rs",
+    ".rb",
+    ".php",
+    ".sql"
   ];
 
   for (const extension of supported) {
@@ -76,10 +98,13 @@ function testSupportedExtensionsAccepted() {
       `${extension} should allow generic MIME from local file pickers`
     );
   }
+
+  assert.strictEqual(isSupportedTextFile("Dockerfile", ""), true);
+  assert.strictEqual(isSupportedTextFile("Makefile", ""), true);
 }
 
 function testUnsupportedExtensionsRejected() {
-  for (const extension of [".pdf", ".docx", ".png", ".jpg", ".jpeg", ".webp", ".zip", ".exe"]) {
+  for (const extension of [".pdf", ".docx", ".xlsx", ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".ico", ".svg"]) {
     const result = validateFileForTextScan({
       fileName: `sample${extension}`,
       mimeType: "",
@@ -88,7 +113,15 @@ function testUnsupportedExtensionsRejected() {
     });
 
     assert.strictEqual(result.ok, false, `${extension} should be rejected`);
+    assert.strictEqual(
+      classifyFileForTextScan({ fileName: `sample${extension}` }).action,
+      "allow",
+      `${extension} should be classified for pass-through upload`
+    );
   }
+
+  assert.strictEqual(classifyFileForTextScan({ fileName: "sample.bin" }).kind, "unknown");
+  assert.strictEqual(classifyFileForTextScan({ fileName: "sample.bin" }).action, "allow");
 }
 
 function testGenericMimeRequiresSupportedExtension() {

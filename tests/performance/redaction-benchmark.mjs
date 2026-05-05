@@ -24,6 +24,25 @@ const repoRoot = path.join(__dirname, "..", "..");
 });
 
 const { Detector, PlaceholderManager, transformOutboundPrompt } = globalThis.PWM;
+const DETECTOR_PROFILE_METHODS = [
+  "scanSensitiveHttpHeaders",
+  "scanStructuredAssignments",
+  "scanUrlCredentials",
+  "scanPatterns",
+  "scanAssignments",
+  "scanExplicitCredentialAssignments",
+  "scanAdversarialAssignments",
+  "scanIdentityAssignments",
+  "scanJsonIdentityFields",
+  "scanUnknownPlaceholderTokens",
+  "scanNaturalLanguageDisclosures",
+  "scanExtraAtUriCredentialSecrets",
+  "scanPlaceholderSuffixSecrets",
+  "scanBarePasswordCandidates",
+  "scanEntropyFallback",
+  "dedupe",
+  "resolveOverlaps"
+];
 
 const DEFAULT_ITERATIONS = 8;
 const WARMUP_ITERATIONS = 2;
@@ -32,6 +51,52 @@ const ITERATIONS = Math.max(
   Number.parseInt(process.env.LEAKGUARD_BENCH_ITERATIONS || `${DEFAULT_ITERATIONS}`, 10)
 );
 const PROFILE_ENABLED = process.env.LEAKGUARD_BENCH_PROFILE === "1";
+
+function buildLargeSyntheticPayload(targetBytes, label) {
+  const longSecret = `LeakGuard${label}LongSecret1234567890abcdef`;
+  const sqlPassword = `SqlServer${label}Pass123`;
+  const header = [
+    `MSSQL_URL=sqlserver://sa:${sqlPassword}@sql.example.com:1433;databaseName=prod`,
+    `secret=${longSecret}`,
+    "token_limit=4096",
+    "secret_santa=office-game",
+    'password_hint="Use long passwords"'
+  ].join("\n");
+  const fillerLine =
+    "2026-05-05 INFO safe large Gemini payload filler request_id=abc123 region=eu-central-1\n";
+  let filler = "";
+
+  while (`${header}\n${filler}`.length < targetBytes) {
+    filler += fillerLine;
+  }
+
+  return {
+    text: `${header}\n${filler}`,
+    forbidden: [longSecret, sqlPassword],
+    expected: [
+      "MSSQL_URL=sqlserver://[PWM_",
+      "secret=[PWM_",
+      "token_limit=4096",
+      "secret_santa=office-game",
+      'password_hint="Use long passwords"'
+    ]
+  };
+}
+
+function buildLargeSyntheticSample(name, targetBytes, label) {
+  const payload = buildLargeSyntheticPayload(targetBytes, label);
+  return {
+    name,
+    text: payload.text,
+    structuralOnly: true,
+    iterations: Math.min(3, ITERATIONS),
+    warmupIterations: 1,
+    maxFindings: 3,
+    minChars: targetBytes,
+    forbidden: payload.forbidden,
+    expected: payload.expected
+  };
+}
 
 const samples = [
   {
@@ -84,8 +149,9 @@ const samples = [
       "token=ghp_1234567890abcdefghijklmnopqrstuvwxyz",
       "public_ip=1.1.1.1 private_ip=192.168.1.10"
     ].join("\n").repeat(180),
-    maxP95Ms: 700,
+    maxP95Ms: 150,
     maxMsPerKb: 18,
+    assertEquivalentToBaseline: true,
     forbidden: [
       "LeakGuardBearerToken_1234567890_abcdefghijklmnopqrstuvwxyz",
       "VeryBadPassword123!",
@@ -93,7 +159,9 @@ const samples = [
       "1.1.1.1"
     ],
     expected: ["2026-05-03 INFO normal application log line", "private_ip=192.168.1.10"]
-  }
+  },
+  buildLargeSyntheticSample("large_synthetic_file_500kb", 500 * 1024, "500Kb"),
+  buildLargeSyntheticSample("large_synthetic_file_1mb", 1024 * 1024, "1Mb")
 ];
 
 function percentile(values, p) {
@@ -133,15 +201,59 @@ function emptyStageTotals() {
   };
 }
 
+function emptyDetectorMethodTotals() {
+  return Object.fromEntries(
+    DETECTOR_PROFILE_METHODS.map((method) => [
+      method,
+      {
+        ms: 0,
+        calls: 0,
+        findings: 0
+      }
+    ])
+  );
+}
+
 function addStageTotals(target, source) {
   for (const key of Object.keys(target)) {
     target[key] += Number(source?.[key] || 0);
   }
 }
 
+function addDetectorMethodTotals(target, source) {
+  for (const [method, value] of Object.entries(source || {})) {
+    if (!target[method]) {
+      target[method] = { ms: 0, calls: 0, findings: 0 };
+    }
+    target[method].ms += Number(value?.ms || 0);
+    target[method].calls += Number(value?.calls || 0);
+    target[method].findings += Number(value?.findings || 0);
+  }
+}
+
+function wrapDetectorForProfiling(detector, totals) {
+  for (const method of DETECTOR_PROFILE_METHODS) {
+    const original = detector[method];
+    if (typeof original !== "function") continue;
+
+    detector[method] = function profiledDetectorMethod(...args) {
+      const start = performance.now();
+      const output = original.apply(this, args);
+      const elapsed = performance.now() - start;
+      totals[method].ms += elapsed;
+      totals[method].calls += 1;
+      if (Array.isArray(output)) {
+        totals[method].findings += output.length;
+      }
+      return output;
+    };
+  }
+}
+
 function redactPipeline(text, options = {}) {
   const profile = Boolean(options.profile);
   const stages = profile ? emptyStageTotals() : null;
+  const detectorMethods = profile ? emptyDetectorMethodTotals() : null;
   let stageStart = profile ? performance.now() : 0;
   const manager = new PlaceholderManager();
 
@@ -151,13 +263,19 @@ function redactPipeline(text, options = {}) {
   }
 
   const detector = new Detector();
+  if (profile) {
+    wrapDetectorForProfiling(detector, detectorMethods);
+  }
 
   if (profile) {
     stages.detector_construct_ms += performance.now() - stageStart;
     stageStart = performance.now();
   }
 
-  const findings = detector.scan(text, { manager });
+  const findings = detector.scan(text, {
+    manager,
+    disableRepeatedLineCache: Boolean(options.disableRepeatedLineCache)
+  });
 
   if (profile) {
     stages.scan_ms += performance.now() - stageStart;
@@ -177,7 +295,8 @@ function redactPipeline(text, options = {}) {
   return {
     findings,
     ...transformed,
-    stages
+    stages,
+    detectorMethods
   };
 }
 
@@ -191,12 +310,49 @@ function assertCorrectness(sample, output) {
   for (const expected of sample.expected) {
     assert.ok(redactedText.includes(expected), `${sample.name}: expected output fragment: ${expected}`);
   }
+
+  if (sample.minChars) {
+    assert.ok(sample.text.length >= sample.minChars, `${sample.name}: synthetic payload is too small`);
+    assert.ok(redactedText.length >= sample.minChars - 256, `${sample.name}: large content was unexpectedly truncated`);
+  }
+
+  if (sample.maxFindings) {
+    assert.ok(
+      output.findings.length <= sample.maxFindings,
+      `${sample.name}: expected bounded finding count, got ${output.findings.length}`
+    );
+  }
+}
+
+function assertEquivalentToBaseline(sample) {
+  if (!sample.assertEquivalentToBaseline) return;
+
+  const optimized = redactPipeline(sample.text);
+  const baseline = redactPipeline(sample.text, {
+    disableRepeatedLineCache: true
+  });
+
+  assert.equal(
+    optimized.redactedText,
+    baseline.redactedText,
+    `${sample.name}: repeated-line fast path changed redacted output`
+  );
+  assert.equal(
+    optimized.findings.length,
+    baseline.findings.length,
+    `${sample.name}: repeated-line fast path changed replacement count`
+  );
 }
 
 function benchmark(sample) {
   let lastOutput = null;
+  const sampleIterations = Number.isFinite(sample.iterations) ? sample.iterations : ITERATIONS;
+  const sampleWarmups = Number.isFinite(sample.warmupIterations)
+    ? sample.warmupIterations
+    : WARMUP_ITERATIONS;
+  assertEquivalentToBaseline(sample);
 
-  for (let index = 0; index < WARMUP_ITERATIONS; index += 1) {
+  for (let index = 0; index < sampleWarmups; index += 1) {
     lastOutput = redactPipeline(sample.text, { profile: PROFILE_ENABLED });
   }
   assertCorrectness(sample, lastOutput);
@@ -205,8 +361,9 @@ function benchmark(sample) {
   const cpuTimes = [];
   const heapDeltas = [];
   const stageTotals = emptyStageTotals();
+  const detectorMethodTotals = emptyDetectorMethodTotals();
 
-  for (let index = 0; index < ITERATIONS; index += 1) {
+  for (let index = 0; index < sampleIterations; index += 1) {
     const heapBefore = heapUsedBytes();
     const cpuBefore = process.cpuUsage();
     const wallStart = performance.now();
@@ -218,6 +375,7 @@ function benchmark(sample) {
     heapDeltas.push(heapUsedBytes() - heapBefore);
     if (PROFILE_ENABLED) {
       addStageTotals(stageTotals, lastOutput.stages);
+      addDetectorMethodTotals(detectorMethodTotals, lastOutput.detectorMethods);
     }
   }
   assertCorrectness(sample, lastOutput);
@@ -231,19 +389,21 @@ function benchmark(sample) {
   const avgHeapDelta = mean(heapDeltas);
   const avgHeapGrowth = heapPositiveDeltas.length ? mean(heapPositiveDeltas) : 0;
 
-  assert.ok(
-    p95Ms <= sample.maxP95Ms,
-    `${sample.name}: p95 ${p95Ms.toFixed(3)}ms exceeded ${sample.maxP95Ms}ms`
-  );
-  assert.ok(
-    msPerKb <= sample.maxMsPerKb,
-    `${sample.name}: avg ${msPerKb.toFixed(3)}ms/KiB exceeded ${sample.maxMsPerKb}ms/KiB`
-  );
+  if (!sample.structuralOnly) {
+    assert.ok(
+      p95Ms <= sample.maxP95Ms,
+      `${sample.name}: p95 ${p95Ms.toFixed(3)}ms exceeded ${sample.maxP95Ms}ms`
+    );
+    assert.ok(
+      msPerKb <= sample.maxMsPerKb,
+      `${sample.name}: avg ${msPerKb.toFixed(3)}ms/KiB exceeded ${sample.maxMsPerKb}ms/KiB`
+    );
+  }
 
   return {
     test: sample.name,
     chars,
-    iterations: ITERATIONS,
+    iterations: sampleIterations,
     findings: lastOutput.findings.length,
     avg_wall_ms: avgMs,
     p50_wall_ms: percentile(wallTimes, 50),
@@ -259,7 +419,17 @@ function benchmark(sample) {
     max_heap_delta_bytes: Math.max(...heapDeltas),
     avg_ms_per_kib: msPerKb,
     stage_avg_ms: Object.fromEntries(
-      Object.entries(stageTotals).map(([key, value]) => [key, PROFILE_ENABLED ? value / ITERATIONS : 0])
+      Object.entries(stageTotals).map(([key, value]) => [key, PROFILE_ENABLED ? value / sampleIterations : 0])
+    ),
+    detector_method_avg_ms: Object.fromEntries(
+      Object.entries(detectorMethodTotals).map(([key, value]) => [
+        key,
+        {
+          ms: PROFILE_ENABLED ? value.ms / sampleIterations : 0,
+          calls: PROFILE_ENABLED ? value.calls / sampleIterations : 0,
+          findings: PROFILE_ENABLED ? value.findings / sampleIterations : 0
+        }
+      ])
     )
   };
 }
@@ -270,6 +440,7 @@ console.table(
   results.map((result) => ({
     test: result.test,
     chars: result.chars,
+    iterations: result.iterations,
     findings: result.findings,
     avg_wall_ms: result.avg_wall_ms.toFixed(3),
     avg_cpu_ms: result.avg_cpu_ms.toFixed(3),
@@ -297,6 +468,20 @@ if (PROFILE_ENABLED) {
       transform_ms: result.stage_avg_ms.transform_ms.toFixed(3)
     }))
   );
+  for (const result of results) {
+    console.log(`Detector method profile: ${result.test}`);
+    console.table(
+      Object.entries(result.detector_method_avg_ms)
+        .map(([method, value]) => ({
+          method,
+          avg_ms: value.ms.toFixed(3),
+          avg_calls: value.calls.toFixed(1),
+          avg_findings: value.findings.toFixed(1)
+        }))
+        .filter((row) => Number(row.avg_calls) > 0)
+        .sort((left, right) => Number(right.avg_ms) - Number(left.avg_ms))
+    );
+  }
 }
 
 console.log("PASS redaction performance benchmark");

@@ -130,7 +130,7 @@ async function testMultipleFilesRejectedWithoutReading() {
   assert.strictEqual(result.message, LOCAL_FILE_MULTI_MESSAGE);
 }
 
-async function testUnsupportedAndBinaryFilesRejected() {
+async function testUnsupportedFilesPassThroughAndTextBinaryFilesRejected() {
   const unsupported = await readLocalTextFileFromDataTransfer(
     createDataTransfer([createFile({ name: "secret.pdf", type: "application/pdf", text: "not scanned" })])
   );
@@ -141,9 +141,10 @@ async function testUnsupportedAndBinaryFilesRejected() {
     createDataTransfer([createFile({ name: "bad.txt", bytes: [0xff, 0xfe, 0xfd] })])
   );
 
-  assert.strictEqual(unsupported.handled, true);
+  assert.strictEqual(unsupported.handled, false);
   assert.strictEqual(unsupported.ok, false);
   assert.strictEqual(unsupported.code, "unsupported_binary_or_document");
+  assert.strictEqual(unsupported.message, "LeakGuard does not inspect this file type yet. Upload allowed.");
   assert.strictEqual(binary.handled, true);
   assert.strictEqual(binary.ok, false);
   assert.strictEqual(binary.code, "binary_content");
@@ -169,7 +170,7 @@ async function testNoFileTransferIgnored() {
   await testClipboardFilesArrayPathDecodesLocally();
   await testClipboardItemsFilePathDecodesLocally();
   await testMultipleFilesRejectedWithoutReading();
-  await testUnsupportedAndBinaryFilesRejected();
+  await testUnsupportedFilesPassThroughAndTextBinaryFilesRejected();
   await testNoFileTransferIgnored();
   console.log("PASS local file paste helper regressions");
 })().catch((error) => {

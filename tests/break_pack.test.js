@@ -28,12 +28,30 @@ const BREAK_TEST_PACK = [
   "DATABASE_URL=postgres://app:ProdDbPass2026!@db.internal:5432/app",
   "MYSQL_URL=mysql://root:RoutePass8899!@mysql.internal:3306/analytics",
   "REDIS_URL=redis://:RedisPass8899!@redis.internal:6379/0",
+  "MSSQL_URL=sqlserver://sa:SqlServerPass123@sql.example.com:1433;databaseName=prod",
+  "SQLSERVER_URL=sqlserver://app:SqlServerEnvPass456@sql.example.com:1433;databaseName=prod",
+  "JDBC_URL=jdbc:sqlserver://host:1433;user=name;password=JdbcSqlPass123;databaseName=prod",
   "WEBHOOK_URL=https://webhook.invalid/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX",
   "SHARED_SECRET=SharedSecretValue1234567890",
+  "secret=FAKELongAwsSecret1234567890abcdefFAKELONGLINE",
+  "LONG_LINE_START openai=abc secret=FAKELongAwsSecret1234567890abcdefFAKELONGLINE stripe=xyz LONG_LINE_END",
+  "LONG_LINE_START openai= github= db=postgres://:@long-db.example.com:5432/longapp aws= secret=FAKELongAwsSecret1234567890abcdefFAKELONGLINE stripe= ip=",
   "real_secret_after_placeholder=RealSecretValueAfterPlaceholder123",
   "token_limit=4096",
   "secret_santa=true",
+  "secret_santa=office-game",
+  'secret_santa="John gives gift to Anna"',
+  "secret_santa_enabled=true",
   "password_hint=ask-admin",
+  '"password_hint": "use a password manager",',
+  'password_hint="Use long passwords"',
+  "BENIGN_PASSWORD_HINT=use-a-password-manager",
+  'github_username="petritbahtiri123"',
+  'bearer_market="financial term"',
+  'public_key_label="this is public, not private"',
+  "DUPLICATE_CHECK_BEGIN_123456789",
+  "DUPLICATE_CHECK_END_123456789",
+  "LEAKGUARD_PERFORMANCE_TEST_END_MARKER_987654321",
   "api_version=2026-04-27",
   "region=eu-central-1",
   "version=1.2.3",
@@ -43,6 +61,7 @@ const BREAK_TEST_PACK = [
   "public_url=https://example.com",
   "url=https://example.com",
   "this is not a password",
+  "This text says use a password manager.",
   "token budget is 4096",
   "secret santa party",
   "bearer animal is not auth",
@@ -57,7 +76,8 @@ const BREAK_TEST_PACK = [
   "pa$$word=DollarPass123!",
   "api key = spacedApiKey1234567890",
   "bearer token: BearerToken1234567890",
-  "authorization bearer AuthorizationBearer1234567890"
+  "authorization bearer AuthorizationBearer1234567890",
+  'secret_note="this is my secret: admin-login-token-FAKE-1234567890"'
 ].join("\n");
 
 function assertIncludesAll(output, expected, label) {
@@ -101,6 +121,22 @@ function testBreakPackRedactionAndSafeLines() {
     2,
     "same repeated API key should reuse one placeholder"
   );
+  assert.ok(
+    /^LONG_LINE_START openai=abc secret=\[PWM_\d+\] stripe=xyz LONG_LINE_END$/m.test(
+      transformedText
+    ),
+    "embedded long-line secret should redact without changing surrounding fields"
+  );
+  assert.ok(
+    /^LONG_LINE_START openai= github= db=postgres:\/\/:@long-db\.example\.com:5432\/longapp aws= secret=\[PWM_\d+\] stripe= ip=$/m.test(
+      transformedText
+    ),
+    "embedded long-line secret should redact after empty fields without changing surrounding fields"
+  );
+  assert.ok(
+    /^secret_note="this is my secret: \[PWM_\d+\]"$/m.test(transformedText),
+    "secret_note should redact only the inner token and preserve the closing quote"
+  );
   assert.ok(redactedText.includes("placeholder=[PWM_1]"), "existing placeholder should stay visible");
   assert.strictEqual(
     /^DB_PASSWORD=\[PWM_1\]$/m.test(redactedText),
@@ -121,7 +157,12 @@ function testBreakPackRedactionAndSafeLines() {
       "ProdDbPass2026!",
       "RoutePass8899!",
       "RedisPass8899!",
+      "SqlServerPass123",
+      "SqlServerEnvPass456",
+      "JdbcSqlPass123",
       "SharedSecretValue1234567890",
+      "FAKELongAwsSecret1234567890abcdefFAKELONGLINE",
+      "admin-login-token-FAKE-1234567890",
       "SpacedPass123!",
       "ZeroPass123!",
       "DollarPass123!",
@@ -138,7 +179,19 @@ function testBreakPackRedactionAndSafeLines() {
     [
       "token_limit=4096",
       "secret_santa=true",
+      "secret_santa=office-game",
+      'secret_santa="John gives gift to Anna"',
+      "secret_santa_enabled=true",
       "password_hint=ask-admin",
+      '"password_hint": "use a password manager",',
+      'password_hint="Use long passwords"',
+      "BENIGN_PASSWORD_HINT=use-a-password-manager",
+      'github_username="petritbahtiri123"',
+      'bearer_market="financial term"',
+      'public_key_label="this is public, not private"',
+      "DUPLICATE_CHECK_BEGIN_123456789",
+      "DUPLICATE_CHECK_END_123456789",
+      "LEAKGUARD_PERFORMANCE_TEST_END_MARKER_987654321",
       "api_version=2026-04-27",
       "region=eu-central-1",
       "version=1.2.3",
@@ -147,6 +200,7 @@ function testBreakPackRedactionAndSafeLines() {
       "public_url=https://example.com",
       "url=https://example.com",
       "this is not a password",
+      "This text says use a password manager.",
       "token budget is 4096",
       "secret santa party",
       "bearer animal is not auth",
@@ -611,6 +665,55 @@ function testBrokenPlaceholderUrlTailDoesNotLeakFurther() {
   );
 }
 
+function testTransformDoesNotReuseUrlUsernamesOutsideCredentialRanges() {
+  const text = [
+    '"readonlyUrl": "postgres://readonly:ReadonlyPassword123@readonly.example.com:5432/app"',
+    "ELASTIC_URL=https://elastic:ElasticPass123@elastic.example.com:9200",
+    'password_hint="Use long passwords"',
+    "BENIGN_PASSWORD_HINT=use-a-password-manager",
+    'github_username="petritbahtiri123"',
+    "DUPLICATE_CHECK_BEGIN_123456789",
+    "DUPLICATE_CHECK_END_123456789",
+    "LEAKGUARD_PERFORMANCE_TEST_END_MARKER_987654321",
+    "secret=FAKELongAwsSecret1234567890abcdefFAKELONGLINE"
+  ].join("\n");
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const findings = detector.scan(text, { manager });
+  const redactedText = transformOutboundPrompt(text, {
+    manager,
+    findings,
+    mode: "hide_public"
+  }).redactedText;
+
+  assert.ok(
+    /"readonlyUrl": "postgres:\/\/\[PWM_\d+\]:\[PWM_\d+\]@readonly\.example\.com:5432\/app"/.test(
+      redactedText
+    ),
+    `readonly URL syntax or host was corrupted: ${redactedText}`
+  );
+  assert.ok(
+    /^ELASTIC_URL=https:\/\/\[PWM_\d+\]:\[PWM_\d+\]@elastic\.example\.com:9200$/m.test(redactedText),
+    `elastic URL syntax or host was corrupted: ${redactedText}`
+  );
+  assert.ok(/^secret=\[PWM_\d+\]$/m.test(redactedText), "generic long-line secret should redact");
+  assertExcludesAll(redactedText, ["ReadonlyPassword123", "ElasticPass123", "FAKELongAwsSecret1234567890abcdefFAKELONGLINE"], "URL reuse regression");
+  assertIncludesAll(
+    redactedText,
+    [
+      'password_hint="Use long passwords"',
+      "BENIGN_PASSWORD_HINT=use-a-password-manager",
+      'github_username="petritbahtiri123"',
+      "DUPLICATE_CHECK_BEGIN_123456789",
+      "DUPLICATE_CHECK_END_123456789",
+      "LEAKGUARD_PERFORMANCE_TEST_END_MARKER_987654321"
+    ],
+    "URL reuse regression safe controls"
+  );
+  assert.strictEqual(redactedText.includes('"[PWM_'), false, "JSON key must not be placeholderized");
+  assert.strictEqual(redactedText.includes("@[PWM_"), false, "host prefix must not be placeholderized");
+}
+
 testBreakPackRedactionAndSafeLines();
 testFullCapabilityBreakPackV2();
 testSensitiveHttpHeaderRedaction();
@@ -622,4 +725,5 @@ testTrustedHeaderPlaceholdersAndRawSuffixes();
 testUrlCredentialPasswordsCanContainRawAtSigns();
 testUrlCredentialParserLeavesSafeUrlShapesAlone();
 testBrokenPlaceholderUrlTailDoesNotLeakFurther();
+testTransformDoesNotReuseUrlUsernamesOutsideCredentialRanges();
 console.log("PASS LeakGuard break-test redaction pack");

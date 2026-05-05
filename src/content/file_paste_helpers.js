@@ -37,6 +37,18 @@
   }
 
   function resultFromValidation(validation) {
+    if (
+      validation?.code === "unsupported_binary_or_document" ||
+      validation?.code === "unsupported_file_type"
+    ) {
+      return {
+        handled: false,
+        ok: false,
+        code: validation.code,
+        message: "LeakGuard does not inspect this file type yet. Upload allowed."
+      };
+    }
+
     return {
       handled: true,
       ok: false,

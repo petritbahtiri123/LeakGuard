@@ -8,35 +8,62 @@
     "This release safely redacts text-based files only. PDF/DOCX/image redaction is planned but not enabled yet.";
   const SUPPORTED_TEXT_EXTENSIONS = new Set([
     ".txt",
+    ".md",
+    ".markdown",
     ".env",
     ".log",
     ".json",
     ".yaml",
     ".yml",
+    ".toml",
     ".xml",
     ".csv",
-    ".md",
     ".ini",
     ".conf",
+    ".cfg",
     ".ps1",
     ".sh",
+    ".bash",
+    ".zsh",
+    ".bat",
+    ".cmd",
     ".py",
     ".js",
+    ".jsx",
     ".ts",
+    ".tsx",
     ".html",
-    ".css"
+    ".css",
+    ".scss",
+    ".java",
+    ".c",
+    ".cpp",
+    ".h",
+    ".hpp",
+    ".cs",
+    ".go",
+    ".rs",
+    ".rb",
+    ".php",
+    ".sql"
   ]);
-  const UNSUPPORTED_EXTENSIONS = new Set([
+  const SUPPORTED_TEXT_BASENAMES = new Set(["dockerfile", "makefile"]);
+  const PASS_THROUGH_UNSUPPORTED_EXTENSIONS = new Set([
     ".pdf",
     ".doc",
     ".docx",
+    ".xls",
+    ".xlsx",
+    ".ppt",
+    ".pptx",
     ".png",
     ".jpg",
     ".jpeg",
     ".webp",
     ".gif",
-    ".zip",
-    ".exe"
+    ".bmp",
+    ".ico",
+    ".svg"
   ]);
 
   function normalizeFileName(fileName) {
@@ -53,16 +80,50 @@
     return name.slice(index);
   }
 
+  function getFileBasename(fileName) {
+    return normalizeFileName(fileName).toLowerCase();
+  }
+
   function normalizeMimeType(mimeType) {
     return String(mimeType || "").split(";")[0].trim().toLowerCase();
   }
 
   function isSupportedTextFile(fileName, mimeType) {
     void mimeType;
+    if (SUPPORTED_TEXT_BASENAMES.has(getFileBasename(fileName))) return true;
     const extension = getFileExtension(fileName);
     if (!SUPPORTED_TEXT_EXTENSIONS.has(extension)) return false;
-    if (UNSUPPORTED_EXTENSIONS.has(extension)) return false;
     return true;
+  }
+
+  function classifyFileForTextScan({ fileName, mimeType } = {}) {
+    const extension = getFileExtension(fileName);
+    if (isSupportedTextFile(fileName, mimeType)) {
+      return {
+        kind: "text",
+        action: "scan",
+        supported: true,
+        extension
+      };
+    }
+
+    if (PASS_THROUGH_UNSUPPORTED_EXTENSIONS.has(extension)) {
+      return {
+        kind: "known_unsupported",
+        action: "allow",
+        supported: false,
+        extension,
+        message: "LeakGuard does not inspect this file type yet. Upload allowed."
+      };
+    }
+
+    return {
+      kind: "unknown",
+      action: "allow",
+      supported: false,
+      extension,
+      message: "LeakGuard does not inspect this file type yet. Upload allowed."
+    };
   }
 
   function validationError(code, message) {
@@ -121,7 +182,7 @@
 
     if (!isSupportedTextFile(fileName, mimeType)) {
       return validationError(
-        UNSUPPORTED_EXTENSIONS.has(extension) ? "unsupported_binary_or_document" : "unsupported_file_type",
+        PASS_THROUGH_UNSUPPORTED_EXTENSIONS.has(extension) ? "unsupported_binary_or_document" : "unsupported_file_type",
         UNSUPPORTED_TEXT_RELEASE_MESSAGE
       );
     }
@@ -389,8 +450,12 @@
   root.PWM.FileScanner = {
     MAX_TEXT_FILE_SIZE_BYTES,
     SUPPORTED_TEXT_EXTENSIONS,
+    SUPPORTED_TEXT_BASENAMES,
+    PASS_THROUGH_UNSUPPORTED_EXTENSIONS,
     UNSUPPORTED_TEXT_RELEASE_MESSAGE,
     getFileExtension,
+    getFileBasename,
+    classifyFileForTextScan,
     isSupportedTextFile,
     validateFileForTextScan,
     decodeUtf8Text,

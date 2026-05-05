@@ -34,7 +34,7 @@ const {
 const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
 
 function extractFunctionSource(source, name) {
-  const match = source.match(new RegExp(`async function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n  \\}`));
+  const match = source.match(new RegExp(`(?:async\\s+)?function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n  \\}`));
   assert.ok(match, `expected to find function ${name}`);
   return match[0];
 }
@@ -246,6 +246,10 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   const typedRewriteSource = extractFunctionSource(contentSource, "applyTypedInterceptionRewrite");
   const beforeInputSource = extractFunctionSource(contentSource, "maybeHandleBeforeInput");
   const fileInsertSource = extractFunctionSource(contentSource, "maybeHandleLocalFileInsert");
+  const fileDragSource = extractFunctionSource(contentSource, "maybeHandleFileDrag");
+  const dropSource = extractFunctionSource(contentSource, "maybeHandleDrop");
+  const manifest = JSON.parse(fs.readFileSync(path.join(repoRoot, "manifests/base.json"), "utf8"));
+  const manifestScripts = manifest.content_scripts[0].js;
   const pasteSource = extractFunctionSource(contentSource, "maybeHandlePaste");
   const submitSource = extractFunctionSource(contentSource, "maybeHandleSubmit");
   const fallbackSendSource = extractFunctionSource(contentSource, "maybeHandleFallbackSendKey");
@@ -263,11 +267,64 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
       contentSource.includes("createSanitizedTextFile"),
     "content script should intercept local file paste/drop/file-input before host pages receive raw files"
   );
+  assert.strictEqual(
+    manifestScripts[0],
+    "content/file_drag_guard.js",
+    "early file drag guard should load before the full runtime stack"
+  );
+  assert.strictEqual(
+    manifest.content_scripts[0].run_at,
+    "document_start",
+    "file drag/drop interception should install before host page capture listeners"
+  );
+  assert.strictEqual(
+    manifest.content_scripts[0].all_frames,
+    true,
+    "file drag/drop interception should cover protected-site frames"
+  );
+  assert.strictEqual(
+    manifest.content_scripts[0].match_about_blank,
+    true,
+    "file drag/drop interception should cover about:blank protected-site child frames"
+  );
   assert.ok(
-    contentSource.includes("function maybeHandleFileDrag") &&
-      contentSource.includes("consumeInterceptionEvent(event);") &&
-      contentSource.includes("event.dataTransfer.dropEffect = \"copy\""),
-    "file dragenter/dragover should stop host upload overlays for composer file drags"
+      fs.readFileSync(path.join(repoRoot, "src/background/core.js"), "utf8").includes('runAt: "document_start"') &&
+      fs.readFileSync(path.join(repoRoot, "src/background/core.js"), "utf8").includes("allFrames: true") &&
+      fs.readFileSync(path.join(repoRoot, "src/background/core.js"), "utf8").includes("matchAboutBlank: true"),
+    "dynamic protected-site content scripts should also install at document_start in all frames"
+  );
+  assert.ok(
+    contentSource.includes("function bindFileDragEvents") &&
+      contentSource.includes("fileDragEventRoots") &&
+      contentSource.includes("bindFileDragEvents(window, onFileDrop)") &&
+      contentSource.includes("bindFileDragEvents(document, onFileDrop)") &&
+      contentSource.includes("bindFileDragEvents(document.documentElement, onFileDrop)") &&
+      contentSource.includes("bindFileDragEvents(document.body, onFileDrop)"),
+    "file drag/drop interception should bind at window, document, and DOM-root capture before nested targets"
+  );
+  assert.ok(
+    fileDragSource.includes("event.preventDefault();") &&
+      fileDragSource.includes("event.stopPropagation();") &&
+      fileDragSource.includes("event.stopImmediatePropagation();") &&
+      fileDragSource.includes("event.dataTransfer.dropEffect = \"copy\"") &&
+      fileDragSource.includes("dataTransferLooksLikeFiles(event.dataTransfer)") &&
+      !fileDragSource.includes("findComposer(") &&
+      !fileDragSource.includes("consumeInterceptionEvent(event);") &&
+      !fileDragSource.includes("querySelectorAll") &&
+      !fileDragSource.includes("getBoundingClientRect") &&
+      !fileDragSource.includes("getClientRects") &&
+      !fileDragSource.includes("offsetWidth") &&
+      !fileDragSource.includes("offsetHeight"),
+    "file dragenter/dragover should synchronously own file drags without composer detection, DOM traversal, or layout reads"
+  );
+  assert.ok(
+    dropSource.indexOf("consumeInterceptionEvent(event);") <
+      dropSource.indexOf("findComposer(event.target) || findComposer(document.activeElement)") &&
+      dropSource.includes("rawFileDropInterceptions") &&
+      dropSource.includes("dataTransferLooksLikeFiles(event.dataTransfer)") &&
+      dropSource.includes('maybeHandleLocalFileInsert(event, input, event.dataTransfer, "drop")') &&
+      !dropSource.includes("if (!input) return"),
+    "file drop should consume raw files immediately and continue local handling without a composer target"
   );
   assert.ok(
     contentSource.includes("async function maybeHandleFileInputChange") &&
@@ -293,15 +350,22 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   assert.ok(
     contentSource.includes("function handOffSanitizedLocalFile") &&
       contentSource.includes("fileInput.files = transfer.files") &&
+      contentSource.includes("function handOffSanitizedFileInput") &&
+      contentSource.includes("resolveFileInputForHandoff(event, input)") &&
+      contentSource.includes("isGeminiHost()") &&
+      contentSource.includes("file-handoff:gemini-file-upload-skipped") &&
       contentSource.includes('dispatchSanitizedFileEvent(target, "drop", transfer)') &&
       contentSource.includes('dispatchSanitizedFileEvent(target, "paste", transfer)'),
-    "local file handling should hand off sanitized files instead of composer text"
+    "local file handling should hand off sanitized files on non-Gemini sites while Gemini skips file-upload handoff"
   );
   assert.ok(
-    !contentSource.includes("async function applyLocalFileRedactedText") &&
+    contentSource.includes("async function applyGeminiSanitizedTextFallback") &&
+      contentSource.includes("Sanitized content inserted as text because Gemini rejected sanitized file upload.") &&
+      contentSource.includes("isGeminiHost()") &&
+      !contentSource.includes("async function applyLocalFileRedactedText") &&
       !contentSource.includes("setInputTextDirect(input, next.text") &&
       !contentSource.includes("insertContentEditableTextCommand(input, next.text"),
-    "local file handling must not fall back to dumping sanitized file contents into the composer"
+    "local file handling should only fall back to sanitized composer text for Gemini handoff rejection"
   );
   assert.ok(
     fileInsertSource.includes("sanitized_file_handoff_failed") &&

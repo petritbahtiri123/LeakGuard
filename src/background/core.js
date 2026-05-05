@@ -29,6 +29,7 @@ const USER_SITE_SCRIPT_ID_PREFIX = "pwm_user_site_";
 const SESSION_STORAGE_AREA = getSessionStorageArea();
 let syncDynamicContentScriptsPromise = Promise.resolve();
 const CONTENT_SCRIPT_FILES = [
+  "content/file_drag_guard.js",
   "compat/browser_api.js",
   "compat/platform.js",
   "vendor/onnxruntime/ort.min.js",
@@ -487,7 +488,9 @@ async function buildUserSiteRegistrations() {
       matches: [rule.matchPattern],
       js: CONTENT_SCRIPT_FILES,
       css: CONTENT_STYLE_FILES,
-      runAt: "document_idle",
+      runAt: "document_start",
+      allFrames: true,
+      matchAboutBlank: true,
       persistAcrossSessions: true
     });
   }

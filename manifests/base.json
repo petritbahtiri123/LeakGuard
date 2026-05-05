@@ -41,6 +41,7 @@
         "https://x.com/*"
       ],
       "js": [
+        "content/file_drag_guard.js",
         "compat/browser_api.js",
         "compat/platform.js",
         "vendor/onnxruntime/ort.min.js",
@@ -66,7 +67,9 @@
         "content/content.js"
       ],
       "css": ["content/overlay.css"],
-      "run_at": "document_idle"
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": true
     }
   ],
   "web_accessible_resources": [

@@ -72,6 +72,141 @@
     return new Set();
   }
 
+  const KEYWORD_CONTEXT_REGEXES = KEYWORDS.map(
+    (keyword) => new RegExp(`\\b${escapeRegex(keyword)}\\b`, "i")
+  );
+  const NEGATIVE_CONTEXT_REGEXES = NEGATIVE_CONTEXT_WORDS.map(
+    (keyword) => new RegExp(`\\b${escapeRegex(keyword)}\\b`, "i")
+  );
+  let activeContextScoreCache = null;
+  let activeContextScoreText = null;
+  let activeLineBounds = null;
+  const PATTERN_REQUIRED_MARKERS = {
+    pem_private_key_block: ["-----begin"],
+    openssh_private_key_block: ["-----begin openssh private key-----"],
+    pem_block: ["-----begin"],
+    placeholder_composite_value: ["["],
+    aws_secret_access_key_assignment: ["aws_secret_access_key"],
+    aws_session_token_assignment: ["aws_session_token"],
+    aws_access_key_id_assignment: ["aws_access_key_id"],
+    aws_access_key: ["akia"],
+    azure_storage_account_key_assignment: ["azure_storage_account_key", "azurewebjobsstorage__accountkey", "accountkey", "account_key", "account-key"],
+    openai_api_key: ["sk-"],
+    anthropic_api_key: ["sk-ant-"],
+    github_pat: ["github_pat_"],
+    slack_token: ["xox", "xapp-"],
+    slack_webhook: ["hooks.slack.com/services"],
+    discord_webhook: ["discord.com/api/webhooks", "discordapp.com/api/webhooks"],
+    github_token: ["ghp_", "gho_", "ghu_", "ghs_", "ghr_"],
+    gitlab_pat: ["glpat-", "gldt-", "glrt-", "glcbt-", "glptt-", "glft-", "glimt-", "glagent-", "glwt-"],
+    jwt_token: ["eyj"],
+    stripe_secret_key: ["sk_live_", "sk_test_"],
+    stripe_webhook_secret: ["whsec_"],
+    google_api_key: ["aiza"],
+    google_oauth_client_secret: ["gocspx-"],
+    google_refresh_token_assignment: ["refresh_token", "refresh-token", "refreshtoken"],
+    sendgrid_api_key: ["sg."],
+    json_api_key_field: ['"apikey"', '"api_key"'],
+    json_password_field: ['"password"', '"dbpassword"', '"db_password"'],
+    json_token_field: ['"token"', '"accesstoken"', '"access_token"', '"sessiontoken"', '"session_token"', '"refreshtoken"', '"refresh_token"', '"idtoken"', '"id_token"'],
+    json_client_secret_field: ['"clientsecret"', '"client_secret"', '"secret"'],
+    natural_language_api_key: ["api key", "apikey"],
+    natural_language_openai_key: ["openai"],
+    natural_language_password: ["password"],
+    natural_language_secret: ["secret"],
+    labelled_password_value: ["password"],
+    labelled_openai_key_value: ["key"],
+    real_value_label: ["real value"],
+    quoted_secret_label: ["secret"],
+    natural_language_token: ["token"],
+    google_service_account_private_key: ['"private_key"'],
+    authorization_bearer_value: ["authorization"],
+    bearer_token: ["bearer"],
+    basic_auth_header: ["basic"],
+    db_uri: ["postgres://", "postgresql://", "mysql://", "mariadb://", "mongodb://", "mongodb+srv://", "redis://", "amqp://", "mssql://", "sqlserver://", "jdbc:sqlserver://"],
+    generic_uri_credentials: ["://"],
+    azure_servicebus_connection_string: ["endpoint=sb://"],
+    azure_storage_connection_string: ["defaultendpointsprotocol=https"],
+    npm_token: ["npm_"],
+    pypi_token: ["pypi-"],
+    docker_auth_config: ['"auth"'],
+    cookie_session_token: ["cookie"],
+    query_param_api_key: ["?api", "&api"],
+    query_param_token: ["?token", "&token", "?access_token", "&access_token", "?accesstoken", "&accesstoken", "?auth_token", "&auth_token", "?refresh_token", "&refresh_token", "?refreshtoken", "&refreshtoken"]
+  };
+
+  function patternCanMatch(pattern, lowerText) {
+    const markers = PATTERN_REQUIRED_MARKERS[pattern?.name];
+    if (!markers || !markers.length) return true;
+    return markers.some((marker) => lowerText.includes(marker));
+  }
+
+  function buildLineBounds(text) {
+    const input = String(text || "");
+    const bounds = [];
+    let start = 0;
+
+    for (let index = 0; index <= input.length; index += 1) {
+      if (index === input.length || input[index] === "\n") {
+        bounds.push({
+          start,
+          end: input[index - 1] === "\r" ? index - 1 : index
+        });
+        start = index + 1;
+      }
+    }
+
+    return bounds;
+  }
+
+  function findLineBoundsForOffset(offset) {
+    if (!activeLineBounds?.length) return null;
+
+    let low = 0;
+    let high = activeLineBounds.length - 1;
+    const target = Math.max(0, Number(offset) || 0);
+
+    while (low <= high) {
+      const mid = (low + high) >> 1;
+      const bounds = activeLineBounds[mid];
+
+      if (target < bounds.start) {
+        high = mid - 1;
+      } else if (target > bounds.end) {
+        low = mid + 1;
+      } else {
+        return bounds;
+      }
+    }
+
+    return activeLineBounds[Math.max(0, Math.min(activeLineBounds.length - 1, low))] || null;
+  }
+
+  function buildRepeatedLinePlan(text) {
+    const input = String(text || "");
+    if (input.length < 16000 || input.includes("-----BEGIN")) return null;
+
+    const lines = [];
+    const seen = new Set();
+    let start = 0;
+
+    for (let index = 0; index <= input.length; index += 1) {
+      if (index === input.length || input[index] === "\n") {
+        const end = input[index - 1] === "\r" ? index - 1 : index;
+        const line = input.slice(start, end);
+        lines.push({ line, offset: start });
+        if (line) seen.add(line);
+        start = index + 1;
+      }
+    }
+
+    if (lines.length < 40 || seen.size / Math.max(1, lines.length) > 0.65) {
+      return null;
+    }
+
+    return lines;
+  }
+
   function inferPlaceholderTypeFromKey(key) {
     const value = String(key || "").toLowerCase();
 
@@ -117,9 +252,16 @@
 
   function getContextWindow(text, start, end, radius = 64) {
     const input = String(text || "");
-    const lineStart = input.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
-    const nextLineBreak = input.indexOf("\n", Math.max(0, end));
-    const lineEnd = nextLineBreak >= 0 ? nextLineBreak : input.length;
+    const cachedBounds = activeContextScoreText === input ? findLineBoundsForOffset(start) : null;
+    const lineStart = cachedBounds
+      ? cachedBounds.start
+      : input.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
+    const lineEnd = cachedBounds
+      ? cachedBounds.end
+      : (() => {
+          const nextLineBreak = input.indexOf("\n", Math.max(0, end));
+          return nextLineBreak >= 0 ? nextLineBreak : input.length;
+        })();
     const left = Math.max(lineStart, start - radius);
     const right = Math.min(lineEnd, end + radius);
     const before = input.slice(left, start);
@@ -128,15 +270,22 @@
   }
 
   function contextScore(text, start, end) {
+    const input = String(text || "");
+    const cacheKey =
+      activeContextScoreCache && activeContextScoreText === input ? `${start}:${end}` : null;
+    if (cacheKey && activeContextScoreCache.has(cacheKey)) {
+      return activeContextScoreCache.get(cacheKey);
+    }
+
     const windowText = getContextWindow(text, start, end);
     let score = 0;
 
-    for (const keyword of KEYWORDS) {
-      if (new RegExp(`\\b${escapeRegex(keyword)}\\b`, "i").test(windowText)) score += 6;
+    for (const regex of KEYWORD_CONTEXT_REGEXES) {
+      if (regex.test(windowText)) score += 6;
     }
 
-    for (const keyword of NEGATIVE_CONTEXT_WORDS) {
-      if (new RegExp(`\\b${escapeRegex(keyword)}\\b`, "i").test(windowText)) score -= 14;
+    for (const regex of NEGATIVE_CONTEXT_REGEXES) {
+      if (regex.test(windowText)) score -= 14;
     }
 
     if (/\bauthorization\b/.test(windowText) && /\bbearer\b/.test(windowText)) {
@@ -147,7 +296,11 @@
       score += 5;
     }
 
-    return Math.max(-36, Math.min(24, score));
+    const bounded = Math.max(-36, Math.min(24, score));
+    if (cacheKey) {
+      activeContextScoreCache.set(cacheKey, bounded);
+    }
+    return bounded;
   }
 
   function getLineWindow(text, start, end) {
@@ -261,6 +414,7 @@
     "redis",
     "amqp",
     "mssql",
+    "sqlserver",
     "https",
     "http",
     "ftp",
@@ -515,18 +669,23 @@
 
   const SAFE_ASSIGNMENT_KEYS = new Set([
     "api_version",
+    "bearer_market",
+    "benign_password_hint",
     "build_id",
     "commit_sha",
     "debug",
     "environment",
+    "github_username",
     "image_tag",
     "jira_key",
     "max_token_limit",
     "password_hint",
+    "public_key_label",
     "public_url",
     "region",
     "release_id",
     "secret_santa",
+    "secret_santa_enabled",
     "ticket_id",
     "token_limit",
     "trace_id",
@@ -549,12 +708,29 @@
     "webhook_url"
   ]);
 
+  const EXACT_INLINE_SECRET_KEYS = new Set([
+    "api_secret",
+    "app_secret",
+    "auth_secret",
+    "client_secret",
+    "password",
+    "secret",
+    "signing_secret",
+    "token",
+    "webhook_secret"
+  ]);
+
   function isSafeAssignmentKey(key) {
     return SAFE_ASSIGNMENT_KEYS.has(normalizeAssignmentKey(key));
   }
 
   function isExactCredentialAssignmentKey(key) {
     return EXACT_CREDENTIAL_KEYS.has(normalizeAssignmentKey(key));
+  }
+
+  function isExactInlineSecretKey(key) {
+    const normalized = normalizeAssignmentKey(key);
+    return EXACT_INLINE_SECRET_KEYS.has(normalized) && !SAFE_ASSIGNMENT_KEYS.has(normalized);
   }
 
   function isSensitiveAssignmentKey(key) {
@@ -580,6 +756,16 @@
       /[A-Za-z]/.test(raw) &&
       (/\d/.test(raw) || /[^A-Za-z0-9]/.test(raw) || /(?:secret|token|pass|key|bearer)/i.test(raw))
     );
+  }
+
+  function isGenericKeyAssignmentWithProviderToken(key, value) {
+    const normalizedKey = normalizeAssignmentKey(key);
+    const raw = String(value || "").trim();
+
+    if (!/(?:^|_)key$/.test(normalizedKey)) return false;
+    if (likelyTemplateValue(raw) || isCleanPlaceholder(raw)) return false;
+
+    return /^sk-(?:proj|live|test|org|svcacct|admin)-[A-Za-z0-9_-]{6,}$/.test(raw);
   }
 
   const SENSITIVE_HTTP_HEADERS = new Set([
@@ -677,10 +863,10 @@
     const normalized = normalizeAssignmentKey(key);
     const compact = compactAssignmentKey(key);
     return (
-      /\b(?:database|db|mysql|postgres(?:ql)?|mariadb|mongodb|mongo|redis|amqp|rabbitmq|mssql|sqlserver)_(?:url|uri)\b/.test(
+      /\b(?:database|db|jdbc|mysql|postgres(?:ql)?|mariadb|mongodb|mongo|redis|amqp|rabbitmq|mssql|sqlserver)_(?:url|uri)\b/.test(
         normalized
       ) ||
-      /(?:database|db|mysql|postgres(?:ql)?|mariadb|mongodb|mongo|redis|amqp|rabbitmq|mssql|sqlserver)(?:url|uri)\b/.test(
+      /(?:database|db|jdbc|mysql|postgres(?:ql)?|mariadb|mongodb|mongo|redis|amqp|rabbitmq|mssql|sqlserver)(?:url|uri)\b/.test(
         compact
       )
     );
@@ -700,7 +886,7 @@
   }
 
   function extractDbUriAssignmentValue(value) {
-    const match = /^(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis|amqp|mssql):\/\/[^\s'"`<>{}\[\]]+/i.exec(
+    const match = /^(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis|amqp|mssql|sqlserver|jdbc:sqlserver):\/\/[^\s'"`<>{}\[\]]+/i.exec(
       String(value || "")
     );
 
@@ -741,6 +927,49 @@
     }
 
     return "";
+  }
+
+  function getSqlServerConnectionTokenEnd(text, start) {
+    const input = String(text || "");
+    let end = Math.max(0, start);
+
+    while (end < input.length && !/[\s'"`<>{}\[\]]/.test(input[end])) {
+      end += 1;
+    }
+
+    return end;
+  }
+
+  function collectSqlServerPasswordAttributeCandidates(text) {
+    const input = String(text || "");
+    const prefixRegex = /\b(?:jdbc:sqlserver|sqlserver|mssql):\/\//gi;
+    const candidates = [];
+    let prefixMatch;
+
+    while ((prefixMatch = prefixRegex.exec(input)) !== null) {
+      const tokenStart = prefixMatch.index;
+      const tokenEnd = getSqlServerConnectionTokenEnd(input, tokenStart);
+      const token = input.slice(tokenStart, tokenEnd);
+      const passwordRegex = /(?:^|;)(?:password|pwd)\s*=\s*([^;\s'"`<>{}\[\]]+)/gi;
+      let passwordMatch;
+
+      while ((passwordMatch = passwordRegex.exec(token)) !== null) {
+        const raw = passwordMatch[1] || "";
+        const rawOffset = passwordMatch[0].lastIndexOf(raw);
+        if (!raw || rawOffset < 0) continue;
+
+        const start = tokenStart + passwordMatch.index + rawOffset;
+        candidates.push({
+          raw,
+          start,
+          end: start + raw.length
+        });
+      }
+
+      prefixRegex.lastIndex = Math.max(prefixRegex.lastIndex, tokenEnd);
+    }
+
+    return candidates;
   }
 
   function hasGenericDbCredentials(raw) {
@@ -805,6 +1034,65 @@
     const boundary = findEmbeddedAssignmentBoundary(input);
     if (boundary <= 0) return input;
     return input.slice(0, boundary);
+  }
+
+  function readDelimitedAssignmentValue(text, valueStart) {
+    const input = String(text || "");
+    let start = Math.max(0, Number(valueStart) || 0);
+
+    while (start < input.length && /[ \t]/.test(input[start])) {
+      start += 1;
+    }
+
+    const quote = input[start];
+    if (quote === '"' || quote === "'" || quote === "`") {
+      const rawStart = start + 1;
+      let end = rawStart;
+
+      while (end < input.length && input[end] !== quote && !/[\r\n]/.test(input[end])) {
+        end += 1;
+      }
+
+      return {
+        raw: input.slice(rawStart, end),
+        start: rawStart,
+        end
+      };
+    }
+
+    let end = start;
+    while (end < input.length && !/[\s,;"'`}\]]/.test(input[end])) {
+      end += 1;
+    }
+
+    return {
+      raw: input.slice(start, end),
+      start,
+      end
+    };
+  }
+
+  function hasInlineAssignmentKeyBoundary(text, keyStart) {
+    if (keyStart <= 0) return true;
+    const previous = String(text || "")[keyStart - 1] || "";
+    if (/[A-Za-z0-9_.-]/.test(previous)) return false;
+    if (/[?&@/:]/.test(previous)) return false;
+    return true;
+  }
+
+  function hasBareInlineAssignmentCue(text, keyStart) {
+    const left = String(text || "").slice(0, Math.max(0, keyStart)).trimEnd();
+    if (!left) return true;
+
+    const last = left[left.length - 1] || "";
+    if (/["'`{[,;]/.test(last)) return true;
+
+    const previousToken = left.split(/\s+/).pop() || "";
+    return /[:=]/.test(previousToken);
+  }
+
+  function isBareInlineSecretKey(key) {
+    return /^(?:password|secret|token)$/i.test(normalizeAssignmentKey(key));
   }
 
   function isRegionLikeSegment(value) {
@@ -1012,6 +1300,12 @@
     return /^(?:[A-Za-z]+-){1,4}\d{4}(?:-\d{2}){1,2}$/i.test(String(value || "").trim());
   }
 
+  function isSafeValidationMarker(value) {
+    return /^(?:DUPLICATE_CHECK_(?:BEGIN|END)_\d+|LEAKGUARD_PERFORMANCE_TEST_END_MARKER_\d+)$/i.test(
+      String(value || "").trim()
+    );
+  }
+
   function containsPasswordKeyword(value) {
     const normalized = String(value || "").trim();
     return /(?:^|[_\-\s])(?:secret|password|passwd|passcode|passphrase|pwd)(?=$|[_\-\s]|\d)/i.test(
@@ -1079,6 +1373,23 @@
     );
   }
 
+  function hasExplicitNaturalLanguageDisclosureConnector(afterLabel) {
+    return /^\s*(?:(?:is|equals|set\s+to|should\s+be|becomes)\b|=|:|->|→)/i.test(
+      String(afterLabel || "")
+    );
+  }
+
+  function hasNaturalLanguageDisclosureIntro(label) {
+    const normalized = String(label || "").toLowerCase().replace(/\s+/g, " ").trim();
+    if (/\b(?:this is my|here is my|here is the|here's my|my|the|our|use this)\b/.test(normalized)) {
+      return true;
+    }
+    if (/\b(?:real|actual|prod(?:uction)?|live|same|again)\b/.test(normalized)) {
+      return true;
+    }
+    return /\bvalue$/.test(normalized);
+  }
+
   function hasSensitivePlaceholderContext(text, start, end) {
     const before = getLineWindow(text, start, end)
       .slice(0, Math.max(0, start - (String(text || "").lastIndexOf("\n", Math.max(0, start - 1)) + 1)))
@@ -1127,6 +1438,7 @@
     }
     if (/^(?:v?\d+\.)+\d+(?:[-+][A-Za-z0-9._-]+)?$/.test(value)) return false;
     if (isBuildLabelLike(value)) return false;
+    if (isSafeValidationMarker(value)) return false;
     if (looksLikeFilesystemPath(text, start, end, value)) return false;
 
     const variety = countClassVariety(value);
@@ -1322,7 +1634,8 @@
 
       return {
         manager,
-        trustedPlaceholders: normalizeTrustedPlaceholderSet(source)
+        trustedPlaceholders: normalizeTrustedPlaceholderSet(source),
+        disableRepeatedLineCache: Boolean(options.disableRepeatedLineCache)
       };
     }
 
@@ -1457,10 +1770,57 @@
       };
     }
 
-    scanPatterns(text) {
+    cloneFindingAtOffset(finding, offset) {
+      return {
+        ...finding,
+        id: this.nextId(),
+        start: finding.start + offset,
+        end: finding.end + offset
+      };
+    }
+
+    scanRepeatedLines(text, scanner) {
+      if (this.scanContext?.disableRepeatedLineCache) return null;
+      const plan = buildRepeatedLinePlan(text);
+      if (!plan) return null;
+
+      const cache = new Map();
       const findings = [];
 
+      for (const { line, offset } of plan) {
+        if (!line) continue;
+
+        let lineFindings = cache.get(line);
+        if (!lineFindings) {
+          lineFindings = scanner(line).map((finding) => ({
+            ...finding,
+            id: null
+          }));
+          cache.set(line, lineFindings);
+        }
+
+        for (const finding of lineFindings) {
+          findings.push(this.cloneFindingAtOffset(finding, offset));
+        }
+      }
+
+      return findings;
+    }
+
+    scanPatterns(text, options = {}) {
+      if (!options.lineCache) {
+        const lineCached = this.scanRepeatedLines(text, (line) =>
+          this.scanPatterns(line, { lineCache: true })
+        );
+        if (lineCached) return lineCached;
+      }
+
+      const findings = [];
+      const lowerText = String(text || "").toLowerCase();
+
       for (const pattern of PATTERNS) {
+        if (!patternCanMatch(pattern, lowerText)) continue;
+
         const regex = cloneRegex(pattern.regex);
         let match;
 
@@ -1527,7 +1887,14 @@
       return findings;
     }
 
-    scanSensitiveHttpHeaders(text) {
+    scanSensitiveHttpHeaders(text, options = {}) {
+      if (!options.lineCache) {
+        const lineCached = this.scanRepeatedLines(text, (line) =>
+          this.scanSensitiveHttpHeaders(line, { lineCache: true })
+        );
+        if (lineCached) return lineCached;
+      }
+
       const findings = [];
       const lines = String(text || "").split("\n");
       let lineOffset = 0;
@@ -1688,7 +2055,14 @@
       return findings;
     }
 
-    scanStructuredAssignments(text) {
+    scanStructuredAssignments(text, options = {}) {
+      if (!options.lineCache) {
+        const lineCached = this.scanRepeatedLines(text, (line) =>
+          this.scanStructuredAssignments(line, { lineCache: true })
+        );
+        if (lineCached) return lineCached;
+      }
+
       const findings = [];
       const regex =
         /([A-Za-z_][A-Za-z0-9_.-]{0,80})\s*[:=]\s*(?:"([^"\r\n]+)"|'([^'\r\n]+)'|`([^`\r\n]+)`|([^\s\r\n]+))/gim;
@@ -1840,7 +2214,14 @@
       return findings;
     }
 
-    scanAssignments(text) {
+    scanAssignments(text, options = {}) {
+      if (!options.lineCache) {
+        const lineCached = this.scanRepeatedLines(text, (line) =>
+          this.scanAssignments(line, { lineCache: true })
+        );
+        if (lineCached) return lineCached;
+      }
+
       const findings = [];
       const regex = cloneRegex(ASSIGNMENT_REGEX);
       let match;
@@ -1950,18 +2331,97 @@
       return findings;
     }
 
-    scanExplicitCredentialAssignments(text) {
+    scanExactInlineSecretAssignments(text, options = {}) {
+      if (!options.lineCache) {
+        const lineCached = this.scanRepeatedLines(text, (line) =>
+          this.scanExactInlineSecretAssignments(line, { lineCache: true })
+        );
+        if (lineCached) return lineCached;
+      }
+
+      const findings = [];
+      const regex = /([A-Za-z_][A-Za-z0-9_.-]{0,80})\s*[:=]\s*/g;
+      let match;
+
+      while ((match = regex.exec(text)) !== null) {
+        const key = match[1];
+        if (!isExactInlineSecretKey(key)) continue;
+        if (!hasInlineAssignmentKeyBoundary(text, match.index)) continue;
+        if (isBareInlineSecretKey(key) && !hasBareInlineAssignmentCue(text, match.index)) continue;
+        if (match.index > 0 && /[?&]/.test(String(text || "")[match.index - 1])) continue;
+        if (
+          String(text || "")[match.index - 1] === ";" &&
+          /(?:jdbc:sqlserver|sqlserver|mssql):\/\//i.test(
+            String(text || "").slice(Math.max(0, match.index - 256), match.index)
+          )
+        ) {
+          continue;
+        }
+
+        const value = readDelimitedAssignmentValue(text, regex.lastIndex);
+        if (String(text || "")[value.start] === "[") continue;
+        const raw = normalizeCandidate(value.raw);
+        if (!raw || raw.length < 8) continue;
+        if (this.isAllowlisted(raw)) continue;
+        if (!looksCredentialLikeAssignmentValue(raw)) continue;
+        if (looksLikeUnsupportedVendorHexAssignment(key, raw)) continue;
+        if (containsPlaceholder(raw) && isBenignPlaceholderComposite(raw)) continue;
+        if (this.shouldDeferTrustedPlaceholderTail(raw, text, value.start)) continue;
+
+        const placeholderType = inferPlaceholderTypeFromKey(key);
+        const suppressed = this.shouldSuppress({
+          raw,
+          text,
+          start: value.start,
+          end: value.end,
+          key,
+          placeholderType,
+          source: "assignment"
+        });
+        const failClosedGenericSecret =
+          normalizeAssignmentKey(key) === "secret" &&
+          /[A-Za-z]/.test(raw) &&
+          /\d/.test(raw) &&
+          /(?:secret|token|pass|key|bearer)/i.test(raw);
+        if (suppressed && !failClosedGenericSecret) {
+          continue;
+        }
+
+        const entropy = calculateEntropy(raw);
+        findings.push(
+          this.buildFinding({
+            category: "credential",
+            placeholderType,
+            raw,
+            start: value.start,
+            end: value.end,
+            score: 100,
+            methods: ["assignment", "exact-key", entropy >= 3.6 ? "entropy" : null].filter(
+              Boolean
+            )
+          })
+        );
+      }
+
+      return findings;
+    }
+
+    scanExplicitCredentialAssignments(text, options = {}) {
+      if (!options.lineCache) {
+        const lineCached = this.scanRepeatedLines(text, (line) =>
+          this.scanExplicitCredentialAssignments(line, { lineCache: true })
+        );
+        if (lineCached) return lineCached;
+      }
+
       const findings = [];
       const regex =
-        /([A-Za-z_][A-Za-z0-9_.-]{0,80})\s*[:=]\s*(?:"([^"\r\n]+)"|'([^'\r\n]+)'|`([^`\r\n]+)`|([^\s\r\n]+))/gim;
+        /([A-Za-z_][A-Za-z0-9_.-]{0,80})\s*[:=]\s*(?:"([^"\r\n]+)"|'([^'\r\n]+)'|`([^`\r\n]+)`|([^\s,;"'`}\r\n]+))/gim;
       let match;
 
       while ((match = regex.exec(text)) !== null) {
         const key = match[1];
         if (match.index > 0 && /[?&]/.test(String(text || "")[match.index - 1])) continue;
-        if (isSafeAssignmentKey(key)) continue;
-        if (isDbUriAssignmentKey(key) || isConnectionStringAssignmentKey(key)) continue;
-        if (!isSensitiveAssignmentKey(key)) continue;
 
         const rawCandidate = [match[2], match[3], match[4], match[5]].find(
           (candidate) => typeof candidate === "string"
@@ -1969,7 +2429,12 @@
         if (!rawCandidate) continue;
 
         const raw = normalizeCandidate(rawCandidate);
-        if (!looksCredentialLikeAssignmentValue(raw)) continue;
+        const providerKeyAssignment = isGenericKeyAssignmentWithProviderToken(key, raw);
+
+        if (isSafeAssignmentKey(key)) continue;
+        if (isDbUriAssignmentKey(key) || isConnectionStringAssignmentKey(key)) continue;
+        if (!isSensitiveAssignmentKey(key) && !providerKeyAssignment) continue;
+        if (!looksCredentialLikeAssignmentValue(raw) && !providerKeyAssignment) continue;
         if (looksLikeUnsupportedVendorHexAssignment(key, raw)) continue;
         if (containsPlaceholder(raw) && isBenignPlaceholderComposite(raw)) continue;
         if (this.shouldDeferTrustedPlaceholderTail(raw, text, match.index + match[0].indexOf(rawCandidate))) {
@@ -1991,7 +2456,7 @@
 
         const start = match.index + valueIndex;
         const end = start + rawCandidate.length;
-        const placeholderType = inferPlaceholderTypeFromKey(key);
+        const placeholderType = providerKeyAssignment ? "API_KEY" : inferPlaceholderTypeFromKey(key);
 
         if (
           this.shouldSuppress({
@@ -2011,6 +2476,7 @@
         const score =
           62 +
           (isExactCredentialAssignmentKey(key) ? 12 : 4) +
+          (providerKeyAssignment ? 16 : 0) +
           (entropy >= 3.6 ? 4 : 0) +
           (countClassVariety(raw) >= 3 ? 2 : 0);
 
@@ -2025,6 +2491,51 @@
             methods: ["assignment", "explicit-key", entropy >= 3.6 ? "entropy" : null].filter(
               Boolean
             )
+          })
+        );
+      }
+
+      return findings;
+    }
+
+    scanSqlServerPasswordAttributes(text) {
+      const findings = [];
+      const candidates = collectSqlServerPasswordAttributeCandidates(text);
+
+      for (const candidate of candidates) {
+        const raw = normalizeCandidate(candidate.raw);
+        if (!raw || raw.length < 8) continue;
+        if (this.isAllowlisted(raw)) continue;
+        if (isCleanPlaceholder(raw) && this.isTrustedVisiblePlaceholder(raw)) continue;
+        if (containsPlaceholder(raw) && isBenignPlaceholderComposite(raw)) continue;
+        if (
+          this.shouldSuppress({
+            raw,
+            text,
+            start: candidate.start,
+            end: candidate.end,
+            key: "password",
+            placeholderType: "PASSWORD",
+            source: "assignment"
+          })
+        ) {
+          continue;
+        }
+
+        const entropy = calculateEntropy(raw);
+        findings.push(
+          this.buildFinding({
+            category: "credential",
+            placeholderType: "PASSWORD",
+            raw,
+            start: candidate.start,
+            end: candidate.end,
+            score: 99 + (entropy >= 3.8 ? 1 : 0),
+            methods: [
+              "sqlserver-connection-string",
+              "password-attribute",
+              entropy >= 3.8 ? "entropy" : null
+            ].filter(Boolean)
           })
         );
       }
@@ -2053,7 +2564,11 @@
           continue;
         }
 
-        if (username && !isCleanPlaceholder(username) && !this.isAllowlisted(username)) {
+        if (
+          username &&
+          !isCleanPlaceholder(username) &&
+          !this.isAllowlisted(username)
+        ) {
           findings.push(
             this.buildFinding({
               category: "identity",
@@ -2102,7 +2617,7 @@
         }
 
         if (!this.isAllowlisted(secret)) {
-          const isDbScheme = /^(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis|amqp|mssql)$/.test(scheme);
+          const isDbScheme = /^(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis|amqp|mssql|sqlserver)$/.test(scheme);
           findings.push(
             this.buildFinding({
               category: "credential",
@@ -2120,7 +2635,14 @@
       return findings;
     }
 
-    scanIdentityAssignments(text) {
+    scanIdentityAssignments(text, options = {}) {
+      if (!options.lineCache) {
+        const lineCached = this.scanRepeatedLines(text, (line) =>
+          this.scanIdentityAssignments(line, { lineCache: true })
+        );
+        if (lineCached) return lineCached;
+      }
+
       const findings = [];
       const regex =
         /([A-Za-z_][A-Za-z0-9_.-]{0,80})\s*[:=]\s*(?:"([^"\r\n]+)"|'([^'\r\n]+)'|`([^`\r\n]+)`|([^\s\r\n]+))/gim;
@@ -2271,7 +2793,14 @@
       return findings;
     }
 
-    scanEntropyFallback(text) {
+    scanEntropyFallback(text, options = {}) {
+      if (!options.lineCache) {
+        const lineCached = this.scanRepeatedLines(text, (line) =>
+          this.scanEntropyFallback(line, { lineCache: true })
+        );
+        if (lineCached) return lineCached;
+      }
+
       const findings = [];
       const regex = /\b[A-Za-z0-9+/_-]{16,}={0,2}\b/g;
       let match;
@@ -2286,6 +2815,7 @@
         if (/^(https?|wss?):\/\//i.test(raw)) continue;
         if (/^\d+$/.test(raw)) continue;
         if (isBuildLabelLike(raw)) continue;
+        if (isSafeValidationMarker(raw)) continue;
         if (looksLikeFilesystemPath(text, start, end, raw)) continue;
         if (hasUnsupportedVendorHexAssignmentContext(text, start, raw)) continue;
         if (this.shouldSuppress({ raw, text, start, end })) continue;
@@ -2359,12 +2889,19 @@
       return findings;
     }
 
-    scanNaturalLanguageDisclosures(text) {
+    scanNaturalLanguageDisclosures(text, options = {}) {
+      if (!options.lineCache) {
+        const lineCached = this.scanRepeatedLines(text, (line) =>
+          this.scanNaturalLanguageDisclosures(line, { lineCache: true })
+        );
+        if (lineCached) return lineCached;
+      }
+
       const findings = [];
       const labelSource =
         "(?:real|actual)\\s+(?:(?:db|database)\\s+)?(?:password|passwd|pwd|passcode|passphrase|secret|api\\s*key|apikey|token|access\\s+token|refresh\\s+token|bearer\\s+token|client\\s+secret|private\\s+key|webhook\\s+secret)\\s+value|(?:(?:this\\s+is\\s+my|here\\s+is\\s+my|here\\s+is\\s+the|here'?s\\s+my|my|the|our|use\\s+this)\\s+)?(?:(?:real|actual|prod(?:uction)?|live)\\s+)?(?:(?:db|database)\\s+)?(?:password|passwd|pwd|passcode|passphrase|secret|api\\s*key|apikey|token|access\\s+token|refresh\\s+token|bearer\\s+token|client\\s+secret|private\\s+key|webhook\\s+secret)|(?:again\\s+(?:the\\s+)?)?same\\s+(?:key|token|password|secret)|real\\s+value|actual\\s+value";
       const valueSource =
-        "\"([^\"\\r\\n]{6,})\"|'([^'\\r\\n]{6,})'|`([^`\\r\\n]{6,})`|([^\\s,;]{6,})";
+        "\"([^\"\\r\\n]{6,})\"|'([^'\\r\\n]{6,})'|`([^`\\r\\n]{6,})`|([^\\s,;\"'`]{6,})";
       const regex = new RegExp(
         `\\b(${labelSource})\\s*(?:(?:is|equals|set\\s+to|should\\s+be|becomes)\\s*)?(?:=|:|->|→)?\\s*(?:${valueSource})`,
         "gi"
@@ -2378,6 +2915,12 @@
         );
         if (!rawCandidate) continue;
         const afterLabel = match[0].slice(String(label || "").length);
+        if (
+          !hasExplicitNaturalLanguageDisclosureConnector(afterLabel) &&
+          !hasNaturalLanguageDisclosureIntro(label)
+        ) {
+          continue;
+        }
         if (!/^\s/.test(afterLabel) && !/^(?:=|:|->|→)/.test(afterLabel)) {
           continue;
         }
@@ -2508,7 +3051,14 @@
       return findings;
     }
 
-    scanAdversarialAssignments(text) {
+    scanAdversarialAssignments(text, options = {}) {
+      if (!options.lineCache) {
+        const lineCached = this.scanRepeatedLines(text, (line) =>
+          this.scanAdversarialAssignments(line, { lineCache: true })
+        );
+        if (lineCached) return lineCached;
+      }
+
       const findings = [];
       const regex =
         /([A-Za-z](?:[\u200B-\u200D\uFEFF\s._$@-]*[A-Za-z0-9$@]){1,80})\s*[:=]\s*(?:"([^"\r\n]+)"|'([^'\r\n]+)'|`([^`\r\n]+)`|([^\s\r\n]+))/gim;
@@ -2610,6 +3160,10 @@
         const bHasFullValue = b.method?.includes("full-value") ? 1 : 0;
         if (bHasFullValue !== aHasFullValue) return bHasFullValue - aHasFullValue;
 
+        const aHasExactKey = a.method?.includes("exact-key") ? 1 : 0;
+        const bHasExactKey = b.method?.includes("exact-key") ? 1 : 0;
+        if (bHasExactKey !== aHasExactKey) return bHasExactKey - aHasExactKey;
+
         const lenA = a.end - a.start;
         const lenB = b.end - b.start;
 
@@ -2635,6 +3189,9 @@
     scan(text, options = {}) {
       this._seq = 0;
       const previousContext = this.scanContext;
+      const previousContextScoreCache = activeContextScoreCache;
+      const previousContextScoreText = activeContextScoreText;
+      const previousLineBounds = activeLineBounds;
       this.scanContext = this.normalizeScanContext(options);
 
       const input = String(text || "");
@@ -2644,12 +3201,17 @@
       }
 
       try {
+        activeContextScoreCache = new Map();
+        activeContextScoreText = input;
+        activeLineBounds = buildLineBounds(input);
         const findings = [
           ...this.scanSensitiveHttpHeaders(input),
           ...this.scanStructuredAssignments(input),
           ...this.scanUrlCredentials(input),
+          ...this.scanSqlServerPasswordAttributes(input),
           ...this.scanPatterns(input),
           ...this.scanAssignments(input),
+          ...this.scanExactInlineSecretAssignments(input),
           ...this.scanExplicitCredentialAssignments(input),
           ...this.scanAdversarialAssignments(input),
           ...this.scanIdentityAssignments(input),
@@ -2665,6 +3227,9 @@
         return this.resolveOverlaps(this.dedupe(findings));
       } finally {
         this.scanContext = previousContext;
+        activeContextScoreCache = previousContextScoreCache;
+        activeContextScoreText = previousContextScoreText;
+        activeLineBounds = previousLineBounds;
       }
     }
 

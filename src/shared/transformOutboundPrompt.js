@@ -56,9 +56,28 @@
   }
 
   function applyReplacements(text, replacements) {
-    let output = String(text || "");
+    const input = String(text || "");
+    const sorted = [...replacements].sort((left, right) => left.start - right.start);
+    const hasOverlaps = sorted.some((replacement, index) => {
+      if (index === 0) return false;
+      return replacement.start < sorted[index - 1].end;
+    });
 
-    for (const replacement of [...replacements].sort((left, right) => right.start - left.start)) {
+    if (!hasOverlaps) {
+      const chunks = [];
+      let cursor = 0;
+
+      for (const replacement of sorted) {
+        chunks.push(input.slice(cursor, replacement.start), replacement.placeholder);
+        cursor = replacement.end;
+      }
+
+      chunks.push(input.slice(cursor));
+      return chunks.join("");
+    }
+
+    let output = input;
+    for (const replacement of sorted.sort((left, right) => right.start - left.start)) {
       output =
         output.slice(0, replacement.start) + replacement.placeholder + output.slice(replacement.end);
     }
@@ -68,6 +87,32 @@
 
   function overlapsAnyRange(candidate, ranges) {
     return ranges.some((range) => candidate.start < range.end && candidate.end > range.start);
+  }
+
+  function shouldReuseKnownSecretInPlainText(text, start, end, raw) {
+    const knownRaw = String(raw || "");
+    const previous = start > 0 ? text[start - 1] : "";
+    const next = end < text.length ? text[end] : "";
+    const leftContext = text.slice(Math.max(0, start - 32), start).toLowerCase();
+    const shortIdentifier = /^[A-Za-z0-9._-]{3,16}$/.test(knownRaw);
+    const hintContext =
+      previous === "-" && /(?:password_hint|hint|ask)\s*[:=]?\s*[\w.-]*-$/.test(leftContext);
+    const secretLikeShortValue =
+      /\d/.test(knownRaw) || /(?:secret|token|pass|key|auth|bearer)/i.test(knownRaw);
+
+    if (shortIdentifier && !hintContext && !secretLikeShortValue) {
+      return false;
+    }
+
+    if (shortIdentifier && /[A-Za-z0-9._-]/.test(next)) {
+      return false;
+    }
+
+    if (shortIdentifier && /[A-Za-z0-9_.]/.test(previous)) {
+      return false;
+    }
+
+    return true;
   }
 
   function collectKnownSecretReplacements(text, manager, occupiedRanges = []) {
@@ -80,19 +125,25 @@
 
     function scanPlainTextSegment(segmentText, offset) {
       for (const entry of knownEntries) {
-        if (!entry.raw) continue;
+        const knownRaw = String(entry.raw || "");
+        if (knownRaw.length < 3) continue;
 
         let searchIndex = 0;
         while (searchIndex < segmentText.length) {
-          const relativeIndex = segmentText.indexOf(entry.raw, searchIndex);
+          const relativeIndex = segmentText.indexOf(knownRaw, searchIndex);
           if (relativeIndex === -1) break;
 
           const start = offset + relativeIndex;
-          const end = start + entry.raw.length;
+          const end = start + knownRaw.length;
+          if (!shouldReuseKnownSecretInPlainText(text, start, end, knownRaw)) {
+            searchIndex = relativeIndex + knownRaw.length;
+            continue;
+          }
+
           const candidate = {
             start,
             end,
-            raw: entry.raw,
+            raw: knownRaw,
             placeholder: entry.placeholder,
             type: "SECRET",
             category: "secret"
@@ -103,7 +154,7 @@
             occupiedRanges.push({ start, end });
           }
 
-          searchIndex = relativeIndex + Math.max(1, entry.raw.length);
+          searchIndex = relativeIndex + knownRaw.length;
         }
       }
     }
