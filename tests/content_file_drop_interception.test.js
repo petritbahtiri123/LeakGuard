@@ -374,6 +374,11 @@ function createHarness(overrides = {}) {
     showMessageModal: async (...args) => {
       calls.modals.push(args);
     },
+    showGeminiLargeTextConfirmationModal: async (...args) => {
+      calls.largeTextConfirmations = calls.largeTextConfirmations || [];
+      calls.largeTextConfirmations.push(args);
+      return { action: "insert" };
+    },
     debugReveal: (label, details) => {
       calls.debugEvents.push({ label, details });
     },
@@ -407,6 +412,7 @@ function createHarness(overrides = {}) {
       "const CHATGPT_LARGE_PASTE_FILE_THRESHOLD = 16 * 1024;",
       'const CHATGPT_SANITIZED_PASTE_FILE_NAME = "leakguard-redacted-paste.txt";',
       "const GEMINI_DIRECT_TEXT_INSERT_THRESHOLD = 16 * 1024;",
+      "const GEMINI_AUTO_INSERT_TEXT_LIMIT = 256 * 1024;",
       "const GEMINI_LARGE_TEXT_SUPPRESS_MS = 2500;",
       "let suppressInputScanUntil = 0;",
       extractFunctionSource(contentSource, "consumeInterceptionEvent"),
@@ -436,6 +442,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "insertLargeGeminiEditorText"),
       extractFunctionSource(contentSource, "insertGeminiEditorText"),
       extractFunctionSource(contentSource, "dispatchGeminiEditorInput"),
+      extractFunctionSource(contentSource, "confirmGeminiLargeSanitizedTextInsertion"),
       extractFunctionSource(contentSource, "applyGeminiEditorText"),
       extractFunctionSource(contentSource, "blockGeminiEditorRawContent"),
       extractFunctionSource(contentSource, "maybeHandleGeminiEditorPaste"),
@@ -1049,6 +1056,7 @@ async function testLargeGeminiDropUsesDirectSanitizedInsertion() {
   assert.strictEqual(execCommandCalls, 0);
   assert.strictEqual(calls.reads.length, 1);
   assert.strictEqual(calls.redactions.length, 1);
+  assert.strictEqual(calls.largeTextConfirmations?.length || 0, 0);
   assert.strictEqual(editor.inputEvents.length, 1);
   assert.strictEqual(editor.inputEvents[0].inputType, "insertReplacementText");
   assert.strictEqual(editor.inputEvents[0].data, null);
@@ -1144,6 +1152,12 @@ async function testVeryLargeGeminiDropDoesNotUseEventOrCommandLoops() {
   assert.ok(eventCalls.stopImmediatePropagation >= 1);
   assert.strictEqual(calls.reads.length, 1, "file should be read once");
   assert.strictEqual(calls.redactions.length, 1, "large payload should be redacted once");
+  assert.strictEqual(calls.largeTextConfirmations.length, 1, "huge payload should require explicit confirmation");
+  assert.strictEqual(
+    calls.largeTextConfirmations[0][0],
+    sanitizedLargeText.length,
+    "confirmation should receive only sanitized text length"
+  );
   assert.strictEqual(execCommandCalls, 0, "large payload should bypass execCommand entirely");
   assert.strictEqual(editor.textContentWrites, 1, "large payload should be inserted with one DOM write");
   assert.strictEqual(editor.inputEvents.length, 1, "large payload should dispatch one input event");
@@ -1155,6 +1169,88 @@ async function testVeryLargeGeminiDropDoesNotUseEventOrCommandLoops() {
   assert.strictEqual(editor.text.includes(rawSecret), false);
   assert.strictEqual((editor.text.match(/\[PWM_1\]/g) || []).length, 2);
   assert.ok(getSuppressInputScanUntil() > Date.now(), "large insertion should suppress re-entrant scans");
+}
+
+async function testVeryLargeGeminiDropCancelDoesNotInsertText() {
+  const rawSecret = "LeakGuardFileApiKey1234567890";
+  const largeText = buildLargeGeminiPayload({
+    minBytes: 500 * 1024,
+    rawSecret
+  });
+  const sanitizedLargeText = largeText.replace(
+    /LeakGuard(?:Drop|Paste|File)ApiKey1234567890/g,
+    "[PWM_1]"
+  );
+  const file = createTextFile({
+    name: "very-large.env",
+    text: largeText
+  });
+  const { editor, child } = createGeminiEditor("Existing prompt");
+  let execCommandCalls = 0;
+  const confirmationLengths = [];
+  const { maybeHandleDrop, calls } = createHarness({
+    location: { hostname: "gemini.google.com" },
+    showGeminiLargeTextConfirmationModal: async (redactedLength) => {
+      confirmationLengths.push(redactedLength);
+      return { action: "cancel" };
+    },
+    readLocalTextFileFromDataTransfer: async (transfer) => {
+      calls.reads.push(transfer);
+      return {
+        handled: true,
+        ok: true,
+        text: largeText,
+        file: {
+          name: "very-large.env",
+          type: "text/plain"
+        }
+      };
+    },
+    requestRedaction: async (text, findings) => {
+      calls.redactions.push({ text, findings });
+      return {
+        redactedText: sanitizedLargeText
+      };
+    },
+    document: {
+      activeElement: editor,
+      execCommand() {
+        execCommandCalls += 1;
+        throw new Error("cancelled large Gemini insertion must not use execCommand");
+      },
+      createRange: () => null
+    }
+  });
+  const { event } = createEvent({
+    dataTransfer: {
+      types: ["Files"],
+      files: [file],
+      items: [],
+      dropEffect: "none"
+    },
+    target: child
+  });
+
+  await maybeHandleDrop(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(calls.reads.length, 1, "raw file should still be read locally once");
+  assert.strictEqual(calls.redactions.length, 1, "large text must be redacted before confirmation");
+  assert.strictEqual(confirmationLengths.length, 1, "large fallback should ask before insertion");
+  assert.strictEqual(confirmationLengths[0], sanitizedLargeText.length);
+  assert.strictEqual(execCommandCalls, 0);
+  assert.strictEqual(editor.textContentWrites, 0, "cancel should leave Gemini editor unchanged");
+  assert.strictEqual(editor.inputEvents.length, 0, "cancel should not dispatch Gemini input events");
+  assert.strictEqual(editor.text, "Existing prompt");
+  assert.strictEqual(editor.text.includes(rawSecret), false);
+  assert.ok(
+    calls.badges.some(([message]) => message === "Sanitized text insertion cancelled"),
+    "cancel should show a short status message"
+  );
+  assert.ok(
+    calls.debugEvents.some((entry) => entry.label === "gemini-text:large-confirmation-cancelled"),
+    "cancel path should leave a safe debug breadcrumb"
+  );
 }
 
 async function testGeminiTextLikeFileExtensionsAreSanitized() {
@@ -1826,6 +1922,7 @@ async function testChatGptAndClaudeStillUseSanitizedFileHandoffOnly() {
   await testGeminiQlEditorDropTextFileIsSanitizedAndInserted();
   await testLargeGeminiDropUsesDirectSanitizedInsertion();
   await testVeryLargeGeminiDropDoesNotUseEventOrCommandLoops();
+  await testVeryLargeGeminiDropCancelDoesNotInsertText();
   await testGeminiTextLikeFileExtensionsAreSanitized();
   await testGeminiTextLikeSanitizerFailureBlocksRawFile();
   await testUnsupportedDocumentAndImageFilesPassThroughByDefault();

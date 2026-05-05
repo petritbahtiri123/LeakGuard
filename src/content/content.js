@@ -120,6 +120,7 @@
   const CHATGPT_LARGE_PASTE_FILE_THRESHOLD = 16 * 1024;
   const CHATGPT_SANITIZED_PASTE_FILE_NAME = "leakguard-redacted-paste.txt";
   const GEMINI_DIRECT_TEXT_INSERT_THRESHOLD = 16 * 1024;
+  const GEMINI_AUTO_INSERT_TEXT_LIMIT = 256 * 1024;
   const GEMINI_LARGE_TEXT_SUPPRESS_MS = 2500;
   const FILE_DRAG_SESSION_RESET_MS = 5000;
   const GEMINI_SANITIZED_TEXT_FALLBACK_MESSAGE =
@@ -1269,6 +1270,106 @@
     });
   }
 
+  function showGeminiLargeTextConfirmationModal(redactedLength) {
+    if (modalOpen) {
+      return Promise.resolve({ action: "cancel" });
+    }
+
+    modalOpen = true;
+
+    return new Promise((resolve) => {
+      const backdrop = document.createElement("div");
+      backdrop.className = "pwm-modal-backdrop";
+
+      const modal = document.createElement("div");
+      modal.className = "pwm-modal";
+      modal.setAttribute("role", "dialog");
+      modal.setAttribute("aria-modal", "true");
+      modal.tabIndex = -1;
+
+      const title = document.createElement("h2");
+      title.textContent = "Large sanitized text fallback";
+
+      const desc = document.createElement("p");
+      const sizeKb = Math.max(1, Math.round(Number(redactedLength || 0) / 1024));
+      desc.textContent =
+        `Gemini rejected the sanitized file upload. This sanitized text is about ${sizeKb} KiB, and inserting it into Gemini may freeze the page temporarily.`;
+
+      const actions = document.createElement("div");
+      actions.className = "pwm-actions";
+
+      const cancelBtn = document.createElement("button");
+      cancelBtn.className = "pwm-btn";
+      cancelBtn.type = "button";
+      cancelBtn.textContent = "Cancel";
+
+      const insertBtn = document.createElement("button");
+      insertBtn.className = "pwm-btn pwm-btn-primary";
+      insertBtn.type = "button";
+      insertBtn.textContent = "Insert anyway";
+
+      const consumeModalEvent = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (typeof event.stopImmediatePropagation === "function") {
+          event.stopImmediatePropagation();
+        }
+      };
+
+      const finish = (action) => {
+        window.removeEventListener("keydown", onKeyDown, true);
+        window.removeEventListener("keypress", onModalPassthrough, true);
+        window.removeEventListener("keyup", onModalPassthrough, true);
+        window.removeEventListener("beforeinput", onModalPassthrough, true);
+        window.removeEventListener("input", onModalPassthrough, true);
+        window.removeEventListener("paste", onModalPassthrough, true);
+        closeModal(backdrop);
+        resolve({ action });
+      };
+
+      const onKeyDown = (event) => {
+        if (event.key === "Escape") {
+          consumeModalEvent(event);
+          finish("cancel");
+          return;
+        }
+
+        if (event.key === "Enter" || event.key === " ") {
+          consumeModalEvent(event);
+          finish(document.activeElement === cancelBtn ? "cancel" : "insert");
+          return;
+        }
+
+        consumeModalEvent(event);
+      };
+
+      const onModalPassthrough = (event) => {
+        consumeModalEvent(event);
+      };
+
+      cancelBtn.addEventListener("click", () => finish("cancel"));
+      insertBtn.addEventListener("click", () => finish("insert"));
+      backdrop.addEventListener("click", (event) => {
+        if (event.target === backdrop) {
+          finish("cancel");
+        }
+      });
+
+      actions.append(cancelBtn, insertBtn);
+      modal.append(title, desc, actions);
+      backdrop.appendChild(modal);
+      document.documentElement.appendChild(backdrop);
+
+      window.addEventListener("keydown", onKeyDown, true);
+      window.addEventListener("keypress", onModalPassthrough, true);
+      window.addEventListener("keyup", onModalPassthrough, true);
+      window.addEventListener("beforeinput", onModalPassthrough, true);
+      window.addEventListener("input", onModalPassthrough, true);
+      window.addEventListener("paste", onModalPassthrough, true);
+      insertBtn.focus();
+    });
+  }
+
   async function settleComposer() {
     await new Promise((resolve) => window.setTimeout(resolve, 0));
     await new Promise((resolve) => window.requestAnimationFrame(resolve));
@@ -2089,7 +2190,18 @@
     }
   }
 
-  async function applyGeminiEditorText(editor, sanitizedText, context) {
+  async function applyGeminiEditorText(editor, sanitizedText, context, options) {
+    const applyOptions = options || {};
+    if (
+      !applyOptions.skipLargeConfirmation &&
+      !(await confirmGeminiLargeSanitizedTextInsertion(sanitizedText, context))
+    ) {
+      setBadge("Sanitized text insertion cancelled");
+      hideBadgeSoon(3200);
+      refreshBadgeFromCurrentInput();
+      return "cancelled";
+    }
+
     if (insertGeminiEditorText(editor, sanitizedText)) {
       setBadge("Content redacted");
       hideBadgeSoon();
@@ -2116,6 +2228,32 @@
     return inserted;
   }
 
+  async function confirmGeminiLargeSanitizedTextInsertion(sanitizedText, context) {
+    const redactedLength = String(sanitizedText || "").length;
+    if (redactedLength <= GEMINI_AUTO_INSERT_TEXT_LIMIT) return true;
+
+    debugReveal("gemini-text:large-confirmation-required", {
+      context,
+      redactedLength,
+      limit: GEMINI_AUTO_INSERT_TEXT_LIMIT
+    });
+
+    const decision = await showGeminiLargeTextConfirmationModal(redactedLength);
+    if (decision?.action === "insert") {
+      debugReveal("gemini-text:large-confirmation-accepted", {
+        context,
+        redactedLength
+      });
+      return true;
+    }
+
+    debugReveal("gemini-text:large-confirmation-cancelled", {
+      context,
+      redactedLength
+    });
+    return false;
+  }
+
   async function blockGeminiEditorRawContent(event, title, message) {
     consumeInterceptionEvent(event);
     setBadge(title);
@@ -2136,7 +2274,8 @@
 
     try {
       const sanitizedText = await redactGeminiEditorText(pasted);
-      if (await applyGeminiEditorText(editor, sanitizedText, "gemini-paste")) {
+      const applied = await applyGeminiEditorText(editor, sanitizedText, "gemini-paste");
+      if (applied === true || applied === "cancelled") {
         return true;
       }
     } catch (error) {
@@ -2206,7 +2345,8 @@
 
     try {
       const sanitizedText = await redactGeminiEditorText(localFile.text);
-      if (await applyGeminiEditorText(editor, sanitizedText, "gemini-drop")) {
+      const applied = await applyGeminiEditorText(editor, sanitizedText, "gemini-drop");
+      if (applied === true || applied === "cancelled") {
         return true;
       }
     } catch (error) {
@@ -2485,12 +2625,20 @@
       return false;
     }
 
+    if (!(await confirmGeminiLargeSanitizedTextInsertion(redactedText, "file-text-fallback"))) {
+      setBadge("Sanitized text insertion cancelled");
+      hideBadgeSoon(3200);
+      refreshBadgeFromCurrentInput();
+      return "cancelled";
+    }
+
     const editor = resolveGeminiEditorTarget(event?.target) || resolveGeminiEditorTarget(input);
     if (editor) {
       const inserted = await applyGeminiEditorText(
         editor,
         String(redactedText || ""),
-        "file-text-fallback"
+        "file-text-fallback",
+        { skipLargeConfirmation: true }
       );
       if (inserted) {
         setBadge(GEMINI_SANITIZED_TEXT_FALLBACK_MESSAGE);
@@ -2544,9 +2692,18 @@
       return false;
     }
 
+    if (!(await confirmGeminiLargeSanitizedTextInsertion(redactedText, "gemini-file-text"))) {
+      setBadge("Sanitized text insertion cancelled");
+      hideBadgeSoon(3200);
+      refreshBadgeFromCurrentInput();
+      return "cancelled";
+    }
+
     const editor = resolveGeminiEditorTarget(event?.target) || resolveGeminiEditorTarget(input);
     if (editor) {
-      return applyGeminiEditorText(editor, String(redactedText || ""), "gemini-file-text");
+      return applyGeminiEditorText(editor, String(redactedText || ""), "gemini-file-text", {
+        skipLargeConfirmation: true
+      });
     }
 
     const targetInput = input || findComposer(event?.target) || findComposer(document.activeElement);
@@ -2620,7 +2777,8 @@
     const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
 
     if (context === "drop" && isGeminiHost()) {
-      if (await insertGeminiLocalFileText(event, input, result.redactedText)) {
+      const geminiTextResult = await insertGeminiLocalFileText(event, input, result.redactedText);
+      if (geminiTextResult === true) {
         setBadge("Sanitized content inserted as text");
         hideBadgeSoon(4200);
         refreshBadgeFromCurrentInput();
@@ -2628,6 +2786,14 @@
           handled: true,
           ok: true,
           strategy: "gemini-direct-text"
+        };
+      }
+
+      if (geminiTextResult === "cancelled") {
+        return {
+          handled: true,
+          ok: false,
+          reason: "gemini_large_text_cancelled"
         };
       }
 
@@ -2656,11 +2822,20 @@
     const handedOff = handOffSanitizedLocalFile(event, input, sanitizedFile, context);
 
     if (!handedOff) {
-      if (await applyGeminiSanitizedTextFallback(event, input, result.redactedText)) {
+      const fallbackResult = await applyGeminiSanitizedTextFallback(event, input, result.redactedText);
+      if (fallbackResult === true) {
         return {
           handled: true,
           ok: true,
           strategy: "gemini-sanitized-text-fallback"
+        };
+      }
+
+      if (fallbackResult === "cancelled") {
+        return {
+          handled: true,
+          ok: false,
+          reason: "gemini_large_text_cancelled"
         };
       }
 
