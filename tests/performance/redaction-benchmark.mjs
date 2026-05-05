@@ -52,6 +52,52 @@ const ITERATIONS = Math.max(
 );
 const PROFILE_ENABLED = process.env.LEAKGUARD_BENCH_PROFILE === "1";
 
+function buildLargeSyntheticPayload(targetBytes, label) {
+  const longSecret = `LeakGuard${label}LongSecret1234567890abcdef`;
+  const sqlPassword = `SqlServer${label}Pass123`;
+  const header = [
+    `MSSQL_URL=sqlserver://sa:${sqlPassword}@sql.example.com:1433;databaseName=prod`,
+    `secret=${longSecret}`,
+    "token_limit=4096",
+    "secret_santa=office-game",
+    'password_hint="Use long passwords"'
+  ].join("\n");
+  const fillerLine =
+    "2026-05-05 INFO safe large Gemini payload filler request_id=abc123 region=eu-central-1\n";
+  let filler = "";
+
+  while (`${header}\n${filler}`.length < targetBytes) {
+    filler += fillerLine;
+  }
+
+  return {
+    text: `${header}\n${filler}`,
+    forbidden: [longSecret, sqlPassword],
+    expected: [
+      "MSSQL_URL=sqlserver://[PWM_",
+      "secret=[PWM_",
+      "token_limit=4096",
+      "secret_santa=office-game",
+      'password_hint="Use long passwords"'
+    ]
+  };
+}
+
+function buildLargeSyntheticSample(name, targetBytes, label) {
+  const payload = buildLargeSyntheticPayload(targetBytes, label);
+  return {
+    name,
+    text: payload.text,
+    structuralOnly: true,
+    iterations: Math.min(3, ITERATIONS),
+    warmupIterations: 1,
+    maxFindings: 3,
+    minChars: targetBytes,
+    forbidden: payload.forbidden,
+    expected: payload.expected
+  };
+}
+
 const samples = [
   {
     name: "small_safe_text",
@@ -113,7 +159,9 @@ const samples = [
       "1.1.1.1"
     ],
     expected: ["2026-05-03 INFO normal application log line", "private_ip=192.168.1.10"]
-  }
+  },
+  buildLargeSyntheticSample("large_synthetic_file_500kb", 500 * 1024, "500Kb"),
+  buildLargeSyntheticSample("large_synthetic_file_1mb", 1024 * 1024, "1Mb")
 ];
 
 function percentile(values, p) {
@@ -262,6 +310,18 @@ function assertCorrectness(sample, output) {
   for (const expected of sample.expected) {
     assert.ok(redactedText.includes(expected), `${sample.name}: expected output fragment: ${expected}`);
   }
+
+  if (sample.minChars) {
+    assert.ok(sample.text.length >= sample.minChars, `${sample.name}: synthetic payload is too small`);
+    assert.ok(redactedText.length >= sample.minChars - 256, `${sample.name}: large content was unexpectedly truncated`);
+  }
+
+  if (sample.maxFindings) {
+    assert.ok(
+      output.findings.length <= sample.maxFindings,
+      `${sample.name}: expected bounded finding count, got ${output.findings.length}`
+    );
+  }
 }
 
 function assertEquivalentToBaseline(sample) {
@@ -286,9 +346,13 @@ function assertEquivalentToBaseline(sample) {
 
 function benchmark(sample) {
   let lastOutput = null;
+  const sampleIterations = Number.isFinite(sample.iterations) ? sample.iterations : ITERATIONS;
+  const sampleWarmups = Number.isFinite(sample.warmupIterations)
+    ? sample.warmupIterations
+    : WARMUP_ITERATIONS;
   assertEquivalentToBaseline(sample);
 
-  for (let index = 0; index < WARMUP_ITERATIONS; index += 1) {
+  for (let index = 0; index < sampleWarmups; index += 1) {
     lastOutput = redactPipeline(sample.text, { profile: PROFILE_ENABLED });
   }
   assertCorrectness(sample, lastOutput);
@@ -299,7 +363,7 @@ function benchmark(sample) {
   const stageTotals = emptyStageTotals();
   const detectorMethodTotals = emptyDetectorMethodTotals();
 
-  for (let index = 0; index < ITERATIONS; index += 1) {
+  for (let index = 0; index < sampleIterations; index += 1) {
     const heapBefore = heapUsedBytes();
     const cpuBefore = process.cpuUsage();
     const wallStart = performance.now();
@@ -325,19 +389,21 @@ function benchmark(sample) {
   const avgHeapDelta = mean(heapDeltas);
   const avgHeapGrowth = heapPositiveDeltas.length ? mean(heapPositiveDeltas) : 0;
 
-  assert.ok(
-    p95Ms <= sample.maxP95Ms,
-    `${sample.name}: p95 ${p95Ms.toFixed(3)}ms exceeded ${sample.maxP95Ms}ms`
-  );
-  assert.ok(
-    msPerKb <= sample.maxMsPerKb,
-    `${sample.name}: avg ${msPerKb.toFixed(3)}ms/KiB exceeded ${sample.maxMsPerKb}ms/KiB`
-  );
+  if (!sample.structuralOnly) {
+    assert.ok(
+      p95Ms <= sample.maxP95Ms,
+      `${sample.name}: p95 ${p95Ms.toFixed(3)}ms exceeded ${sample.maxP95Ms}ms`
+    );
+    assert.ok(
+      msPerKb <= sample.maxMsPerKb,
+      `${sample.name}: avg ${msPerKb.toFixed(3)}ms/KiB exceeded ${sample.maxMsPerKb}ms/KiB`
+    );
+  }
 
   return {
     test: sample.name,
     chars,
-    iterations: ITERATIONS,
+    iterations: sampleIterations,
     findings: lastOutput.findings.length,
     avg_wall_ms: avgMs,
     p50_wall_ms: percentile(wallTimes, 50),
@@ -353,15 +419,15 @@ function benchmark(sample) {
     max_heap_delta_bytes: Math.max(...heapDeltas),
     avg_ms_per_kib: msPerKb,
     stage_avg_ms: Object.fromEntries(
-      Object.entries(stageTotals).map(([key, value]) => [key, PROFILE_ENABLED ? value / ITERATIONS : 0])
+      Object.entries(stageTotals).map(([key, value]) => [key, PROFILE_ENABLED ? value / sampleIterations : 0])
     ),
     detector_method_avg_ms: Object.fromEntries(
       Object.entries(detectorMethodTotals).map(([key, value]) => [
         key,
         {
-          ms: PROFILE_ENABLED ? value.ms / ITERATIONS : 0,
-          calls: PROFILE_ENABLED ? value.calls / ITERATIONS : 0,
-          findings: PROFILE_ENABLED ? value.findings / ITERATIONS : 0
+          ms: PROFILE_ENABLED ? value.ms / sampleIterations : 0,
+          calls: PROFILE_ENABLED ? value.calls / sampleIterations : 0,
+          findings: PROFILE_ENABLED ? value.findings / sampleIterations : 0
         }
       ])
     )
@@ -374,6 +440,7 @@ console.table(
   results.map((result) => ({
     test: result.test,
     chars: result.chars,
+    iterations: result.iterations,
     findings: result.findings,
     avg_wall_ms: result.avg_wall_ms.toFixed(3),
     avg_cpu_ms: result.avg_cpu_ms.toFixed(3),

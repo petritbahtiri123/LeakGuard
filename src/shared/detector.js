@@ -123,7 +123,7 @@
     authorization_bearer_value: ["authorization"],
     bearer_token: ["bearer"],
     basic_auth_header: ["basic"],
-    db_uri: ["postgres://", "postgresql://", "mysql://", "mariadb://", "mongodb://", "mongodb+srv://", "redis://", "amqp://", "mssql://"],
+    db_uri: ["postgres://", "postgresql://", "mysql://", "mariadb://", "mongodb://", "mongodb+srv://", "redis://", "amqp://", "mssql://", "sqlserver://", "jdbc:sqlserver://"],
     generic_uri_credentials: ["://"],
     azure_servicebus_connection_string: ["endpoint=sb://"],
     azure_storage_connection_string: ["defaultendpointsprotocol=https"],
@@ -414,6 +414,7 @@
     "redis",
     "amqp",
     "mssql",
+    "sqlserver",
     "https",
     "http",
     "ftp",
@@ -668,18 +669,23 @@
 
   const SAFE_ASSIGNMENT_KEYS = new Set([
     "api_version",
+    "bearer_market",
+    "benign_password_hint",
     "build_id",
     "commit_sha",
     "debug",
     "environment",
+    "github_username",
     "image_tag",
     "jira_key",
     "max_token_limit",
     "password_hint",
+    "public_key_label",
     "public_url",
     "region",
     "release_id",
     "secret_santa",
+    "secret_santa_enabled",
     "ticket_id",
     "token_limit",
     "trace_id",
@@ -702,12 +708,29 @@
     "webhook_url"
   ]);
 
+  const EXACT_INLINE_SECRET_KEYS = new Set([
+    "api_secret",
+    "app_secret",
+    "auth_secret",
+    "client_secret",
+    "password",
+    "secret",
+    "signing_secret",
+    "token",
+    "webhook_secret"
+  ]);
+
   function isSafeAssignmentKey(key) {
     return SAFE_ASSIGNMENT_KEYS.has(normalizeAssignmentKey(key));
   }
 
   function isExactCredentialAssignmentKey(key) {
     return EXACT_CREDENTIAL_KEYS.has(normalizeAssignmentKey(key));
+  }
+
+  function isExactInlineSecretKey(key) {
+    const normalized = normalizeAssignmentKey(key);
+    return EXACT_INLINE_SECRET_KEYS.has(normalized) && !SAFE_ASSIGNMENT_KEYS.has(normalized);
   }
 
   function isSensitiveAssignmentKey(key) {
@@ -840,10 +863,10 @@
     const normalized = normalizeAssignmentKey(key);
     const compact = compactAssignmentKey(key);
     return (
-      /\b(?:database|db|mysql|postgres(?:ql)?|mariadb|mongodb|mongo|redis|amqp|rabbitmq|mssql|sqlserver)_(?:url|uri)\b/.test(
+      /\b(?:database|db|jdbc|mysql|postgres(?:ql)?|mariadb|mongodb|mongo|redis|amqp|rabbitmq|mssql|sqlserver)_(?:url|uri)\b/.test(
         normalized
       ) ||
-      /(?:database|db|mysql|postgres(?:ql)?|mariadb|mongodb|mongo|redis|amqp|rabbitmq|mssql|sqlserver)(?:url|uri)\b/.test(
+      /(?:database|db|jdbc|mysql|postgres(?:ql)?|mariadb|mongodb|mongo|redis|amqp|rabbitmq|mssql|sqlserver)(?:url|uri)\b/.test(
         compact
       )
     );
@@ -863,7 +886,7 @@
   }
 
   function extractDbUriAssignmentValue(value) {
-    const match = /^(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis|amqp|mssql):\/\/[^\s'"`<>{}\[\]]+/i.exec(
+    const match = /^(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis|amqp|mssql|sqlserver|jdbc:sqlserver):\/\/[^\s'"`<>{}\[\]]+/i.exec(
       String(value || "")
     );
 
@@ -904,6 +927,49 @@
     }
 
     return "";
+  }
+
+  function getSqlServerConnectionTokenEnd(text, start) {
+    const input = String(text || "");
+    let end = Math.max(0, start);
+
+    while (end < input.length && !/[\s'"`<>{}\[\]]/.test(input[end])) {
+      end += 1;
+    }
+
+    return end;
+  }
+
+  function collectSqlServerPasswordAttributeCandidates(text) {
+    const input = String(text || "");
+    const prefixRegex = /\b(?:jdbc:sqlserver|sqlserver|mssql):\/\//gi;
+    const candidates = [];
+    let prefixMatch;
+
+    while ((prefixMatch = prefixRegex.exec(input)) !== null) {
+      const tokenStart = prefixMatch.index;
+      const tokenEnd = getSqlServerConnectionTokenEnd(input, tokenStart);
+      const token = input.slice(tokenStart, tokenEnd);
+      const passwordRegex = /(?:^|;)(?:password|pwd)\s*=\s*([^;\s'"`<>{}\[\]]+)/gi;
+      let passwordMatch;
+
+      while ((passwordMatch = passwordRegex.exec(token)) !== null) {
+        const raw = passwordMatch[1] || "";
+        const rawOffset = passwordMatch[0].lastIndexOf(raw);
+        if (!raw || rawOffset < 0) continue;
+
+        const start = tokenStart + passwordMatch.index + rawOffset;
+        candidates.push({
+          raw,
+          start,
+          end: start + raw.length
+        });
+      }
+
+      prefixRegex.lastIndex = Math.max(prefixRegex.lastIndex, tokenEnd);
+    }
+
+    return candidates;
   }
 
   function hasGenericDbCredentials(raw) {
@@ -968,6 +1034,65 @@
     const boundary = findEmbeddedAssignmentBoundary(input);
     if (boundary <= 0) return input;
     return input.slice(0, boundary);
+  }
+
+  function readDelimitedAssignmentValue(text, valueStart) {
+    const input = String(text || "");
+    let start = Math.max(0, Number(valueStart) || 0);
+
+    while (start < input.length && /[ \t]/.test(input[start])) {
+      start += 1;
+    }
+
+    const quote = input[start];
+    if (quote === '"' || quote === "'" || quote === "`") {
+      const rawStart = start + 1;
+      let end = rawStart;
+
+      while (end < input.length && input[end] !== quote && !/[\r\n]/.test(input[end])) {
+        end += 1;
+      }
+
+      return {
+        raw: input.slice(rawStart, end),
+        start: rawStart,
+        end
+      };
+    }
+
+    let end = start;
+    while (end < input.length && !/[\s,;"'`}\]]/.test(input[end])) {
+      end += 1;
+    }
+
+    return {
+      raw: input.slice(start, end),
+      start,
+      end
+    };
+  }
+
+  function hasInlineAssignmentKeyBoundary(text, keyStart) {
+    if (keyStart <= 0) return true;
+    const previous = String(text || "")[keyStart - 1] || "";
+    if (/[A-Za-z0-9_.-]/.test(previous)) return false;
+    if (/[?&@/:]/.test(previous)) return false;
+    return true;
+  }
+
+  function hasBareInlineAssignmentCue(text, keyStart) {
+    const left = String(text || "").slice(0, Math.max(0, keyStart)).trimEnd();
+    if (!left) return true;
+
+    const last = left[left.length - 1] || "";
+    if (/["'`{[,;]/.test(last)) return true;
+
+    const previousToken = left.split(/\s+/).pop() || "";
+    return /[:=]/.test(previousToken);
+  }
+
+  function isBareInlineSecretKey(key) {
+    return /^(?:password|secret|token)$/i.test(normalizeAssignmentKey(key));
   }
 
   function isRegionLikeSegment(value) {
@@ -1175,6 +1300,12 @@
     return /^(?:[A-Za-z]+-){1,4}\d{4}(?:-\d{2}){1,2}$/i.test(String(value || "").trim());
   }
 
+  function isSafeValidationMarker(value) {
+    return /^(?:DUPLICATE_CHECK_(?:BEGIN|END)_\d+|LEAKGUARD_PERFORMANCE_TEST_END_MARKER_\d+)$/i.test(
+      String(value || "").trim()
+    );
+  }
+
   function containsPasswordKeyword(value) {
     const normalized = String(value || "").trim();
     return /(?:^|[_\-\s])(?:secret|password|passwd|passcode|passphrase|pwd)(?=$|[_\-\s]|\d)/i.test(
@@ -1242,6 +1373,23 @@
     );
   }
 
+  function hasExplicitNaturalLanguageDisclosureConnector(afterLabel) {
+    return /^\s*(?:(?:is|equals|set\s+to|should\s+be|becomes)\b|=|:|->|→)/i.test(
+      String(afterLabel || "")
+    );
+  }
+
+  function hasNaturalLanguageDisclosureIntro(label) {
+    const normalized = String(label || "").toLowerCase().replace(/\s+/g, " ").trim();
+    if (/\b(?:this is my|here is my|here is the|here's my|my|the|our|use this)\b/.test(normalized)) {
+      return true;
+    }
+    if (/\b(?:real|actual|prod(?:uction)?|live|same|again)\b/.test(normalized)) {
+      return true;
+    }
+    return /\bvalue$/.test(normalized);
+  }
+
   function hasSensitivePlaceholderContext(text, start, end) {
     const before = getLineWindow(text, start, end)
       .slice(0, Math.max(0, start - (String(text || "").lastIndexOf("\n", Math.max(0, start - 1)) + 1)))
@@ -1290,6 +1438,7 @@
     }
     if (/^(?:v?\d+\.)+\d+(?:[-+][A-Za-z0-9._-]+)?$/.test(value)) return false;
     if (isBuildLabelLike(value)) return false;
+    if (isSafeValidationMarker(value)) return false;
     if (looksLikeFilesystemPath(text, start, end, value)) return false;
 
     const variety = countClassVariety(value);
@@ -2182,6 +2331,81 @@
       return findings;
     }
 
+    scanExactInlineSecretAssignments(text, options = {}) {
+      if (!options.lineCache) {
+        const lineCached = this.scanRepeatedLines(text, (line) =>
+          this.scanExactInlineSecretAssignments(line, { lineCache: true })
+        );
+        if (lineCached) return lineCached;
+      }
+
+      const findings = [];
+      const regex = /([A-Za-z_][A-Za-z0-9_.-]{0,80})\s*[:=]\s*/g;
+      let match;
+
+      while ((match = regex.exec(text)) !== null) {
+        const key = match[1];
+        if (!isExactInlineSecretKey(key)) continue;
+        if (!hasInlineAssignmentKeyBoundary(text, match.index)) continue;
+        if (isBareInlineSecretKey(key) && !hasBareInlineAssignmentCue(text, match.index)) continue;
+        if (match.index > 0 && /[?&]/.test(String(text || "")[match.index - 1])) continue;
+        if (
+          String(text || "")[match.index - 1] === ";" &&
+          /(?:jdbc:sqlserver|sqlserver|mssql):\/\//i.test(
+            String(text || "").slice(Math.max(0, match.index - 256), match.index)
+          )
+        ) {
+          continue;
+        }
+
+        const value = readDelimitedAssignmentValue(text, regex.lastIndex);
+        if (String(text || "")[value.start] === "[") continue;
+        const raw = normalizeCandidate(value.raw);
+        if (!raw || raw.length < 8) continue;
+        if (this.isAllowlisted(raw)) continue;
+        if (!looksCredentialLikeAssignmentValue(raw)) continue;
+        if (looksLikeUnsupportedVendorHexAssignment(key, raw)) continue;
+        if (containsPlaceholder(raw) && isBenignPlaceholderComposite(raw)) continue;
+        if (this.shouldDeferTrustedPlaceholderTail(raw, text, value.start)) continue;
+
+        const placeholderType = inferPlaceholderTypeFromKey(key);
+        const suppressed = this.shouldSuppress({
+          raw,
+          text,
+          start: value.start,
+          end: value.end,
+          key,
+          placeholderType,
+          source: "assignment"
+        });
+        const failClosedGenericSecret =
+          normalizeAssignmentKey(key) === "secret" &&
+          /[A-Za-z]/.test(raw) &&
+          /\d/.test(raw) &&
+          /(?:secret|token|pass|key|bearer)/i.test(raw);
+        if (suppressed && !failClosedGenericSecret) {
+          continue;
+        }
+
+        const entropy = calculateEntropy(raw);
+        findings.push(
+          this.buildFinding({
+            category: "credential",
+            placeholderType,
+            raw,
+            start: value.start,
+            end: value.end,
+            score: 100,
+            methods: ["assignment", "exact-key", entropy >= 3.6 ? "entropy" : null].filter(
+              Boolean
+            )
+          })
+        );
+      }
+
+      return findings;
+    }
+
     scanExplicitCredentialAssignments(text, options = {}) {
       if (!options.lineCache) {
         const lineCached = this.scanRepeatedLines(text, (line) =>
@@ -2192,7 +2416,7 @@
 
       const findings = [];
       const regex =
-        /([A-Za-z_][A-Za-z0-9_.-]{0,80})\s*[:=]\s*(?:"([^"\r\n]+)"|'([^'\r\n]+)'|`([^`\r\n]+)`|([^\s\r\n]+))/gim;
+        /([A-Za-z_][A-Za-z0-9_.-]{0,80})\s*[:=]\s*(?:"([^"\r\n]+)"|'([^'\r\n]+)'|`([^`\r\n]+)`|([^\s,;"'`}\r\n]+))/gim;
       let match;
 
       while ((match = regex.exec(text)) !== null) {
@@ -2274,6 +2498,51 @@
       return findings;
     }
 
+    scanSqlServerPasswordAttributes(text) {
+      const findings = [];
+      const candidates = collectSqlServerPasswordAttributeCandidates(text);
+
+      for (const candidate of candidates) {
+        const raw = normalizeCandidate(candidate.raw);
+        if (!raw || raw.length < 8) continue;
+        if (this.isAllowlisted(raw)) continue;
+        if (isCleanPlaceholder(raw) && this.isTrustedVisiblePlaceholder(raw)) continue;
+        if (containsPlaceholder(raw) && isBenignPlaceholderComposite(raw)) continue;
+        if (
+          this.shouldSuppress({
+            raw,
+            text,
+            start: candidate.start,
+            end: candidate.end,
+            key: "password",
+            placeholderType: "PASSWORD",
+            source: "assignment"
+          })
+        ) {
+          continue;
+        }
+
+        const entropy = calculateEntropy(raw);
+        findings.push(
+          this.buildFinding({
+            category: "credential",
+            placeholderType: "PASSWORD",
+            raw,
+            start: candidate.start,
+            end: candidate.end,
+            score: 99 + (entropy >= 3.8 ? 1 : 0),
+            methods: [
+              "sqlserver-connection-string",
+              "password-attribute",
+              entropy >= 3.8 ? "entropy" : null
+            ].filter(Boolean)
+          })
+        );
+      }
+
+      return findings;
+    }
+
     scanUrlCredentials(text) {
       const findings = [];
       const candidates = collectUrlUserinfoCandidates(text);
@@ -2295,7 +2564,11 @@
           continue;
         }
 
-        if (username && !isCleanPlaceholder(username) && !this.isAllowlisted(username)) {
+        if (
+          username &&
+          !isCleanPlaceholder(username) &&
+          !this.isAllowlisted(username)
+        ) {
           findings.push(
             this.buildFinding({
               category: "identity",
@@ -2344,7 +2617,7 @@
         }
 
         if (!this.isAllowlisted(secret)) {
-          const isDbScheme = /^(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis|amqp|mssql)$/.test(scheme);
+          const isDbScheme = /^(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis|amqp|mssql|sqlserver)$/.test(scheme);
           findings.push(
             this.buildFinding({
               category: "credential",
@@ -2542,6 +2815,7 @@
         if (/^(https?|wss?):\/\//i.test(raw)) continue;
         if (/^\d+$/.test(raw)) continue;
         if (isBuildLabelLike(raw)) continue;
+        if (isSafeValidationMarker(raw)) continue;
         if (looksLikeFilesystemPath(text, start, end, raw)) continue;
         if (hasUnsupportedVendorHexAssignmentContext(text, start, raw)) continue;
         if (this.shouldSuppress({ raw, text, start, end })) continue;
@@ -2627,7 +2901,7 @@
       const labelSource =
         "(?:real|actual)\\s+(?:(?:db|database)\\s+)?(?:password|passwd|pwd|passcode|passphrase|secret|api\\s*key|apikey|token|access\\s+token|refresh\\s+token|bearer\\s+token|client\\s+secret|private\\s+key|webhook\\s+secret)\\s+value|(?:(?:this\\s+is\\s+my|here\\s+is\\s+my|here\\s+is\\s+the|here'?s\\s+my|my|the|our|use\\s+this)\\s+)?(?:(?:real|actual|prod(?:uction)?|live)\\s+)?(?:(?:db|database)\\s+)?(?:password|passwd|pwd|passcode|passphrase|secret|api\\s*key|apikey|token|access\\s+token|refresh\\s+token|bearer\\s+token|client\\s+secret|private\\s+key|webhook\\s+secret)|(?:again\\s+(?:the\\s+)?)?same\\s+(?:key|token|password|secret)|real\\s+value|actual\\s+value";
       const valueSource =
-        "\"([^\"\\r\\n]{6,})\"|'([^'\\r\\n]{6,})'|`([^`\\r\\n]{6,})`|([^\\s,;]{6,})";
+        "\"([^\"\\r\\n]{6,})\"|'([^'\\r\\n]{6,})'|`([^`\\r\\n]{6,})`|([^\\s,;\"'`]{6,})";
       const regex = new RegExp(
         `\\b(${labelSource})\\s*(?:(?:is|equals|set\\s+to|should\\s+be|becomes)\\s*)?(?:=|:|->|→)?\\s*(?:${valueSource})`,
         "gi"
@@ -2641,6 +2915,12 @@
         );
         if (!rawCandidate) continue;
         const afterLabel = match[0].slice(String(label || "").length);
+        if (
+          !hasExplicitNaturalLanguageDisclosureConnector(afterLabel) &&
+          !hasNaturalLanguageDisclosureIntro(label)
+        ) {
+          continue;
+        }
         if (!/^\s/.test(afterLabel) && !/^(?:=|:|->|→)/.test(afterLabel)) {
           continue;
         }
@@ -2880,6 +3160,10 @@
         const bHasFullValue = b.method?.includes("full-value") ? 1 : 0;
         if (bHasFullValue !== aHasFullValue) return bHasFullValue - aHasFullValue;
 
+        const aHasExactKey = a.method?.includes("exact-key") ? 1 : 0;
+        const bHasExactKey = b.method?.includes("exact-key") ? 1 : 0;
+        if (bHasExactKey !== aHasExactKey) return bHasExactKey - aHasExactKey;
+
         const lenA = a.end - a.start;
         const lenB = b.end - b.start;
 
@@ -2924,8 +3208,10 @@
           ...this.scanSensitiveHttpHeaders(input),
           ...this.scanStructuredAssignments(input),
           ...this.scanUrlCredentials(input),
+          ...this.scanSqlServerPasswordAttributes(input),
           ...this.scanPatterns(input),
           ...this.scanAssignments(input),
+          ...this.scanExactInlineSecretAssignments(input),
           ...this.scanExplicitCredentialAssignments(input),
           ...this.scanAdversarialAssignments(input),
           ...this.scanIdentityAssignments(input),

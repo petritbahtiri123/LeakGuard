@@ -194,6 +194,7 @@ function createGeminiEditor(initialText = "") {
     tagName: "DIV",
     className: "ql-editor",
     text: initialText,
+    textContentWrites: 0,
     focusCalls: 0,
     inputEvents: [],
     focus() {
@@ -215,6 +216,10 @@ function createGeminiEditor(initialText = "") {
       return this.text;
     },
     set(value) {
+      this.textContentWrites += 1;
+      if (typeof this.onTextContentSet === "function") {
+        this.onTextContentSet(String(value || ""));
+      }
       this.text = String(value || "");
     }
   });
@@ -241,6 +246,24 @@ function createTextFile({ name = "secrets.env", type = "text/plain", text }) {
   };
 }
 
+function buildLargeGeminiPayload({ minBytes, rawSecret }) {
+  const header = [
+    "Before the secret",
+    `API_KEY=${rawSecret}`,
+    "token_limit=4096"
+  ].join("\n");
+  const footer = `\nSECOND_API_KEY=${rawSecret}\n`;
+  const fillerLine =
+    "safe_line=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n";
+  let filler = "";
+
+  while (Buffer.byteLength(`${header}\n${filler}${footer}`, "utf8") < minBytes) {
+    filler += fillerLine;
+  }
+
+  return `${header}\n${filler}${footer}`;
+}
+
 function createHarness(overrides = {}) {
   const calls = {
     reads: [],
@@ -252,6 +275,7 @@ function createHarness(overrides = {}) {
     hideBadgeSoon: 0,
     refreshBadge: 0,
     modals: [],
+    debugEvents: [],
     dragDetections: 0,
     clearedDragSessions: 0
   };
@@ -328,7 +352,9 @@ function createHarness(overrides = {}) {
     showMessageModal: async (...args) => {
       calls.modals.push(args);
     },
-    debugReveal: () => {},
+    debugReveal: (label, details) => {
+      calls.debugEvents.push({ label, details });
+    },
     handleContentError: (error) => {
       calls.errors = calls.errors || [];
       calls.errors.push(error);
@@ -373,6 +399,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "resolveGeminiEditorTarget"),
       extractFunctionSource(contentSource, "redactGeminiEditorText"),
       extractFunctionSource(contentSource, "suppressFollowupInputScan"),
+      extractFunctionSource(contentSource, "isProgrammaticInputScanSuppressed"),
       extractFunctionSource(contentSource, "placeGeminiEditorCaretAtEnd"),
       extractFunctionSource(contentSource, "setGeminiEditorTextDirect"),
       extractFunctionSource(contentSource, "insertLargeGeminiEditorText"),
@@ -392,7 +419,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "maybeHandlePaste"),
       extractFunctionSource(contentSource, "maybeHandleDrop"),
       extractFunctionSource(contentSource, "maybeHandleFileDrag"),
-      "return { maybeHandlePaste, maybeHandleDrop, maybeHandleFileDrag };"
+      "return { maybeHandlePaste, maybeHandleDrop, maybeHandleFileDrag, getSuppressInputScanUntil: () => suppressInputScanUntil, isProgrammaticInputScanSuppressed };"
     ].join("\n\n")
   );
   const handlers = factory(...Object.values(dependencies));
@@ -914,19 +941,25 @@ async function testGeminiQlEditorDropTextFileIsSanitizedAndInserted() {
 
 async function testLargeGeminiDropUsesDirectSanitizedInsertion() {
   const rawSecret = "LeakGuardFileApiKey1234567890";
-  const filler = "safe_line=0123456789abcdef\n".repeat(850);
-  const largeText = [
-    "Before the secret",
-    `API_KEY=${rawSecret}`,
-    filler,
-    `SECOND_API_KEY=${rawSecret}`
-  ].join("\n");
+  const largeText = buildLargeGeminiPayload({
+    minBytes: 17 * 1024,
+    rawSecret
+  });
+  const sanitizedLargeText = largeText.replace(
+    /LeakGuard(?:Drop|Paste|File)ApiKey1234567890/g,
+    "[PWM_1]"
+  );
   const file = createTextFile({
     name: "large.env",
     text: largeText
   });
   const { editor, child } = createGeminiEditor("Review this:\n");
   editor.selection = { start: "Review this:\n".length, end: "Review this:\n".length };
+  let redactionCompleted = false;
+  editor.onTextContentSet = (value) => {
+    assert.strictEqual(redactionCompleted, true, "Gemini text must be redacted before insertion");
+    assert.strictEqual(value.includes(rawSecret), false, "raw file content must not be inserted");
+  };
   class TestInputEvent extends Event {
     constructor(type, init = {}) {
       super(type, init);
@@ -935,10 +968,12 @@ async function testLargeGeminiDropUsesDirectSanitizedInsertion() {
     }
   }
   let execCommandCalls = 0;
-  const { maybeHandleDrop, calls } = createHarness({
+  let dropEvent = null;
+  const { maybeHandleDrop, calls, getSuppressInputScanUntil, isProgrammaticInputScanSuppressed } = createHarness({
     location: { hostname: "gemini.google.com" },
     InputEvent: TestInputEvent,
     readLocalTextFileFromDataTransfer: async (transfer) => {
+      assert.strictEqual(dropEvent.defaultPrevented, true, "raw drop should be blocked before file read");
       calls.reads.push(transfer);
       return {
         handled: true,
@@ -948,6 +983,13 @@ async function testLargeGeminiDropUsesDirectSanitizedInsertion() {
           name: "large.env",
           type: "text/plain"
         }
+      };
+    },
+    requestRedaction: async (text, findings) => {
+      calls.redactions.push({ text, findings });
+      redactionCompleted = true;
+      return {
+        redactedText: sanitizedLargeText
       };
     },
     document: {
@@ -968,21 +1010,120 @@ async function testLargeGeminiDropUsesDirectSanitizedInsertion() {
     },
     target: child
   });
+  dropEvent = event;
 
   await maybeHandleDrop(event);
 
   assert.strictEqual(event.defaultPrevented, true);
   assert.strictEqual(execCommandCalls, 0);
+  assert.strictEqual(calls.reads.length, 1);
   assert.strictEqual(calls.redactions.length, 1);
   assert.strictEqual(editor.inputEvents.length, 1);
   assert.strictEqual(editor.inputEvents[0].inputType, "insertReplacementText");
   assert.strictEqual(editor.inputEvents[0].data, null);
+  assert.notStrictEqual(editor.inputEvents[0].data, sanitizedLargeText);
+  assert.strictEqual(editor.textContentWrites, 1);
   assert.strictEqual(editor.text.includes(rawSecret), false);
   assert.strictEqual((editor.text.match(/\[PWM_1\]/g) || []).length, 2);
   assert.strictEqual(editor.text.includes("[PWM_2]"), false);
+  assert.strictEqual(editor.text, `Review this:\n${sanitizedLargeText}`);
   assert.strictEqual(editor.text.startsWith("Review this:\nBefore the secret"), true);
   assert.strictEqual(calls.textFallbacks.length, 0);
   assert.strictEqual(calls.handoffs.length, 0);
+  assert.ok(
+    calls.debugEvents.some((entry) => entry.label === "gemini-text:direct-large-insert"),
+    "expected direct large Gemini insertion breadcrumb"
+  );
+  assert.ok(getSuppressInputScanUntil() > Date.now(), "large insertion should suppress follow-up scans");
+  assert.strictEqual(
+    isProgrammaticInputScanSuppressed(),
+    true,
+    "programmatic scan suppression should prevent re-entrant self-processing"
+  );
+}
+
+async function testVeryLargeGeminiDropDoesNotUseEventOrCommandLoops() {
+  const rawSecret = "LeakGuardFileApiKey1234567890";
+  const largeText = buildLargeGeminiPayload({
+    minBytes: 500 * 1024,
+    rawSecret
+  });
+  const sanitizedLargeText = largeText.replace(
+    /LeakGuard(?:Drop|Paste|File)ApiKey1234567890/g,
+    "[PWM_1]"
+  );
+  const file = createTextFile({
+    name: "very-large.env",
+    text: largeText
+  });
+  const { editor, child } = createGeminiEditor("");
+  class TestInputEvent extends Event {
+    constructor(type, init = {}) {
+      super(type, init);
+      this.inputType = init.inputType;
+      this.data = init.data;
+    }
+  }
+  let execCommandCalls = 0;
+  const { maybeHandleDrop, calls, getSuppressInputScanUntil } = createHarness({
+    location: { hostname: "gemini.google.com" },
+    InputEvent: TestInputEvent,
+    readLocalTextFileFromDataTransfer: async (transfer) => {
+      assert.strictEqual(transfer.files[0], file);
+      calls.reads.push(transfer);
+      return {
+        handled: true,
+        ok: true,
+        text: largeText,
+        file: {
+          name: "very-large.env",
+          type: "text/plain"
+        }
+      };
+    },
+    requestRedaction: async (text, findings) => {
+      calls.redactions.push({ text, findings });
+      return {
+        redactedText: sanitizedLargeText
+      };
+    },
+    document: {
+      activeElement: editor,
+      execCommand(command, _showUi, value) {
+        execCommandCalls += 1;
+        assert.notStrictEqual(value, sanitizedLargeText, "huge sanitized text must not go through execCommand");
+        return false;
+      },
+      createRange: () => null
+    }
+  });
+  const { event, calls: eventCalls } = createEvent({
+    dataTransfer: {
+      types: ["Files"],
+      files: [file],
+      items: [],
+      dropEffect: "none"
+    },
+    target: child
+  });
+
+  await maybeHandleDrop(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.ok(eventCalls.stopImmediatePropagation >= 1);
+  assert.strictEqual(calls.reads.length, 1, "file should be read once");
+  assert.strictEqual(calls.redactions.length, 1, "large payload should be redacted once");
+  assert.strictEqual(execCommandCalls, 0, "large payload should bypass execCommand entirely");
+  assert.strictEqual(editor.textContentWrites, 1, "large payload should be inserted with one DOM write");
+  assert.strictEqual(editor.inputEvents.length, 1, "large payload should dispatch one input event");
+  assert.strictEqual(editor.inputEvents[0].inputType, "insertReplacementText");
+  assert.strictEqual(editor.inputEvents[0].data, null, "large input event must not carry the file body");
+  assert.strictEqual(calls.textFallbacks.length, 0, "large path should not use line/character paste fallback loops");
+  assert.strictEqual(calls.handoffs.length, 0, "Gemini large path should not replay sanitized file upload");
+  assert.strictEqual(editor.text, sanitizedLargeText, "large sanitized text should be inserted exactly once");
+  assert.strictEqual(editor.text.includes(rawSecret), false);
+  assert.strictEqual((editor.text.match(/\[PWM_1\]/g) || []).length, 2);
+  assert.ok(getSuppressInputScanUntil() > Date.now(), "large insertion should suppress re-entrant scans");
 }
 
 async function testGeminiTextLikeFileExtensionsAreSanitized() {
@@ -1422,6 +1563,7 @@ async function testChatGptAndClaudeStillUseSanitizedFileHandoffOnly() {
   await testGeminiQlEditorPasteIsSanitizedBeforePageHandlers();
   await testGeminiQlEditorDropTextFileIsSanitizedAndInserted();
   await testLargeGeminiDropUsesDirectSanitizedInsertion();
+  await testVeryLargeGeminiDropDoesNotUseEventOrCommandLoops();
   await testGeminiTextLikeFileExtensionsAreSanitized();
   await testGeminiTextLikeSanitizerFailureBlocksRawFile();
   await testUnsupportedDocumentAndImageFilesPassThroughByDefault();

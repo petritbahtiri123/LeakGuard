@@ -89,6 +89,32 @@
     return ranges.some((range) => candidate.start < range.end && candidate.end > range.start);
   }
 
+  function shouldReuseKnownSecretInPlainText(text, start, end, raw) {
+    const knownRaw = String(raw || "");
+    const previous = start > 0 ? text[start - 1] : "";
+    const next = end < text.length ? text[end] : "";
+    const leftContext = text.slice(Math.max(0, start - 32), start).toLowerCase();
+    const shortIdentifier = /^[A-Za-z0-9._-]{3,16}$/.test(knownRaw);
+    const hintContext =
+      previous === "-" && /(?:password_hint|hint|ask)\s*[:=]?\s*[\w.-]*-$/.test(leftContext);
+    const secretLikeShortValue =
+      /\d/.test(knownRaw) || /(?:secret|token|pass|key|auth|bearer)/i.test(knownRaw);
+
+    if (shortIdentifier && !hintContext && !secretLikeShortValue) {
+      return false;
+    }
+
+    if (shortIdentifier && /[A-Za-z0-9._-]/.test(next)) {
+      return false;
+    }
+
+    if (shortIdentifier && /[A-Za-z0-9_.]/.test(previous)) {
+      return false;
+    }
+
+    return true;
+  }
+
   function collectKnownSecretReplacements(text, manager, occupiedRanges = []) {
     const replacements = [];
     const regex = new RegExp(root.PWM.PLACEHOLDER_TOKEN_REGEX.source, "g");
@@ -99,19 +125,25 @@
 
     function scanPlainTextSegment(segmentText, offset) {
       for (const entry of knownEntries) {
-        if (!entry.raw) continue;
+        const knownRaw = String(entry.raw || "");
+        if (knownRaw.length < 3) continue;
 
         let searchIndex = 0;
         while (searchIndex < segmentText.length) {
-          const relativeIndex = segmentText.indexOf(entry.raw, searchIndex);
+          const relativeIndex = segmentText.indexOf(knownRaw, searchIndex);
           if (relativeIndex === -1) break;
 
           const start = offset + relativeIndex;
-          const end = start + entry.raw.length;
+          const end = start + knownRaw.length;
+          if (!shouldReuseKnownSecretInPlainText(text, start, end, knownRaw)) {
+            searchIndex = relativeIndex + knownRaw.length;
+            continue;
+          }
+
           const candidate = {
             start,
             end,
-            raw: entry.raw,
+            raw: knownRaw,
             placeholder: entry.placeholder,
             type: "SECRET",
             category: "secret"
@@ -122,7 +154,7 @@
             occupiedRanges.push({ start, end });
           }
 
-          searchIndex = relativeIndex + Math.max(1, entry.raw.length);
+          searchIndex = relativeIndex + knownRaw.length;
         }
       }
     }

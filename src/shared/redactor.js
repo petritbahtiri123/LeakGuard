@@ -17,37 +17,40 @@
 
     function scanPlainTextSegment(segmentText, offset) {
       for (const entry of knownEntries) {
-        if (!entry.raw) continue;
+        const knownRaw = String(entry.raw || "");
+        if (knownRaw.length < 3) continue;
 
         let searchIndex = 0;
         while (searchIndex < segmentText.length) {
-          const relativeIndex = segmentText.indexOf(entry.raw, searchIndex);
+          const relativeIndex = segmentText.indexOf(knownRaw, searchIndex);
           if (relativeIndex === -1) break;
 
           const start = offset + relativeIndex;
-          const end = start + entry.raw.length;
+          const end = start + knownRaw.length;
           const previous = start > 0 ? text[start - 1] : "";
           const next = end < text.length ? text[end] : "";
           const leftContext = text.slice(Math.max(0, start - 32), start).toLowerCase();
-          const shortIdentifier = /^[A-Za-z0-9._-]{3,16}$/.test(entry.raw);
+          const shortIdentifier = /^[A-Za-z0-9._-]{3,16}$/.test(knownRaw);
+          const hintContext =
+            previous === "-" && /(?:password_hint|hint|ask)\s*[:=]?\s*[\w.-]*-$/.test(leftContext);
+          const secretLikeShortValue =
+            /\d/.test(knownRaw) || /(?:secret|token|pass|key|auth|bearer)/i.test(knownRaw);
 
-          if (
-            shortIdentifier &&
-            !(
-              previous === "-" &&
-              /(?:password_hint|hint|ask)\s*[:=]?\s*[\w.-]*-$/.test(leftContext)
-            )
-          ) {
-            searchIndex = relativeIndex + Math.max(1, entry.raw.length);
+          if (shortIdentifier && !hintContext && !secretLikeShortValue) {
+            searchIndex = relativeIndex + knownRaw.length;
             continue;
           }
           if (shortIdentifier && /[A-Za-z0-9._-]/.test(next)) {
-            searchIndex = relativeIndex + Math.max(1, entry.raw.length);
+            searchIndex = relativeIndex + knownRaw.length;
+            continue;
+          }
+          if (shortIdentifier && /[A-Za-z0-9_.]/.test(previous)) {
+            searchIndex = relativeIndex + knownRaw.length;
             continue;
           }
           const candidate = {
             id: `reuse_${start}_${end}`,
-            raw: entry.raw,
+            raw: knownRaw,
             start,
             end,
             type: "SECRET",
@@ -60,7 +63,7 @@
             occupiedRanges.push({ start, end });
           }
 
-          searchIndex = relativeIndex + Math.max(1, entry.raw.length);
+          searchIndex = relativeIndex + knownRaw.length;
         }
       }
     }

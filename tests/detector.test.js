@@ -655,6 +655,164 @@ function testFullValueReplacementForConnectionStyleAssignments() {
   );
 }
 
+function testSqlServerConnectionStringsRedactPasswords() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const text = [
+    "MSSQL_URL=sqlserver://sa:SqlServerPass123@sql.example.com:1433;databaseName=prod",
+    "SQLSERVER_URL=sqlserver://app:SqlServerEnvPass456@sql.example.com:1433;databaseName=prod",
+    "MSSQL_URL=mssql://sa:AnotherSqlPass123@sql.example.com:1433/prod",
+    "JDBC_URL=jdbc:sqlserver://host:1433;user=name;password=JdbcSqlPass123;databaseName=prod"
+  ].join("\n");
+
+  const findings = detector.scan(text);
+  const result = redactor.redact(text, findings);
+
+  assert.ok(
+    findings.some(
+      (finding) =>
+        finding.type === "DB_URI" &&
+        finding.raw === "SqlServerPass123" &&
+        finding.method.includes("db-uri-password")
+    ),
+    "sqlserver:// assignment should detect the password segment"
+  );
+  assert.ok(
+    findings.some(
+      (finding) =>
+        finding.type === "DB_URI" &&
+        finding.raw === "SqlServerEnvPass456" &&
+        finding.method.includes("db-uri-password")
+    ),
+    "SQLSERVER_URL assignment should detect the password segment"
+  );
+  assert.ok(
+    findings.some(
+      (finding) =>
+        finding.type === "DB_URI" &&
+        finding.raw === "AnotherSqlPass123" &&
+        finding.method.includes("db-uri-password")
+    ),
+    "mssql:// assignment should continue detecting the password segment"
+  );
+  assert.ok(
+    findings.some(
+      (finding) =>
+        finding.type === "PASSWORD" &&
+        finding.raw === "JdbcSqlPass123" &&
+        finding.method.includes("sqlserver-connection-string")
+    ),
+    "jdbc:sqlserver password attribute should detect only the password value"
+  );
+  assert.strictEqual(result.redactedText.includes("SqlServerPass123"), false);
+  assert.strictEqual(result.redactedText.includes("SqlServerEnvPass456"), false);
+  assert.strictEqual(result.redactedText.includes("AnotherSqlPass123"), false);
+  assert.strictEqual(result.redactedText.includes("JdbcSqlPass123"), false);
+  assert.ok(
+    /^MSSQL_URL=sqlserver:\/\/\[PWM_\d+\]:\[PWM_\d+\]@sql\.example\.com:1433;databaseName=prod$/m.test(
+      result.redactedText
+    ),
+    "sqlserver:// URI shape should remain readable while masking credentials"
+  );
+  assert.ok(
+    /^JDBC_URL=jdbc:sqlserver:\/\/host:1433;user=name;password=\[PWM_\d+\];databaseName=prod$/m.test(
+      result.redactedText
+    ),
+    "jdbc:sqlserver connection string should mask only the password attribute"
+  );
+}
+
+function testGenericSecretAssignmentsInLongLinesRedactWithoutSafeKeyFalsePositives() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const secret = "FAKELongAwsSecret1234567890abcdefFAKELONGLINE";
+  const sharedSecret = "SharedGenericSecretValue1234567890abcdef";
+  const embeddedLongLine =
+    "LONG_LINE_START openai=abc secret=FAKELongAwsSecret1234567890abcdefFAKELONGLINE stripe=xyz LONG_LINE_END";
+  const embeddedEmptyFieldLongLine =
+    "LONG_LINE_START openai= github= db=postgres://:@long-db.example.com:5432/longapp aws= secret=FAKELongAwsSecret1234567890abcdefFAKELONGLINE stripe= ip=";
+  const sensitiveKeys = [
+    "api_secret",
+    "client_secret",
+    "app_secret",
+    "signing_secret",
+    "webhook_secret",
+    "auth_secret"
+  ];
+  const text = [
+    `secret=${secret}`,
+    embeddedLongLine,
+    embeddedEmptyFieldLongLine,
+    `prefix=metadata;secret=${secret};suffix=still-readable`,
+    ...sensitiveKeys.map((key) => `${key}=${sharedSecret}`),
+    "secret_santa=office-game",
+    'secret_santa="John gives gift to Anna"',
+    "secret_santa_enabled=true",
+    '"password_hint": "use a password manager",',
+    'password_hint="Use long passwords"',
+    "BENIGN_PASSWORD_HINT=use-a-password-manager",
+    'github_username="petritbahtiri123"',
+    "token_limit=4096",
+    'bearer_market="financial term"',
+    'public_key_label="this is public, not private"',
+    "DUPLICATE_CHECK_BEGIN_123456789",
+    "DUPLICATE_CHECK_END_123456789",
+    "LEAKGUARD_PERFORMANCE_TEST_END_MARKER_987654321",
+    "This text says use a password manager.",
+    'secret_note="this is my secret: admin-login-token-FAKE-1234567890"'
+  ].join("\n");
+
+  const findings = detector.scan(text);
+  const result = redactor.redact(text, findings);
+
+  assert.ok(
+    findings.some((finding) => finding.type === "SECRET" && finding.raw === secret),
+    "long-line secret= assignment should detect the value"
+  );
+  assert.strictEqual(result.redactedText.includes(secret), false);
+  assert.strictEqual(result.redactedText.includes(sharedSecret), false);
+  assert.strictEqual(result.redactedText.includes("admin-login-token-FAKE-1234567890"), false);
+  assert.ok(/^secret=\[PWM_\d+\]$/m.test(result.redactedText));
+  assert.ok(
+    /^LONG_LINE_START openai=abc secret=\[PWM_\d+\] stripe=xyz LONG_LINE_END$/m.test(
+      result.redactedText
+    ),
+    "embedded long-line secret should redact only the secret value"
+  );
+  assert.ok(
+    /^LONG_LINE_START openai= github= db=postgres:\/\/:@long-db\.example\.com:5432\/longapp aws= secret=\[PWM_\d+\] stripe= ip=$/m.test(
+      result.redactedText
+    ),
+    "embedded long-line secret should redact even after empty fields"
+  );
+  assert.ok(/^prefix=metadata;secret=\[PWM_\d+\];suffix=still-readable$/m.test(result.redactedText));
+  const sharedPlaceholders = sensitiveKeys
+    .map((key) => new RegExp(`^${key}=(\\[PWM_\\d+\\])$`, "m").exec(result.redactedText)?.[1])
+    .filter(Boolean);
+  assert.strictEqual(sharedPlaceholders.length, sensitiveKeys.length);
+  assert.strictEqual(new Set(sharedPlaceholders).size, 1, "same generic secret should reuse one placeholder");
+  assert.ok(result.redactedText.includes("secret_santa=office-game"));
+  assert.ok(result.redactedText.includes('secret_santa="John gives gift to Anna"'));
+  assert.ok(result.redactedText.includes("secret_santa_enabled=true"));
+  assert.ok(result.redactedText.includes('"password_hint": "use a password manager",'));
+  assert.ok(result.redactedText.includes('password_hint="Use long passwords"'));
+  assert.ok(result.redactedText.includes("BENIGN_PASSWORD_HINT=use-a-password-manager"));
+  assert.ok(result.redactedText.includes('github_username="petritbahtiri123"'));
+  assert.ok(result.redactedText.includes("token_limit=4096"));
+  assert.ok(result.redactedText.includes('bearer_market="financial term"'));
+  assert.ok(result.redactedText.includes('public_key_label="this is public, not private"'));
+  assert.ok(result.redactedText.includes("DUPLICATE_CHECK_BEGIN_123456789"));
+  assert.ok(result.redactedText.includes("DUPLICATE_CHECK_END_123456789"));
+  assert.ok(result.redactedText.includes("LEAKGUARD_PERFORMANCE_TEST_END_MARKER_987654321"));
+  assert.ok(result.redactedText.includes("This text says use a password manager."));
+  assert.ok(
+    /^secret_note="this is my secret: \[PWM_\d+\]"$/m.test(result.redactedText),
+    "secret_note should redact only the inner token and preserve the closing quote"
+  );
+}
+
 function testGenericBasicAuthUrl() {
   const detector = new Detector();
   const text = "Internal URL https://deploy:Sup3rSecr3t!@ops.internal.corp/path is used by the deploy agent.";
@@ -1847,6 +2005,8 @@ function run() {
   testPositiveCredentialFixturesStillRedactWithExistingPlaceholdersInText();
   testDbUriWithCredentials();
   testFullValueReplacementForConnectionStyleAssignments();
+  testSqlServerConnectionStringsRedactPasswords();
+  testGenericSecretAssignmentsInLongLinesRedactWithoutSafeKeyFalsePositives();
   testGenericBasicAuthUrl();
   testOverlapBearerVsJwt();
   testAuthorizationBearerVariants();

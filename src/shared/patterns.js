@@ -405,7 +405,7 @@
       category: "connection_string",
       baseScore: 75,
       regex:
-        /\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis|amqp|mssql):\/\/[^\s'"`<>{}\[\]]+/gi
+        /\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis|amqp|mssql|sqlserver|jdbc:sqlserver):\/\/[^\s'"`<>{}\[\]]+/gi
     },
     {
       name: "generic_uri_credentials",
@@ -567,7 +567,7 @@
     /((?:[A-Za-z_][A-Za-z0-9_.-]{0,80})?(?:aws[_-]?secret[_-]?access[_-]?key|aws[_-]?session[_-]?token|pass(?:word)?|pwd|secret|token|api[_-]?key|openai(?:[_-]?api)?(?:[_-]?key)?|jwt|access[_-]?key|client[_-]?secret|private[_-]?key|account[_-]?key|cookie|session(?:[_-]?id|[_-]?secret)?|auth(?:orization)?|connection(?:string|_string)?|webhook))/i;
 
   const ASSIGNMENT_REGEX =
-    /((?:[A-Za-z_][A-Za-z0-9_.-]{0,80})?(?:aws[_-]?secret[_-]?access[_-]?key|aws[_-]?session[_-]?token|pass(?:word)?|pwd|secret|token|api[_-]?key|openai(?:[_-]?api)?(?:[_-]?key)?|jwt|access[_-]?key|client[_-]?secret|private[_-]?key|account[_-]?key|cookie|session(?:[_-]?id|[_-]?secret)?|auth(?:orization)?|connection(?:string|_string)?|webhook))\s*[:=]\s*((?:"[^"\n\r]*")|(?:'[^'\n\r]*')|(?:`[^`\n\r]*`)|(?:[^\s,;]+))/gim;
+    /((?:[A-Za-z_][A-Za-z0-9_.-]{0,80})?(?:aws[_-]?secret[_-]?access[_-]?key|aws[_-]?session[_-]?token|pass(?:word)?|pwd|secret|token|api[_-]?key|openai(?:[_-]?api)?(?:[_-]?key)?|jwt|access[_-]?key|client[_-]?secret|private[_-]?key|account[_-]?key|cookie|session(?:[_-]?id|[_-]?secret)?|auth(?:orization)?|connection(?:string|_string)?|webhook))\s*[:=]\s*((?:"[^"\n\r]*")|(?:'[^'\n\r]*')|(?:`[^`\n\r]*`)|(?:[^\s,;"'`}]+))/gim;
 
   const CLEAN_PLACEHOLDER_REGEX =
     /^\[(?:PWM_\d+|NET_\d+(?:_SUB_\d+)*(?:_(?:HOST_\d+|GW|VIP|DNS))?|PUB_HOST_\d+(?:_(?:GW|VIP|DNS))?)\]$/;
