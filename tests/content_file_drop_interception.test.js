@@ -140,6 +140,7 @@ function createEvent({
     },
     stopImmediatePropagation() {
       calls.stopImmediatePropagation += 1;
+      event.__immediateStopped = true;
     }
   };
 
@@ -519,7 +520,9 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "maybeHandlePaste"),
       extractFunctionSource(contentSource, "maybeHandleDrop"),
       extractFunctionSource(contentSource, "maybeHandleFileDrag"),
-      "return { maybeHandleChatGptLargeTextPaste, maybeHandlePaste, maybeHandleDrop, maybeHandleFileDrag, getSuppressInputScanUntil: () => suppressInputScanUntil, isProgrammaticInputScanSuppressed };"
+      "const sanitizedFileInputHandoffs = new WeakSet();",
+      extractFunctionSource(contentSource, "maybeHandleFileInputChange"),
+      "return { maybeHandleChatGptLargeTextPaste, maybeHandlePaste, maybeHandleDrop, maybeHandleFileDrag, maybeHandleFileInputChange, getSuppressInputScanUntil: () => suppressInputScanUntil, isProgrammaticInputScanSuppressed };"
     ].join("\n\n")
   );
   const handlers = factory(...Object.values(dependencies));
@@ -917,11 +920,177 @@ async function testGeminiStreamingHandoffUsesDiscoveredFileInput() {
   assert.strictEqual(handedOff, true);
   assert.strictEqual(shadowInput.files.length, 1);
   assert.strictEqual(shadowInput.files[0], sanitizedFile);
-  assert.deepStrictEqual(shadowInput.events, ["input", "change"]);
+  assert.deepStrictEqual(shadowInput.events, ["change"]);
   assert.strictEqual(fallbackDrops.length, 0);
   assert.ok(
     debugEvents.some((entry) => entry.label === "file-handoff:assignment-success"),
     "expected Gemini streaming handoff to assign sanitized file input"
+  );
+}
+
+async function testGeminiLargeFileInputWithoutComposerUsesStreamingSanitizedHandoff() {
+  const repeatedSecret = "sk-proj-ZZZ111ZZZ111ZZZ111ZZZ111ZZZ111ZZZ111ZZZ111ZZZ111";
+  const anotherSecret = "sk-proj-BBB222";
+  const rawText = [
+    `backup_key=${repeatedSecret}`,
+    `repeat_backup_key=${repeatedSecret}`,
+    `another_key=${anotherSecret}`,
+    "token_limit=4096",
+    "password_hint=use a password manager",
+    "secret_santa=party"
+  ].join("\n");
+  const rawFile = createTextFile({
+    name: "large-gemini.env",
+    text: rawText
+  });
+  rawFile.size = 12 * 1024 * 1024;
+  const fileInput = createFileInput({ source: "shadow-root" });
+  fileInput.files = [rawFile];
+  fileInput.value = "C:\\fakepath\\large-gemini.env";
+  const geminiObservedChanges = [];
+  fileInput.dispatchEvent = (dispatchedEvent) => {
+    fileInput.events.push(dispatchedEvent.type);
+    if (dispatchedEvent.type === "change") {
+      geminiObservedChanges.push(Array.from(fileInput.files || []));
+    }
+    return true;
+  };
+  const findComposerCalls = [];
+  let streamedFile = null;
+  const { maybeHandleFileInputChange, calls } = createHarness({
+    location: { hostname: "gemini.google.com" },
+    findComposer: (target) => {
+      findComposerCalls.push(target);
+      return null;
+    },
+    readLocalTextFileFromDataTransfer: async (transfer) => {
+      calls.reads.push(transfer);
+      return {
+        handled: true,
+        ok: false,
+        code: "streaming_required",
+        sourceFile: rawFile,
+        file: {
+          name: rawFile.name,
+          type: rawFile.type,
+          sizeBytes: rawFile.size
+        }
+      };
+    },
+    requestRedaction: async (text, findings) => {
+      calls.redactions.push({ text, findings });
+      return {
+        redactedText: text.replaceAll(repeatedSecret, "[PWM_1]").replaceAll(anotherSecret, "[PWM_2]")
+      };
+    },
+    StreamingFileRedactor: {
+      LARGE_TEXT_STREAMING_MAX_BYTES: 50 * 1024 * 1024,
+      STREAMING_BLOCK_TITLE: "File too large for local redaction",
+      STREAMING_BLOCK_MESSAGE:
+        "This file is over 50 MB. LeakGuard blocked the upload because it cannot safely sanitize it yet.",
+      redactTextFileStream: async (file, options) => {
+        streamedFile = file;
+        const result = await options.redactText(rawText);
+        return {
+          action: "redacted",
+          sanitizedFile: {
+            name: file.name,
+            type: file.type,
+            size: result.redactedText.length,
+            text: result.redactedText
+          },
+          bytesProcessed: file.size,
+          findingsCount: result.replacements?.length || 2
+        };
+      }
+    },
+    handOffSanitizedLocalFile: (event, input, sanitizedFile, context) => {
+      calls.handoffs.push({ event, input, sanitizedFile, context });
+      assert.strictEqual(event.target, fileInput);
+      assert.strictEqual(input, null);
+      assert.strictEqual(context, "file-input");
+      assert.strictEqual(sanitizedFile.text.includes(repeatedSecret), false);
+      assert.strictEqual(sanitizedFile.text.includes(anotherSecret), false);
+      fileInput.files = [sanitizedFile];
+      fileInput.dispatchEvent({ type: "change", bubbles: true, cancelable: true });
+      return true;
+    }
+  });
+  const { event, calls: eventCalls } = createEvent({
+    target: fileInput
+  });
+
+  await maybeHandleFileInputChange(event);
+  if (!event.__immediateStopped) {
+    geminiObservedChanges.push(Array.from(fileInput.files || []));
+  }
+
+  assert.deepStrictEqual(findComposerCalls, [fileInput]);
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(eventCalls.stopImmediatePropagation, 1);
+  assert.strictEqual(streamedFile, rawFile);
+  assert.strictEqual(fileInput.value, "");
+  assert.strictEqual(calls.reads.length, 1);
+  assert.deepStrictEqual(calls.reads[0].files, [rawFile]);
+  assert.strictEqual(calls.redactions.length, 1);
+  assert.strictEqual(calls.handoffs.length, 1);
+  assert.strictEqual(calls.handoffs[0].context, "file-input");
+  assert.strictEqual(calls.handoffs[0].sanitizedFile.text.includes(repeatedSecret), false);
+  assert.strictEqual(calls.handoffs[0].sanitizedFile.text.includes(anotherSecret), false);
+  assert.strictEqual(
+    (calls.handoffs[0].sanitizedFile.text.match(/\[PWM_1\]/g) || []).length,
+    2,
+    "repeated raw secrets should reuse the same placeholder in the handed-off file"
+  );
+  assert.ok(calls.handoffs[0].sanitizedFile.text.includes("another_key=[PWM_2]"));
+  assert.ok(calls.handoffs[0].sanitizedFile.text.includes("token_limit=4096"));
+  assert.ok(calls.handoffs[0].sanitizedFile.text.includes("password_hint=use a password manager"));
+  assert.ok(calls.handoffs[0].sanitizedFile.text.includes("secret_santa=party"));
+  assert.strictEqual(calls.textFallbacks.length, 0);
+  assert.strictEqual(calls.directTextWrites?.length || 0, 0);
+  assert.strictEqual(calls.largeTextConfirmations?.length || 0, 0);
+  assert.deepStrictEqual(fileInput.events, ["change"]);
+  assert.strictEqual(geminiObservedChanges.length, 1);
+  assert.strictEqual(geminiObservedChanges[0][0], calls.handoffs[0].sanitizedFile);
+  assert.notStrictEqual(geminiObservedChanges[0][0], rawFile);
+  assert.strictEqual(geminiObservedChanges[0][0].text.includes(repeatedSecret), false);
+  assert.strictEqual(geminiObservedChanges[0][0].text.includes(anotherSecret), false);
+}
+
+async function testNonGeminiFileInputWithoutComposerStillIgnored() {
+  const rawFile = createTextFile({
+    name: "chatgpt.env",
+    text: "API_KEY=LeakGuardFileApiKey1234567890"
+  });
+  const fileInput = createFileInput();
+  fileInput.files = [rawFile];
+  const findComposerCalls = [];
+  const { maybeHandleFileInputChange, calls } = createHarness({
+    location: { hostname: "chatgpt.com" },
+    findComposer: (target) => {
+      findComposerCalls.push(target);
+      return null;
+    }
+  });
+  const { event } = createEvent({
+    target: fileInput
+  });
+
+  await maybeHandleFileInputChange(event);
+
+  assert.deepStrictEqual(findComposerCalls, [fileInput]);
+  assert.strictEqual(event.defaultPrevented, false);
+  assert.strictEqual(calls.reads.length, 0);
+  assert.strictEqual(calls.redactions.length, 0);
+  assert.strictEqual(calls.handoffs.length, 0);
+}
+
+async function testChangeListenerUsesCapturePhaseForFileInputInterception() {
+  assert.ok(
+    /document\.addEventListener\(\s*"change"[\s\S]*maybeHandleFileInputChange\(event\)[\s\S]*true\s*\)/.test(
+      contentSource
+    ),
+    "file input change interception should stay capture-phase"
   );
 }
 
@@ -2380,6 +2549,9 @@ async function testChatGptAndClaudeStillUseSanitizedFileHandoffOnly() {
   await testComposerTargetDropStillPassesComposer();
   await testGeminiDropSkipsSanitizedFileInputHandoff();
   await testGeminiStreamingHandoffUsesDiscoveredFileInput();
+  await testGeminiLargeFileInputWithoutComposerUsesStreamingSanitizedHandoff();
+  await testNonGeminiFileInputWithoutComposerStillIgnored();
+  await testChangeListenerUsesCapturePhaseForFileInputInterception();
   await testGeminiDropDoesNotDiscoverEnabledInput();
   await testGeminiDropSkipsDiscoveryPerDragSession();
   await testGeminiDropWithoutInputSkipsUploadHandoff();

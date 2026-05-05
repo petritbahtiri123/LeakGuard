@@ -13,8 +13,12 @@ const manifestsRoot = path.join(repoRoot, "manifests");
 const distRoot = path.join(repoRoot, "dist");
 const assetDirs = ["background", "content", "popup", "options", "ui", "scanner", "shared", "compat"];
 const staticDirs = ["icons", "config", "ai/models"];
-const onnxRuntimeLoaderFiles = ["ort.min.js"];
-const onnxRuntimeSidecarPattern = /^ort-wasm.*\.(?:js|mjs|wasm)$/;
+const onnxRuntimeFiles = [
+  "ort.min.js",
+  "ort-wasm-simd-threaded.mjs",
+  "ort-wasm-simd-threaded.wasm"
+];
+const onnxRuntimeSidecarPattern = /^ort-wasm-simd-threaded\.(?:mjs|wasm)$/;
 const supportedBrowsers = new Set(["chrome", "firefox"]);
 const supportedModes = new Set(["consumer", "enterprise"]);
 
@@ -47,16 +51,13 @@ function listOnnxRuntimeFiles() {
     .readdirSync(sourceDir, { withFileTypes: true })
     .filter((entry) => entry.isFile())
     .map((entry) => entry.name);
-  const sidecarFiles = files.filter((file) => onnxRuntimeSidecarPattern.test(file)).sort();
-  const runtimeFiles = [...onnxRuntimeLoaderFiles, ...sidecarFiles].sort();
-
-  for (const file of runtimeFiles) {
+  for (const file of onnxRuntimeFiles) {
     if (!files.includes(file)) {
       throw new Error(`Missing ONNX Runtime loader asset ${path.join(sourceDir, file)}.`);
     }
   }
 
-  return runtimeFiles;
+  return [...onnxRuntimeFiles].sort();
 }
 
 function getOnnxRuntimeWebAccessibleResources() {

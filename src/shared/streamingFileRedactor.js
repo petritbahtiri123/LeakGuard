@@ -9,6 +9,8 @@
   const STREAMING_BLOCK_TITLE = "File too large for local redaction";
   const STREAMING_BLOCK_MESSAGE =
     "This file is over 50 MB. LeakGuard blocked the upload because it cannot safely sanitize it yet.";
+  const STREAMING_INVALID_UTF8_MESSAGE =
+    "This file is not valid UTF-8 text. LeakGuard blocked the raw upload because it cannot safely sanitize this encoding yet.";
 
   function normalizeFileName(fileName) {
     return String(fileName || "").split(/[\\/]/).pop() || "leakguard-redacted.txt";
@@ -141,6 +143,13 @@
     return null;
   }
 
+  function isTextDecoderError(error) {
+    return (
+      error instanceof TypeError &&
+      /TextDecoder|encoded data|decode/i.test(String(error?.message || ""))
+    );
+  }
+
   async function redactTextFileStream(file, options = {}) {
     const sizeBytes = getFileSize(file);
     const maxBytes = Number(options.maxBytes || LARGE_TEXT_STREAMING_MAX_BYTES);
@@ -221,7 +230,10 @@
     } catch (error) {
       return {
         action: "failed",
-        error: error?.message || "LeakGuard could not stream-redact this file.",
+        error: isTextDecoderError(error)
+          ? STREAMING_INVALID_UTF8_MESSAGE
+          : error?.message || "LeakGuard could not stream-redact this file.",
+        code: isTextDecoderError(error) ? "invalid_utf8" : "streaming_redaction_failed",
         bytesProcessed,
         findingsCount
       };
@@ -251,6 +263,7 @@
     LARGE_TEXT_STREAMING_MAX_BYTES,
     STREAMING_BLOCK_TITLE,
     STREAMING_BLOCK_MESSAGE,
+    STREAMING_INVALID_UTF8_MESSAGE,
     redactTextFileStream
   };
 

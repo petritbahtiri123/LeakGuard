@@ -194,6 +194,41 @@ async function testSafeControlsRemainUnredacted() {
   assert.strictEqual(output, text);
 }
 
+async function testFiveMiBUploadFixtureRedactsShortProjectKeyAssignment() {
+  const fullKey = "sk-proj-AAAA1111bbbb2222CCCC3333dddd4444eeee5555";
+  const repeatedKey = "sk-proj-ZZZ111";
+  const anotherKey = "sk-proj-BBB222";
+  const header = [
+    `full_key=${fullKey}`,
+    `half_key=${repeatedKey}`,
+    `backup_key=${repeatedKey}`,
+    `another_key=${anotherKey}`,
+    "token_limit=4096",
+    "password_hint=use a password manager",
+    "secret_santa=party"
+  ].join("\n");
+  const fillerLine = "safe_line=0123456789abcdef0123456789abcdef0123456789abcdef\n";
+  const filler = fillerLine.repeat(Math.ceil((5 * 1024 * 1024) / fillerLine.length));
+  const { output } = await redactFixture(`${header}\n${filler}`, {
+    chunkSize: 512 * 1024,
+    chunkBytes: 512 * 1024,
+    overlapSize: 16 * 1024
+  });
+
+  assert.strictEqual(output.includes(fullKey), false);
+  assert.strictEqual(output.includes(repeatedKey), false);
+  assert.strictEqual(output.includes(anotherKey), false);
+  assert.ok(/^full_key=\[PWM_\d+\]$/m.test(output));
+  assert.ok(/^half_key=(\[PWM_\d+\])$/m.test(output));
+  const repeatedPlaceholder = /^half_key=(\[PWM_\d+\])$/m.exec(output)?.[1];
+  assert.ok(repeatedPlaceholder, "half key should redact to a placeholder");
+  assert.ok(output.includes(`backup_key=${repeatedPlaceholder}`));
+  assert.ok(/^another_key=\[PWM_\d+\]$/m.test(output));
+  assert.ok(output.includes("token_limit=4096"));
+  assert.ok(output.includes("password_hint=use a password manager"));
+  assert.ok(output.includes("secret_santa=party"));
+}
+
 async function testOverFiftyMiBBlocks() {
   const file = {
     name: "too-large.log",
@@ -214,6 +249,39 @@ async function testOverFiftyMiBBlocks() {
   assert.ok(result.error.includes("over 50 MB"));
 }
 
+async function testInvalidUtf8FailsClosedWithFriendlyMessage() {
+  const file = {
+    name: "utf16-large.env",
+    type: "text/plain",
+    size: 5 * 1024 * 1024,
+    stream() {
+      let sent = false;
+      return new ReadableStream({
+        pull(controller) {
+          if (sent) {
+            controller.close();
+            return;
+          }
+          sent = true;
+          controller.enqueue(Uint8Array.from([0xff, 0xfe, 65, 0, 66, 0]));
+        }
+      });
+    }
+  };
+  const result = await redactTextFileStream(file, {
+    redactText: async () => {
+      throw new Error("invalid UTF-8 should fail before redaction");
+    },
+    createFile: createOutputFile
+  });
+
+  assert.strictEqual(result.action, "failed");
+  assert.strictEqual(result.code, "invalid_utf8");
+  assert.ok(result.error.includes("not valid UTF-8 text"));
+  assert.strictEqual(result.error.includes("TextDecoder"), false);
+  assert.strictEqual(result.sanitizedFile, undefined);
+}
+
 (async () => {
   await testLargeFileStreamsWithoutWholeFileRead();
   await testRepeatedSecretAcrossChunksKeepsSamePlaceholder();
@@ -221,7 +289,9 @@ async function testOverFiftyMiBBlocks() {
   await testDatabaseUrlSplitAcrossChunkBoundaryRedacts();
   await testPrivateKeySpanningChunksRedacts();
   await testSafeControlsRemainUnredacted();
+  await testFiveMiBUploadFixtureRedactsShortProjectKeyAssignment();
   await testOverFiftyMiBBlocks();
+  await testInvalidUtf8FailsClosedWithFriendlyMessage();
   console.log("PASS streaming large file redaction regressions");
 })().catch((error) => {
   console.error(error);

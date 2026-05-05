@@ -90,7 +90,9 @@
           runtime.env.wasm.wasmPaths = getExtensionUrl("vendor/onnxruntime/");
           runtime.env.wasm.numThreads = 1;
         }
-        return runtime.InferenceSession.create(getExtensionUrl(MODEL_PATH));
+        return runtime.InferenceSession.create(getExtensionUrl(MODEL_PATH), {
+          executionProviders: ["wasm"]
+        });
       })().catch((error) => {
         logAiWarning("model unavailable", error);
         return null;

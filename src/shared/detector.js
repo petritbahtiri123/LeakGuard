@@ -2065,7 +2065,7 @@
 
       const findings = [];
       const regex =
-        /([A-Za-z_][A-Za-z0-9_.-]{0,80})\s*[:=]\s*(?:"([^"\r\n]+)"|'([^'\r\n]+)'|`([^`\r\n]+)`|([^\s\r\n]+))/gim;
+        /([A-Za-z_][A-Za-z0-9_.-]{0,80})[^\S\r\n]*[:=][^\S\r\n]*(?:"([^"\r\n]+)"|'([^'\r\n]+)'|`([^`\r\n]+)`|([^\s\r\n]+))/gim;
       let match;
 
       while ((match = regex.exec(text)) !== null) {
@@ -2416,7 +2416,7 @@
 
       const findings = [];
       const regex =
-        /([A-Za-z_][A-Za-z0-9_.-]{0,80})\s*[:=]\s*(?:"([^"\r\n]+)"|'([^'\r\n]+)'|`([^`\r\n]+)`|([^\s,;"'`}\r\n]+))/gim;
+        /([A-Za-z_][A-Za-z0-9_.-]{0,80})[^\S\r\n]*[:=][^\S\r\n]*(?:"([^"\r\n]+)"|'([^'\r\n]+)'|`([^`\r\n]+)`|([^\s,;"'`}\r\n]+))/gim;
       let match;
 
       while ((match = regex.exec(text)) !== null) {
@@ -2491,6 +2491,54 @@
             methods: ["assignment", "explicit-key", entropy >= 3.6 ? "entropy" : null].filter(
               Boolean
             )
+          })
+        );
+      }
+
+      return findings;
+    }
+
+    scanLabelledProviderKeyValues(text) {
+      const findings = [];
+      const regex =
+        /(?:^|\n)([^\r\n]*(?:api[ _-]?key|apikey|key)[^\r\n]*:)[^\S\r\n]*(?:\r?\n)[^\S\r\n]*(sk-(?:proj|live|test|org|svcacct|admin)-[A-Za-z0-9_-]{6,})/gi;
+      let match;
+
+      while ((match = regex.exec(text)) !== null) {
+        const label = String(match[1] || "");
+        const raw = normalizeCandidate(match[2]);
+        if (!raw) continue;
+        if (/\b(?:example|sample|dummy|fake|template|mock|placeholder|replace[_ -]?me|changeme)\b/i.test(label)) {
+          continue;
+        }
+
+        const start = match.index + match[0].lastIndexOf(match[2]);
+        const end = start + raw.length;
+
+        if (
+          this.shouldSuppress({
+            raw,
+            text,
+            start,
+            end,
+            patternName: "labelled_provider_key_value",
+            key: label,
+            placeholderType: "API_KEY",
+            source: "natural-language"
+          })
+        ) {
+          continue;
+        }
+
+        findings.push(
+          this.buildFinding({
+            category: "credential",
+            placeholderType: "API_KEY",
+            raw,
+            start,
+            end,
+            score: 90 + Math.max(0, contextScore(text, start, end)),
+            methods: ["natural-language", "provider-key"]
           })
         );
       }
@@ -3213,6 +3261,7 @@
           ...this.scanAssignments(input),
           ...this.scanExactInlineSecretAssignments(input),
           ...this.scanExplicitCredentialAssignments(input),
+          ...this.scanLabelledProviderKeyValues(input),
           ...this.scanAdversarialAssignments(input),
           ...this.scanIdentityAssignments(input),
           ...this.scanJsonIdentityFields(input),

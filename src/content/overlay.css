@@ -216,18 +216,27 @@
 }
 
 .pwm-secret {
+  --pwm-secret-accent: #0891b2;
+  --pwm-secret-border: #0e7490;
+  --pwm-secret-bg-start: #ecfeff;
+  --pwm-secret-bg-end: #cffafe;
+  --pwm-secret-ring: rgba(8, 145, 178, 0.22);
   display: inline-flex;
   align-items: center;
   position: relative;
-  border: 1px dashed #38bdf8;
+  border: 1px solid var(--pwm-secret-border);
   border-radius: 8px;
-  padding: 1px 6px;
-  color: #dbeafe;
-  background:
-    linear-gradient(135deg, rgba(56, 189, 248, 0.14), rgba(15, 23, 42, 0.02)),
-    rgba(15, 23, 42, 0.02);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  padding: 1px 7px;
+  color: #0f172a;
+  background: linear-gradient(135deg, var(--pwm-secret-bg-start), var(--pwm-secret-bg-end));
+  box-shadow:
+    inset 3px 0 0 var(--pwm-secret-accent),
+    0 0 0 2px var(--pwm-secret-ring),
+    0 1px 2px rgba(15, 23, 42, 0.3);
   cursor: pointer;
+  font-weight: 750;
+  line-height: 1.45;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.72);
   user-select: none;
   transition:
     transform 140ms ease,
@@ -236,16 +245,49 @@
     box-shadow 220ms ease;
 }
 
+.pwm-secret[data-pwm-tone="amber"] {
+  --pwm-secret-accent: #d97706;
+  --pwm-secret-border: #b45309;
+  --pwm-secret-bg-start: #fffbeb;
+  --pwm-secret-bg-end: #fde68a;
+  --pwm-secret-ring: rgba(217, 119, 6, 0.24);
+}
+
+.pwm-secret[data-pwm-tone="violet"] {
+  --pwm-secret-accent: #7c3aed;
+  --pwm-secret-border: #6d28d9;
+  --pwm-secret-bg-start: #f5f3ff;
+  --pwm-secret-bg-end: #ddd6fe;
+  --pwm-secret-ring: rgba(124, 58, 237, 0.22);
+}
+
+.pwm-secret[data-pwm-tone="rose"] {
+  --pwm-secret-accent: #e11d48;
+  --pwm-secret-border: #be123c;
+  --pwm-secret-bg-start: #fff1f2;
+  --pwm-secret-bg-end: #fecdd3;
+  --pwm-secret-ring: rgba(225, 29, 72, 0.22);
+}
+
+.pwm-secret[data-pwm-tone="emerald"] {
+  --pwm-secret-accent: #059669;
+  --pwm-secret-border: #047857;
+  --pwm-secret-bg-start: #ecfdf5;
+  --pwm-secret-bg-end: #a7f3d0;
+  --pwm-secret-ring: rgba(5, 150, 105, 0.22);
+}
+
 .pwm-secret:hover {
   transform: translateY(-1px);
-  border-color: #67e8f9;
+  border-color: var(--pwm-secret-accent);
   box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
-    0 10px 28px -22px rgba(34, 211, 238, 0.7);
+    inset 3px 0 0 var(--pwm-secret-accent),
+    0 0 0 3px var(--pwm-secret-ring),
+    0 10px 24px -18px rgba(15, 23, 42, 0.58);
 }
 
 .pwm-secret:focus-visible {
-  outline: 2px solid #67e8f9;
+  outline: 2px solid var(--pwm-secret-accent);
   outline-offset: 2px;
 }
 

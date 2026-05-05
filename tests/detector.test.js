@@ -995,6 +995,56 @@ function testGenericKeyAssignmentWithProviderPrefixRedactsShortProjectKey() {
   );
 }
 
+function testGenericKeyAssignmentAfterProseLabelRedactsShortProjectKey() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const text = [
+    "This file tests partial/half-key patterns.",
+    "",
+    "Full key:",
+    "sk-proj-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "",
+    "Half-looking key:",
+    "sk-proj-ZZZ111",
+    "",
+    "Another suspicious line:",
+    "another_key=sk-proj-BBB222",
+    "",
+    "Safe line:",
+    "token_limit=4096"
+  ].join("\n");
+
+  const findings = detector.scan(text, { manager });
+  const result = redactor.redact(text, findings);
+
+  assert.ok(
+    findings.some(
+      (finding) =>
+        finding.type === "API_KEY" &&
+        finding.raw === "sk-proj-ZZZ111" &&
+        finding.start === text.indexOf("sk-proj-ZZZ111") &&
+        finding.method.includes("provider-key")
+    ),
+    "short provider-prefixed value after a key label should be detected intentionally"
+  );
+  assert.ok(
+    findings.some(
+      (finding) =>
+        finding.type === "API_KEY" &&
+        finding.raw === "sk-proj-BBB222" &&
+        finding.start === text.indexOf("sk-proj-BBB222") &&
+        finding.method.includes("explicit-key")
+    ),
+    "prose labels ending with ':' must not swallow following short provider-key assignments"
+  );
+  assert.strictEqual(result.redactedText.includes("sk-proj-ZZZ111"), false);
+  assert.ok(/^half-looking key:\n\[PWM_\d+\]$/im.test(result.redactedText));
+  assert.strictEqual(result.redactedText.includes("another_key=sk-proj-BBB222"), false);
+  assert.ok(/^another_key=\[PWM_\d+\]$/m.test(result.redactedText));
+  assert.ok(result.redactedText.includes("token_limit=4096"));
+}
+
 function testAwsSecretAssignmentWithExamplePrefixStillFailsClosedButDocsPlaceholderStaysVisible() {
   const detector = new Detector();
   const manager = new PlaceholderManager();
@@ -2016,6 +2066,7 @@ function run() {
   testExampleValuesDoNotTrigger();
   testExplicitAssignmentsStillRedactWhenAdjacentLinesContainExampleLikeValues();
   testGenericKeyAssignmentWithProviderPrefixRedactsShortProjectKey();
+  testGenericKeyAssignmentAfterProseLabelRedactsShortProjectKey();
   testAwsSecretAssignmentWithExamplePrefixStillFailsClosedButDocsPlaceholderStaysVisible();
   testConcatenatedPlaceholderAssignmentsDoNotCreateCompositeFalsePositives();
   testUserStressEdgeCasesRedactSecretsButKeepSafeLiterals();
