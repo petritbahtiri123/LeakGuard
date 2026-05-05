@@ -2684,7 +2684,7 @@
       if (localFile.code === "streaming_required" && localFile.sourceFile) {
         const streamResult = await streamRedactLocalTextFile(localFile.sourceFile, localFile.file);
         if (streamResult.action === "redacted" && streamResult.sanitizedFile) {
-          const handedOff = handOffSanitizedLocalFile(event, editor, streamResult.sanitizedFile, "drop");
+          const handedOff = handOffGeminiSanitizedFileUpload(event, editor, streamResult.sanitizedFile);
           if (handedOff) {
             setBadge("LeakGuard attached a sanitized local file.");
             hideBadgeSoon(3200);
@@ -3007,6 +3007,28 @@
     return false;
   }
 
+  function handOffGeminiSanitizedFileUpload(event, input, sanitizedFile) {
+    if (!isGeminiHost()) return false;
+
+    const transfer = createSanitizedDataTransfer(sanitizedFile);
+    if (!transfer) {
+      debugReveal("file-handoff:gemini-data-transfer-create-failed", {
+        sanitizedFile: describeFileForDebug(sanitizedFile)
+      });
+      return false;
+    }
+
+    const fileInput = resolveFileInputForHandoff(event, input);
+    if (!fileInput) {
+      debugReveal("file-handoff:gemini-input-not-found", {
+        sanitizedFile: describeFileForDebug(sanitizedFile)
+      });
+      return false;
+    }
+
+    return handOffSanitizedFileInput(fileInput, transfer);
+  }
+
   async function applyGeminiSanitizedTextFallback(event, input, redactedText) {
     if (!isGeminiHost()) {
       return false;
@@ -3171,7 +3193,10 @@
           );
         }
 
-        const handedOff = handOffSanitizedLocalFile(event, input, streamResult.sanitizedFile, context);
+        const handedOff =
+          context === "drop" && isGeminiHost()
+            ? handOffGeminiSanitizedFileUpload(event, input, streamResult.sanitizedFile)
+            : handOffSanitizedLocalFile(event, input, streamResult.sanitizedFile, context);
         if (handedOff) {
           setBadge("LeakGuard attached a sanitized local file.");
           hideBadgeSoon(3200);

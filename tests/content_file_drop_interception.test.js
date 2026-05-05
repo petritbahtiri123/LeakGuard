@@ -389,6 +389,10 @@ function createHarness(overrides = {}) {
       calls.handoffs.push({ event, input, sanitizedFile, context });
       return true;
     },
+    handOffGeminiSanitizedFileUpload: (event, input, sanitizedFile) => {
+      calls.handoffs.push({ event, input, sanitizedFile, context: "gemini-file-input" });
+      return true;
+    },
     getInputText: (input) => input?.text || "",
     getSelectionOffsets: (input) => input?.selection || { start: 0, end: 0 },
     applyPasteDecision: async (input, originalText, selection, insertedText, context) => {
@@ -627,7 +631,8 @@ function createHandoffHarness({ hostname = "gemini.google.com", fileInputs = [],
       extractFunctionSource(contentSource, "resolveFileInputForHandoff"),
       extractFunctionSource(contentSource, "handOffSanitizedFileInput"),
       extractFunctionSource(contentSource, "handOffSanitizedLocalFile"),
-      "return { handOffSanitizedLocalFile, resolveFileInputForHandoff };"
+      extractFunctionSource(contentSource, "handOffGeminiSanitizedFileUpload"),
+      "return { handOffSanitizedLocalFile, handOffGeminiSanitizedFileUpload, resolveFileInputForHandoff };"
     ].join("\n\n")
   );
 
@@ -882,6 +887,41 @@ async function testGeminiDropSkipsSanitizedFileInputHandoff() {
   assert.ok(
     debugEvents.some((entry) => entry.label === "file-handoff:gemini-file-upload-skipped"),
     "expected Gemini file upload handoff to be skipped"
+  );
+}
+
+async function testGeminiStreamingHandoffUsesDiscoveredFileInput() {
+  const sanitizedFile = {
+    name: "large-stream.env",
+    type: "text/plain",
+    size: 18,
+    text: "API_KEY=[PWM_1]"
+  };
+  const shadowInput = createFileInput({ source: "shadow-root" });
+  const { handOffGeminiSanitizedFileUpload, debugEvents, fallbackDrops } = createHandoffHarness({
+    shadowInputs: [shadowInput]
+  });
+  const event = {
+    target: {
+      nodeType: 1,
+      tagName: "P",
+      dispatchEvent() {
+        throw new Error("Gemini streaming handoff should use file input assignment");
+      }
+    },
+    dataTransfer: createDataTransfer()
+  };
+
+  const handedOff = handOffGeminiSanitizedFileUpload(event, null, sanitizedFile);
+
+  assert.strictEqual(handedOff, true);
+  assert.strictEqual(shadowInput.files.length, 1);
+  assert.strictEqual(shadowInput.files[0], sanitizedFile);
+  assert.deepStrictEqual(shadowInput.events, ["input", "change"]);
+  assert.strictEqual(fallbackDrops.length, 0);
+  assert.ok(
+    debugEvents.some((entry) => entry.label === "file-handoff:assignment-success"),
+    "expected Gemini streaming handoff to assign sanitized file input"
   );
 }
 
@@ -2339,6 +2379,7 @@ async function testChatGptAndClaudeStillUseSanitizedFileHandoffOnly() {
   await testSanitizedFileHandoffDropIsIgnored();
   await testComposerTargetDropStillPassesComposer();
   await testGeminiDropSkipsSanitizedFileInputHandoff();
+  await testGeminiStreamingHandoffUsesDiscoveredFileInput();
   await testGeminiDropDoesNotDiscoverEnabledInput();
   await testGeminiDropSkipsDiscoveryPerDragSession();
   await testGeminiDropWithoutInputSkipsUploadHandoff();
