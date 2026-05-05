@@ -8,6 +8,7 @@ const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.j
 require(path.join(repoRoot, "src/content/file_paste_helpers.js"));
 require(path.join(repoRoot, "src/content/composer_helpers.js"));
 require(path.join(repoRoot, "src/shared/fileScanner.js"));
+require(path.join(repoRoot, "src/shared/streamingFileRedactor.js"));
 
 const { dataTransferHasFiles } = globalThis.PWM.FilePasteHelpers;
 
@@ -336,6 +337,7 @@ function createHarness(overrides = {}) {
     fileDragGuard: null,
     rawFileDropInterceptions: new WeakSet(),
     FilePasteHelpers: globalThis.PWM.FilePasteHelpers,
+    StreamingFileRedactor: globalThis.PWM.StreamingFileRedactor || {},
     normalizeComposerText: globalThis.PWM.ComposerHelpers.normalizeComposerText,
     spliceSelectionText: globalThis.PWM.ComposerHelpers.spliceSelectionText,
     buildComposerWritePlan: (input, text) => ({
@@ -385,6 +387,10 @@ function createHarness(overrides = {}) {
     },
     handOffSanitizedLocalFile: (event, input, sanitizedFile, context) => {
       calls.handoffs.push({ event, input, sanitizedFile, context });
+      return true;
+    },
+    handOffGeminiSanitizedFileUpload: (event, input, sanitizedFile) => {
+      calls.handoffs.push({ event, input, sanitizedFile, context: "gemini-file-input" });
       return true;
     },
     getInputText: (input) => input?.text || "",
@@ -469,6 +475,12 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "showLocalPayloadOptimizationStatus"),
       extractFunctionSource(contentSource, "clearLocalPayloadOptimizationStatus"),
       extractFunctionSource(contentSource, "blockLargeLocalTextPayload"),
+      extractFunctionSource(contentSource, "showStreamingRedactionStatus"),
+      extractFunctionSource(contentSource, "updateStreamingRedactionProgress"),
+      extractFunctionSource(contentSource, "clearStreamingRedactionStatus"),
+      extractFunctionSource(contentSource, "createStreamingSanitizedFile"),
+      extractFunctionSource(contentSource, "streamRedactLocalTextFile"),
+      extractFunctionSource(contentSource, "blockStreamingLocalFile"),
       extractFunctionSource(contentSource, "isSanitizedFileHandoffEvent"),
       extractFunctionSource(contentSource, "normalizeTarget"),
       extractFunctionSource(contentSource, "isChatGptHost"),
@@ -619,7 +631,8 @@ function createHandoffHarness({ hostname = "gemini.google.com", fileInputs = [],
       extractFunctionSource(contentSource, "resolveFileInputForHandoff"),
       extractFunctionSource(contentSource, "handOffSanitizedFileInput"),
       extractFunctionSource(contentSource, "handOffSanitizedLocalFile"),
-      "return { handOffSanitizedLocalFile, resolveFileInputForHandoff };"
+      extractFunctionSource(contentSource, "handOffGeminiSanitizedFileUpload"),
+      "return { handOffSanitizedLocalFile, handOffGeminiSanitizedFileUpload, resolveFileInputForHandoff };"
     ].join("\n\n")
   );
 
@@ -874,6 +887,41 @@ async function testGeminiDropSkipsSanitizedFileInputHandoff() {
   assert.ok(
     debugEvents.some((entry) => entry.label === "file-handoff:gemini-file-upload-skipped"),
     "expected Gemini file upload handoff to be skipped"
+  );
+}
+
+async function testGeminiStreamingHandoffUsesDiscoveredFileInput() {
+  const sanitizedFile = {
+    name: "large-stream.env",
+    type: "text/plain",
+    size: 18,
+    text: "API_KEY=[PWM_1]"
+  };
+  const shadowInput = createFileInput({ source: "shadow-root" });
+  const { handOffGeminiSanitizedFileUpload, debugEvents, fallbackDrops } = createHandoffHarness({
+    shadowInputs: [shadowInput]
+  });
+  const event = {
+    target: {
+      nodeType: 1,
+      tagName: "P",
+      dispatchEvent() {
+        throw new Error("Gemini streaming handoff should use file input assignment");
+      }
+    },
+    dataTransfer: createDataTransfer()
+  };
+
+  const handedOff = handOffGeminiSanitizedFileUpload(event, null, sanitizedFile);
+
+  assert.strictEqual(handedOff, true);
+  assert.strictEqual(shadowInput.files.length, 1);
+  assert.strictEqual(shadowInput.files[0], sanitizedFile);
+  assert.deepStrictEqual(shadowInput.events, ["input", "change"]);
+  assert.strictEqual(fallbackDrops.length, 0);
+  assert.ok(
+    debugEvents.some((entry) => entry.label === "file-handoff:assignment-success"),
+    "expected Gemini streaming handoff to assign sanitized file input"
   );
 }
 
@@ -1538,6 +1586,141 @@ async function testGeminiOverHardLimitDropIsBlockedBeforeInsertion() {
   assert.strictEqual(calls.modals.flat().join("\n").includes(rawSecret), false);
 }
 
+async function testDropOverHardLimitUsesStreamingSanitizedFileHandoff() {
+  const sourceFile = {
+    name: "large-stream.env",
+    type: "text/plain",
+    size: 5 * 1024 * 1024,
+    async text() {
+      throw new Error("streaming drop must not call file.text()");
+    },
+    async arrayBuffer() {
+      throw new Error("streaming drop must not call file.arrayBuffer()");
+    }
+  };
+  const composer = {
+    tagName: "TEXTAREA",
+    text: "",
+    selection: { start: 0, end: 0 }
+  };
+  const sanitizedFile = {
+    name: "large-stream.env",
+    type: "text/plain",
+    text: "API_KEY=[PWM_1]"
+  };
+  const { maybeHandleDrop, calls } = createHarness({
+    findComposer: () => composer,
+    readLocalTextFileFromDataTransfer: async (transfer) => {
+      calls.reads.push(transfer);
+      return {
+        handled: true,
+        ok: false,
+        code: "streaming_required",
+        sourceFile,
+        file: {
+          name: sourceFile.name,
+          type: sourceFile.type,
+          sizeBytes: sourceFile.size
+        }
+      };
+    },
+    StreamingFileRedactor: {
+      LARGE_TEXT_STREAMING_MAX_BYTES: 50 * 1024 * 1024,
+      STREAMING_BLOCK_TITLE: "File too large for local redaction",
+      STREAMING_BLOCK_MESSAGE:
+        "This file is over 50 MB. LeakGuard blocked the upload because it cannot safely sanitize it yet.",
+      redactTextFileStream: async (file, options) => {
+        assert.strictEqual(file, sourceFile);
+        options.onProgress?.({ bytesProcessed: sourceFile.size, totalBytes: sourceFile.size });
+        return {
+          action: "redacted",
+          sanitizedFile,
+          findingsCount: 1,
+          bytesProcessed: sourceFile.size
+        };
+      }
+    }
+  });
+  const { event } = createEvent({
+    dataTransfer: {
+      types: ["Files"],
+      files: [sourceFile],
+      items: [],
+      dropEffect: "none"
+    },
+    target: composer
+  });
+
+  await maybeHandleDrop(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(calls.redactions.length, 0, "large streaming path should not use single-shot redaction");
+  assert.strictEqual(calls.handoffs.length, 1);
+  assert.strictEqual(calls.handoffs[0].sanitizedFile, sanitizedFile);
+  assert.strictEqual(calls.handoffs[0].context, "drop");
+  assert.ok(calls.badges.some(([message]) => String(message || "").includes("Streaming redaction")));
+  assert.ok(calls.badges.some(([message]) => message === "LeakGuard attached a sanitized local file."));
+}
+
+async function testDropOverFiftyMiBBlocksBeforeStreaming() {
+  const sourceFile = {
+    name: "too-large-stream.env",
+    type: "text/plain",
+    size: 51 * 1024 * 1024
+  };
+  const composer = {
+    tagName: "TEXTAREA",
+    text: "",
+    selection: { start: 0, end: 0 }
+  };
+  const { maybeHandleDrop, calls } = createHarness({
+    findComposer: () => composer,
+    readLocalTextFileFromDataTransfer: async (transfer) => {
+      calls.reads.push(transfer);
+      return {
+        handled: true,
+        ok: false,
+        code: "streaming_required",
+        sourceFile,
+        file: {
+          name: sourceFile.name,
+          type: sourceFile.type,
+          sizeBytes: sourceFile.size
+        }
+      };
+    },
+    StreamingFileRedactor: {
+      LARGE_TEXT_STREAMING_MAX_BYTES: 50 * 1024 * 1024,
+      STREAMING_BLOCK_TITLE: "File too large for local redaction",
+      STREAMING_BLOCK_MESSAGE:
+        "This file is over 50 MB. LeakGuard blocked the upload because it cannot safely sanitize it yet.",
+      redactTextFileStream: async () => ({
+        action: "blocked",
+        title: "File too large for local redaction",
+        error: "This file is over 50 MB. LeakGuard blocked the upload because it cannot safely sanitize it yet.",
+        bytesProcessed: 0,
+        findingsCount: 0
+      })
+    }
+  });
+  const { event } = createEvent({
+    dataTransfer: {
+      types: ["Files"],
+      files: [sourceFile],
+      items: [],
+      dropEffect: "none"
+    },
+    target: composer
+  });
+
+  await maybeHandleDrop(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(calls.handoffs.length, 0);
+  assert.ok(calls.modals.some(([title]) => title === "File too large for local redaction"));
+  assert.ok(calls.modals.flat().join("\n").includes("over 50 MB"));
+}
+
 async function testGeminiTextLikeFileExtensionsAreSanitized() {
   for (const name of ["secrets.env", "notes.txt", "payload.json"]) {
     const rawSecret = "LeakGuardFileApiKey1234567890";
@@ -2196,6 +2379,7 @@ async function testChatGptAndClaudeStillUseSanitizedFileHandoffOnly() {
   await testSanitizedFileHandoffDropIsIgnored();
   await testComposerTargetDropStillPassesComposer();
   await testGeminiDropSkipsSanitizedFileInputHandoff();
+  await testGeminiStreamingHandoffUsesDiscoveredFileInput();
   await testGeminiDropDoesNotDiscoverEnabledInput();
   await testGeminiDropSkipsDiscoveryPerDragSession();
   await testGeminiDropWithoutInputSkipsUploadHandoff();
@@ -2212,6 +2396,8 @@ async function testChatGptAndClaudeStillUseSanitizedFileHandoffOnly() {
   await testOptimizedLocalFileDropShowsStatusAndProcessesSanitizedContent();
   await testChatGptOverHardLimitPasteIsBlockedBeforeHandoff();
   await testGeminiOverHardLimitDropIsBlockedBeforeInsertion();
+  await testDropOverHardLimitUsesStreamingSanitizedFileHandoff();
+  await testDropOverFiftyMiBBlocksBeforeStreaming();
   await testGeminiTextLikeFileExtensionsAreSanitized();
   await testGeminiTextLikeSanitizerFailureBlocksRawFile();
   await testUnsupportedDocumentAndImageFilesPassThroughByDefault();

@@ -178,8 +178,10 @@ async function testOptimizedZoneFileStillDecodesAndOversizedFileBlocks() {
   assert.strictEqual(optimized.text.length, optimizedText.length);
   assert.strictEqual(oversized.handled, true);
   assert.strictEqual(oversized.ok, false);
-  assert.strictEqual(oversized.code, "file_too_large");
-  assert.ok(oversized.message.includes("over 4 MB"));
+  assert.strictEqual(oversized.code, "streaming_required");
+  assert.ok(oversized.message.includes("stream-redact"));
+  assert.ok(oversized.sourceFile);
+  assert.strictEqual(oversized.file.name, "oversized.log");
 }
 
 (async () => {

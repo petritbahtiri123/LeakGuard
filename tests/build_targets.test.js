@@ -53,14 +53,18 @@ async function run() {
   );
   const contentScripts = chromeManifest.content_scripts[0].js;
   const fileScannerIndex = contentScripts.indexOf("shared/fileScanner.js");
+  const streamingRedactorIndex = contentScripts.indexOf("shared/streamingFileRedactor.js");
   const filePasteHelperIndex = contentScripts.indexOf("content/file_paste_helpers.js");
   const contentIndex = contentScripts.indexOf("content/content.js");
 
   assert.ok(fileScannerIndex > -1, "content scripts should include shared file scanner helpers");
+  assert.ok(streamingRedactorIndex > -1, "content scripts should include streaming file redactor helpers");
   assert.ok(filePasteHelperIndex > -1, "content scripts should include local file paste helpers");
   assert.ok(
-    fileScannerIndex < filePasteHelperIndex && filePasteHelperIndex < contentIndex,
-    "file scanner, file paste helper, and content script injection order should stay aligned"
+    fileScannerIndex < streamingRedactorIndex &&
+      streamingRedactorIndex < filePasteHelperIndex &&
+      filePasteHelperIndex < contentIndex,
+    "file scanner, streaming redactor, file paste helper, and content script injection order should stay aligned"
   );
   assert.strictEqual(
     chromeEnterpriseManifest.storage?.managed_schema,

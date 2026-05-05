@@ -37,6 +37,7 @@
     readLocalTextFileFromDataTransfer,
     createSanitizedTextFile
   } = FilePasteHelpers || {};
+  const StreamingFileRedactor = globalThis.PWM?.StreamingFileRedactor || {};
 
   const COMPOSER_SELECTORS = [
     "#prompt-textarea",
@@ -131,6 +132,11 @@
   const LOCAL_TEXT_HARD_BLOCK_TITLE = "Large payload blocked for browser stability";
   const LOCAL_TEXT_HARD_BLOCK_MESSAGE =
     "This content is over 4 MB. LeakGuard did not process or send it automatically to avoid browser instability. Split the file into smaller parts, or sanitize it separately before upload.";
+  const STREAMING_BLOCK_TITLE =
+    StreamingFileRedactor.STREAMING_BLOCK_TITLE || "File too large for local redaction";
+  const STREAMING_BLOCK_MESSAGE =
+    StreamingFileRedactor.STREAMING_BLOCK_MESSAGE ||
+    "This file is over 50 MB. LeakGuard blocked the upload because it cannot safely sanitize it yet.";
   const FILE_DRAG_SESSION_RESET_MS = 5000;
   const GEMINI_SANITIZED_TEXT_FALLBACK_MESSAGE =
     "Sanitized content inserted as text because Gemini rejected sanitized file upload.";
@@ -446,6 +452,108 @@
         reason: "local_text_payload_too_large"
       };
     });
+  }
+
+  function showStreamingRedactionStatus(fileInfo) {
+    debugReveal("streaming-redaction:started", {
+      file: describeFileForDebug(fileInfo),
+      maxBytes: StreamingFileRedactor.LARGE_TEXT_STREAMING_MAX_BYTES || 50 * 1024 * 1024
+    });
+    setBadge("Streaming redaction... LeakGuard is sanitizing a large file locally before upload.");
+  }
+
+  function updateStreamingRedactionProgress(progress) {
+    const processed = Number(progress?.bytesProcessed || 0);
+    const total = Number(progress?.totalBytes || 0);
+    debugReveal("streaming-redaction:progress", {
+      bytesProcessed: processed,
+      totalBytes: total
+    });
+  }
+
+  function clearStreamingRedactionStatus(result) {
+    debugReveal("streaming-redaction:finished", {
+      action: result?.action || "unknown",
+      bytesProcessed: result?.bytesProcessed || 0,
+      findingsCount: result?.findingsCount || 0
+    });
+    if (result?.action === "redacted") {
+      setBadge("Redaction complete. Sanitized content is ready.");
+      hideBadgeSoon(3200);
+    } else {
+      hideBadgeSoon(1600);
+    }
+  }
+
+  function createStreamingSanitizedFile(fileInfo) {
+    return ({ name, type, parts }) => {
+      const metadata = {
+        name: name || fileInfo?.name || "leakguard-redacted.txt",
+        type: type || fileInfo?.type || "text/plain"
+      };
+
+      if (typeof File === "function") {
+        return new File(parts, metadata.name, {
+          type: metadata.type,
+          lastModified: Date.now()
+        });
+      }
+
+      if (typeof Blob === "function") {
+        const blob = new Blob(parts, { type: metadata.type });
+        try {
+          Object.defineProperty(blob, "name", {
+            value: metadata.name,
+            configurable: true
+          });
+          Object.defineProperty(blob, "lastModified", {
+            value: Date.now(),
+            configurable: true
+          });
+        } catch {
+          // The sanitized bytes remain available even if Blob metadata is read-only.
+        }
+        return blob;
+      }
+
+      return null;
+    };
+  }
+
+  async function streamRedactLocalTextFile(sourceFile, fileInfo) {
+    if (typeof StreamingFileRedactor.redactTextFileStream !== "function") {
+      return {
+        action: "failed",
+        error: "LeakGuard streaming redaction is unavailable."
+      };
+    }
+
+    showStreamingRedactionStatus(fileInfo || sourceFile);
+    const result = await StreamingFileRedactor.redactTextFileStream(sourceFile, {
+      createFile: createStreamingSanitizedFile(fileInfo || sourceFile),
+      onProgress: updateStreamingRedactionProgress,
+      redactText: async (text) => {
+        const analysis = analyzeText(text);
+        return requestRedaction(analysis.normalizedText, analysis.secretFindings, {
+          auditReason: "streaming_file_redaction"
+        });
+      }
+    });
+    clearStreamingRedactionStatus(result);
+    return result;
+  }
+
+  async function blockStreamingLocalFile(event, title, message) {
+    consumeInterceptionEvent(event);
+    setBadge(title);
+    hideBadgeSoon(4200);
+    await showMessageModal(title, message);
+    refreshBadgeFromCurrentInput();
+    return {
+      handled: true,
+      ok: false,
+      reason: "streaming_file_blocked"
+    };
   }
 
   function buildComposerWritePlan(input, text) {
@@ -2523,6 +2631,28 @@
       };
     }
 
+    if (Number(file?.size || 0) > (StreamingFileRedactor.LARGE_TEXT_STREAMING_MAX_BYTES || 50 * 1024 * 1024)) {
+      return {
+        ok: false,
+        code: "file_too_large",
+        message: STREAMING_BLOCK_MESSAGE
+      };
+    }
+
+    if (Number(file?.size || 0) > LOCAL_TEXT_HARD_BLOCK_BYTES) {
+      return {
+        ok: false,
+        code: "streaming_required",
+        sourceFile: file,
+        file: {
+          name: file?.name || "",
+          type: file?.type || "text/plain",
+          sizeBytes: Number(file?.size || 0)
+        },
+        message: "LeakGuard will stream-redact this large text file locally before upload."
+      };
+    }
+
     try {
       return {
         ok: true,
@@ -2551,6 +2681,25 @@
         ? await readLocalTextFileFromDataTransfer(event.dataTransfer)
         : await readGeminiTextFile(files[0]);
     if (!localFile.ok) {
+      if (localFile.code === "streaming_required" && localFile.sourceFile) {
+        const streamResult = await streamRedactLocalTextFile(localFile.sourceFile, localFile.file);
+        if (streamResult.action === "redacted" && streamResult.sanitizedFile) {
+          const handedOff = handOffGeminiSanitizedFileUpload(event, editor, streamResult.sanitizedFile);
+          if (handedOff) {
+            setBadge("LeakGuard attached a sanitized local file.");
+            hideBadgeSoon(3200);
+            refreshBadgeFromCurrentInput();
+            return true;
+          }
+        }
+
+        return blockGeminiEditorRawContent(
+          event,
+          streamResult.title || "Raw file upload blocked",
+          streamResult.error || "LeakGuard blocked raw file upload because sanitized streaming handoff failed."
+        );
+      }
+
       return blockGeminiEditorRawContent(
         event,
         "Raw file upload blocked",
@@ -2858,6 +3007,28 @@
     return false;
   }
 
+  function handOffGeminiSanitizedFileUpload(event, input, sanitizedFile) {
+    if (!isGeminiHost()) return false;
+
+    const transfer = createSanitizedDataTransfer(sanitizedFile);
+    if (!transfer) {
+      debugReveal("file-handoff:gemini-data-transfer-create-failed", {
+        sanitizedFile: describeFileForDebug(sanitizedFile)
+      });
+      return false;
+    }
+
+    const fileInput = resolveFileInputForHandoff(event, input);
+    if (!fileInput) {
+      debugReveal("file-handoff:gemini-input-not-found", {
+        sanitizedFile: describeFileForDebug(sanitizedFile)
+      });
+      return false;
+    }
+
+    return handOffSanitizedFileInput(fileInput, transfer);
+  }
+
   async function applyGeminiSanitizedTextFallback(event, input, redactedText) {
     if (!isGeminiHost()) {
       return false;
@@ -3004,10 +3175,50 @@
     if (!localFile.handled) return false;
 
     if (!localFile.ok) {
+      if (localFile.code === "streaming_required" && localFile.sourceFile) {
+        const streamResult = await streamRedactLocalTextFile(localFile.sourceFile, localFile.file);
+        if (streamResult.action === "blocked") {
+          return blockStreamingLocalFile(
+            event,
+            streamResult.title || STREAMING_BLOCK_TITLE,
+            streamResult.error || STREAMING_BLOCK_MESSAGE
+          );
+        }
+
+        if (streamResult.action !== "redacted" || !streamResult.sanitizedFile) {
+          return blockStreamingLocalFile(
+            event,
+            "Raw file upload blocked",
+            streamResult.error || "LeakGuard blocked raw file upload because streaming redaction failed."
+          );
+        }
+
+        const handedOff =
+          context === "drop" && isGeminiHost()
+            ? handOffGeminiSanitizedFileUpload(event, input, streamResult.sanitizedFile)
+            : handOffSanitizedLocalFile(event, input, streamResult.sanitizedFile, context);
+        if (handedOff) {
+          setBadge("LeakGuard attached a sanitized local file.");
+          hideBadgeSoon(3200);
+          refreshBadgeFromCurrentInput();
+          return {
+            handled: true,
+            ok: true,
+            strategy: "streaming-sanitized-file-handoff"
+          };
+        }
+
+        return blockStreamingLocalFile(
+          event,
+          "Raw file upload blocked",
+          "LeakGuard blocked raw file upload. Sanitized streaming file handoff failed."
+        );
+      }
+
       if (localFile.code === "file_too_large") {
-        setBadge(LOCAL_TEXT_HARD_BLOCK_TITLE);
+        setBadge(STREAMING_BLOCK_TITLE);
         hideBadgeSoon(4200);
-        await showMessageModal(LOCAL_TEXT_HARD_BLOCK_TITLE, LOCAL_TEXT_HARD_BLOCK_MESSAGE);
+        await showMessageModal(STREAMING_BLOCK_TITLE, localFile.message || STREAMING_BLOCK_MESSAGE);
       } else {
         setBadge("Local file not attached");
         hideBadgeSoon(3200);

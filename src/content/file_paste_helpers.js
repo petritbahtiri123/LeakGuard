@@ -7,6 +7,8 @@
   const LOCAL_FILE_READ_MESSAGE =
     "LeakGuard could not read this local file, so nothing was attached.";
   const LOCAL_FILE_TEXT_INSERTION_FALLBACK_ENABLED = false;
+  const LOCAL_FILE_STREAMING_REQUIRED_MESSAGE =
+    "LeakGuard will stream-redact this large text file locally before upload.";
 
   function dataTransferHasFiles(dataTransfer) {
     if (!dataTransfer) return false;
@@ -85,6 +87,22 @@
       sizeBytes
     });
     if (!metadataValidation?.ok) return resultFromValidation(metadataValidation);
+
+    if (sizeBytes > Number(FileScanner.LOCAL_TEXT_HARD_BLOCK_BYTES || 4 * 1024 * 1024)) {
+      return {
+        handled: true,
+        ok: false,
+        code: "streaming_required",
+        message: LOCAL_FILE_STREAMING_REQUIRED_MESSAGE,
+        sourceFile: file,
+        file: {
+          name: fileName.split(/[\\/]/).pop() || "",
+          extension: FileScanner.getFileExtension?.(fileName) || "",
+          type: FileScanner.normalizeMimeType?.(mimeType) || mimeType.split(";")[0].trim().toLowerCase(),
+          sizeBytes
+        }
+      };
+    }
 
     let buffer;
     try {
@@ -179,6 +197,7 @@
   root.PWM.FilePasteHelpers = {
     LOCAL_FILE_MULTI_MESSAGE,
     LOCAL_FILE_READ_MESSAGE,
+    LOCAL_FILE_STREAMING_REQUIRED_MESSAGE,
     LOCAL_FILE_TEXT_INSERTION_FALLBACK_ENABLED,
     dataTransferHasFiles,
     listDataTransferFiles,
