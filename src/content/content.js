@@ -119,7 +119,7 @@
   const PROGRAMMATIC_INPUT_SUPPRESS_MS = 500;
   const CHATGPT_LARGE_PASTE_FILE_THRESHOLD = 16 * 1024;
   const CHATGPT_SANITIZED_PASTE_FILE_NAME = "leakguard-redacted-paste.txt";
-  const GEMINI_DIRECT_TEXT_INSERT_THRESHOLD = 16 * 1024;
+  const GEMINI_DIRECT_TEXT_INSERT_THRESHOLD = 8 * 1024;
   const GEMINI_AUTO_INSERT_TEXT_LIMIT = 256 * 1024;
   const GEMINI_LARGE_TEXT_SUPPRESS_MS = 2500;
   const FILE_DRAG_SESSION_RESET_MS = 5000;
@@ -2102,16 +2102,107 @@
     }
   }
 
+  function setEditorAttribute(el, name, value) {
+    try {
+      if (typeof el.setAttribute === "function") {
+        el.setAttribute(name, value);
+        return;
+      }
+    } catch {
+      // Fall through to property assignment for simple DOM/test shims.
+    }
+
+    try {
+      el[name] = value;
+    } catch {
+      // Best-effort only; Gemini may use non-standard contenteditable wrappers.
+    }
+  }
+
+  function captureEditorAttribute(el, name) {
+    let hadAttribute = false;
+    let attributeValue = null;
+    try {
+      hadAttribute = typeof el.hasAttribute === "function" ? el.hasAttribute(name) : Object.prototype.hasOwnProperty.call(el, name);
+      attributeValue = typeof el.getAttribute === "function" ? el.getAttribute(name) : el[name];
+    } catch {
+      hadAttribute = false;
+      attributeValue = null;
+    }
+
+    let propertyValue;
+    let hadProperty = false;
+    try {
+      hadProperty = name in el;
+      propertyValue = el[name];
+    } catch {
+      hadProperty = false;
+      propertyValue = undefined;
+    }
+
+    return { name, hadAttribute, attributeValue, hadProperty, propertyValue };
+  }
+
+  function disableGeminiEditorInputAssist(editor) {
+    if (!editor) return null;
+    const snapshot = ["spellcheck", "autocorrect", "autocomplete", "autocapitalize"].map((name) =>
+      captureEditorAttribute(editor, name)
+    );
+
+    setEditorAttribute(editor, "spellcheck", "false");
+    setEditorAttribute(editor, "autocorrect", "off");
+    setEditorAttribute(editor, "autocomplete", "off");
+    setEditorAttribute(editor, "autocapitalize", "off");
+    try {
+      editor.spellcheck = false;
+    } catch {
+      // Attribute form above covers normal contenteditable editors.
+    }
+    return snapshot;
+  }
+
+  function restoreGeminiEditorInputAssist(editor, snapshot) {
+    if (!editor || !Array.isArray(snapshot)) return;
+    for (const entry of snapshot) {
+      try {
+        if (entry.hadAttribute) {
+          if (typeof editor.setAttribute === "function") {
+            editor.setAttribute(entry.name, entry.attributeValue);
+          } else {
+            editor[entry.name] = entry.attributeValue;
+          }
+        } else if (typeof editor.removeAttribute === "function") {
+          editor.removeAttribute(entry.name);
+        } else {
+          try {
+            delete editor[entry.name];
+          } catch {
+            editor[entry.name] = undefined;
+          }
+        }
+
+        if (entry.hadProperty) {
+          editor[entry.name] = entry.propertyValue;
+        }
+      } catch {
+        // Restore is best-effort and must not turn sanitized insertion into raw pass-through.
+      }
+    }
+  }
+
   function setGeminiEditorTextDirect(editor, nextText) {
     const normalized = normalizeComposerText(nextText);
     if (!editor) return false;
 
+    const assistSnapshot = disableGeminiEditorInputAssist(editor);
     try {
       editor.textContent = normalized;
       placeGeminiEditorCaretAtEnd(editor);
       return true;
     } catch {
       return false;
+    } finally {
+      restoreGeminiEditorInputAssist(editor, assistSnapshot);
     }
   }
 

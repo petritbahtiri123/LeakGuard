@@ -194,9 +194,28 @@ function createGeminiEditor(initialText = "") {
     tagName: "DIV",
     className: "ql-editor",
     text: initialText,
+    attributes: {
+      spellcheck: "true",
+      autocorrect: "on",
+      autocomplete: "on",
+      autocapitalize: "sentences"
+    },
+    spellcheck: true,
     textContentWrites: 0,
     focusCalls: 0,
     inputEvents: [],
+    setAttribute(name, value) {
+      this.attributes[name] = String(value);
+    },
+    getAttribute(name) {
+      return Object.prototype.hasOwnProperty.call(this.attributes, name) ? this.attributes[name] : null;
+    },
+    hasAttribute(name) {
+      return Object.prototype.hasOwnProperty.call(this.attributes, name);
+    },
+    removeAttribute(name) {
+      delete this.attributes[name];
+    },
     focus() {
       this.focusCalls += 1;
     },
@@ -217,6 +236,13 @@ function createGeminiEditor(initialText = "") {
     },
     set(value) {
       this.textContentWrites += 1;
+      this.inputAssistAtWrite = {
+        spellcheckAttribute: this.attributes.spellcheck,
+        spellcheckProperty: this.spellcheck,
+        autocorrect: this.attributes.autocorrect,
+        autocomplete: this.attributes.autocomplete,
+        autocapitalize: this.attributes.autocapitalize
+      };
       if (typeof this.onTextContentSet === "function") {
         this.onTextContentSet(String(value || ""));
       }
@@ -411,7 +437,7 @@ function createHarness(overrides = {}) {
       "const PROGRAMMATIC_INPUT_SUPPRESS_MS = 500;",
       "const CHATGPT_LARGE_PASTE_FILE_THRESHOLD = 16 * 1024;",
       'const CHATGPT_SANITIZED_PASTE_FILE_NAME = "leakguard-redacted-paste.txt";',
-      "const GEMINI_DIRECT_TEXT_INSERT_THRESHOLD = 16 * 1024;",
+      "const GEMINI_DIRECT_TEXT_INSERT_THRESHOLD = 8 * 1024;",
       "const GEMINI_AUTO_INSERT_TEXT_LIMIT = 256 * 1024;",
       "const GEMINI_LARGE_TEXT_SUPPRESS_MS = 2500;",
       "let suppressInputScanUntil = 0;",
@@ -438,6 +464,10 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "suppressFollowupInputScan"),
       extractFunctionSource(contentSource, "isProgrammaticInputScanSuppressed"),
       extractFunctionSource(contentSource, "placeGeminiEditorCaretAtEnd"),
+      extractFunctionSource(contentSource, "setEditorAttribute"),
+      extractFunctionSource(contentSource, "captureEditorAttribute"),
+      extractFunctionSource(contentSource, "disableGeminiEditorInputAssist"),
+      extractFunctionSource(contentSource, "restoreGeminiEditorInputAssist"),
       extractFunctionSource(contentSource, "setGeminiEditorTextDirect"),
       extractFunctionSource(contentSource, "insertLargeGeminiEditorText"),
       extractFunctionSource(contentSource, "insertGeminiEditorText"),
@@ -980,7 +1010,7 @@ async function testGeminiQlEditorDropTextFileIsSanitizedAndInserted() {
 async function testLargeGeminiDropUsesDirectSanitizedInsertion() {
   const rawSecret = "LeakGuardFileApiKey1234567890";
   const largeText = buildLargeGeminiPayload({
-    minBytes: 17 * 1024,
+    minBytes: 15 * 1024,
     rawSecret
   });
   const sanitizedLargeText = largeText.replace(
@@ -1062,6 +1092,18 @@ async function testLargeGeminiDropUsesDirectSanitizedInsertion() {
   assert.strictEqual(editor.inputEvents[0].data, null);
   assert.notStrictEqual(editor.inputEvents[0].data, sanitizedLargeText);
   assert.strictEqual(editor.textContentWrites, 1);
+  assert.deepStrictEqual(editor.inputAssistAtWrite, {
+    spellcheckAttribute: "false",
+    spellcheckProperty: false,
+    autocorrect: "off",
+    autocomplete: "off",
+    autocapitalize: "off"
+  });
+  assert.strictEqual(editor.getAttribute("spellcheck"), "true");
+  assert.strictEqual(editor.getAttribute("autocorrect"), "on");
+  assert.strictEqual(editor.getAttribute("autocomplete"), "on");
+  assert.strictEqual(editor.getAttribute("autocapitalize"), "sentences");
+  assert.strictEqual(editor.spellcheck, true);
   assert.strictEqual(editor.text.includes(rawSecret), false);
   assert.strictEqual((editor.text.match(/\[PWM_1\]/g) || []).length, 2);
   assert.strictEqual(editor.text.includes("[PWM_2]"), false);
@@ -1160,6 +1202,18 @@ async function testVeryLargeGeminiDropDoesNotUseEventOrCommandLoops() {
   );
   assert.strictEqual(execCommandCalls, 0, "large payload should bypass execCommand entirely");
   assert.strictEqual(editor.textContentWrites, 1, "large payload should be inserted with one DOM write");
+  assert.deepStrictEqual(editor.inputAssistAtWrite, {
+    spellcheckAttribute: "false",
+    spellcheckProperty: false,
+    autocorrect: "off",
+    autocomplete: "off",
+    autocapitalize: "off"
+  });
+  assert.strictEqual(editor.getAttribute("spellcheck"), "true", "spellcheck attribute should be restored");
+  assert.strictEqual(editor.getAttribute("autocorrect"), "on", "autocorrect attribute should be restored");
+  assert.strictEqual(editor.getAttribute("autocomplete"), "on", "autocomplete attribute should be restored");
+  assert.strictEqual(editor.getAttribute("autocapitalize"), "sentences", "autocapitalize attribute should be restored");
+  assert.strictEqual(editor.spellcheck, true, "spellcheck property should be restored");
   assert.strictEqual(editor.inputEvents.length, 1, "large payload should dispatch one input event");
   assert.strictEqual(editor.inputEvents[0].inputType, "insertReplacementText");
   assert.strictEqual(editor.inputEvents[0].data, null, "large input event must not carry the file body");
