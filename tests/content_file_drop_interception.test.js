@@ -290,6 +290,16 @@ function buildLargeGeminiPayload({ minBytes, rawSecret }) {
   return `${header}\n${filler}${footer}`;
 }
 
+function buildSizedText({ minBytes, rawSecret = "LeakGuardSizedApiKey1234567890" }) {
+  const header = `API_KEY=${rawSecret}\n`;
+  const fillerLine = "safe_size_line=0123456789abcdef0123456789abcdef0123456789abcdef\n";
+  const remaining = Math.max(0, minBytes - Buffer.byteLength(header, "utf8"));
+  const fillerCount = Math.ceil(remaining / Buffer.byteLength(fillerLine, "utf8"));
+  const filler = fillerLine.repeat(fillerCount);
+
+  return `${header}${filler}`;
+}
+
 function createHarness(overrides = {}) {
   const calls = {
     reads: [],
@@ -440,6 +450,11 @@ function createHarness(overrides = {}) {
       "const GEMINI_DIRECT_TEXT_INSERT_THRESHOLD = 8 * 1024;",
       "const GEMINI_AUTO_INSERT_TEXT_LIMIT = 256 * 1024;",
       "const GEMINI_LARGE_TEXT_SUPPRESS_MS = 2500;",
+      "const LOCAL_TEXT_FAST_MAX_BYTES = 2 * 1024 * 1024;",
+      "const LOCAL_TEXT_OPTIMIZED_MAX_BYTES = 4 * 1024 * 1024;",
+      "const LOCAL_TEXT_HARD_BLOCK_BYTES = 4 * 1024 * 1024;",
+      'const LOCAL_TEXT_HARD_BLOCK_TITLE = "Large payload blocked for browser stability";',
+      'const LOCAL_TEXT_HARD_BLOCK_MESSAGE = "This content is over 4 MB. LeakGuard did not process or send it automatically to avoid browser instability. Split the file into smaller parts, or sanitize it separately before upload.";',
       "let suppressInputScanUntil = 0;",
       extractFunctionSource(contentSource, "consumeInterceptionEvent"),
       extractFunctionSource(contentSource, "dataTransferLooksLikeFiles"),
@@ -449,6 +464,11 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "resolveLocalFileTransferPolicy"),
       extractFunctionSource(contentSource, "resolveFileDragGuardPolicy"),
       extractFunctionSource(contentSource, "showUnsupportedFilePassThroughNotice"),
+      extractFunctionSource(contentSource, "getLocalTextPayloadByteLength"),
+      extractFunctionSource(contentSource, "classifyLocalTextPayloadSize"),
+      extractFunctionSource(contentSource, "showLocalPayloadOptimizationStatus"),
+      extractFunctionSource(contentSource, "clearLocalPayloadOptimizationStatus"),
+      extractFunctionSource(contentSource, "blockLargeLocalTextPayload"),
       extractFunctionSource(contentSource, "isSanitizedFileHandoffEvent"),
       extractFunctionSource(contentSource, "normalizeTarget"),
       extractFunctionSource(contentSource, "isChatGptHost"),
@@ -1307,6 +1327,217 @@ async function testVeryLargeGeminiDropCancelDoesNotInsertText() {
   );
 }
 
+async function testFastLocalFileDropDoesNotShowOptimizationStatus() {
+  const rawSecret = "LeakGuardFileApiKey1234567890";
+  const text = buildSizedText({ minBytes: 50 * 1024, rawSecret });
+  const file = createTextFile({
+    name: "fast-zone.env",
+    text
+  });
+  const composer = {
+    tagName: "TEXTAREA",
+    text: "",
+    selection: { start: 0, end: 0 }
+  };
+  const { maybeHandleDrop, calls } = createHarness({
+    location: { hostname: "chatgpt.com" },
+    findComposer: () => composer,
+    readLocalTextFileFromDataTransfer: async (transfer) => {
+      calls.reads.push(transfer);
+      return {
+        handled: true,
+        ok: true,
+        text,
+        file: {
+          name: "fast-zone.env",
+          type: "text/plain",
+          sizeBytes: Buffer.byteLength(text, "utf8")
+        }
+      };
+    }
+  });
+  const { event } = createEvent({
+    dataTransfer: {
+      types: ["Files"],
+      files: [file],
+      items: [],
+      dropEffect: "none"
+    },
+    target: composer
+  });
+
+  await maybeHandleDrop(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(calls.redactions.length, 1);
+  assert.strictEqual(calls.handoffs.length, 1);
+  assert.strictEqual(calls.handoffs[0].sanitizedFile.text.includes(rawSecret), false);
+  assert.strictEqual(
+    calls.debugEvents.some((entry) => entry.label === "local-payload:optimization-started"),
+    false,
+    "fast-zone payload should not show optimization status"
+  );
+}
+
+async function testOptimizedLocalFileDropShowsStatusAndProcessesSanitizedContent() {
+  const rawSecret = "LeakGuardOptimizedZoneApiKey1234567890";
+  const text = buildSizedText({ minBytes: 2 * 1024 * 1024 + 128 * 1024, rawSecret });
+  const file = createTextFile({
+    name: "optimized-zone.log",
+    text
+  });
+  const composer = {
+    tagName: "TEXTAREA",
+    text: "",
+    selection: { start: 0, end: 0 }
+  };
+  const { maybeHandleDrop, calls } = createHarness({
+    location: { hostname: "chatgpt.com" },
+    findComposer: () => composer,
+    readLocalTextFileFromDataTransfer: async (transfer) => {
+      calls.reads.push(transfer);
+      return {
+        handled: true,
+        ok: true,
+        text,
+        file: {
+          name: "optimized-zone.log",
+          type: "text/plain",
+          sizeBytes: Buffer.byteLength(text, "utf8")
+        }
+      };
+    },
+    requestRedaction: async (input, findings) => {
+      calls.redactions.push({ text: input, findings });
+      return {
+        redactedText: input.replaceAll(rawSecret, "[PWM_1]")
+      };
+    }
+  });
+  const { event } = createEvent({
+    dataTransfer: {
+      types: ["Files"],
+      files: [file],
+      items: [],
+      dropEffect: "none"
+    },
+    target: composer
+  });
+
+  await maybeHandleDrop(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(calls.redactions.length, 1);
+  assert.strictEqual(calls.handoffs.length, 1);
+  assert.strictEqual(calls.handoffs[0].sanitizedFile.text.includes(rawSecret), false);
+  assert.ok(calls.handoffs[0].sanitizedFile.text.includes("[PWM_1]"));
+  assert.ok(
+    calls.debugEvents.some((entry) => entry.label === "local-payload:optimization-started"),
+    "optimized-zone payload should show optimization status"
+  );
+  assert.ok(
+    calls.debugEvents.some(
+      (entry) => entry.label === "local-payload:optimization-finished" && entry.details.outcome === "complete"
+    ),
+    "optimized-zone payload should clear optimization status on completion"
+  );
+  assert.ok(calls.badges.some(([message]) => String(message || "").includes("Optimizing redaction")));
+  assert.ok(calls.badges.some(([message]) => String(message || "").includes("Redaction complete")));
+}
+
+async function testChatGptOverHardLimitPasteIsBlockedBeforeHandoff() {
+  const rawSecret = "LeakGuardOversizePasteApiKey1234567890";
+  const text = buildSizedText({ minBytes: 4 * 1024 * 1024 + 64 * 1024, rawSecret });
+  const composer = {
+    tagName: "TEXTAREA",
+    text: "",
+    selection: { start: 0, end: 0 }
+  };
+  const { maybeHandlePaste, calls } = createHarness({
+    location: { hostname: "chatgpt.com" },
+    findComposer: () => composer,
+    requestRedaction: async () => {
+      throw new Error("oversized ChatGPT paste must not be redacted or handed off");
+    }
+  });
+  const { event, calls: eventCalls } = createClipboardEvent({
+    text,
+    target: composer
+  });
+
+  await maybeHandlePaste(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.ok(eventCalls.stopImmediatePropagation >= 1);
+  assert.strictEqual(calls.redactions.length, 0);
+  assert.strictEqual(calls.createdFiles.length, 0);
+  assert.strictEqual(calls.handoffs.length, 0);
+  assert.strictEqual(calls.textFallbacks.length, 0);
+  assert.strictEqual(calls.directTextWrites?.length || 0, 0);
+  assert.ok(calls.modals.some(([title]) => title === "Large payload blocked for browser stability"));
+  assert.strictEqual(calls.modals.flat().join("\n").includes(rawSecret), false);
+}
+
+async function testGeminiOverHardLimitDropIsBlockedBeforeInsertion() {
+  const rawSecret = "LeakGuardOversizeGeminiApiKey1234567890";
+  const text = buildSizedText({ minBytes: 4 * 1024 * 1024 + 64 * 1024, rawSecret });
+  const file = createTextFile({
+    name: "oversize-gemini.log",
+    text
+  });
+  const { editor, child } = createGeminiEditor("");
+  let execCommandCalls = 0;
+  const { maybeHandleDrop, calls } = createHarness({
+    location: { hostname: "gemini.google.com" },
+    readLocalTextFileFromDataTransfer: async (transfer) => {
+      calls.reads.push(transfer);
+      return {
+        handled: true,
+        ok: true,
+        text,
+        file: {
+          name: "oversize-gemini.log",
+          type: "text/plain",
+          sizeBytes: Buffer.byteLength(text, "utf8")
+        }
+      };
+    },
+    requestRedaction: async () => {
+      throw new Error("oversized Gemini payload must not be redacted or inserted");
+    },
+    document: {
+      activeElement: editor,
+      execCommand() {
+        execCommandCalls += 1;
+        return false;
+      },
+      createRange: () => null
+    }
+  });
+  const { event } = createEvent({
+    dataTransfer: {
+      types: ["Files"],
+      files: [file],
+      items: [],
+      dropEffect: "none"
+    },
+    target: child
+  });
+
+  await maybeHandleDrop(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(calls.redactions.length, 0);
+  assert.strictEqual(calls.handoffs.length, 0);
+  assert.strictEqual(calls.textFallbacks.length, 0);
+  assert.strictEqual(editor.text, "");
+  assert.strictEqual(editor.textContentWrites, 0);
+  assert.strictEqual(editor.inputEvents.length, 0);
+  assert.strictEqual(execCommandCalls, 0);
+  assert.ok(calls.modals.some(([title]) => title === "Large payload blocked for browser stability"));
+  assert.strictEqual(calls.modals.flat().join("\n").includes(rawSecret), false);
+}
+
 async function testGeminiTextLikeFileExtensionsAreSanitized() {
   for (const name of ["secrets.env", "notes.txt", "payload.json"]) {
     const rawSecret = "LeakGuardFileApiKey1234567890";
@@ -1977,6 +2208,10 @@ async function testChatGptAndClaudeStillUseSanitizedFileHandoffOnly() {
   await testLargeGeminiDropUsesDirectSanitizedInsertion();
   await testVeryLargeGeminiDropDoesNotUseEventOrCommandLoops();
   await testVeryLargeGeminiDropCancelDoesNotInsertText();
+  await testFastLocalFileDropDoesNotShowOptimizationStatus();
+  await testOptimizedLocalFileDropShowsStatusAndProcessesSanitizedContent();
+  await testChatGptOverHardLimitPasteIsBlockedBeforeHandoff();
+  await testGeminiOverHardLimitDropIsBlockedBeforeInsertion();
   await testGeminiTextLikeFileExtensionsAreSanitized();
   await testGeminiTextLikeSanitizerFailureBlocksRawFile();
   await testUnsupportedDocumentAndImageFilesPassThroughByDefault();

@@ -2,7 +2,10 @@
   const root = typeof globalThis !== "undefined" ? globalThis : window;
   root.PWM = root.PWM || {};
 
-  const MAX_TEXT_FILE_SIZE_BYTES = 2 * 1024 * 1024;
+  const LOCAL_TEXT_FAST_MAX_BYTES = 2 * 1024 * 1024;
+  const LOCAL_TEXT_OPTIMIZED_MAX_BYTES = 4 * 1024 * 1024;
+  const LOCAL_TEXT_HARD_BLOCK_BYTES = 4 * 1024 * 1024;
+  const MAX_TEXT_FILE_SIZE_BYTES = LOCAL_TEXT_HARD_BLOCK_BYTES;
   const REDACTED_PREVIEW_LIMIT = 4000;
   const UNSUPPORTED_TEXT_RELEASE_MESSAGE =
     "This release safely redacts text-based files only. PDF/DOCX/image redaction is planned but not enabled yet.";
@@ -173,10 +176,10 @@
     const actualSize = buffer ? byteLengthOf(buffer) : 0;
     const effectiveSize = Number.isFinite(declaredSize) && declaredSize >= 0 ? declaredSize : actualSize;
 
-    if (effectiveSize > MAX_TEXT_FILE_SIZE_BYTES) {
+    if (effectiveSize > LOCAL_TEXT_HARD_BLOCK_BYTES) {
       return validationError(
         "file_too_large",
-        "This release scans text files up to 2 MiB. Choose a smaller file or split it before scanning."
+        "This content is over 4 MB. LeakGuard did not process or send it automatically to avoid browser instability. Split the file into smaller parts, or sanitize it separately before upload."
       );
     }
 
@@ -448,6 +451,9 @@
   }
 
   root.PWM.FileScanner = {
+    LOCAL_TEXT_FAST_MAX_BYTES,
+    LOCAL_TEXT_OPTIMIZED_MAX_BYTES,
+    LOCAL_TEXT_HARD_BLOCK_BYTES,
     MAX_TEXT_FILE_SIZE_BYTES,
     SUPPORTED_TEXT_EXTENSIONS,
     SUPPORTED_TEXT_BASENAMES,
