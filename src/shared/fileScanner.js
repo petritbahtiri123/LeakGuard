@@ -5,7 +5,11 @@
   const LOCAL_TEXT_FAST_MAX_BYTES = 2 * 1024 * 1024;
   const LOCAL_TEXT_OPTIMIZED_MAX_BYTES = 4 * 1024 * 1024;
   const LOCAL_TEXT_HARD_BLOCK_BYTES = 4 * 1024 * 1024;
-  const MAX_TEXT_FILE_SIZE_BYTES = LOCAL_TEXT_HARD_BLOCK_BYTES;
+  const LARGE_TEXT_STREAMING_MAX_BYTES = 50 * 1024 * 1024;
+  const MAX_TEXT_FILE_SIZE_BYTES = LARGE_TEXT_STREAMING_MAX_BYTES;
+  const LARGE_TEXT_STREAMING_BLOCK_TITLE = "File too large for local redaction";
+  const LARGE_TEXT_STREAMING_BLOCK_MESSAGE =
+    "This file is over 50 MB. LeakGuard blocked the upload because it cannot safely sanitize it yet.";
   const REDACTED_PREVIEW_LIMIT = 4000;
   const UNSUPPORTED_TEXT_RELEASE_MESSAGE =
     "This release safely redacts text-based files only. PDF/DOCX/image redaction is planned but not enabled yet.";
@@ -176,17 +180,17 @@
     const actualSize = buffer ? byteLengthOf(buffer) : 0;
     const effectiveSize = Number.isFinite(declaredSize) && declaredSize >= 0 ? declaredSize : actualSize;
 
-    if (effectiveSize > LOCAL_TEXT_HARD_BLOCK_BYTES) {
-      return validationError(
-        "file_too_large",
-        "This content is over 4 MB. LeakGuard did not process or send it automatically to avoid browser instability. Split the file into smaller parts, or sanitize it separately before upload."
-      );
-    }
-
     if (!isSupportedTextFile(fileName, mimeType)) {
       return validationError(
         PASS_THROUGH_UNSUPPORTED_EXTENSIONS.has(extension) ? "unsupported_binary_or_document" : "unsupported_file_type",
         UNSUPPORTED_TEXT_RELEASE_MESSAGE
+      );
+    }
+
+    if (effectiveSize > LARGE_TEXT_STREAMING_MAX_BYTES) {
+      return validationError(
+        "file_too_large",
+        LARGE_TEXT_STREAMING_BLOCK_MESSAGE
       );
     }
 
@@ -454,6 +458,9 @@
     LOCAL_TEXT_FAST_MAX_BYTES,
     LOCAL_TEXT_OPTIMIZED_MAX_BYTES,
     LOCAL_TEXT_HARD_BLOCK_BYTES,
+    LARGE_TEXT_STREAMING_MAX_BYTES,
+    LARGE_TEXT_STREAMING_BLOCK_TITLE,
+    LARGE_TEXT_STREAMING_BLOCK_MESSAGE,
     MAX_TEXT_FILE_SIZE_BYTES,
     SUPPORTED_TEXT_EXTENSIONS,
     SUPPORTED_TEXT_BASENAMES,

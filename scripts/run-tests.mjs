@@ -20,6 +20,7 @@ const testFiles = [
   "tests/ai_assist.test.js",
   "tests/file_scanner.test.js",
   "tests/file_paste_helpers.test.js",
+  "tests/streaming_file_redactor.test.js",
   "tests/productization.test.js",
   "tests/security.test.js",
   "tests/synthetic_pack.test.js",

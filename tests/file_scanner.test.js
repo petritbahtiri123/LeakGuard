@@ -19,6 +19,7 @@ const {
   LOCAL_TEXT_FAST_MAX_BYTES,
   LOCAL_TEXT_OPTIMIZED_MAX_BYTES,
   LOCAL_TEXT_HARD_BLOCK_BYTES,
+  LARGE_TEXT_STREAMING_MAX_BYTES,
   MAX_TEXT_FILE_SIZE_BYTES,
   getFileExtension,
   isSupportedTextFile,
@@ -169,7 +170,8 @@ function testOversizedFileRejectedBeforeScanning() {
   assert.strictEqual(LOCAL_TEXT_FAST_MAX_BYTES, 2 * 1024 * 1024);
   assert.strictEqual(LOCAL_TEXT_OPTIMIZED_MAX_BYTES, 4 * 1024 * 1024);
   assert.strictEqual(LOCAL_TEXT_HARD_BLOCK_BYTES, 4 * 1024 * 1024);
-  assert.strictEqual(MAX_TEXT_FILE_SIZE_BYTES, LOCAL_TEXT_HARD_BLOCK_BYTES);
+  assert.strictEqual(LARGE_TEXT_STREAMING_MAX_BYTES, 50 * 1024 * 1024);
+  assert.strictEqual(MAX_TEXT_FILE_SIZE_BYTES, LARGE_TEXT_STREAMING_MAX_BYTES);
 
   const optimizedZone = validateFileForTextScan({
     fileName: "optimized.log",
@@ -178,15 +180,22 @@ function testOversizedFileRejectedBeforeScanning() {
   });
   assert.strictEqual(optimizedZone.ok, true, "2-4 MiB text files should remain processable");
 
-  const result = validateFileForTextScan({
+  const streamingZone = validateFileForTextScan({
     fileName: "large.log",
     mimeType: "text/plain",
     sizeBytes: LOCAL_TEXT_HARD_BLOCK_BYTES + 1
   });
+  assert.strictEqual(streamingZone.ok, true, ">4 MiB text files should be streamable");
+
+  const result = validateFileForTextScan({
+    fileName: "too-large.log",
+    mimeType: "text/plain",
+    sizeBytes: LARGE_TEXT_STREAMING_MAX_BYTES + 1
+  });
 
   assert.strictEqual(result.ok, false);
   assert.strictEqual(result.code, "file_too_large");
-  assert.ok(result.message.includes("over 4 MB"));
+  assert.ok(result.message.includes("over 50 MB"));
 }
 
 function testEnvSecretsRedacted() {
