@@ -1,49 +1,33 @@
-# Prompt Templates
 
-## Bug Fix
-```text
-Fix <bug> in LeakGuard.
-Read first: docs/REPO_MAP.md, docs/BUG_PLAYBOOK.md, <likely files>.
-Requirements:
-- preserve placeholder behavior and local-only privacy model
-- keep change narrow
-- add regression tests for <case>
-- run node tests/<area>.test.js and npm test
-Return: changed files, summary, test result.
-```
+## Replace your default Codex prompt with this
 
-## Feature Addition
-```text
-Add <feature> to LeakGuard.
-Read first: docs/REPO_MAP.md, relevant source and tests.
-Constraints:
-- no backend/telemetry/cloud processing
-- preserve secure reveal and session-only raw secret storage
-- follow existing UI/module patterns
-- add focused tests and update docs only if behavior changes
-Return: implementation summary and verification.
-```
+Your current `CODEX_PROMPT_TEMPLATES.md` tells Codex to read `AGENTS.md`, `REPO_MAP.md`, `BUG_PLAYBOOK.md`, `package.json`, and `scripts/run-tests.mjs` before editing. That is safe but expensive. :contentReference[oaicite:4]{index=4}
 
-## Refactor
+Use this instead:
+
 ```text
-Refactor <area> without changing behavior.
-Read first: docs/REPO_MAP.md and tests covering <area>.
+Repository: petritbahtiri123/LeakGuard
+
+Mode: FAST
+
+Read first:
+- docs/CODEX_FAST_CONTEXT.md
+- only the directly relevant source/test files for this task
+
+Task:
+<exact task here>
+
 Rules:
-- no broad rewrites outside <scope>
-- preserve public APIs, placeholder semantics, and manifest load order
-- keep diffs mechanical and reviewable
-- prove behavior with existing tests
-Return: rationale, files changed, tests run.
-```
+- Keep the diff narrow.
+- Preserve local-only privacy model.
+- Preserve placeholder stability/reuse/order.
+- Do not inspect unrelated files unless the narrow path fails.
+- Run the narrow test first.
+- Do not run npm test until the focused test passes or I ask for final validation.
+- Do not edit dist/, node_modules/, ai/models/, generated artifacts, or package-lock unless required.
 
-## Test Creation
-```text
-Add tests for <behavior/regression>.
-Read first: docs/BUG_PLAYBOOK.md and nearest existing test file.
-Rules:
-- use synthetic secrets only
-- assert both expected placeholders and forbidden raw leaks
-- include safe-value controls when false positives are possible
-- run the focused test and npm test if code changes
-Return: tests added and result.
-```
+Return:
+Summary
+Files changed
+Tests run
+Risks/follow-up
