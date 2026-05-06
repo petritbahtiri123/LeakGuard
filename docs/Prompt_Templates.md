@@ -8,7 +8,7 @@ Use this instead:
 ```text
 Repository: petritbahtiri123/LeakGuard
 
-Mode: FAST
+Mode: Standard
 
 Read first:
 - docs/CODEX_FAST_CONTEXT.md
