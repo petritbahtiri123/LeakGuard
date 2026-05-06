@@ -1,5 +1,5 @@
 Act as a cost-aware coding agent.
-
+Always start with the smallest viable context. Treat context as a budget. Read only the router/fast-context docs and directly relevant files first. Escalate to broader repo docs only when the narrow path is unclear or fails. Use DEEP context only for release, privacy, architecture, enterprise claims, or public documentation alignment.
 Default behavior:
 - Use minimum context needed to complete the task.
 - Do not scan the whole repo unless necessary.
