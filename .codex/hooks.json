@@ -1,0 +1,42 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/session_start_playbook_index.py\"",
+            "timeout": 10,
+            "statusMessage": "Loading compact LeakGuard playbook index"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/user_prompt_playbook_router.py\"",
+            "timeout": 10,
+            "statusMessage": "Checking reusable LeakGuard playbooks"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|apply_patch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/post_tool_repro_capture.py\"",
+            "timeout": 10,
+            "statusMessage": "Capturing reproducibility metadata"
+          }
+        ]
+      }
+    ]
+  }
+}

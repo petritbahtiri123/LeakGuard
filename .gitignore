@@ -25,3 +25,7 @@ lerna-debug.log*
 # temp directory
 .temp
 .tmp
+
+# Codex local reproducibility captures
+/docs/codex-runs/*.json
+!/docs/codex-runs/.gitkeep
