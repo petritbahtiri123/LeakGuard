@@ -114,7 +114,7 @@ function testDynamicContentScriptsMatchManifestRuntimeStack() {
     "dynamic user-site injection should load the same runtime stack as manifest content scripts"
   );
   assert.ok(
-    dynamicScripts.includes("vendor/onnxruntime/ort.min.js") &&
+    dynamicScripts.includes("vendor/onnxruntime/ort.wasm.min.js") &&
       dynamicScripts.includes("shared/ai/classifier.js") &&
       dynamicScripts.includes("shared/aiCandidateGate.js") &&
       dynamicScripts.includes("shared/transformOutboundPromptWithAi.js"),

@@ -59,6 +59,10 @@ async function testBrowserIntegrationIsOptionalAndPolicyControlled() {
     "content scripts should load the browser-side classifier module"
   );
   assert.ok(
+    manifest.content_scripts[0].js.includes("vendor/onnxruntime/ort.wasm.min.js"),
+    "content scripts should load the WASM-only ONNX Runtime bundle"
+  );
+  assert.ok(
     runtimeResources.includes("vendor/onnxruntime/ort-wasm-simd-threaded.mjs") &&
       runtimeResources.includes("vendor/onnxruntime/ort-wasm-simd-threaded.wasm"),
     "ONNX Runtime resources should include the packaged CPU WASM module loader and binary"

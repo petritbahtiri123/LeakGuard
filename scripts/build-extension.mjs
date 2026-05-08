@@ -14,7 +14,7 @@ const distRoot = path.join(repoRoot, "dist");
 const assetDirs = ["background", "content", "popup", "options", "ui", "scanner", "shared", "compat"];
 const staticDirs = ["icons", "config", "ai/models"];
 const onnxRuntimeFiles = [
-  "ort.min.js",
+  "ort.wasm.min.js",
   "ort-wasm-simd-threaded.mjs",
   "ort-wasm-simd-threaded.wasm"
 ];
@@ -180,8 +180,22 @@ function copyOnnxRuntime(targetRoot) {
 
   for (const file of listOnnxRuntimeFiles()) {
     const sourceFile = path.join(sourceDir, file);
-    fs.copyFileSync(sourceFile, path.join(targetDir, file));
+    const targetFile = path.join(targetDir, file);
+    fs.copyFileSync(sourceFile, targetFile);
+    if (file === "ort.wasm.min.js") {
+      sanitizeOnnxRuntimeLoader(targetFile);
+    }
   }
+}
+
+function sanitizeOnnxRuntimeLoader(targetFile) {
+  const source = fs.readFileSync(targetFile, "utf8");
+  const dynamicImportLoader = "(await import(/*webpackIgnore:true*/ /*@vite-ignore*/e)).default";
+  const fixedImportLoader = '(await import("./ort-wasm-simd-threaded.mjs")).default';
+  if (!source.includes(dynamicImportLoader)) {
+    throw new Error(`ONNX Runtime loader import pattern changed in ${targetFile}.`);
+  }
+  fs.writeFileSync(targetFile, source.replace(dynamicImportLoader, fixedImportLoader));
 }
 
 function buildTarget(browser, mode = "consumer") {

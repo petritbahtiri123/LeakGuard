@@ -32,7 +32,7 @@ const CONTENT_SCRIPT_FILES = [
   "content/file_drag_guard.js",
   "compat/browser_api.js",
   "compat/platform.js",
-  "vendor/onnxruntime/ort.min.js",
+  "vendor/onnxruntime/ort.wasm.min.js",
   "shared/entropy.js",
   "shared/patterns.js",
   "shared/ai/classifier.js",

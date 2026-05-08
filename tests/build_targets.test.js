@@ -51,6 +51,9 @@ async function run() {
   const chromeManifest = JSON.parse(
     fs.readFileSync(path.join(repoRoot, "dist/chrome/manifest.json"), "utf8")
   );
+  const firefoxManifest = JSON.parse(
+    fs.readFileSync(path.join(repoRoot, "dist/firefox/manifest.json"), "utf8")
+  );
   const contentScripts = chromeManifest.content_scripts[0].js;
   const fileScannerIndex = contentScripts.indexOf("shared/fileScanner.js");
   const streamingRedactorIndex = contentScripts.indexOf("shared/streamingFileRedactor.js");
@@ -70,6 +73,24 @@ async function run() {
     chromeEnterpriseManifest.storage?.managed_schema,
     "config/managed_policy_schema.json",
     "chrome enterprise manifest should declare managed policy schema support"
+  );
+  assert.deepStrictEqual(
+    firefoxManifest.browser_specific_settings?.gecko?.data_collection_permissions,
+    { required: ["none"] },
+    "firefox manifest should disclose no transmitted data collection"
+  );
+
+  const firefoxOnnxLoader = fs.readFileSync(
+    path.join(repoRoot, "dist/firefox/vendor/onnxruntime/ort.wasm.min.js"),
+    "utf8"
+  );
+  assert.ok(
+    firefoxOnnxLoader.includes('import("./ort-wasm-simd-threaded.mjs")'),
+    "packaged ONNX loader should import the local WASM sidecar with a fixed target"
+  );
+  assert.ok(
+    !firefoxOnnxLoader.includes("/*@vite-ignore*/e"),
+    "packaged ONNX loader should not keep the dynamic import target flagged by AMO lint"
   );
 
   const consumerDefaults = await policyModule.loadDefaultPolicy({
