@@ -630,6 +630,134 @@
     return suffixIndex >= 0 ? suffixIndex : normalizedText.length;
   }
 
+  function hashFindingValue(value) {
+    const input = normalizeComposerText(value).trim();
+    let hash = 2166136261;
+
+    for (let index = 0; index < input.length; index += 1) {
+      hash ^= input.charCodeAt(index);
+      hash = Math.imul(hash, 16777619) >>> 0;
+    }
+
+    return hash.toString(36);
+  }
+
+  let unstableRiskFingerprintCounter = 0;
+
+  function getValidFindingRange(finding, normalizedText) {
+    const text = normalizeComposerText(normalizedText);
+    const start = Number(finding?.start);
+    const end = Number(finding?.end);
+
+    if (
+      Number.isInteger(start) &&
+      Number.isInteger(end) &&
+      start >= 0 &&
+      end > start &&
+      end <= text.length
+    ) {
+      return { start, end };
+    }
+
+    return { start: null, end: null };
+  }
+
+  function resolveFindingIdentity(finding, normalizedText) {
+    const safeStableIdentity =
+      finding?.fingerprintValue ?? finding?.valueHash ?? finding?.stableId ?? null;
+
+    if (safeStableIdentity != null && String(safeStableIdentity).trim()) {
+      const identity = String(safeStableIdentity).trim();
+      return {
+        kind: "stable",
+        hash: hashFindingValue(identity),
+        length: identity.length
+      };
+    }
+
+    const raw = normalizeComposerText(
+      finding?.raw ?? finding?.value ?? finding?.secret ?? finding?.text ?? finding?.match ?? ""
+    ).trim();
+
+    if (raw) {
+      return {
+        kind: "value",
+        hash: hashFindingValue(raw),
+        length: raw.length
+      };
+    }
+
+    const range = getValidFindingRange(finding, normalizedText);
+    if (range.start != null && range.end != null) {
+      const sliced = normalizeComposerText(normalizedText).slice(range.start, range.end).trim();
+      if (sliced) {
+        return {
+          kind: "range-slice",
+          hash: hashFindingValue(sliced),
+          length: sliced.length
+        };
+      }
+    }
+
+    unstableRiskFingerprintCounter += 1;
+    return {
+      kind: "unstable",
+      hash: `unstable-${unstableRiskFingerprintCounter.toString(36)}`,
+      length: 0
+    };
+  }
+
+  function normalizeRiskFinding(finding, normalizedText) {
+    const range = getValidFindingRange(finding, normalizedText);
+    const identity = resolveFindingIdentity(finding, normalizedText);
+
+    // Allow-once detector contract: findings should provide a safe stable
+    // identity, a raw value that is hashed immediately, or valid start/end
+    // offsets into the normalized composer text. Anonymous findings remain
+    // deliberately unstable so they cannot suppress unrelated future risks.
+    return {
+      type: String(finding?.type || finding?.placeholderType || "SECRET"),
+      severity: String(finding?.severity || ""),
+      method: String(finding?.method || ""),
+      start: range.start,
+      end: range.end,
+      identityKind: identity.kind,
+      identityHash: identity.hash,
+      identityLength: identity.length
+    };
+  }
+
+  function buildRiskFingerprint(findings, normalizedText = "") {
+    const normalized = (findings || [])
+      .map((finding) => normalizeRiskFinding(finding, normalizedText))
+      .filter((finding) => finding.identityHash || finding.type)
+      .sort((a, b) => {
+        const left = [
+          a.type,
+          a.severity,
+          a.method,
+          a.start,
+          a.end,
+          a.identityKind,
+          a.identityHash,
+          a.identityLength
+        ].join("\u0000");
+        const right = [
+          b.type,
+          b.severity,
+          b.method,
+          b.start,
+          b.end,
+          b.identityKind,
+          b.identityHash,
+          b.identityLength
+        ].join("\u0000");
+        return left < right ? -1 : left > right ? 1 : 0;
+      });
+
+    return normalized.length ? JSON.stringify(normalized) : "";
+  }
+
   root.PWM.ComposerHelpers = {
     normalizeComposerText,
     normalizeEditorInnerText,
@@ -644,6 +772,7 @@
     getBeforeInputData,
     selectFindingsOverlappingInsertion,
     deriveRewriteCaretOffset,
+    buildRiskFingerprint,
     textToBlockFragment,
     insertContentEditableTextCommand,
     setInputTextDirect,

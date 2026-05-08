@@ -6,7 +6,8 @@ require(path.join(__dirname, "../src/content/composer_helpers.js"));
 
 const {
   normalizeEditorInnerText,
-  serializeContentEditableRoot
+  serializeContentEditableRoot,
+  buildRiskFingerprint
 } = globalThis.PWM.ComposerHelpers;
 
 const composerHelperSource = fs.readFileSync(
@@ -178,6 +179,165 @@ function testLocalFileFallbackHelpersUsePlainEvents() {
   );
 }
 
+function testRiskFingerprintIgnoresNormalComposerTextChanges() {
+  const text = "username=wayland.dev";
+  const continued = `${text} is the account name, not a password.`;
+  const finding = {
+    type: "USERNAME",
+    severity: "medium",
+    raw: "wayland.dev",
+    start: 9,
+    end: 20
+  };
+
+  assert.strictEqual(
+    buildRiskFingerprint([finding], text),
+    buildRiskFingerprint([finding], continued),
+    "normal text appended after a finding should not change the allow-once fingerprint"
+  );
+}
+
+function testRiskFingerprintChangesWhenFindingsChange() {
+  const text = "username=wayland.dev public resolver 8.8.8.8";
+  const original = buildRiskFingerprint([
+    {
+      type: "USERNAME",
+      severity: "medium",
+      raw: "wayland.dev",
+      start: 9,
+      end: 20
+    }
+  ], text);
+  const added = buildRiskFingerprint([
+    {
+      type: "USERNAME",
+      severity: "medium",
+      raw: "wayland.dev",
+      start: 9,
+      end: 20
+    },
+    {
+      type: "PUBLIC_IP",
+      severity: "medium",
+      raw: "8.8.8.8",
+      start: 37,
+      end: 44
+    }
+  ], text);
+  const replaced = buildRiskFingerprint([
+    {
+      type: "USERNAME",
+      severity: "medium",
+      raw: "other.dev",
+      start: 9,
+      end: 18
+    }
+  ], "username=other.dev");
+
+  assert.notStrictEqual(added, original, "adding a new sensitive finding should change the fingerprint");
+  assert.notStrictEqual(replaced, original, "changing a sensitive value should change the fingerprint");
+}
+
+function testRiskFingerprintDoesNotStoreRawFindingValues() {
+  const rawSecret = "AllowOnceRawSecret12345";
+  const fingerprint = buildRiskFingerprint([
+    {
+      type: "SECRET",
+      severity: "medium",
+      raw: rawSecret
+    }
+  ]);
+
+  assert.strictEqual(
+    fingerprint.includes(rawSecret),
+    false,
+    "risk fingerprints should not contain raw finding values"
+  );
+}
+
+function testRiskFingerprintUsesRangeWhenFindingHasNoRawValue() {
+  const text = "explain token FutureToken12345 safely";
+  const continued = `${text} with ordinary context`;
+  const finding = {
+    type: "SECRET",
+    severity: "medium",
+    method: "future-detector",
+    start: 14,
+    end: 30
+  };
+  const fingerprint = buildRiskFingerprint([finding], text);
+
+  assert.ok(fingerprint, "range-only findings should still produce an allow-once fingerprint");
+  assert.strictEqual(
+    fingerprint,
+    buildRiskFingerprint([finding], continued),
+    "range-only findings should stay stable when normal text is appended after allow once"
+  );
+  assert.strictEqual(
+    fingerprint.includes("FutureToken12345"),
+    false,
+    "range-derived fingerprints should not store the sliced raw value"
+  );
+}
+
+function testRiskFingerprintChangesForNewRangeOnlyFinding() {
+  const text = "explain token FutureToken12345 safely and ip 8.8.8.8";
+  const original = buildRiskFingerprint([
+    {
+      type: "SECRET",
+      severity: "medium",
+      method: "future-detector",
+      start: 14,
+      end: 30
+    }
+  ], text);
+  const added = buildRiskFingerprint([
+    {
+      type: "SECRET",
+      severity: "medium",
+      method: "future-detector",
+      start: 14,
+      end: 30
+    },
+    {
+      type: "PUBLIC_IP",
+      severity: "medium",
+      method: "future-network",
+      start: 45,
+      end: 52
+    }
+  ], text);
+
+  assert.notStrictEqual(
+    added,
+    original,
+    "adding a new range-only finding should reopen the modal"
+  );
+}
+
+function testAnonymousRiskFingerprintIsConservativelyUnstable() {
+  const first = buildRiskFingerprint([
+    {
+      type: "FUTURE_SECRET",
+      severity: "medium",
+      method: "anonymous-detector"
+    }
+  ], "normal text");
+  const second = buildRiskFingerprint([
+    {
+      type: "FUTURE_SECRET",
+      severity: "medium",
+      method: "anonymous-detector"
+    }
+  ], "different normal text");
+
+  assert.notStrictEqual(
+    first,
+    second,
+    "findings without safe identity, raw value, or range should not suppress unrelated future findings"
+  );
+}
+
 function run() {
   testPreservesSingleIntentionalBlankLine();
   testCollapsesExcessBlankRunsToOneEmptyLine();
@@ -186,6 +346,12 @@ function run() {
   testSerializesTopLevelBreakRunsAsBlankLines();
   testContentEditableRewritePathsSyncHostState();
   testLocalFileFallbackHelpersUsePlainEvents();
+  testRiskFingerprintIgnoresNormalComposerTextChanges();
+  testRiskFingerprintChangesWhenFindingsChange();
+  testRiskFingerprintDoesNotStoreRawFindingValues();
+  testRiskFingerprintUsesRangeWhenFindingHasNoRawValue();
+  testRiskFingerprintChangesForNewRangeOnlyFinding();
+  testAnonymousRiskFingerprintIsConservativelyUnstable();
   console.log("PASS composer helper multiline normalization regressions");
 }
 

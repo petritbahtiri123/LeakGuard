@@ -28,7 +28,8 @@ const {
   spliceSelectionText,
   shouldInterceptBeforeInput,
   selectFindingsOverlappingInsertion,
-  deriveRewriteCaretOffset
+  deriveRewriteCaretOffset,
+  buildRiskFingerprint
 } = ComposerHelpers;
 
 const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
@@ -238,6 +239,112 @@ function testCaretDerivationPrefersOriginalSuffixAnchor() {
     caretOffset,
     expectedText.indexOf(" suffix"),
     "caret restoration should stay anchored ahead of the untouched suffix when possible"
+  );
+}
+
+function combinedFindings(text) {
+  return [
+    ...analyze(text),
+    ...buildNetworkUiFindings(normalizeVisiblePlaceholders(text), { mode: "hide_public" })
+  ].sort((a, b) => a.start - b.start);
+}
+
+function riskFingerprintForText(text) {
+  return buildRiskFingerprint(combinedFindings(text), normalizeVisiblePlaceholders(text));
+}
+
+function testAllowOnceFingerprintSurvivesNormalTyping() {
+  const initial = "username=wayland.dev";
+  const continued = `${initial} is the account name, not a password.`;
+
+  const initialFingerprint = riskFingerprintForText(initial);
+  const continuedFingerprint = riskFingerprintForText(continued);
+
+  assert.ok(initialFingerprint, "medium typed detection should produce an allow-once fingerprint");
+  assert.strictEqual(
+    continuedFingerprint,
+    initialFingerprint,
+    "continuing with normal explanatory text should not reopen the modal for the same finding set"
+  );
+}
+
+function testAllowOnceFingerprintChangesWhenNewSuspiciousValueIsAdded() {
+  const initial = "username=wayland.dev";
+  const withNewRisk = `${initial} public resolver 8.8.8.8`;
+
+  assert.notStrictEqual(
+    riskFingerprintForText(withNewRisk),
+    riskFingerprintForText(initial),
+    "adding a new sensitive-looking value should require a fresh decision"
+  );
+}
+
+function testAllowOnceFingerprintChangesWhenSuspiciousValueIsReplaced() {
+  const initial = "username=wayland.dev";
+  const replaced = "username=other.dev";
+
+  assert.notStrictEqual(
+    riskFingerprintForText(replaced),
+    riskFingerprintForText(initial),
+    "replacing a suspicious value should require a fresh decision"
+  );
+}
+
+function testAllowOnceModalStateStaysLocalAndHasNoRawStorageHooks() {
+  const rawSecret = "AllowOnceStorageSecret123";
+  const fingerprint = buildRiskFingerprint([
+    {
+      type: "SECRET",
+      severity: "medium",
+      raw: rawSecret
+    }
+  ]);
+
+  assert.strictEqual(fingerprint.includes(rawSecret), false, "fingerprint should not contain raw secrets");
+  assert.strictEqual(
+    /allowedOnceFingerprint[\s\S]{0,240}(localStorage|chrome\.storage|sessionStorage)/.test(contentSource),
+    false,
+    "allow-once fingerprints should stay in per-editor memory, not browser storage"
+  );
+}
+
+function testAllowOnceBypassGatesTypedRedactionPipeline() {
+  const typedScanSource = extractFunctionSource(contentSource, "maybeHandleTypedSecrets");
+  const allowCheckIndex = typedScanSource.indexOf("isCurrentRiskSetAllowedOnce(input, analysis.findings");
+  const firstRedactionIndex = typedScanSource.indexOf("requestRedaction(");
+
+  assert.ok(allowCheckIndex >= 0, "typed scanner should check allow-once before redaction");
+  assert.ok(firstRedactionIndex >= 0, "typed scanner should still redact when Redact is chosen");
+  assert.ok(
+    allowCheckIndex < firstRedactionIndex,
+    "allow-once must gate auto-redaction before requestRedaction can run"
+  );
+  assert.ok(
+    typedScanSource.includes("scanGeneration !== typedScanGeneration") &&
+      typedScanSource.includes("isCurrentRiskSetAllowedOnce(latestInput, analysis.findings"),
+    "stale typed scans should re-check allow-once before applying redacted text"
+  );
+}
+
+function testAllowOnceBypassGatesPasteAndSendPipelines() {
+  const pasteSource = extractFunctionSource(contentSource, "maybeHandlePaste");
+  const submitSource = extractFunctionSource(contentSource, "maybeHandleSubmit");
+  const fallbackSendSource = extractFunctionSource(contentSource, "maybeHandleFallbackSendKey");
+
+  assert.ok(
+    pasteSource.indexOf("isCurrentRiskSetAllowedOnce(input, analysis.findings") <
+      pasteSource.indexOf("const policy = await getPolicyForAction();"),
+    "paste follow-up should bypass redaction/prompting for an already allowed risk set"
+  );
+  assert.ok(
+    submitSource.indexOf("isCurrentRiskSetAllowedOnce(input, analysis.findings") <
+      submitSource.indexOf("const policy = analysis.findings.length"),
+    "submit should allow the already approved message without rewriting it"
+  );
+  assert.ok(
+    fallbackSendSource.indexOf("isCurrentRiskSetAllowedOnce(input, analysis.findings") <
+      fallbackSendSource.indexOf("const policy = analysis.findings.length"),
+    "fallback Enter send should bypass redaction for an already allowed risk set"
   );
 }
 
@@ -465,6 +572,18 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
       pasteSource.indexOf("await analyzeTextWithAiAssist(pasted)"),
     "paste handler should consume sensitive paste events before async AI analysis can let the host insert raw text"
   );
+  assert.ok(
+    contentSource.includes("buildRiskFingerprint") &&
+      contentSource.includes("allowedOnceFingerprint") &&
+      contentSource.includes("pendingDecisionFingerprint") &&
+      contentSource.includes("pendingDecisionPromise"),
+    "allow once should use a per-editor risk fingerprint and single-flight modal state"
+  );
+  assert.ok(
+    contentSource.includes("clearAllRiskSessionState();") &&
+      contentSource.includes("typedScanGeneration"),
+    "allow-once state should reset on lifecycle/send boundaries and stale typed scans should be superseded"
+  );
 }
 
 function run() {
@@ -481,6 +600,12 @@ function run() {
   testTypedTrustedPlaceholderTailTargetsOnlyTailBeforeCommit();
   testTypedRepeatedSecretRewriteDoesNotLeakRawBoundaries();
   testCaretDerivationPrefersOriginalSuffixAnchor();
+  testAllowOnceFingerprintSurvivesNormalTyping();
+  testAllowOnceFingerprintChangesWhenNewSuspiciousValueIsAdded();
+  testAllowOnceFingerprintChangesWhenSuspiciousValueIsReplaced();
+  testAllowOnceModalStateStaysLocalAndHasNoRawStorageHooks();
+  testAllowOnceBypassGatesTypedRedactionPipeline();
+  testAllowOnceBypassGatesPasteAndSendPipelines();
   testContentScriptBindsBeforeInputAndKeepsFallbackGuard();
   console.log("PASS typed beforeinput interception regressions");
 }

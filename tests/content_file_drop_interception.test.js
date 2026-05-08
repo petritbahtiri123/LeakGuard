@@ -429,6 +429,7 @@ function createHarness(overrides = {}) {
       calls.errors = calls.errors || [];
       calls.errors.push(error);
     },
+    noteActiveRiskEditor: () => {},
     suppressFollowupInputScan: () => {},
     getActivePolicy: () => ({}),
     handleFileDragDetected: () => {
