@@ -67,4 +67,32 @@ function redact(text) {
   assert.strictEqual(result.redactedText, "password=[PWM_2][PWM_3]");
 })();
 
+(function testPartialApiKeyAndJwtLikeValues() {
+  const text = [
+    "api_key=ApiKeyPartial123",
+    "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZHZlcnNhcmlhbCJ9.signature123456",
+    "token is ghr_AdversarialToken1234567890"
+  ].join("\n");
+  const result = redact(text);
+
+  assert.strictEqual(result.redactedText.includes("ApiKeyPartial123"), false);
+  assert.strictEqual(result.redactedText.includes("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZHZlcnNhcmlhbCJ9.signature123456"), false);
+  assert.strictEqual(result.redactedText.includes("ghr_AdversarialToken1234567890"), false);
+})();
+
+(function testPemBlockAndUrlCredentialStructure() {
+  const text = [
+    "private_key: -----BEGIN PRIVATE KEY-----",
+    "ABCDEF1234567890ABCDEF1234567890",
+    "-----END PRIVATE KEY-----",
+    "https://svc:UrlCredPass123!@service.internal/path"
+  ].join("\n");
+  const result = redact(text);
+
+  assert.strictEqual(result.redactedText.includes("ABCDEF1234567890ABCDEF1234567890"), false);
+  assert.ok(/^private_key: \[PWM_\d+\]$/m.test(result.redactedText));
+  assert.ok(/https:\/\/\[PWM_\d+\]:\[PWM_\d+\]@service\.internal\/path/.test(result.redactedText));
+  assert.strictEqual(result.redactedText.includes("UrlCredPass123!"), false);
+})();
+
 console.log("PASS adversarial redaction tests");

@@ -684,10 +684,12 @@
     "public_url",
     "region",
     "release_id",
+    "request_id",
     "secret_santa",
     "secret_santa_enabled",
     "ticket_id",
     "token_limit",
+    "tokenlimit",
     "trace_id",
     "url",
     "version"
@@ -721,7 +723,13 @@
   ]);
 
   function isSafeAssignmentKey(key) {
-    return SAFE_ASSIGNMENT_KEYS.has(normalizeAssignmentKey(key));
+    const normalized = normalizeAssignmentKey(key);
+    if (SAFE_ASSIGNMENT_KEYS.has(normalized)) return true;
+
+    const compact = compactAssignmentKey(key);
+    return /(?:password|passwd|pwd|secret|token|apikey|api_key|clientsecret|privatekey)(?:field|input|element|selector|ref|name)$/i.test(
+      compact
+    );
   }
 
   function isExactCredentialAssignmentKey(key) {
@@ -1283,6 +1291,15 @@
     return looksLikeUnsupportedVendorHexAssignment(keyMatch[1], value);
   }
 
+  function hasSafeAssignmentKeyContext(text, start) {
+    const input = String(text || "");
+    const lineStart = input.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
+    const beforeRaw = input.slice(lineStart, Math.max(lineStart, start));
+    const keyMatch = /([A-Za-z_][A-Za-z0-9_.-]{0,80})\s*[:=]\s*$/.exec(beforeRaw);
+
+    return keyMatch ? isSafeAssignmentKey(keyMatch[1]) : false;
+  }
+
   function isIdentityAssignmentKey(key) {
     const normalized = normalizeAssignmentKey(key);
     return /(?:^|_)(?:username|user(?:_?name)?|login|email|e_mail|mail)(?:$|_)/.test(normalized);
@@ -1290,6 +1307,22 @@
 
   function isLikelyEmailAddress(value) {
     return /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i.test(String(value || ""));
+  }
+
+  function isEmailInUrlOrUriContext(text, start) {
+    const input = String(text || "");
+    const lineStart = input.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
+    const before = input.slice(lineStart, Math.max(lineStart, start));
+    const urlStart = before.search(/\b(?:https?|wss?|ftp|sftp|mailto):[^\s"'`<>]*$/i);
+
+    if (urlStart >= 0) return true;
+    return /(?:[?&][A-Za-z0-9_.-]*=)[^\s"'`<>]*$/i.test(before);
+  }
+
+  function isEmailInCodeImportContext(text, start) {
+    const line = getLineWindow(text, start, start).trim();
+
+    return /\b(?:import|from|require|include)\b/.test(line) || /@[\w.-]+\/[\w.-]+/.test(line);
   }
 
   function isLikelyUsernameLikeValue(value) {
@@ -1414,6 +1447,8 @@
     if (containsPlaceholder(raw)) return true;
     if (looksExampleLike(raw) || containsTemplateMarker(raw)) return true;
     if (isLikelyEmailAddress(raw) && /@example\.(?:com|org|net)$/i.test(raw)) return true;
+    if (isLikelyEmailAddress(raw) && isEmailInUrlOrUriContext(text, start)) return true;
+    if (isLikelyEmailAddress(raw) && isEmailInCodeImportContext(text, start)) return true;
 
     const ctx = contextScore(text, start, end);
     if (ctx <= -8 && !/(password|secret|token|credential|auth)/i.test(String(key || ""))) {
@@ -2683,6 +2718,43 @@
       return findings;
     }
 
+    scanEmailAddresses(text, options = {}) {
+      if (!options.lineCache) {
+        const lineCached = this.scanRepeatedLines(text, (line) =>
+          this.scanEmailAddresses(line, { lineCache: true })
+        );
+        if (lineCached) return lineCached;
+      }
+
+      const findings = [];
+      const regex = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
+      let match;
+
+      while ((match = regex.exec(text)) !== null) {
+        const raw = match[0];
+        const start = match.index;
+        const end = start + raw.length;
+
+        if (!isLikelyEmailAddress(raw)) continue;
+        if (this.isAllowlisted(raw)) continue;
+        if (shouldSuppressIdentityValue(raw, text, start, end, "email")) continue;
+
+        findings.push(
+          this.buildFinding({
+            category: "identity",
+            placeholderType: "EMAIL",
+            raw,
+            start,
+            end,
+            score: 82 + Math.max(0, contextScore(text, start, end)),
+            methods: ["email", "identity"]
+          })
+        );
+      }
+
+      return findings;
+    }
+
     scanIdentityAssignments(text, options = {}) {
       if (!options.lineCache) {
         const lineCached = this.scanRepeatedLines(text, (line) =>
@@ -2866,6 +2938,7 @@
         if (isSafeValidationMarker(raw)) continue;
         if (looksLikeFilesystemPath(text, start, end, raw)) continue;
         if (hasUnsupportedVendorHexAssignmentContext(text, start, raw)) continue;
+        if (hasSafeAssignmentKeyContext(text, start)) continue;
         if (this.shouldSuppress({ raw, text, start, end })) continue;
 
         const entropy = calculateEntropy(raw);
@@ -3263,6 +3336,7 @@
           ...this.scanExplicitCredentialAssignments(input),
           ...this.scanLabelledProviderKeyValues(input),
           ...this.scanAdversarialAssignments(input),
+          ...this.scanEmailAddresses(input),
           ...this.scanIdentityAssignments(input),
           ...this.scanJsonIdentityFields(input),
           ...this.scanUnknownPlaceholderTokens(input),

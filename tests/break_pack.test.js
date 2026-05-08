@@ -714,6 +714,46 @@ function testTransformDoesNotReuseUrlUsernamesOutsideCredentialRanges() {
   assert.strictEqual(redactedText.includes("@[PWM_"), false, "host prefix must not be placeholderized");
 }
 
+function testEmailIdentityRedactionAndSafeUrlEmailText() {
+  const text = [
+    "Primary contact alex.manager@corp.internal handles access.",
+    "email=alex.manager@corp.internal",
+    "contact_email=alex.manager@corp.internal",
+    "docs_email=user@example.com",
+    "callback=https://docs.example/invite?email=reader@docs.example&redirect=/home",
+    "DATABASE_URL=postgres://app:EmailPackDbPass123!@db.internal:5432/app"
+  ].join("\n");
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const findings = detector.scan(text, { manager });
+  const redactedText = transformOutboundPrompt(text, {
+    manager,
+    findings,
+    mode: "hide_public"
+  }).redactedText;
+  const emailPlaceholder = /^email=(\[PWM_\d+\])$/m.exec(redactedText)?.[1];
+
+  assert.ok(emailPlaceholder, `primary email should redact: ${redactedText}`);
+  assert.ok(
+    redactedText.includes(`Primary contact ${emailPlaceholder} handles access.`),
+    "prose email should redact without changing surrounding prose"
+  );
+  assert.ok(
+    redactedText.includes(`contact_email=${emailPlaceholder}`),
+    "duplicate email should reuse the same placeholder"
+  );
+  assert.ok(redactedText.includes("docs_email=user@example.com"), "example.com email should stay visible");
+  assert.ok(
+    redactedText.includes("callback=https://docs.example/invite?email=reader@docs.example&redirect=/home"),
+    "email-like URL query text should not be parsed as URL credentials"
+  );
+  assert.ok(
+    /^DATABASE_URL=postgres:\/\/\[PWM_\d+\]:\[PWM_\d+\]@db\.internal:5432\/app$/m.test(redactedText),
+    "database URL credentials should still redact around email tests"
+  );
+  assertExcludesAll(redactedText, ["alex.manager@corp.internal", "EmailPackDbPass123!"], "email identity pack");
+}
+
 testBreakPackRedactionAndSafeLines();
 testFullCapabilityBreakPackV2();
 testSensitiveHttpHeaderRedaction();
@@ -726,4 +766,5 @@ testUrlCredentialPasswordsCanContainRawAtSigns();
 testUrlCredentialParserLeavesSafeUrlShapesAlone();
 testBrokenPlaceholderUrlTailDoesNotLeakFurther();
 testTransformDoesNotReuseUrlUsernamesOutsideCredentialRanges();
+testEmailIdentityRedactionAndSafeUrlEmailText();
 console.log("PASS LeakGuard break-test redaction pack");

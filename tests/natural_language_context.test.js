@@ -146,8 +146,41 @@ function testPairedNaturalLanguageDisclosureFamilies() {
   }
 }
 
+function testLabelledSecretAliasFamilies() {
+  const text = [
+    "pwd: ShortPwd123!",
+    "pass = PassAlias123!",
+    "api_key: LabelApiKey1234567890",
+    "apikey=LabelApiKeyABC123456",
+    "client_secret: ClientSecretAlias123!",
+    "refresh_token: RefreshTokenAlias123456",
+    "private_key: -----BEGIN PRIVATE KEY-----",
+    "ABCDEF1234567890",
+    "-----END PRIVATE KEY-----"
+  ].join("\n");
+  const { findings, result } = scanAndRedact(text);
+  const expected = [
+    ["PASSWORD", "ShortPwd123!"],
+    ["SECRET", "PassAlias123!"],
+    ["API_KEY", "LabelApiKey1234567890"],
+    ["API_KEY", "LabelApiKeyABC123456"],
+    ["SECRET", "ClientSecretAlias123!"],
+    ["TOKEN", "RefreshTokenAlias123456"],
+    ["PRIVATE_KEY", "-----BEGIN PRIVATE KEY-----\nABCDEF1234567890\n-----END PRIVATE KEY-----"]
+  ];
+
+  for (const [type, raw] of expected) {
+    assert.ok(
+      findings.some((finding) => finding.type === type && finding.raw === raw),
+      `expected ${type} labelled finding for ${raw}`
+    );
+    assert.strictEqual(result.redactedText.includes(raw), false, `${raw} should be redacted`);
+  }
+}
+
 testExpandedNaturalLanguageDisclosures();
 testFalseContextDenyListSuppressesDiscussionText();
 testPairedNaturalLanguageDisclosureFamilies();
+testLabelledSecretAliasFamilies();
 
 console.log("PASS natural-language context regressions");

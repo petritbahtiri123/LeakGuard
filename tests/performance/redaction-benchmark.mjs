@@ -98,6 +98,61 @@ function buildLargeSyntheticSample(name, targetBytes, label) {
   };
 }
 
+function buildRepeatedEnvLikeSample() {
+  const secret = "RepeatedEnvSecret1234567890!";
+  const apiKey = "sk-proj-RepeatedEnvApiKey1234567890abcdef";
+  const lineBlock = [
+    `DB_PASSWORD=${secret}`,
+    `OPENAI_API_KEY=${apiKey}`,
+    "TOKEN_LIMIT=4096",
+    "REGION=eu-central-1",
+    "REQUEST_ID=req-01HV7M7A2B3C4D5E6F7G8H9J0K"
+  ].join("\n");
+
+  return {
+    name: "repeated_env_like_80kb",
+    text: `${lineBlock}\n`.repeat(650),
+    structuralOnly: true,
+    iterations: Math.min(3, ITERATIONS),
+    warmupIterations: 1,
+    forbidden: [secret, apiKey],
+    expected: ["DB_PASSWORD=[PWM_", "OPENAI_API_KEY=[PWM_", "TOKEN_LIMIT=4096", "REGION=eu-central-1"]
+  };
+}
+
+function buildLongSafeLogSample() {
+  const safeLine =
+    "2026-05-08 INFO request_id=req-01HV7M7A2B3C4D5E6F7G8H9J0K region=eu-central-1 token_limit=4096 version=1.2.3\n";
+
+  return {
+    name: "long_safe_logs_120kb",
+    text: safeLine.repeat(1100),
+    structuralOnly: true,
+    iterations: Math.min(3, ITERATIONS),
+    warmupIterations: 1,
+    maxFindings: 0,
+    forbidden: [],
+    expected: ["request_id=req-01HV7M7A2B3C4D5E6F7G8H9J0K", "region=eu-central-1", "token_limit=4096"]
+  };
+}
+
+function buildLongPromptFewSecretsSample() {
+  const password = "LongPromptDbPass123!";
+  const token = "LongPromptBearerToken1234567890";
+  const filler =
+    "Please summarize the migration notes, preserve package versions like 1.2.3, and keep region eu-central-1 visible.\n";
+
+  return {
+    name: "long_prompt_few_secrets_90kb",
+    text: `${filler.repeat(420)}\nDB_PASSWORD=${password}\n${filler.repeat(420)}\nAuthorization: Bearer ${token}\n`,
+    structuralOnly: true,
+    iterations: Math.min(3, ITERATIONS),
+    warmupIterations: 1,
+    forbidden: [password, token],
+    expected: ["DB_PASSWORD=[PWM_", "Authorization: Bearer [PWM_", "region eu-central-1"]
+  };
+}
+
 const samples = [
   {
     name: "small_safe_text",
@@ -140,6 +195,9 @@ const samples = [
     ],
     expected: ["PUBLIC_URL=https://example.com", "PRIVATE_IP=10.0.0.5", "[PUB_HOST_"]
   },
+  buildRepeatedEnvLikeSample(),
+  buildLongSafeLogSample(),
+  buildLongPromptFewSecretsSample(),
   {
     name: "large_log_blob_45kb",
     text: [

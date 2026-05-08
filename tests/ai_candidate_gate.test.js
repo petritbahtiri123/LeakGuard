@@ -30,6 +30,7 @@ function testSafeConfigValuesAreIgnored() {
     "password_hint=ask-admin",
     "jira_key=LG-123",
     "ticket_id=INC-9",
+    "request_id=req-01HV7M7A2B3C4D5E6F7G8H9J0K",
     "commit_sha=abcdef1234567890abcdef1234567890abcdef12",
     "build_id=build-2026-04-27",
     "image_tag=app:2026.04"
@@ -77,11 +78,68 @@ function testRangeShapes() {
   );
 }
 
+function testMediumConfidenceCandidatesForLocalAssist() {
+  const text = [
+    "note=abc123def456",
+    "custom_header: MediumRiskValue123",
+    "my integration token MaybeToken12345",
+    "callback=https://user:MaybeUrlPass123@example.com/path"
+  ].join("\n");
+  const candidates = extractAiCandidates(text, { policyMode: "enterprise" });
+
+  assert.ok(
+    candidates.some(
+      (candidate) =>
+        candidate.value === "abc123def456" && candidate.score >= 40 && candidate.score < 60
+    ),
+    "enterprise/strict mode should pass medium-confidence unknown values to local AI assist"
+  );
+  assert.ok(candidates.some((candidate) => candidate.kind === "colon" && candidate.value === "MediumRiskValue123"));
+  assert.ok(candidates.some((candidate) => candidate.kind === "naturalLanguage" && candidate.value === "MaybeToken12345"));
+  assert.ok(candidates.some((candidate) => candidate.kind === "urlCredential" && candidate.value === "MaybeUrlPass123"));
+}
+
+function testCandidateExtractionDoesNotUseNetworkApis() {
+  const originalFetch = globalThis.fetch;
+  const originalXmlHttpRequest = globalThis.XMLHttpRequest;
+  let networkCalls = 0;
+
+  globalThis.fetch = () => {
+    networkCalls += 1;
+    throw new Error("network call is not allowed in local AI candidate extraction");
+  };
+  globalThis.XMLHttpRequest = function XMLHttpRequest() {
+    networkCalls += 1;
+    throw new Error("XMLHttpRequest is not allowed in local AI candidate extraction");
+  };
+
+  try {
+    const candidates = extractAiCandidates("token=MaybeLocalOnlyToken12345", {
+      policyMode: "enterprise"
+    });
+    assert.ok(candidates.some((candidate) => candidate.value === "MaybeLocalOnlyToken12345"));
+    assert.strictEqual(networkCalls, 0, "AI candidate extraction must remain local-only");
+  } finally {
+    if (typeof originalFetch === "undefined") {
+      delete globalThis.fetch;
+    } else {
+      globalThis.fetch = originalFetch;
+    }
+    if (typeof originalXmlHttpRequest === "undefined") {
+      delete globalThis.XMLHttpRequest;
+    } else {
+      globalThis.XMLHttpRequest = originalXmlHttpRequest;
+    }
+  }
+}
+
 testDeterministicRangesAreExcluded();
 testSafeConfigValuesAreIgnored();
 testSuspiciousAssignmentsAndUrlCredentials();
 testPlaceholdersAreIgnored();
 testPolicyThresholds();
 testRangeShapes();
+testMediumConfidenceCandidatesForLocalAssist();
+testCandidateExtractionDoesNotUseNetworkApis();
 
 console.log("PASS AI candidate gate regressions");

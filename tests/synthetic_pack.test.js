@@ -229,7 +229,7 @@ function testConfidenceBandSyntheticInputs() {
   assert.ok(usernameFinding, "synthetic username assignment should detect");
   assert.ok(emailFinding, "synthetic email assignment should detect");
   assert.strictEqual(usernameFinding.severity, "medium");
-  assert.strictEqual(emailFinding.severity, "medium");
+  assert.strictEqual(emailFinding.severity, "high");
   assertForbiddenOutput(result.redactedText, ["HarborLock4455!", "secret1234"], "confidence band synthetic inputs");
   assertPreservedOutput(
     result.redactedText,
