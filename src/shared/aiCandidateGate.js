@@ -38,10 +38,12 @@
     "password_hint",
     "public_url",
     "region",
+    "request_id",
     "release_id",
     "secret_santa",
     "ticket_id",
     "token_limit",
+    "tokenlimit",
     "trace_id",
     "version"
   ]);
@@ -181,6 +183,7 @@
     if (!value || value.length < 3) return;
     if (isSafeValue(value)) return;
     if (SAFE_KEYS.has(key)) return;
+    if (candidate.kind === "bare" && hasKeyword(next.contextText || "", [...SAFE_KEYS])) return;
     if (candidate.kind !== "urlCredential" && FALSE_CONTEXT_REGEX.test(next.contextText || "")) return;
     if (overlapsAnyRange(next, ranges)) return;
 

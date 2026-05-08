@@ -2031,9 +2031,82 @@ function testUsernameAndEmailAssignmentsStayMediumConfidence() {
   assert.ok(usernameFinding, "username assignment should surface as a contextual identity finding");
   assert.ok(emailFinding, "email assignment should surface as a contextual identity finding");
   assert.strictEqual(usernameFinding.severity, "medium", "username assignments should warn before they auto-redact");
-  assert.strictEqual(emailFinding.severity, "medium", "email assignments should warn before they auto-redact");
+  assert.strictEqual(emailFinding.severity, "high", "real-looking email assignments should auto-redact");
   assert.ok(usernameFinding.method.includes("identity"));
   assert.ok(emailFinding.method.includes("identity"));
+}
+
+function testEmailRedactionSuppressionAndReuse() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const workEmail = "jane.doe@company.com";
+  const text = [
+    `Please contact ${workEmail} for account access.`,
+    `email=${workEmail}`,
+    `user_email=${workEmail}`,
+    `owner="${workEmail}"`,
+    `docs_email=user@example.com`,
+    `placeholder_email=[PWM_7]`,
+    "tutorial: email=user@example.com",
+    "callback=https://example.com/invite?email=link.user@company.com&next=/ok",
+    "mailto:user@example.com"
+  ].join("\n");
+
+  const findings = detector.scan(text);
+  const result = redactor.redact(text, findings);
+  const redactedText = result.redactedText;
+  const emailPlaceholders = (redactedText.match(/\[PWM_\d+\]/g) || []).filter(
+    (placeholder) => placeholder !== "[PWM_7]"
+  );
+
+  assert.ok(
+    findings.some((finding) => finding.type === "EMAIL" && finding.raw === workEmail),
+    "real-looking work emails should produce identity findings"
+  );
+  assert.strictEqual(new Set(emailPlaceholders).size, 1, "duplicate email values should reuse one placeholder");
+  assert.strictEqual(redactedText.includes(workEmail), false, "work email should not remain visible");
+  assert.ok(
+    /^Please contact \[PWM_\d+\] for account access\.$/m.test(redactedText),
+    "prose email should redact without changing surrounding words"
+  );
+  assert.ok(redactedText.includes("docs_email=user@example.com"), "example.com email should stay visible");
+  assert.ok(redactedText.includes("placeholder_email=[PWM_7]"), "clean placeholder email should stay visible");
+  assert.ok(redactedText.includes("tutorial: email=user@example.com"), "tutorial example email should stay visible");
+  assert.ok(
+    redactedText.includes("callback=https://example.com/invite?email=link.user@company.com&next=/ok"),
+    "email inside a URL query should not be misparsed as URL credentials"
+  );
+  assert.ok(redactedText.includes("mailto:user@example.com"), "mailto example should stay visible");
+}
+
+function testDeveloperDocumentationFalsePositiveControls() {
+  const detector = new Detector();
+  const cases = [
+    [
+      "const passwordField = document.querySelector(\"#password\");",
+      "const apiKeyInput = form.elements.apiKey;",
+      "const tokenLimit = 4096;",
+      "const secret_santa = true;",
+      "const password_hint = \"use a password manager\";"
+    ].join("\n"),
+    [
+      "Package versions: leakguard@1.2.3, node 20.11.1, @scope/pkg@0.4.0-beta.1",
+      "region=us-east-1",
+      "availability_zone=us-east-1a",
+      "request_id=req-01HV7M7A2B3C4D5E6F7G8H9J0K",
+      "trace_id=00-abcdef1234567890abcdef1234567890-abcdef1234567890-01"
+    ].join("\n"),
+    [
+      "Docs: set API_KEY=replace_me and password=changeme.",
+      "Tutorial sample: token=example-token-value and email=user@example.com.",
+      "Normal code example: const tokenLimit = options.maxTokens || 4096;"
+    ].join("\n")
+  ];
+
+  for (const text of cases) {
+    assert.deepStrictEqual(detector.scan(text), [], `safe developer/docs text should not redact: ${text}`);
+  }
 }
 
 function run() {
@@ -2096,6 +2169,8 @@ function run() {
   testPlaceholderSuffixSecretRedactsOnlyAppendedMaterial();
   testStandaloneBenignBuildLabelStaysVisible();
   testUsernameAndEmailAssignmentsStayMediumConfidence();
+  testEmailRedactionSuppressionAndReuse();
+  testDeveloperDocumentationFalsePositiveControls();
 
   console.log(
     `PASS ${fixtures.length} positive fixtures + metadata, suppression, multiline, and reveal regressions`
