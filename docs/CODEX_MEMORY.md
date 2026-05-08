@@ -10,7 +10,7 @@ LeakGuard keeps a repo-local Codex memory system for recurring bug and workflow 
 
 - `SessionStart` reads only `docs/codex-playbooks/INDEX.md` and caps injected context at 2000 characters.
 - `UserPromptSubmit` scores known issue patterns and injects only short playbook pointers, capped at 1200 characters.
-- `PostToolUse` writes compact reproducibility metadata to `docs/codex-runs/` and does not inject command output back into context.
+- `PostToolUse` writes compact reproducibility metadata to `docs/codex-runs/` and does not capture raw command output, prompts, full logs, or clipboard contents.
 
 Hooks are enabled by `.codex/config.toml`:
 
@@ -19,7 +19,7 @@ Hooks are enabled by `.codex/config.toml`:
 codex_hooks = true
 ```
 
-Hook wiring lives in `.codex/hooks.json`.
+Hook wiring lives in `.codex/hooks.json`. Hook commands use dependency-free Node scripts so they work on Windows and Unix-like shells without relying on a `python3` executable name.
 
 ## How Playbooks Work
 
@@ -60,6 +60,8 @@ You can also temporarily move or edit `.codex/hooks.json`, but avoid committing 
 
 - Do not add secrets, tokens, private data, raw secret samples, or transcripts to playbooks.
 - Do not print full logs from hooks.
+- Do not persist raw command output previews. Repro captures should keep only metadata such as timestamp, hook event, tool name, status, command hash, compact command summary, changed file list, and added/removed counts.
+- Do not store raw secrets, tokens, email addresses, private keys, clipboard contents, prompts, or full logs in `docs/codex-runs/`.
 - Keep hook `additionalContext` hard-capped.
 - Hooks must fail open unless an explicit security policy requires blocking.
 - Keep scripts simple and dependency-free.
@@ -70,7 +72,7 @@ You can also temporarily move or edit `.codex/hooks.json`, but avoid committing 
 
 - Do not load all playbooks at startup.
 - Do not copy `docs/codex-runs/` content into prompts.
-- Do not store raw command output beyond compact previews.
+- Do not store raw command output previews.
 - Do not route broad categories that cause noisy false matches.
 - Do not add remote services, telemetry, or cloud processing.
 

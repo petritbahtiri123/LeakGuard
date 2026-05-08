@@ -5,7 +5,6 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-MAX_PREVIEW_CHARS = 2000
 MAX_SUMMARY_CHARS = 500
 
 
@@ -17,6 +16,11 @@ def compact_string(value, limit):
     if len(text) <= limit:
         return text
     return text[: max(0, limit - 32)].rstrip() + "\n[truncated for repro capture]"
+
+
+def stable_hash(value):
+    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=True, sort_keys=True)
+    return hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
 
 
 def patch_summary(tool_input):
@@ -34,18 +38,7 @@ def patch_summary(tool_input):
     files += [line.split(":", 1)[1].strip() for line in text.splitlines() if line.startswith("*** Add File:")]
     files += [line.split(":", 1)[1].strip() for line in text.splitlines() if line.startswith("*** Delete File:")]
     summary = {"added_lines": added, "removed_lines": removed, "files": files[:20]}
-    if not files and text:
-        summary["preview"] = compact_string(text, MAX_SUMMARY_CHARS)
     return summary
-
-
-def output_preview(tool_response):
-    if isinstance(tool_response, dict):
-        for key in ("output", "stdout", "stderr", "message", "text"):
-            value = tool_response.get(key)
-            if value:
-                return compact_string(value, MAX_PREVIEW_CHARS)
-    return compact_string(tool_response, MAX_PREVIEW_CHARS)
 
 
 def status_from_response(tool_response):
@@ -56,16 +49,30 @@ def status_from_response(tool_response):
     return None
 
 
+def summarize_command(command):
+    normalized = command.replace("\r\n", "\n").strip()
+    if not normalized:
+        return "empty command"
+    line_count = normalized.count("\n") + 1
+    return compact_string(f"shell command ({len(normalized)} chars, {line_count} line{'s' if line_count != 1 else ''})", MAX_SUMMARY_CHARS)
+
+
 def command_or_patch(payload):
     tool_input = payload.get("tool_input")
     tool_name = payload.get("tool_name")
     if isinstance(tool_input, dict):
         command = tool_input.get("command")
         if isinstance(command, str):
-            return {"command": compact_string(command, MAX_SUMMARY_CHARS)}
+            return {
+                "command_hash": stable_hash(command),
+                "command_summary": summarize_command(command),
+            }
     if tool_name == "apply_patch":
-        return {"patch_summary": patch_summary(tool_input)}
-    return {"input_summary": compact_string(tool_input, MAX_SUMMARY_CHARS)}
+        return {
+            "command_hash": stable_hash(tool_input),
+            "patch_summary": patch_summary(tool_input),
+        }
+    return {"command_hash": stable_hash(tool_input), "command_summary": "non-shell tool input"}
 
 
 def main():
@@ -92,11 +99,7 @@ def main():
             "timestamp": timestamp,
             "hook_event_name": payload.get("hook_event_name"),
             "tool_name": payload.get("tool_name"),
-            "tool_use_id": payload.get("tool_use_id"),
-            "turn_id": payload.get("turn_id"),
-            "cwd": payload.get("cwd"),
             "status": status_from_response(payload.get("tool_response")),
-            "output_preview": output_preview(payload.get("tool_response")),
         }
         metadata.update(command_or_patch(payload))
 
