@@ -29,10 +29,12 @@
 
 - Paste the manual smoke block from `tests/manual_detection_paste_block.txt`.
 - Confirm likely secrets are replaced with `[PWM_n]` placeholders when you choose `Redact`.
-- Confirm obvious docs placeholders such as `replace_me` stay visible.
+- Confirm likely email addresses are redacted locally in prompts and supported text files.
+- Confirm obvious docs placeholders such as `replace_me`, example literals, and development variable names stay visible when they are not sensitive values.
 - Confirm `databaseUrl` and `MYSQL_URL` keep their URI shape while only the password segment is masked.
 - Confirm JSON fields like `accessToken`, `dbPassword`, `clientSecret`, and `apiKey` are redacted.
 - Confirm webhook URLs, bearer tokens, cookie/session values, Docker auth blobs, and connection strings are redacted.
+- Confirm release copy states no cloud processing, no telemetry, and no remote model calls without promising perfect protection.
 
 ## Network Detection Flow
 
@@ -116,3 +118,4 @@
 - Capture final screenshots for popup home, popup management, in-page panel, decision modal, and popup reveal.
 - Replace any temporary support or privacy contact placeholders in the privacy policy.
 - Review the Chrome Web Store copy in `docs/CHROME_WEB_STORE_LISTING.md`.
+- Review release-facing wording for Firefox Add-ons suitability: local-only processing, no telemetry, no cloud processing, no remote model calls, and no perfect-protection claims.

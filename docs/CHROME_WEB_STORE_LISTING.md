@@ -6,11 +6,11 @@ LeakGuard
 
 ## One-line Summary
 
-Protect prompts and local text files by redacting likely secrets and public IPv4 details locally in Chrome.
+Protect prompts and local text files by redacting likely secrets, email addresses, and public IPv4 details locally in Chrome.
 
 ## Short Description
 
-LeakGuard helps prevent accidental leaks by detecting likely secrets and public IPv4 data in supported chat composers and selected local text files.
+LeakGuard helps reduce accidental leaks by detecting likely secrets, email addresses, and public IPv4 data in supported chat composers and selected local text files.
 
 ## Detailed Description
 
@@ -19,6 +19,7 @@ LeakGuard is a local-only Chrome extension for people who work with prompts, cre
 Before text is sent from a protected site, LeakGuard can:
 
 - detect likely secrets such as API keys, tokens, passwords, client secrets, webhook URLs, connection strings, Docker auth blobs, and cookie-style session values
+- detect likely email addresses
 - detect public IPv4 hosts and public IPv4 CIDR ranges
 - show an `Allow once` or `Redact` decision flow before submission
 - replace raw values with stable placeholders such as `[PWM_1]`, `[PUB_HOST_1]`, and `[NET_1]`
@@ -37,6 +38,8 @@ LeakGuard is designed for risk reduction, not as a complete data-loss-prevention
 - built-in protection for ChatGPT, OpenAI Chat, Claude, Gemini, Grok, and X
 - user-managed exact-site protection for additional sites
 - local-only detection and redaction
+- local-only email redaction for likely email addresses
+- false-positive suppression for common documentation placeholders, example values, and development variable names
 - local text-file scanning with redacted-copy and sanitized-report exports
 - local text-file paste/drop/file-select redaction for supported UTF-8 text files in protected AI composers
 - streaming local redaction for supported text-file composer uploads above 4 MiB and up to 50 MB
@@ -51,6 +54,7 @@ LeakGuard is designed for risk reduction, not as a complete data-loss-prevention
 
 - no cloud processing
 - no telemetry
+- no remote model calls
 - no backend service
 - no promise of perfect privacy or complete secret protection
 - no PDF, DOCX, image OCR, or visual image redaction in this release
@@ -105,6 +109,8 @@ Use real extension screenshots with production copy. Avoid showing raw real cred
 - Supported local text files pasted, dropped, or selected in protected AI composers are processed locally, including streaming/chunked local redaction for supported text files above 4 MiB and up to 50 MB.
 - Raw text-file uploads are blocked if sanitized file handoff cannot complete.
 - Raw secrets are not sent to external services by the extension.
+- Likely email addresses are redacted locally; LeakGuard does not upload email text for scanning.
+- The detector suppresses common documentation placeholders, example values, and development variable names to reduce false positives.
 - Sanitized File Scanner JSON reports do not include raw secrets by default.
 - User-managed sites are exact origin rules, not wildcard rules.
 - Secure reveal is confined to extension-owned UI.

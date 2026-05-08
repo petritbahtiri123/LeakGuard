@@ -4,15 +4,16 @@ Last updated: 2026-05-05
 
 ## Summary
 
-LeakGuard processes protected prompt text and explicitly selected local text files locally in your browser to help reduce accidental leaks of secrets and public IPv4 network details.
+LeakGuard processes protected prompt text and explicitly selected local text files locally in your browser to help reduce accidental leaks of secrets, email addresses, and public IPv4 network details.
 
-LeakGuard does not operate a backend service and does not send your prompt text, selected file contents, raw secrets, or raw network values to our servers.
+LeakGuard does not operate a backend service and does not send your prompt text, selected file contents, raw secrets, email addresses, or raw network values to our servers. LeakGuard does not use telemetry, cloud processing, or remote model calls.
 
 ## What LeakGuard Accesses
 
 LeakGuard may access text you type, paste, or submit in protected site composers so it can:
 
 - detect likely secrets
+- detect likely email addresses
 - detect public IPv4 hosts and CIDR ranges
 - show an allow-or-redact decision before send
 - replace sensitive values with placeholders
@@ -38,10 +39,13 @@ LeakGuard does not send the following to our servers because the extension does 
 - prompt text
 - selected file contents
 - raw secret values
+- email addresses
 - raw network values
 - placeholder maps
 - browsing telemetry
 - streaming redaction chunks
+
+LeakGuard also suppresses common documentation placeholders, example values, and development variable names where possible to reduce false positives during local scanning.
 
 Sanitized File Scanner JSON reports do not include raw secret values by default. Redacted file copies and reports are created only after you click the export buttons.
 
@@ -65,7 +69,7 @@ LeakGuard extension pages use a restrictive Content Security Policy for extensio
 
 ## Limitations
 
-LeakGuard is a risk-reduction tool, not a guarantee of secrecy or privacy. It does not protect against:
+LeakGuard is a risk-reduction tool, not a guarantee of secrecy or privacy, and it may miss or misclassify some sensitive text. It does not protect against:
 
 - browser compromise or malware
 - OS-level clipboard/history capture

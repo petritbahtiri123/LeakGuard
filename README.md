@@ -7,16 +7,16 @@ LeakGuard is a local-first browser privacy guard that reduces accidental AI prom
 
 The public product name is LeakGuard.
 
-It watches supported composers for typed or pasted content, detects likely secrets and sensitive public IPv4 data before submission, and lets you choose `Redact` or `Allow once`.
+It watches supported composers for typed or pasted content, detects likely secrets, email addresses, and sensitive public IPv4 data before submission, and lets you choose `Redact` or `Allow once`.
 
-LeakGuard does not use a backend service or cloud processing. It is designed for practical risk reduction, not perfect privacy or full enterprise DLP.
+LeakGuard does not use a backend service, cloud processing, telemetry, or remote model calls. It is designed for practical risk reduction, not perfect privacy or full enterprise DLP.
 
 > Local-only. No backend. No telemetry. Secure reveal stays inside extension-owned UI..
 
 ## What LeakGuard Is
 
 - A local-first browser privacy guard for supported AI chat composers
-- A deterministic-first redaction layer for likely secrets and sensitive public IPv4 data
+- A deterministic-first redaction layer for likely secrets, email addresses, and sensitive public IPv4 data
 - A session-scoped placeholder system for replacing raw values with tokens such as `[PWM_1]`, `[PUB_HOST_1]`, and `[NET_1]`
 - A local text-file scanner for selected text files
 - Local text-file paste/drop redaction for supported UTF-8 text files in protected AI composers
@@ -63,6 +63,8 @@ https://ko-fi.com/petritbahtiri
 - If sanitized file handoff fails or the file is unsupported/invalid, LeakGuard blocks raw upload and shows a local message
 - Trust-aware placeholder preservation and reuse for session-known `[PWM_N]`, `[NET_N]`, and `[PUB_HOST_N]` tokens
 - Full-value redaction for sensitive HTTP headers such as `Authorization`, `X-API-Key`, auth token headers, `Cookie`, and `Set-Cookie`
+- Local-only email redaction for likely email addresses in protected prompts and supported text files
+- False-positive suppression for common documentation placeholders, example values, and development variable names
 - Local File Scanner for text-based files with redacted-copy and sanitized-report exports
 - Popup-based site management for add, enable, disable, and remove flows
 - In-page top-center status menu on protected pages
@@ -106,9 +108,10 @@ LeakGuard currently focuses on high-value prompt leak cases such as:
 - Database URLs and connection strings while preserving URI shape and masking only the secret segment
 - Sensitive HTTP headers while preserving header names, separators, auth schemes, and cookie attributes where possible
 - Repeated raw secrets across headers, assignments, and labelled prose with stable placeholder reuse
+- Likely email addresses, redacted locally without cloud processing or remote model calls
 - Public IPv4 hosts and public IPv4 CIDR ranges
 
-The detector is heuristic by design. It is tuned to catch realistic mistakes while suppressing obvious docs placeholders and safe literals where possible.
+The detector is heuristic by design. It is tuned to catch realistic mistakes while suppressing obvious documentation placeholders, example literals, safe development variable names, and other low-risk text where possible.
 
 ### Local AI Assist
 

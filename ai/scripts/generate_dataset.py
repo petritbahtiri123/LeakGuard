@@ -112,8 +112,22 @@ def basic_auth_header() -> str:
     return base64.b64encode(credential.encode("utf-8")).decode("ascii")
 
 
-def add(records: list[dict], text: str, label: str, source: str = "synthetic") -> None:
-    records.append({"text": text, "label": label, "source": source})
+def add(
+    records: list[dict],
+    text: str,
+    label: str,
+    source: str = "synthetic",
+    category: str | None = None,
+) -> None:
+    record = {"text": text, "label": label, "source": source}
+    if category:
+        record["category"] = category
+    records.append(record)
+
+
+def add_category(records: list[dict], category: str, examples: list[tuple[str, str]]) -> None:
+    for text, label in examples:
+        add(records, text, label, source="synthetic_category_expansion", category=category)
 
 
 def random_secret_record() -> tuple[str, str]:
@@ -512,6 +526,71 @@ def build_records(count: int = DEFAULT_RECORD_COUNT) -> list[dict]:
     ]
     for text, label in context_contrasts:
         add(records, text, label)
+
+    categorized_expansion = {
+        "prose_email_secrets": [
+            (
+                f"Send the reset link to dev.user@example.invalid; my password is MailPass-{token(alnum, 18)}!",
+                "SECRET",
+            ),
+            ("Contact the demo owner at learner@example.invalid for access to the tutorial", "NOT_SECRET"),
+            ("Ticket mentions admin@example.invalid may have received a password in email; value removed", "UNSURE"),
+        ],
+        "safe_example_emails": [
+            (
+                f"support@example.invalid pasted token {bearer_token()} in the incident notes",
+                "SECRET",
+            ),
+            ("Use alice@example.invalid or bob@example.invalid in screenshots and examples", "NOT_SECRET"),
+            ("Email example shows user@example.invalid and says the API key was redacted", "UNSURE"),
+        ],
+        "labelled_secret_values": [
+            (f"api_key = lg_test_key_{token(alnum, 32)}", "SECRET"),
+            (f"client_secret: GOCSPX-{token(alnum + '-_', 36)}", "SECRET"),
+            ("password_label_text=Password field label shown in the settings UI", "NOT_SECRET"),
+            ("client_secret_help_text=Paste the value from your vault at deploy time", "NOT_SECRET"),
+            ("api_key field exists in the form but the value is not shown", "UNSURE"),
+            ("password was shared in the thread, but moderators replaced it with [REDACTED]", "UNSURE"),
+            (f"my token is {bearer_token()}", "SECRET"),
+            ("tokenLimit is the maximum generated token budget", "NOT_SECRET"),
+            ("token mentioned in the audit summary without the actual value", "UNSURE"),
+        ],
+        "safe_ui_code_variable_names": [
+            (f"const temporaryPassword = \"Tmp-{token(alnum, 18)}!\";", "SECRET"),
+            ("const tokenLimit = 4096; const requestId = getRequestId();", "NOT_SECRET"),
+            ("const clientSecretInput = document.querySelector('#client-secret');", "UNSURE"),
+        ],
+        "request_and_correlation_ids": [
+            (f"request_id=req_20260508 token={bearer_token()}", "SECRET"),
+            (f"request_id=req_{token(string.ascii_lowercase + string.digits, 26)}", "NOT_SECRET"),
+            (f"correlation_id={token(string.ascii_lowercase + string.digits, 24)} maybe linked to auth failure", "UNSURE"),
+        ],
+        "jwt_and_bearer_candidates": [
+            (f"Authorization: Bearer {jwt()}", "SECRET"),
+            ("Authorization: Bearer header.payload.signature in the docs", "NOT_SECRET"),
+            (f"Bearer-like trace value seen once: {token(string.ascii_letters + string.digits + '-_', 28)}", "UNSURE"),
+        ],
+        "synthetic_pem_private_key_snippets": [
+            (f"private_key:\n{private_key()}", "SECRET"),
+            (
+                "Example PEM block:\n-----BEGIN PRIVATE KEY-----\n<base64-body>\n-----END PRIVATE KEY-----",
+                "NOT_SECRET",
+            ),
+            ("Screenshot may contain a private key block, but the text is unreadable", "UNSURE"),
+        ],
+        "docs_tutorial_examples": [
+            (f"Tutorial mistake: export API_KEY=lg_test_key_{token(alnum, 32)}", "SECRET"),
+            ("Docs example: export API_KEY=<your-api-key>", "NOT_SECRET"),
+            ("Tutorial says paste the client_secret from the provider console, but omits the value", "UNSURE"),
+        ],
+        "api_key_like_false_positive_traps": [
+            (f"api-key-like string copied from prod: key_{token(alnum, 30)}", "SECRET"),
+            ("api-key-like placeholder: key_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "NOT_SECRET"),
+            (f"ambiguous API-key-like sample key_{token(alnum, 14)} appears in a unit test", "UNSURE"),
+        ],
+    }
+    for category, examples in categorized_expansion.items():
+        add_category(records, category, examples)
 
     extend_records(records, count)
     RANDOM.shuffle(records)

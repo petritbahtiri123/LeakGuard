@@ -89,6 +89,100 @@
     return ranges.some((range) => candidate.start < range.end && candidate.end > range.start);
   }
 
+  function overlapsRange(left, right) {
+    return left.start < right.end && left.end > right.start;
+  }
+
+  function findSortedOverlapIndex(candidate, ranges) {
+    let low = 0;
+    let high = ranges.length - 1;
+
+    while (low <= high) {
+      const mid = (low + high) >> 1;
+      const range = ranges[mid];
+
+      if (range.end <= candidate.start) {
+        low = mid + 1;
+      } else if (range.start >= candidate.end) {
+        high = mid - 1;
+      } else {
+        return mid;
+      }
+    }
+
+    return -1;
+  }
+
+  function insertSortedRange(ranges, range) {
+    let low = 0;
+    let high = ranges.length;
+
+    while (low < high) {
+      const mid = (low + high) >> 1;
+      if (ranges[mid].start < range.start) {
+        low = mid + 1;
+      } else {
+        high = mid;
+      }
+    }
+
+    ranges.splice(low, 0, range);
+  }
+
+  function makeSortedRanges(ranges) {
+    return [...(ranges || [])].sort((left, right) => left.start - right.start || left.end - right.end);
+  }
+
+  function overlapsAnySortedRange(candidate, sortedRanges) {
+    return findSortedOverlapIndex(candidate, sortedRanges) !== -1;
+  }
+
+  function hasOverlappingRangeAtLeastAsLong(candidate, sortedRanges) {
+    const startIndex = findSortedOverlapIndex(candidate, sortedRanges);
+    if (startIndex < 0) return false;
+
+    const candidateLength = candidate.end - candidate.start;
+
+    for (let index = startIndex; index >= 0 && sortedRanges[index].end > candidate.start; index -= 1) {
+      const range = sortedRanges[index];
+      if (overlapsRange(candidate, range) && range.end - range.start >= candidateLength) {
+        return true;
+      }
+    }
+
+    for (let index = startIndex + 1; index < sortedRanges.length && sortedRanges[index].start < candidate.end; index += 1) {
+      const range = sortedRanges[index];
+      if (overlapsRange(candidate, range) && range.end - range.start >= candidateLength) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  function hasOverlappingRangeLongerThan(candidate, sortedRanges) {
+    const startIndex = findSortedOverlapIndex(candidate, sortedRanges);
+    if (startIndex < 0) return false;
+
+    const candidateLength = candidate.end - candidate.start;
+
+    for (let index = startIndex; index >= 0 && sortedRanges[index].end > candidate.start; index -= 1) {
+      const range = sortedRanges[index];
+      if (overlapsRange(candidate, range) && range.end - range.start > candidateLength) {
+        return true;
+      }
+    }
+
+    for (let index = startIndex + 1; index < sortedRanges.length && sortedRanges[index].start < candidate.end; index += 1) {
+      const range = sortedRanges[index];
+      if (overlapsRange(candidate, range) && range.end - range.start > candidateLength) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   function shouldReuseKnownSecretInPlainText(text, start, end, raw) {
     const knownRaw = String(raw || "");
     const previous = start > 0 ? text[start - 1] : "";
@@ -120,6 +214,8 @@
     const regex = new RegExp(root.PWM.PLACEHOLDER_TOKEN_REGEX.source, "g");
     const knownEntries =
       typeof manager?.getKnownSecretEntries === "function" ? manager.getKnownSecretEntries() : [];
+    const occupiedRangeIndex = makeSortedRanges(occupiedRanges);
+    const replacementRangeIndex = [];
     let lastIndex = 0;
     let match;
 
@@ -149,9 +245,15 @@
             category: "secret"
           };
 
-          if (!overlapsAnyRange(candidate, occupiedRanges) && !overlapsAnyRange(candidate, replacements)) {
+          if (
+            !overlapsAnySortedRange(candidate, occupiedRangeIndex) &&
+            !overlapsAnySortedRange(candidate, replacementRangeIndex)
+          ) {
             replacements.push(candidate);
-            occupiedRanges.push({ start, end });
+            const range = { start, end };
+            occupiedRanges.push(range);
+            insertSortedRange(occupiedRangeIndex, range);
+            insertSortedRange(replacementRangeIndex, range);
           }
 
           searchIndex = relativeIndex + knownRaw.length;
@@ -229,6 +331,11 @@
 
   function transformOutboundPrompt(text, options = {}) {
     const manager = options.manager;
+    const profile = options.profile && typeof performance !== "undefined" ? options.profile : null;
+    const mark = () => (profile ? performance.now() : 0);
+    const addProfile = (key, start) => {
+      if (profile) profile[key] = Number(profile[key] || 0) + performance.now() - start;
+    };
     const normalizedText = normalizeVisiblePlaceholders(String(text || ""));
     if (manager && typeof manager.reserveVisiblePlaceholdersFromText === "function") {
       manager.reserveVisiblePlaceholdersFromText(text);
@@ -243,6 +350,7 @@
     );
     const mode = normalizeTransformMode(options.mode);
     const secretReplacements = [];
+    let stageStart = mark();
 
     for (const finding of secretFindings.sort((left, right) => left.start - right.start)) {
       const replacement = {
@@ -254,39 +362,53 @@
       };
       secretReplacements.push(replacement);
     }
+    addProfile("secret_placeholder_ms", stageStart);
 
+    stageStart = mark();
     const reusedSecretReplacements = collectKnownSecretReplacements(
       normalizedText,
       manager,
       []
-    ).filter((replacement) => {
-      const replacementLength = replacement.end - replacement.start;
-      return !secretReplacements.some((finding) => {
-        if (finding.start >= replacement.end || finding.end <= replacement.start) return false;
-        const findingLength = finding.end - finding.start;
-        return findingLength >= replacementLength;
-      });
-    });
+    );
+    addProfile("known_secret_collect_ms", stageStart);
+
+    stageStart = mark();
+    const secretReplacementRanges = makeSortedRanges(secretReplacements);
+    const filteredReusedSecretReplacements = reusedSecretReplacements.filter(
+      (replacement) => !hasOverlappingRangeAtLeastAsLong(replacement, secretReplacementRanges)
+    );
+    const reusedSecretRanges = makeSortedRanges(filteredReusedSecretReplacements);
     const filteredSecretReplacements = secretReplacements.filter((replacement) => {
-      const replacementLength = replacement.end - replacement.start;
-      return !reusedSecretReplacements.some((reused) => {
-        if (replacement.start >= reused.end || replacement.end <= reused.start) return false;
-        const reusedLength = reused.end - reused.start;
-        return reusedLength > replacementLength;
-      });
+      return !hasOverlappingRangeLongerThan(replacement, reusedSecretRanges);
     });
+    addProfile("secret_overlap_filter_ms", stageStart);
+
+    stageStart = mark();
     const networkReplacements = buildNetworkReplacements(normalizedText, manager, mode);
+    addProfile("network_ms", stageStart);
+
+    stageStart = mark();
     const replacements = [
       ...filteredSecretReplacements,
-      ...reusedSecretReplacements,
+      ...filteredReusedSecretReplacements,
       ...networkReplacements
     ].sort((left, right) => left.start - right.start);
+    addProfile("replacement_sort_ms", stageStart);
+
+    stageStart = mark();
+    const redactedText = applyReplacements(normalizedText, replacements);
+    addProfile("apply_replacements_ms", stageStart);
+
+    stageStart = mark();
+    const clonedReplacements = replacements.map(cloneReplacement);
+    const clonedNetworkReplacements = networkReplacements.map(cloneReplacement);
+    addProfile("clone_replacements_ms", stageStart);
 
     return {
-      redactedText: applyReplacements(normalizedText, replacements),
-      replacements: replacements.map(cloneReplacement),
-      findings: replacements.map(cloneReplacement),
-      networkReplacements: networkReplacements.map(cloneReplacement),
+      redactedText,
+      replacements: clonedReplacements,
+      findings: clonedReplacements,
+      networkReplacements: clonedNetworkReplacements,
       changed: replacements.length > 0 || normalizedText !== String(text || "")
     };
   }
