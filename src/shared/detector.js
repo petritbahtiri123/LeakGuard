@@ -1670,7 +1670,10 @@
       return {
         manager,
         trustedPlaceholders: normalizeTrustedPlaceholderSet(source),
-        disableRepeatedLineCache: Boolean(options.disableRepeatedLineCache)
+        disableRepeatedLineCache: Boolean(options.disableRepeatedLineCache),
+        repeatedLineText: null,
+        repeatedLinePlan: null,
+        repeatedLinePlanReady: false
       };
     }
 
@@ -1816,7 +1819,16 @@
 
     scanRepeatedLines(text, scanner) {
       if (this.scanContext?.disableRepeatedLineCache) return null;
-      const plan = buildRepeatedLinePlan(text);
+      let plan;
+      if (this.scanContext?.repeatedLineText === text) {
+        if (!this.scanContext.repeatedLinePlanReady) {
+          this.scanContext.repeatedLinePlan = buildRepeatedLinePlan(text);
+          this.scanContext.repeatedLinePlanReady = true;
+        }
+        plan = this.scanContext.repeatedLinePlan;
+      } else {
+        plan = buildRepeatedLinePlan(text);
+      }
       if (!plan) return null;
 
       const cache = new Map();
@@ -3325,6 +3337,7 @@
         activeContextScoreCache = new Map();
         activeContextScoreText = input;
         activeLineBounds = buildLineBounds(input);
+        this.scanContext.repeatedLineText = input;
         const findings = [
           ...this.scanSensitiveHttpHeaders(input),
           ...this.scanStructuredAssignments(input),

@@ -113,6 +113,7 @@ function buildRepeatedEnvLikeSample() {
     name: "repeated_env_like_80kb",
     text: `${lineBlock}\n`.repeat(650),
     structuralOnly: true,
+    assertEquivalentToBaseline: true,
     iterations: Math.min(3, ITERATIONS),
     warmupIterations: 1,
     forbidden: [secret, apiKey],
@@ -259,6 +260,18 @@ function emptyStageTotals() {
   };
 }
 
+function emptyTransformTotals() {
+  return {
+    secret_placeholder_ms: 0,
+    known_secret_collect_ms: 0,
+    secret_overlap_filter_ms: 0,
+    network_ms: 0,
+    replacement_sort_ms: 0,
+    apply_replacements_ms: 0,
+    clone_replacements_ms: 0
+  };
+}
+
 function emptyDetectorMethodTotals() {
   return Object.fromEntries(
     DETECTOR_PROFILE_METHODS.map((method) => [
@@ -273,6 +286,12 @@ function emptyDetectorMethodTotals() {
 }
 
 function addStageTotals(target, source) {
+  for (const key of Object.keys(target)) {
+    target[key] += Number(source?.[key] || 0);
+  }
+}
+
+function addTransformTotals(target, source) {
   for (const key of Object.keys(target)) {
     target[key] += Number(source?.[key] || 0);
   }
@@ -312,6 +331,7 @@ function redactPipeline(text, options = {}) {
   const profile = Boolean(options.profile);
   const stages = profile ? emptyStageTotals() : null;
   const detectorMethods = profile ? emptyDetectorMethodTotals() : null;
+  const transformProfile = profile ? emptyTransformTotals() : null;
   let stageStart = profile ? performance.now() : 0;
   const manager = new PlaceholderManager();
 
@@ -343,7 +363,8 @@ function redactPipeline(text, options = {}) {
   const transformed = transformOutboundPrompt(text, {
     manager,
     findings,
-    mode: "hide_public"
+    mode: "hide_public",
+    profile: transformProfile
   });
 
   if (profile) {
@@ -354,7 +375,8 @@ function redactPipeline(text, options = {}) {
     findings,
     ...transformed,
     stages,
-    detectorMethods
+    detectorMethods,
+    transformProfile
   };
 }
 
@@ -420,6 +442,7 @@ function benchmark(sample) {
   const heapDeltas = [];
   const stageTotals = emptyStageTotals();
   const detectorMethodTotals = emptyDetectorMethodTotals();
+  const transformTotals = emptyTransformTotals();
 
   for (let index = 0; index < sampleIterations; index += 1) {
     const heapBefore = heapUsedBytes();
@@ -434,6 +457,7 @@ function benchmark(sample) {
     if (PROFILE_ENABLED) {
       addStageTotals(stageTotals, lastOutput.stages);
       addDetectorMethodTotals(detectorMethodTotals, lastOutput.detectorMethods);
+      addTransformTotals(transformTotals, lastOutput.transformProfile);
     }
   }
   assertCorrectness(sample, lastOutput);
@@ -488,6 +512,12 @@ function benchmark(sample) {
           findings: PROFILE_ENABLED ? value.findings / sampleIterations : 0
         }
       ])
+    ),
+    transform_avg_ms: Object.fromEntries(
+      Object.entries(transformTotals).map(([key, value]) => [
+        key,
+        PROFILE_ENABLED ? value / sampleIterations : 0
+      ])
     )
   };
 }
@@ -527,6 +557,16 @@ if (PROFILE_ENABLED) {
     }))
   );
   for (const result of results) {
+    console.log(`Transform profile: ${result.test}`);
+    console.table(
+      Object.entries(result.transform_avg_ms)
+        .map(([method, value]) => ({
+          method,
+          avg_ms: value.toFixed(3)
+        }))
+        .filter((row) => Number(row.avg_ms) > 0)
+        .sort((left, right) => Number(right.avg_ms) - Number(left.avg_ms))
+    );
     console.log(`Detector method profile: ${result.test}`);
     console.table(
       Object.entries(result.detector_method_avg_ms)

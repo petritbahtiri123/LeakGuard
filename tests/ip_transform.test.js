@@ -271,6 +271,31 @@ function testDetectedSecretAlsoRedactsLaterDuplicateOccurrences() {
   assert.strictEqual(output, ["API_KEY=[PWM_1]", "mirror=[PWM_1]"].join("\n"));
 }
 
+function testKnownSecretReusePrefersLongerKnownRange() {
+  const manager = new PlaceholderManager();
+  manager.getPlaceholder("ApiKeyHeader1234567890");
+  const text = "mirror=ApiKeyHeader1234567890";
+  const suffixStart = text.indexOf("Header1234567890");
+  const output = transform(text, {
+    manager,
+    findings: [
+      {
+        id: "suffix_only",
+        raw: "Header1234567890",
+        start: suffixStart,
+        end: suffixStart + "Header1234567890".length,
+        type: "SECRET",
+        category: "credential",
+        score: 80,
+        severity: "medium",
+        method: ["test"]
+      }
+    ]
+  }).result.redactedText;
+
+  assert.strictEqual(output, "mirror=[PWM_1]");
+}
+
 function testSyntheticMixedNetworkAndSecretBlock() {
   const detector = new Detector();
   const manager = new PlaceholderManager();
@@ -332,6 +357,7 @@ function run() {
   testMixedSecretAndIpBlockStillRedactsOnFirstPass();
   testKnownPlaceholderSecretReusesSameMappingAcrossMixedPrompt();
   testDetectedSecretAlsoRedactsLaterDuplicateOccurrences();
+  testKnownSecretReusePrefersLongerKnownRange();
   testSyntheticMixedNetworkAndSecretBlock();
   testNoFalseCorruption();
   testSessionResetBehavior();
