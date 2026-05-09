@@ -29,7 +29,7 @@ LeakGuard also includes a local File Scanner page for text-based files such as `
 
 For protected AI composers, supported local UTF-8 text files pasted, dropped, or selected in the page can be locally validated, redacted, and replaced with sanitized in-memory `File`/`Blob` objects where the browser and site upload flow accept synthetic file handoff. Larger supported text files above 4 MiB and up to 50 MB are redacted locally with streaming/chunked processing before sanitized handoff. Supported text files above 50 MB are blocked from local redaction with a clear too-large warning. If LeakGuard attempts sanitization and sanitized file handoff fails, LeakGuard blocks raw upload and shows a local message.
 
-LeakGuard scans and redacts supported text files locally. Unsupported formats such as PDFs, DOCX files, images, archives, executables, and binary files are not scanned or redacted in this release. LeakGuard warns before these unsupported files continue through the normal site upload flow.
+LeakGuard scans and redacts supported text files locally. Unsupported formats such as PDFs, DOCX files, images, archives, executables, and binary files are not scanned, redacted, or protected in this release. LeakGuard warns before these unsupported files continue through the normal site upload flow.
 
 LeakGuard also protects ChatGPT large-paste flows that can become generated `Plain Text` attachments, and includes Gemini-specific mitigations for sanitized file handoff and large text fallback behavior.
 
@@ -111,7 +111,7 @@ Use real extension screenshots with production copy. Avoid showing raw real cred
 - The extension processes text locally in the browser.
 - The File Scanner processes explicitly selected text files locally and does not upload or store file contents.
 - Supported local text files pasted, dropped, or selected in protected AI composers are processed locally, including streaming/chunked local redaction for supported text files above 4 MiB and up to 50 MB.
-- Unsupported formats such as PDFs, DOCX files, images, archives, executables, and binary files are not scanned or redacted in this release; LeakGuard warns before those files continue through the normal site upload flow.
+- Unsupported formats such as PDFs, DOCX files, images, archives, executables, and binary files are not scanned, redacted, or protected in this release; LeakGuard warns before those files continue through the normal site upload flow.
 - Raw text-file uploads are blocked if sanitized file handoff cannot complete.
 - Raw secrets are not sent to external services by the extension.
 - Likely email addresses are redacted locally; LeakGuard does not upload email text for scanning.

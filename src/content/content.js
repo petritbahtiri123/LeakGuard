@@ -326,7 +326,8 @@
     return {
       kind: "unknown",
       action: "allow",
-      message: "LeakGuard cannot scan or redact this file type in this release. Upload allowed through the site."
+      message:
+        "LeakGuard did not scan or redact this file. Unsupported file types such as PDF, DOCX, images, archives, executables, and binary files are not protected in this release. Normal upload may continue through the site."
     };
   }
 
@@ -348,7 +349,7 @@
       classifications,
       message:
         classifications.find((classification) => classification.message)?.message ||
-        "LeakGuard cannot scan or redact this file type in this release. Upload allowed through the site."
+        "LeakGuard did not scan or redact this file. Unsupported file types such as PDF, DOCX, images, archives, executables, and binary files are not protected in this release. Normal upload may continue through the site."
     };
   }
 
@@ -362,8 +363,9 @@
 
   function showUnsupportedFilePassThroughNotice(policy) {
     if (!policy?.message) return;
-    setBadge(policy.message);
+    setBadge("Unsupported file not scanned or redacted");
     hideBadgeSoon(4200);
+    void showMessageModal("Unsupported file not protected", policy.message);
   }
 
   function getLocalTextPayloadByteLength(text, fallbackBytes = 0) {
@@ -2843,7 +2845,7 @@
       return {
         ok: false,
         message:
-          "LeakGuard cannot scan or redact this file type in this release. Upload allowed through the site."
+          "LeakGuard did not scan or redact this file. Unsupported file types such as PDF, DOCX, images, archives, executables, and binary files are not protected in this release. Normal upload may continue through the site."
       };
     }
 

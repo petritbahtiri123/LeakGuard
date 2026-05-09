@@ -21,7 +21,7 @@ LeakGuard may access text you type, paste, or submit in protected site composers
 
 LeakGuard may also access a local text file only after you choose it in the File Scanner page or paste, drop, or select it through a protected AI composer. This release supports text-based files only and can export a redacted text copy or a sanitized JSON findings report from the File Scanner page.
 
-LeakGuard scans and redacts supported text files locally. Unsupported formats such as PDFs, DOCX files, images, archives, executables, and binary files are not scanned or redacted in this release. LeakGuard warns before these unsupported files continue through the normal site upload flow.
+LeakGuard scans and redacts supported text files locally. Unsupported formats such as PDFs, DOCX files, images, archives, executables, and binary files are not scanned, redacted, or protected in this release. LeakGuard warns before these unsupported files continue through the normal site upload flow.
 
 For protected AI composers, larger supported text files may be redacted with streaming/chunked local processing before LeakGuard hands off a sanitized in-memory file to the site. This avoids sending raw text-file content through protected upload paths while keeping processing local to your browser.
 

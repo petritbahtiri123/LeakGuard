@@ -10,7 +10,7 @@
   const LOCAL_FILE_STREAMING_REQUIRED_MESSAGE =
     "LeakGuard will stream-redact this large text file locally before upload.";
   const LOCAL_FILE_UNSUPPORTED_WARNING =
-    "LeakGuard cannot scan or redact this file type in this release. Upload allowed through the site.";
+    "LeakGuard did not scan or redact this file. Unsupported file types such as PDF, DOCX, images, archives, executables, and binary files are not protected in this release. Normal upload may continue through the site.";
 
   function dataTransferHasFiles(dataTransfer) {
     if (!dataTransfer) return false;

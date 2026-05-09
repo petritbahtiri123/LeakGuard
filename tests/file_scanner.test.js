@@ -49,6 +49,16 @@ function scanSample(text, fileName = "sample.env") {
   });
 }
 
+function assertExplicitComposerUnsupportedWarning(message, context) {
+  const text = String(message || "").toLowerCase();
+  assert.ok(text.includes("did not scan"), `${context}: warning should say the file was not scanned`);
+  assert.ok(text.includes("redact"), `${context}: warning should say the file was not redacted`);
+  assert.ok(text.includes("unsupported file types"), `${context}: warning should identify unsupported file types`);
+  assert.ok(text.includes("not protected in this release"), `${context}: warning should say unsupported files are not protected in this release`);
+  assert.ok(text.includes("normal upload may continue"), `${context}: warning should say normal upload may continue`);
+  assert.strictEqual(text.includes("sanitized"), false, `${context}: warning must not claim sanitization`);
+}
+
 function testSupportedExtensionsAccepted() {
   const supported = [
     ".txt",
@@ -144,9 +154,9 @@ function testUnsupportedExtensionsRejected() {
       "allow",
       `${extension} should be classified for pass-through upload`
     );
-    assert.ok(
-      classifyFileForTextScan({ fileName: `sample${extension}` }).message.includes("cannot scan or redact"),
-      `${extension} composer classification should warn without claiming sanitization`
+    assertExplicitComposerUnsupportedWarning(
+      classifyFileForTextScan({ fileName: `sample${extension}` }).message,
+      extension
     );
   }
 

@@ -14,7 +14,7 @@
   const UNSUPPORTED_TEXT_RELEASE_MESSAGE =
     "This release scans text files only. Unsupported formats such as PDFs, DOCX files, images, archives, executables, and binary files are not scanned or redacted.";
   const UNSUPPORTED_COMPOSER_FILE_MESSAGE =
-    "LeakGuard cannot scan or redact this file type in this release. Upload allowed through the site.";
+    "LeakGuard did not scan or redact this file. Unsupported file types such as PDF, DOCX, images, archives, executables, and binary files are not protected in this release. Normal upload may continue through the site.";
   const SUPPORTED_TEXT_EXTENSIONS = new Set([
     ".txt",
     ".md",

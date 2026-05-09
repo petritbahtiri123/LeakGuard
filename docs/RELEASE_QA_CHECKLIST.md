@@ -82,7 +82,7 @@
 - Confirm the sanitized attached/uploaded file keeps `token_limit=4096` visible.
 - Confirm the sanitized attached/uploaded file pseudonymizes the public IP with a `[PUB_HOST_N]` placeholder.
 - Confirm the sanitized attached/uploaded file keeps the private IP visible.
-- Confirm unsupported/binary/invalid UTF-8 files show a clear warning that LeakGuard cannot scan/redact them in this release.
+- Confirm unsupported/binary/invalid UTF-8 files show this clear warning before or while normal upload continues: `LeakGuard did not scan or redact this file. Unsupported file types such as PDF, DOCX, images, archives, executables, and binary files are not protected in this release. Normal upload may continue through the site.`
 - Confirm unsupported files are not falsely marked as protected or sanitized.
 - Confirm supported text files above 50 MB are blocked from local redaction with a clear too-large warning.
 - Confirm supported text files are never uploaded raw if LeakGuard attempted sanitization and handoff failed.

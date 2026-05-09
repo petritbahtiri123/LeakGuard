@@ -15,6 +15,16 @@ const {
   createSanitizedTextFile
 } = globalThis.PWM.FilePasteHelpers;
 
+function assertExplicitUnsupportedWarning(message) {
+  const text = String(message || "").toLowerCase();
+  assert.ok(text.includes("did not scan"), "warning should say the file was not scanned");
+  assert.ok(text.includes("redact"), "warning should say the file was not redacted");
+  assert.ok(text.includes("unsupported file types"), "warning should identify unsupported file types");
+  assert.ok(text.includes("not protected in this release"), "warning should say unsupported files are not protected in this release");
+  assert.ok(text.includes("normal upload may continue"), "warning should say normal upload may continue");
+  assert.strictEqual(text.includes("sanitized"), false, "warning must not claim sanitization");
+}
+
 function bufferFromText(text) {
   return new TextEncoder().encode(text).buffer;
 }
@@ -144,7 +154,7 @@ async function testUnsupportedFilesPassThroughAndTextBinaryFilesRejected() {
   assert.strictEqual(unsupported.handled, false);
   assert.strictEqual(unsupported.ok, false);
   assert.strictEqual(unsupported.code, "unsupported_binary_or_document");
-  assert.ok(unsupported.message.includes("cannot scan or redact"));
+  assertExplicitUnsupportedWarning(unsupported.message);
   assert.strictEqual(binary.handled, true);
   assert.strictEqual(binary.ok, false);
   assert.strictEqual(binary.code, "binary_content");

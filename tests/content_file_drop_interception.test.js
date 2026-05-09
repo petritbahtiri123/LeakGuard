@@ -190,6 +190,17 @@ function createClipboardEvent({
   return { event, calls };
 }
 
+function assertExplicitUnsupportedWarning(message, context) {
+  const text = String(message || "").toLowerCase();
+  assert.ok(text.includes("did not scan"), `${context}: warning should say the file was not scanned`);
+  assert.ok(text.includes("redact"), `${context}: warning should say the file was not redacted`);
+  assert.ok(text.includes("unsupported file types"), `${context}: warning should identify unsupported file types`);
+  assert.ok(text.includes("not protected in this release"), `${context}: warning should say unsupported files are not protected in this release`);
+  assert.ok(text.includes("normal upload may continue"), `${context}: warning should say normal upload may continue`);
+  assert.strictEqual(text.includes("sanitized"), false, `${context}: warning must not claim sanitization`);
+  assert.strictEqual(text.includes(" safe"), false, `${context}: warning must not call the file safe`);
+}
+
 function createGeminiEditor(initialText = "") {
   const editor = {
     nodeType: 1,
@@ -2117,11 +2128,11 @@ async function testUnsupportedDocumentAndImageFilesPassThroughByDefault() {
     assert.strictEqual(calls.handoffs.length, 0, `expected ${name} not to hand off`);
     assert.strictEqual(editor.inputEvents.length, 0, `expected ${name} not to be marked protected or sanitized`);
     assert.ok(
-      calls.badges.some(([message]) =>
-        String(message || "").includes("cannot scan or redact this file type")
-      ),
+      calls.badges.some(([message]) => String(message || "").includes("not scanned or redacted")),
       `expected ${name} pass-through notice`
     );
+    assert.strictEqual(calls.modals.length, 1, `expected ${name} explicit warning modal`);
+    assertExplicitUnsupportedWarning(calls.modals[0].join("\n"), name);
   }
 }
 
@@ -2162,11 +2173,11 @@ async function testUnsupportedFileInputWarnsAndKeepsComposerUsable() {
     assert.strictEqual(editor.text, "Existing prompt", `expected ${name} not to alter composer text`);
     assert.strictEqual(editor.inputEvents.length, 0, `expected ${name} composer to remain usable`);
     assert.ok(
-      calls.badges.some(([message]) =>
-        String(message || "").includes("cannot scan or redact this file type")
-      ),
+      calls.badges.some(([message]) => String(message || "").includes("not scanned or redacted")),
       `expected ${name} warning`
     );
+    assert.strictEqual(calls.modals.length, 1, `expected ${name} explicit warning modal`);
+    assertExplicitUnsupportedWarning(calls.modals[0].join("\n"), name);
   }
 }
 
@@ -2202,12 +2213,11 @@ async function testUnsupportedBinaryPassesThroughWithoutSanitizedState() {
   assert.strictEqual(event.defaultPrevented, false);
   assert.strictEqual(calls.redactions.length, 0);
   assert.strictEqual(calls.handoffs.length, 0);
-  assert.strictEqual(calls.modals.length, 0);
+  assert.strictEqual(calls.modals.length, 1);
   assert.ok(
-    calls.badges.some(([message]) =>
-      String(message || "").includes("cannot scan or redact this file type")
-    )
+    calls.badges.some(([message]) => String(message || "").includes("not scanned or redacted"))
   );
+  assertExplicitUnsupportedWarning(calls.modals[0].join("\n"), "payload.bin");
 }
 
 async function testGeminiEditorResolvesContenteditableFallback() {
