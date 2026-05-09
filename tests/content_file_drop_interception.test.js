@@ -4,6 +4,7 @@ const path = require("path");
 
 const repoRoot = path.join(__dirname, "..");
 const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
+const backgroundSource = fs.readFileSync(path.join(repoRoot, "src/background/core.js"), "utf8");
 
 require(path.join(repoRoot, "src/content/file_paste_helpers.js"));
 require(path.join(repoRoot, "src/content/composer_helpers.js"));
@@ -399,8 +400,8 @@ function createHarness(overrides = {}) {
     isCurrentRiskSetAllowedOnce: () => false,
     clearAllowedOnceIfRiskChanged: () => {},
     promptForSensitiveContentDecision: async () => "redact",
-    requestRedaction: async (text, findings) => {
-      calls.redactions.push({ text, findings });
+    requestRedaction: async (text, findings, options) => {
+      calls.redactions.push({ text, findings, options });
       return {
         redactedText: text.replace(
           /LeakGuard(?:Drop|Paste|File)ApiKey1234567890/g,
@@ -537,6 +538,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "maybeHandleGeminiEditorDrop"),
       extractFunctionSource(contentSource, "describeFileForDebug"),
       extractFunctionSource(contentSource, "applyGeminiSanitizedTextFallback"),
+      extractFunctionSource(contentSource, "readSanitizedFileTextForFallback"),
       extractFunctionSource(contentSource, "insertGeminiLocalFileText"),
       extractFunctionSource(contentSource, "maybeHandleLocalFileInsert"),
       extractFunctionSource(contentSource, "maybeHandlePaste"),
@@ -1860,6 +1862,7 @@ async function testDropOverHardLimitUsesStreamingSanitizedFileHandoff() {
       redactTextFileStream: async (file, options) => {
         assert.strictEqual(file, sourceFile);
         options.onProgress?.({ bytesProcessed: sourceFile.size, totalBytes: sourceFile.size });
+        await options.redactText("API_KEY=LeakGuardDropApiKey1234567890");
         return {
           action: "redacted",
           sanitizedFile,
@@ -1882,12 +1885,174 @@ async function testDropOverHardLimitUsesStreamingSanitizedFileHandoff() {
   await maybeHandleDrop(event);
 
   assert.strictEqual(event.defaultPrevented, true);
-  assert.strictEqual(calls.redactions.length, 0, "large streaming path should not use single-shot redaction");
+  assert.strictEqual(calls.redactions.length, 1, "large streaming path should redact only through streaming chunks");
+  assert.strictEqual(calls.redactions[0].options?.skipBackgroundScan, true);
+  assert.strictEqual(calls.redactions[0].options?.auditReason, "streaming_file_redaction");
   assert.strictEqual(calls.handoffs.length, 1);
   assert.strictEqual(calls.handoffs[0].sanitizedFile, sanitizedFile);
   assert.strictEqual(calls.handoffs[0].context, "drop");
   assert.ok(calls.badges.some(([message]) => String(message || "").includes("Streaming redaction")));
   assert.ok(calls.badges.some(([message]) => message === "LeakGuard attached a sanitized local file."));
+}
+
+async function testGeminiStreamingDropFallsBackToSanitizedTextWhenUploadRejected() {
+  const rawSecret = "LeakGuardDropApiKey1234567890";
+  const sanitizedText = "API_KEY=[PWM_1]\ntoken_limit=4096";
+  const sourceFile = {
+    name: "large-stream.env",
+    type: "text/plain",
+    size: 5 * 1024 * 1024,
+    async text() {
+      throw new Error("streaming Gemini drop must not read raw file text");
+    }
+  };
+  const sanitizedFile = {
+    name: "large-stream.env",
+    type: "text/plain",
+    size: sanitizedText.length,
+    async text() {
+      return sanitizedText;
+    }
+  };
+  const { editor, child } = createGeminiEditor("");
+  const { maybeHandleDrop, calls } = createHarness({
+    location: { hostname: "gemini.google.com" },
+    findComposer: () => editor,
+    readLocalTextFileFromDataTransfer: async (transfer) => {
+      calls.reads.push(transfer);
+      return {
+        handled: true,
+        ok: false,
+        code: "streaming_required",
+        sourceFile,
+        file: {
+          name: sourceFile.name,
+          type: sourceFile.type,
+          sizeBytes: sourceFile.size
+        }
+      };
+    },
+    StreamingFileRedactor: {
+      LARGE_TEXT_STREAMING_MAX_BYTES: 50 * 1024 * 1024,
+      redactTextFileStream: async (file, options) => {
+        assert.strictEqual(file, sourceFile);
+        await options.redactText(`API_KEY=${rawSecret}`);
+        return {
+          action: "redacted",
+          sanitizedFile,
+          findingsCount: 1,
+          bytesProcessed: sourceFile.size
+        };
+      }
+    },
+    handOffGeminiSanitizedFileUpload: (event, input, file) => {
+      calls.handoffs.push({ event, input, sanitizedFile: file, context: "gemini-file-input" });
+      return false;
+    }
+  });
+  const { event } = createEvent({
+    dataTransfer: {
+      types: ["Files"],
+      files: [sourceFile],
+      items: [],
+      dropEffect: "none"
+    },
+    target: child
+  });
+
+  await maybeHandleDrop(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(calls.handoffs.length, 1);
+  assert.strictEqual(calls.textFallbacks.length, 1);
+  assert.strictEqual(calls.textFallbacks[0].context, "file-text-fallback");
+  assert.strictEqual(calls.textFallbacks[0].insertedText.includes(rawSecret), false);
+  assert.strictEqual(editor.text.includes(rawSecret), false);
+  assert.ok(editor.text.includes("API_KEY=[PWM_1]"));
+  assert.ok(editor.text.includes("token_limit=4096"));
+  assert.ok(
+    calls.badges.some(([message]) =>
+      message === "Sanitized content inserted as text because Gemini rejected sanitized file upload."
+    )
+  );
+  assert.strictEqual(calls.modals.some(([title]) => title === "Raw file upload blocked"), false);
+}
+
+async function testGeminiStreamingFileInputFallsBackToSanitizedTextWhenUploadRejected() {
+  const rawSecret = "LeakGuardFileApiKey1234567890";
+  const sanitizedText = "API_KEY=[PWM_1]\ndevelopment_mode=true";
+  const sourceFile = {
+    name: "large-input.env",
+    type: "text/plain",
+    size: 5 * 1024 * 1024
+  };
+  const sanitizedFile = {
+    name: "large-input.env",
+    type: "text/plain",
+    size: sanitizedText.length,
+    async text() {
+      return sanitizedText;
+    }
+  };
+  const fileInput = createFileInput();
+  fileInput.files = [sourceFile];
+  fileInput.value = "C:\\fakepath\\large-input.env";
+  const composer = {
+    tagName: "TEXTAREA",
+    text: "",
+    selection: { start: 0, end: 0 }
+  };
+  const { maybeHandleFileInputChange, calls } = createHarness({
+    location: { hostname: "gemini.google.com" },
+    findComposer: () => composer,
+    readLocalTextFileFromDataTransfer: async (transfer) => {
+      calls.reads.push(transfer);
+      return {
+        handled: true,
+        ok: false,
+        code: "streaming_required",
+        sourceFile,
+        file: {
+          name: sourceFile.name,
+          type: sourceFile.type,
+          sizeBytes: sourceFile.size
+        }
+      };
+    },
+    StreamingFileRedactor: {
+      LARGE_TEXT_STREAMING_MAX_BYTES: 50 * 1024 * 1024,
+      redactTextFileStream: async (file, options) => {
+        assert.strictEqual(file, sourceFile);
+        await options.redactText(`API_KEY=${rawSecret}`);
+        return {
+          action: "redacted",
+          sanitizedFile,
+          findingsCount: 1,
+          bytesProcessed: sourceFile.size
+        };
+      }
+    },
+    handOffSanitizedLocalFile: (event, input, file, context) => {
+      calls.handoffs.push({ event, input, sanitizedFile: file, context });
+      return false;
+    }
+  });
+  const { event } = createEvent({
+    target: fileInput
+  });
+
+  await maybeHandleFileInputChange(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(fileInput.value, "");
+  assert.strictEqual(calls.handoffs.length, 1);
+  assert.strictEqual(calls.handoffs[0].context, "file-input");
+  assert.strictEqual(calls.textFallbacks.length, 1);
+  assert.strictEqual(calls.textFallbacks[0].context, "file-text-fallback");
+  assert.strictEqual(calls.textFallbacks[0].insertedText.includes(rawSecret), false);
+  assert.ok(composer.text.includes("API_KEY=[PWM_1]"));
+  assert.ok(composer.text.includes("development_mode=true"));
+  assert.strictEqual(calls.modals.some(([title]) => title === "Raw file upload blocked"), false);
 }
 
 async function testDropOverFiftyMiBBlocksBeforeStreaming() {
@@ -1947,6 +2112,19 @@ async function testDropOverFiftyMiBBlocksBeforeStreaming() {
   assert.strictEqual(calls.handoffs.length, 0);
   assert.ok(calls.modals.some(([title]) => title === "File too large for local redaction"));
   assert.ok(calls.modals.flat().join("\n").includes("over 50 MB"));
+}
+
+function testBackgroundSkipsDuplicateDetectorScanForStreamingChunks() {
+  assert.ok(
+    contentSource.includes("skipBackgroundScan: true") &&
+      contentSource.includes('auditReason: "streaming_file_redaction"'),
+    "streaming file redaction should request background detector skip"
+  );
+  assert.ok(
+    backgroundSource.includes("const shouldScanInBackground = !options.skipBackgroundScan") &&
+      backgroundSource.includes("skipBackgroundScan: Boolean(message.skipBackgroundScan)"),
+    "background redaction should honor streaming skipBackgroundScan flag"
+  );
 }
 
 async function testGeminiTextLikeFileExtensionsAreSanitized() {
@@ -2740,7 +2918,10 @@ async function testChatGptAndClaudeStillUseSanitizedFileHandoffOnly() {
   await testChatGptOverHardLimitPasteIsBlockedBeforeHandoff();
   await testGeminiOverHardLimitDropIsBlockedBeforeInsertion();
   await testDropOverHardLimitUsesStreamingSanitizedFileHandoff();
+  await testGeminiStreamingDropFallsBackToSanitizedTextWhenUploadRejected();
+  await testGeminiStreamingFileInputFallsBackToSanitizedTextWhenUploadRejected();
   await testDropOverFiftyMiBBlocksBeforeStreaming();
+  testBackgroundSkipsDuplicateDetectorScanForStreamingChunks();
   await testGeminiTextLikeFileExtensionsAreSanitized();
   await testGeminiTextLikeSanitizerFailureBlocksRawFile();
   await testSupportedTextFileHandoffFailureBlocksRawUpload();

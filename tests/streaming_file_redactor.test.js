@@ -1,5 +1,6 @@
 const assert = require("assert");
 const path = require("path");
+const { performance } = require("perf_hooks");
 
 const repoRoot = path.join(__dirname, "..");
 
@@ -13,6 +14,8 @@ require(path.join(repoRoot, "src/shared/ipDetection.js"));
 require(path.join(repoRoot, "src/shared/networkHierarchy.js"));
 require(path.join(repoRoot, "src/shared/placeholderAllocator.js"));
 require(path.join(repoRoot, "src/shared/transformOutboundPrompt.js"));
+require(path.join(repoRoot, "src/shared/aiCandidateGate.js"));
+require(path.join(repoRoot, "src/shared/transformOutboundPromptWithAi.js"));
 require(path.join(repoRoot, "src/shared/fileScanner.js"));
 require(path.join(repoRoot, "src/shared/streamingFileRedactor.js"));
 
@@ -87,6 +90,81 @@ function createOutputFile({ name, type, parts }) {
   };
 }
 
+function buildLargeStreamingPayload(targetBytes) {
+  const repeatedSecret = "sk-proj-LARGE_REPEAT_111111111111111111111111111111111111";
+  const boundarySecret = "sk-proj-BOUNDARY_22222222222222222222222222222222222222";
+  const dbPassword = "LargeStreamDbPassword123!";
+  const mysqlPassword = "LargeStreamMysqlPassword456!";
+  const bearer = "LargeStreamingBearerToken_abcdef1234567890abcdef1234567890";
+  const labelledBearer = "fake-streaming-bearer-token-1234567890abcdef";
+  const privateKey = [
+    "-----BEGIN PRIVATE KEY-----",
+    "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCFAKELARGEPRIVATEKEYDATA111111",
+    "FAKELARGEPRIVATEKEYDATA22222222222222222222222222222222222222",
+    "-----END PRIVATE KEY-----"
+  ].join("\n");
+  const safeBlock = [
+    "token_limit=4096",
+    "replace_me",
+    "development_mode=true",
+    "private_ip=10.0.0.15",
+    "private_cidr=192.168.0.0/16"
+  ].join("\n");
+  const header = [
+    `OPENAI_API_KEY=${repeatedSecret}`,
+    `DB_PASSWORD=${dbPassword}`,
+    `DATABASE_URL=postgres://app:${dbPassword}@db.example.com:5432/prod`,
+    `MYSQL_URL=mysql://root:${mysqlPassword}@mysql.example.com:3306/app`,
+    `Authorization: Bearer ${bearer}`,
+    `BEARER_TOKEN=Bearer ${labelledBearer}`,
+    "public_ip=8.8.8.8",
+    "public_cidr=1.2.3.0/24",
+    safeBlock,
+    privateKey,
+    `REPEATED_API_KEY=${repeatedSecret}`
+  ].join("\n");
+  const fillerLine =
+    "2026-05-09 INFO safe filler token_limit=4096 replace_me development_mode=true request_id=req-12345 region=eu-central-1\n";
+  let text = `${header}\n`;
+  const boundaryOffset = 512 * 1024 - "BOUNDARY_KEY=".length - 20;
+
+  while (text.length < boundaryOffset) {
+    text += fillerLine;
+  }
+  text += `BOUNDARY_KEY=${boundarySecret}\n`;
+  while (text.length < targetBytes) {
+    text += fillerLine;
+  }
+
+  return {
+    text,
+    forbidden: [
+      repeatedSecret,
+      boundarySecret,
+      dbPassword,
+      mysqlPassword,
+      bearer,
+      labelledBearer,
+      "FAKELARGEPRIVATEKEYDATA"
+    ],
+    expected: [
+      "OPENAI_API_KEY=[PWM_",
+      "DB_PASSWORD=[PWM_",
+      "DATABASE_URL=postgres://app:[PWM_",
+      "MYSQL_URL=mysql://root:[PWM_",
+      "Authorization: Bearer [PWM_",
+      "BEARER_TOKEN=Bearer [PWM_",
+      "public_ip=[PUB_HOST_",
+      "public_cidr=[NET_",
+      "token_limit=4096",
+      "replace_me",
+      "development_mode=true",
+      "private_ip=10.0.0.15",
+      "private_cidr=192.168.0.0/16"
+    ]
+  };
+}
+
 async function redactFixture(text, options = {}) {
   const file = createStreamingFile({
     text,
@@ -101,6 +179,56 @@ async function redactFixture(text, options = {}) {
   });
   const output = result.sanitizedFile ? await result.sanitizedFile.text() : "";
   return { file, redactor, result, output };
+}
+
+async function testLargeStreamingPerformanceAndClassifierSkip() {
+  const originalClassifier = globalThis.PWM.LeakGuardAiClassifier;
+  const originalTransformWithAi = globalThis.PWM.transformOutboundPromptWithAi;
+  let classifierCalls = 0;
+  let transformWithAiCalls = 0;
+
+  globalThis.PWM.LeakGuardAiClassifier = {
+    classify: async () => {
+      classifierCalls += 1;
+      throw new Error("large streaming redaction must not call local AI classifier");
+    }
+  };
+  globalThis.PWM.transformOutboundPromptWithAi = async () => {
+    transformWithAiCalls += 1;
+    throw new Error("large streaming redaction must not call transformOutboundPromptWithAi");
+  };
+
+  try {
+    for (const [sizeMiB, thresholdMs] of [[5, 4000], [10, 8000]]) {
+      const payload = buildLargeStreamingPayload(sizeMiB * 1024 * 1024);
+      const started = performance.now();
+      const { output, result } = await redactFixture(payload.text, {
+        chunkSize: 512 * 1024,
+        chunkBytes: 512 * 1024,
+        overlapSize: 16 * 1024
+      });
+      const elapsed = performance.now() - started;
+
+      assert.strictEqual(result.action, "redacted");
+      assert.ok(elapsed < thresholdMs, `${sizeMiB} MiB streaming redaction took ${elapsed.toFixed(1)}ms`);
+      for (const raw of payload.forbidden) {
+        assert.strictEqual(output.includes(raw), false, `${sizeMiB} MiB output leaked ${raw}`);
+      }
+      for (const expected of payload.expected) {
+        assert.ok(output.includes(expected), `${sizeMiB} MiB output missing ${expected}`);
+      }
+      const repeatedPlaceholders = output.match(/^REPEATED_API_KEY=(\[PWM_\d+\])$/m);
+      const firstPlaceholder = /^OPENAI_API_KEY=(\[PWM_\d+\])$/m.exec(output);
+      assert.ok(firstPlaceholder?.[1], "first repeated secret should redact");
+      assert.strictEqual(repeatedPlaceholders?.[1], firstPlaceholder[1]);
+    }
+  } finally {
+    globalThis.PWM.LeakGuardAiClassifier = originalClassifier;
+    globalThis.PWM.transformOutboundPromptWithAi = originalTransformWithAi;
+  }
+
+  assert.strictEqual(classifierCalls, 0);
+  assert.strictEqual(transformWithAiCalls, 0);
 }
 
 async function testLargeFileStreamsWithoutWholeFileRead() {
@@ -290,6 +418,7 @@ async function testInvalidUtf8FailsClosedWithFriendlyMessage() {
   await testPrivateKeySpanningChunksRedacts();
   await testSafeControlsRemainUnredacted();
   await testFiveMiBUploadFixtureRedactsShortProjectKeyAssignment();
+  await testLargeStreamingPerformanceAndClassifierSkip();
   await testOverFiftyMiBBlocks();
   await testInvalidUtf8FailsClosedWithFriendlyMessage();
   console.log("PASS streaming large file redaction regressions");

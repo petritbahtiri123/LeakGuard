@@ -869,6 +869,23 @@ function testAuthorizationBearerVariants() {
   assert.strictEqual(unique.length, 1, "same bearer token should reuse one placeholder");
 }
 
+function testLabelledBearerTokenAssignmentKeepsSchemeAndRedactsToken() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const raw = "fake-streaming-bearer-token-1234567890abcdef";
+  const text = `BEARER_TOKEN=Bearer ${raw}`;
+
+  const findings = detector.scan(text);
+  const result = redactor.redact(text, findings);
+
+  assert.strictEqual(result.redactedText.includes(raw), false);
+  assert.ok(
+    /^BEARER_TOKEN=Bearer \[PWM_\d+\]$/.test(result.redactedText),
+    `labelled bearer token should preserve scheme and redact token: ${result.redactedText}`
+  );
+}
+
 function testBasicAuthAssignmentVariants() {
   const detector = new Detector();
   const manager = new PlaceholderManager();
@@ -2181,6 +2198,7 @@ function run() {
   testGenericBasicAuthUrl();
   testOverlapBearerVsJwt();
   testAuthorizationBearerVariants();
+  testLabelledBearerTokenAssignmentKeepsSchemeAndRedactsToken();
   testBasicAuthAssignmentVariants();
   testOverlappingMatchesPreferSinglePemBlock();
   testAllowlist();

@@ -519,7 +519,8 @@
       redactText: async (text) => {
         const analysis = analyzeText(text);
         return requestRedaction(analysis.normalizedText, analysis.secretFindings, {
-          auditReason: "streaming_file_redaction"
+          auditReason: "streaming_file_redaction",
+          skipBackgroundScan: true
         });
       }
     });
@@ -1021,7 +1022,8 @@
       url: location.href,
       text,
       findings,
-      auditReason: options.auditReason || null
+      auditReason: options.auditReason || null,
+      skipBackgroundScan: Boolean(options.skipBackgroundScan)
     });
 
     if (!response?.ok || !response?.result) {
@@ -2912,6 +2914,14 @@
             refreshBadgeFromCurrentInput();
             return true;
           }
+
+          const fallbackText = await readSanitizedFileTextForFallback(streamResult.sanitizedFile);
+          if (fallbackText) {
+            const fallbackResult = await applyGeminiSanitizedTextFallback(event, editor, fallbackText);
+            if (fallbackResult === true || fallbackResult === "cancelled") {
+              return true;
+            }
+          }
         }
 
         return blockGeminiEditorRawContent(
@@ -3328,6 +3338,17 @@
     return true;
   }
 
+  async function readSanitizedFileTextForFallback(sanitizedFile) {
+    if (!sanitizedFile) return "";
+    if (typeof sanitizedFile.text === "function") {
+      return String(await sanitizedFile.text());
+    }
+    if (typeof sanitizedFile.text === "string") {
+      return sanitizedFile.text;
+    }
+    return "";
+  }
+
   async function insertGeminiLocalFileText(event, input, redactedText) {
     if (!isGeminiHost()) {
       return false;
@@ -3442,6 +3463,28 @@
             ok: true,
             strategy: "streaming-sanitized-file-handoff"
           };
+        }
+
+        if (isGeminiHost()) {
+          const fallbackText = await readSanitizedFileTextForFallback(streamResult.sanitizedFile);
+          if (fallbackText) {
+            const fallbackResult = await applyGeminiSanitizedTextFallback(event, input, fallbackText);
+            if (fallbackResult === true) {
+              return {
+                handled: true,
+                ok: true,
+                strategy: "gemini-streaming-sanitized-text-fallback"
+              };
+            }
+
+            if (fallbackResult === "cancelled") {
+              return {
+                handled: true,
+                ok: false,
+                reason: "gemini_large_text_cancelled"
+              };
+            }
+          }
         }
 
         return blockStreamingLocalFile(

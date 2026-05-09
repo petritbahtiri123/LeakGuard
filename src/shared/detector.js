@@ -2398,6 +2398,73 @@
       return findings;
     }
 
+    scanBearerTokenAssignments(text, options = {}) {
+      if (!options.lineCache) {
+        const lineCached = this.scanRepeatedLines(text, (line) =>
+          this.scanBearerTokenAssignments(line, { lineCache: true })
+        );
+        if (lineCached) return lineCached;
+      }
+
+      const findings = [];
+      const regex =
+        /([A-Za-z_][A-Za-z0-9_.-]{0,80})[^\S\r\n]*[:=][^\S\r\n]*Bearer[^\S\r\n]+([^\s,;"'`}\]\r\n]+)/gim;
+      let match;
+
+      while ((match = regex.exec(text)) !== null) {
+        const key = match[1];
+        const raw = normalizeCandidate(match[2]);
+        const normalizedKey = normalizeAssignmentKey(key);
+
+        if (match.index > 0 && /[?&]/.test(String(text || "")[match.index - 1])) continue;
+        if (isSafeAssignmentKey(key)) continue;
+        if (!/(?:bearer|token|auth|authorization)/i.test(normalizedKey)) continue;
+        if (!raw || raw.length < 8) continue;
+        const failClosedFakeBearerValue =
+          /^fake[-_]/i.test(raw) &&
+          raw.length >= 16 &&
+          /(?:bearer|token|secret|key|pass|\d)/i.test(raw);
+        if (!looksCredentialLikeAssignmentValue(raw) && !failClosedFakeBearerValue) continue;
+
+        const valueIndex = match[0].lastIndexOf(match[2]);
+        if (valueIndex < 0) continue;
+
+        const start = match.index + valueIndex;
+        const end = start + match[2].length;
+        const placeholderType = "TOKEN";
+
+        const suppressed = this.shouldSuppress({
+          raw,
+          text,
+          start,
+          end,
+          key,
+          placeholderType,
+          source: "assignment"
+        });
+        if (suppressed && !failClosedFakeBearerValue) {
+          continue;
+        }
+
+        const entropy = calculateEntropy(raw);
+        findings.push(
+          this.buildFinding({
+            category: "credential",
+            placeholderType,
+            raw,
+            start,
+            end,
+            score: 98 + (entropy >= 3.6 ? 2 : 0),
+            methods: ["assignment", "bearer-scheme", entropy >= 3.6 ? "entropy" : null].filter(
+              Boolean
+            )
+          })
+        );
+      }
+
+      return findings;
+    }
+
     scanExactInlineSecretAssignments(text, options = {}) {
       if (!options.lineCache) {
         const lineCached = this.scanRepeatedLines(text, (line) =>
@@ -3367,6 +3434,7 @@
           ...this.scanSqlServerPasswordAttributes(input),
           ...this.scanPatterns(input),
           ...this.scanAssignments(input),
+          ...this.scanBearerTokenAssignments(input),
           ...this.scanExactInlineSecretAssignments(input),
           ...this.scanExplicitCredentialAssignments(input),
           ...this.scanLabelledProviderKeyValues(input),
