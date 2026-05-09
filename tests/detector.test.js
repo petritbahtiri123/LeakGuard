@@ -624,12 +624,12 @@ function testFullValueReplacementForConnectionStyleAssignments() {
 
   assert.strictEqual(lines[0], "AZURE_STORAGE_CONNECTION_STRING=[PWM_1]");
   assert.ok(
-    /^DATABASE_URL=postgres:\/\/\[PWM_\d+\]:\[PWM_\d+\]@db\.internal:5432\/appdb$/.test(lines[1]),
-    "DATABASE_URL assignment should redact username and password while preserving URL structure"
+    /^DATABASE_URL=postgres:\/\/testuser:\[PWM_\d+\]@db\.internal:5432\/appdb$/.test(lines[1]),
+    "DATABASE_URL assignment should redact only the password while preserving URL structure"
   );
   assert.ok(
-    /^MYSQL_URL=mysql:\/\/\[PWM_\d+\]:\[PWM_\d+\]@mysql\.internal:3306\/analytics$/.test(lines[2]),
-    "MYSQL_URL assignment should redact username and password while preserving URL structure"
+    /^MYSQL_URL=mysql:\/\/reporter:\[PWM_\d+\]@mysql\.internal:3306\/analytics$/.test(lines[2]),
+    "MYSQL_URL assignment should redact only the password while preserving URL structure"
   );
 
   assert.ok(
@@ -637,10 +637,7 @@ function testFullValueReplacementForConnectionStyleAssignments() {
       !result.redactedText.includes("AnotherFakePass456!"),
     "db passwords must not survive redaction output"
   );
-  assert.ok(
-    !result.redactedText.includes("testuser") && !result.redactedText.includes("reporter"),
-    "db usernames must not survive redaction output"
-  );
+  assert.ok(result.redactedText.includes("testuser") && result.redactedText.includes("reporter"));
   assert.ok(
     !result.redactedText.includes("FakeAccountKey1234567890ABCDEFGHIJKLMN==") &&
       !result.redactedText.includes("AccountName=fakestorageacct") &&
@@ -710,10 +707,22 @@ function testSqlServerConnectionStringsRedactPasswords() {
   assert.strictEqual(result.redactedText.includes("AnotherSqlPass123"), false);
   assert.strictEqual(result.redactedText.includes("JdbcSqlPass123"), false);
   assert.ok(
-    /^MSSQL_URL=sqlserver:\/\/\[PWM_\d+\]:\[PWM_\d+\]@sql\.example\.com:1433;databaseName=prod$/m.test(
+    /^MSSQL_URL=sqlserver:\/\/sa:\[PWM_\d+\]@sql\.example\.com:1433;databaseName=prod$/m.test(
       result.redactedText
     ),
-    "sqlserver:// URI shape should remain readable while masking credentials"
+    "sqlserver:// URI shape should remain readable while masking only the password"
+  );
+  assert.ok(
+    /^SQLSERVER_URL=sqlserver:\/\/app:\[PWM_\d+\]@sql\.example\.com:1433;databaseName=prod$/m.test(
+      result.redactedText
+    ),
+    "SQLSERVER_URL should preserve username while masking only the password"
+  );
+  assert.ok(
+    /^MSSQL_URL=mssql:\/\/sa:\[PWM_\d+\]@sql\.example\.com:1433\/prod$/m.test(
+      result.redactedText
+    ),
+    "mssql:// URI shape should remain readable while masking only the password"
   );
   assert.ok(
     /^JDBC_URL=jdbc:sqlserver:\/\/host:1433;user=name;password=\[PWM_\d+\];databaseName=prod$/m.test(
@@ -1605,14 +1614,14 @@ function testDatabaseUrlAssignmentKeepsUriButMasksOnlyPassword() {
     "databaseUrl assignment should detect only the DB password segment"
   );
   assert.ok(
-    /databaseUrl: "postgres:\/\/\[PWM_\d+\]:\[PWM_\d+\]@db\.example\.com:5432\/appdb"/.test(
+    /databaseUrl: "postgres:\/\/admin:\[PWM_\d+\]@db\.example\.com:5432\/appdb"/.test(
       result.redactedText
     ),
-    "databaseUrl should keep the URI shape while masking username and password"
+    "databaseUrl should keep the URI shape while masking only the password"
   );
   assert.ok(
-    !result.redactedText.includes("MyUltraSecretPass") && !result.redactedText.includes("admin:"),
-    "raw database credentials must not survive redaction"
+    !result.redactedText.includes("MyUltraSecretPass") && result.redactedText.includes("admin:"),
+    "raw database password must not survive redaction"
   );
 }
 
@@ -1772,14 +1781,14 @@ function testSyntheticCredentialHardeningBlock() {
   }
 
   assert.ok(
-    /databaseUrl="postgres:\/\/\[PWM_\d+\]:\[PWM_\d+\]@db\.prod\.internal:5432\/app"/.test(result.redactedText),
-    "databaseUrl should keep its URI structure while masking username and password"
+    /databaseUrl="postgres:\/\/admin:\[PWM_\d+\]@db\.prod\.internal:5432\/app"/.test(result.redactedText),
+    "databaseUrl should keep its URI structure while masking only the password"
   );
   assert.ok(
-    /MYSQL_URL=mysql:\/\/\[PWM_\d+\]:\[PWM_\d+\]@mysql\.ops\.internal:3306\/analytics/.test(
+    /MYSQL_URL=mysql:\/\/reporter:\[PWM_\d+\]@mysql\.ops\.internal:3306\/analytics/.test(
       result.redactedText
     ),
-    "MYSQL_URL should keep its URI structure while masking username and password"
+    "MYSQL_URL should keep its URI structure while masking only the password"
   );
   assert.ok(result.redactedText.includes("PUBLIC_URL=https://openai.com"), "safe public URLs should stay visible");
   assert.ok(result.redactedText.includes("REGION=eu-central-1"), "regions should stay visible");
@@ -2080,6 +2089,45 @@ function testEmailRedactionSuppressionAndReuse() {
   assert.ok(redactedText.includes("mailto:user@example.com"), "mailto example should stay visible");
 }
 
+function testReleaseQaIdentityAndDatabaseUrlRegressions() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const text = [
+    "EMAIL=qa.person@example.com",
+    "MYSQL_URL=mysql://root:AnotherFakePass456@192.0.2.44:3306/mysql",
+    "DB_URL=mysql://app_user:SuperFakePassword123@db.example.com:3306/appdb",
+    "token_limit=4096",
+    "replace_me",
+    "example",
+    "development_mode=true"
+  ].join("\n");
+
+  const findings = detector.scan(text);
+  const result = redactor.redact(text, findings);
+  const redactedText = result.redactedText;
+
+  assert.ok(
+    findings.some((finding) => finding.type === "EMAIL" && finding.raw === "qa.person@example.com"),
+    "EMAIL assignment should produce an email identity finding even for example.com values"
+  );
+  assert.ok(/^EMAIL=\[PWM_\d+\]$/m.test(redactedText), "EMAIL assignment value should redact");
+  assert.ok(
+    /^MYSQL_URL=mysql:\/\/root:\[PWM_\d+\]@192\.0\.2\.44:3306\/mysql$/m.test(redactedText),
+    `MYSQL_URL should preserve URI shape and redact only the password: ${redactedText}`
+  );
+  assert.ok(
+    /^DB_URL=mysql:\/\/app_user:\[PWM_\d+\]@db\.example\.com:3306\/appdb$/m.test(redactedText),
+    `DB_URL should preserve URI shape and redact only the password: ${redactedText}`
+  );
+  assert.strictEqual(redactedText.includes("AnotherFakePass456"), false);
+  assert.strictEqual(redactedText.includes("SuperFakePassword123"), false);
+  assert.ok(redactedText.includes("token_limit=4096"), "safe numeric config should stay visible");
+  assert.ok(redactedText.includes("replace_me"), "safe placeholder literal should stay visible");
+  assert.ok(redactedText.includes("example"), "safe example literal should stay visible");
+  assert.ok(redactedText.includes("development_mode=true"), "safe boolean config should stay visible");
+}
+
 function testDeveloperDocumentationFalsePositiveControls() {
   const detector = new Detector();
   const cases = [
@@ -2170,6 +2218,7 @@ function run() {
   testStandaloneBenignBuildLabelStaysVisible();
   testUsernameAndEmailAssignmentsStayMediumConfidence();
   testEmailRedactionSuppressionAndReuse();
+  testReleaseQaIdentityAndDatabaseUrlRegressions();
   testDeveloperDocumentationFalsePositiveControls();
 
   console.log(
