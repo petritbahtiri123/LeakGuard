@@ -330,6 +330,7 @@ function testAllowOnceBypassGatesPasteAndSendPipelines() {
   const pasteSource = extractFunctionSource(contentSource, "maybeHandlePaste");
   const submitSource = extractFunctionSource(contentSource, "maybeHandleSubmit");
   const fallbackSendSource = extractFunctionSource(contentSource, "maybeHandleFallbackSendKey");
+  const geminiPasteSource = extractFunctionSource(contentSource, "maybeHandleGeminiEditorPaste");
 
   assert.ok(
     pasteSource.indexOf("isCurrentRiskSetAllowedOnce(input, analysis.findings") <
@@ -345,6 +346,19 @@ function testAllowOnceBypassGatesPasteAndSendPipelines() {
     fallbackSendSource.indexOf("isCurrentRiskSetAllowedOnce(input, analysis.findings") <
       fallbackSendSource.indexOf("const policy = analysis.findings.length"),
     "fallback Enter send should bypass redaction for an already allowed risk set"
+  );
+  assert.ok(
+    geminiPasteSource.includes("promptForSensitiveContentDecision(") &&
+      geminiPasteSource.includes('"paste"') &&
+      geminiPasteSource.includes("isCurrentRiskSetAllowedOnce(editor, analysis.findings") &&
+      geminiPasteSource.includes("applyGeminiEditorText(editor, textToInsert"),
+    "Gemini editor paste should expose the shared Allow once/Redact decision and then use the safe Gemini insertion path"
+  );
+  assert.ok(
+    geminiPasteSource.includes('if (decisionAction === "redact")') &&
+      geminiPasteSource.indexOf("promptForSensitiveContentDecision(") <
+        geminiPasteSource.indexOf('if (decisionAction === "redact")'),
+    "Gemini editor paste must offer Allow once before requesting normal redaction"
   );
 }
 

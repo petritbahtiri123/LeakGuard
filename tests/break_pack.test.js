@@ -615,14 +615,14 @@ function assertUrlCredentialsRedactWithLastAt({ input, expectedRegex, forbidden 
 function testUrlCredentialPasswordsCanContainRawAtSigns() {
   assertUrlCredentialsRedactWithLastAt({
     input: "postgres://admin:p@ssw0rd123@db.internal:5432/app",
-    expectedRegex: /^postgres:\/\/\[PWM_\d+\]:\[PWM_\d+\]@db\.internal:5432\/app$/,
-    forbidden: ["admin", "p@ssw0rd123", "@ssw0rd123"]
+    expectedRegex: /^postgres:\/\/admin:\[PWM_\d+\]@db\.internal:5432\/app$/,
+    forbidden: ["p@ssw0rd123", "@ssw0rd123"]
   });
 
   assertUrlCredentialsRedactWithLastAt({
     input: "mysql://reporter:Report@Pass123@mysql.internal:3306/analytics",
-    expectedRegex: /^mysql:\/\/\[PWM_\d+\]:\[PWM_\d+\]@mysql\.internal:3306\/analytics$/,
-    forbidden: ["reporter", "Report@Pass123", "@Pass123"]
+    expectedRegex: /^mysql:\/\/reporter:\[PWM_\d+\]@mysql\.internal:3306\/analytics$/,
+    forbidden: ["Report@Pass123", "@Pass123"]
   });
 
   assertUrlCredentialsRedactWithLastAt({
@@ -687,7 +687,7 @@ function testTransformDoesNotReuseUrlUsernamesOutsideCredentialRanges() {
   }).redactedText;
 
   assert.ok(
-    /"readonlyUrl": "postgres:\/\/\[PWM_\d+\]:\[PWM_\d+\]@readonly\.example\.com:5432\/app"/.test(
+    /"readonlyUrl": "postgres:\/\/readonly:\[PWM_\d+\]@readonly\.example\.com:5432\/app"/.test(
       redactedText
     ),
     `readonly URL syntax or host was corrupted: ${redactedText}`
@@ -748,10 +748,46 @@ function testEmailIdentityRedactionAndSafeUrlEmailText() {
     "email-like URL query text should not be parsed as URL credentials"
   );
   assert.ok(
-    /^DATABASE_URL=postgres:\/\/\[PWM_\d+\]:\[PWM_\d+\]@db\.internal:5432\/app$/m.test(redactedText),
+    /^DATABASE_URL=postgres:\/\/app:\[PWM_\d+\]@db\.internal:5432\/app$/m.test(redactedText),
     "database URL credentials should still redact around email tests"
   );
   assertExcludesAll(redactedText, ["alex.manager@corp.internal", "EmailPackDbPass123!"], "email identity pack");
+}
+
+function testReleaseQaRedactionRegressions() {
+  const text = [
+    "EMAIL=qa.person@example.com",
+    "MYSQL_URL=mysql://root:AnotherFakePass456@192.0.2.44:3306/mysql",
+    "DB_URL=mysql://app_user:SuperFakePassword123@db.example.com:3306/appdb",
+    "token_limit=4096",
+    "replace_me",
+    "example",
+    "development_mode=true"
+  ].join("\n");
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const findings = detector.scan(text, { manager });
+  const redactedText = new Redactor(manager).redact(text, findings).redactedText;
+
+  assert.ok(/^EMAIL=\[PWM_\d+\]$/m.test(redactedText), `EMAIL value should redact: ${redactedText}`);
+  assert.ok(
+    /^MYSQL_URL=mysql:\/\/root:\[PWM_\d+\]@192\.0\.2\.44:3306\/mysql$/m.test(redactedText),
+    `MYSQL_URL should preserve URI shape and redact only the password: ${redactedText}`
+  );
+  assert.ok(
+    /^DB_URL=mysql:\/\/app_user:\[PWM_\d+\]@db\.example\.com:3306\/appdb$/m.test(redactedText),
+    `DB_URL should preserve URI shape and redact only the password: ${redactedText}`
+  );
+  assertExcludesAll(
+    redactedText,
+    ["qa.person@example.com", "AnotherFakePass456", "SuperFakePassword123"],
+    "release QA regression pack"
+  );
+  assertIncludesAll(
+    redactedText,
+    ["token_limit=4096", "replace_me", "example", "development_mode=true"],
+    "release QA safe config values"
+  );
 }
 
 testBreakPackRedactionAndSafeLines();
@@ -767,4 +803,5 @@ testUrlCredentialParserLeavesSafeUrlShapesAlone();
 testBrokenPlaceholderUrlTailDoesNotLeakFurther();
 testTransformDoesNotReuseUrlUsernamesOutsideCredentialRanges();
 testEmailIdentityRedactionAndSafeUrlEmailText();
+testReleaseQaRedactionRegressions();
 console.log("PASS LeakGuard break-test redaction pack");

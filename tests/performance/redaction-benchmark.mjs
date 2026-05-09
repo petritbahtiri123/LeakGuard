@@ -74,7 +74,7 @@ function buildLargeSyntheticPayload(targetBytes, label) {
     text: `${header}\n${filler}`,
     forbidden: [longSecret, sqlPassword],
     expected: [
-      "MSSQL_URL=sqlserver://[PWM_",
+      "MSSQL_URL=sqlserver://sa:[PWM_",
       "secret=[PWM_",
       "token_limit=4096",
       "secret_santa=office-game",

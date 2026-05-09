@@ -161,7 +161,7 @@ async function testDatabaseUrlSplitAcrossChunkBoundaryRedacts() {
   });
 
   assert.strictEqual(output.includes(password), false);
-  assert.ok(/postgres:\/\/\[PWM_\d+\]:\[PWM_\d+\]@db\.example\.com/.test(output));
+  assert.ok(/postgres:\/\/admin:\[PWM_\d+\]@db\.example\.com/.test(output));
 }
 
 async function testPrivateKeySpanningChunksRedacts() {

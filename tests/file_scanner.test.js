@@ -242,13 +242,13 @@ function testSanitizedScannerReportExcludesRawSecretBoundaries() {
   assert.strictEqual(reportJson.includes(`postgres://app:${urlPassword}`), false, "report leaked raw URI credential prefix");
   assert.ok(result.redactedText.includes("Authorization: Bearer "), "header label should remain visible");
   assert.ok(
-    /DATABASE_URL=postgres:\/\/\[PWM_\d+\]:\[PWM_\d+\]@db\.example\.com:5432\/(?:app|\[PWM_\d+\])/.test(result.redactedText),
-    "database URL shape should remain visible with separate credential placeholders"
+    /DATABASE_URL=postgres:\/\/app:\[PWM_\d+\]@db\.example\.com:5432\/app/.test(result.redactedText),
+    "database URL shape should remain visible while masking only the password"
   );
   assert.ok(result.redactedText.includes("PUBLIC_URL=https://example.com"), "safe public URL should remain visible");
 
   const placeholders = result.redactedText.match(/\[PWM_\d+\]/g) || [];
-  assert.ok(placeholders.length >= 4, "expected redacted placeholders for repeated secret and URL credentials");
+  assert.ok(placeholders.length >= 3, "expected redacted placeholders for repeated secret and URL password");
   assert.strictEqual(
     result.redactedText.includes(`ApiKey${placeholders[0]}`),
     false,

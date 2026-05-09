@@ -571,6 +571,12 @@
     return Boolean(parseUrlUserinfoToken(String(value || ""), 0));
   }
 
+  function isDatabaseUrlUserinfoScheme(scheme) {
+    return /^(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis|amqp|mssql|sqlserver)$/.test(
+      String(scheme || "")
+    );
+  }
+
   function hasBroadExampleSegment(value) {
     return /(?:^|[;=:/_.-])(?:example|sample|dummy)(?:[A-Za-z0-9_-]*)?(?=$|[;=:/_.-])/i.test(
       String(value || "")
@@ -1300,9 +1306,15 @@
     return keyMatch ? isSafeAssignmentKey(keyMatch[1]) : false;
   }
 
+  const EXACT_EMAIL_ASSIGNMENT_KEYS = new Set(["email", "e_mail", "mail"]);
+
   function isIdentityAssignmentKey(key) {
     const normalized = normalizeAssignmentKey(key);
     return /(?:^|_)(?:username|user(?:_?name)?|login|email|e_mail|mail)(?:$|_)/.test(normalized);
+  }
+
+  function isExactEmailAssignmentKey(key) {
+    return EXACT_EMAIL_ASSIGNMENT_KEYS.has(normalizeAssignmentKey(key));
   }
 
   function isLikelyEmailAddress(value) {
@@ -1441,12 +1453,20 @@
     );
   }
 
-  function shouldSuppressIdentityValue(raw, text, start, end, key) {
+  function shouldSuppressIdentityValue(raw, text, start, end, key, options = {}) {
     if (!raw) return true;
     if (isCleanPlaceholder(raw)) return true;
     if (containsPlaceholder(raw)) return true;
-    if (looksExampleLike(raw) || containsTemplateMarker(raw)) return true;
-    if (isLikelyEmailAddress(raw) && /@example\.(?:com|org|net)$/i.test(raw)) return true;
+    const exactEmailAssignment =
+      options.source === "assignment" && isExactEmailAssignmentKey(key) && isLikelyEmailAddress(raw);
+    if ((looksExampleLike(raw) || containsTemplateMarker(raw)) && !exactEmailAssignment) return true;
+    if (
+      isLikelyEmailAddress(raw) &&
+      /@example\.(?:com|org|net)$/i.test(raw) &&
+      !exactEmailAssignment
+    ) {
+      return true;
+    }
     if (isLikelyEmailAddress(raw) && isEmailInUrlOrUriContext(text, start)) return true;
     if (isLikelyEmailAddress(raw) && isEmailInCodeImportContext(text, start)) return true;
 
@@ -2660,6 +2680,7 @@
         }
 
         if (
+          !isDatabaseUrlUserinfoScheme(scheme) &&
           username &&
           !isCleanPlaceholder(username) &&
           !this.isAllowlisted(username)
@@ -2712,7 +2733,7 @@
         }
 
         if (!this.isAllowlisted(secret)) {
-          const isDbScheme = /^(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis|amqp|mssql|sqlserver)$/.test(scheme);
+          const isDbScheme = isDatabaseUrlUserinfoScheme(scheme);
           findings.push(
             this.buildFinding({
               category: "credential",
@@ -2749,7 +2770,7 @@
 
         if (!isLikelyEmailAddress(raw)) continue;
         if (this.isAllowlisted(raw)) continue;
-        if (shouldSuppressIdentityValue(raw, text, start, end, "email")) continue;
+        if (shouldSuppressIdentityValue(raw, text, start, end, "email", { source: "email" })) continue;
 
         findings.push(
           this.buildFinding({
@@ -2799,7 +2820,7 @@
         const start = match.index + valueIndex;
         const end = start + rawCandidate.length;
         if (this.isAllowlisted(raw)) continue;
-        if (shouldSuppressIdentityValue(raw, text, start, end, key)) continue;
+        if (shouldSuppressIdentityValue(raw, text, start, end, key, { source: "assignment" })) continue;
 
         const normalizedKey = normalizeAssignmentKey(key);
         const emailLike = isLikelyEmailAddress(raw);
@@ -2812,6 +2833,7 @@
         if (/email|mail/.test(normalizedKey)) score += 10;
         if (/username|login|user/.test(normalizedKey)) score += 8;
         if (emailLike) score += 8;
+        if (emailLike && isExactEmailAssignmentKey(key)) score += 18;
         if (/[._-]/.test(raw)) score += 3;
         if (/\d/.test(raw)) score += 2;
         if (/\b(?:password|secret|token|auth|credential)\b/i.test(getContextWindow(text, start, end, 96))) {
@@ -2853,7 +2875,7 @@
         const start = match.index + valueOffset;
         const end = start + match[2].length;
         if (this.isAllowlisted(raw)) continue;
-        if (shouldSuppressIdentityValue(raw, text, start, end, key)) continue;
+        if (shouldSuppressIdentityValue(raw, text, start, end, key, { source: "json" })) continue;
 
         findings.push(
           this.buildFinding({

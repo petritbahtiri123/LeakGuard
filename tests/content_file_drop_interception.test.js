@@ -377,6 +377,17 @@ function createHarness(overrides = {}) {
         : [],
       placeholderNormalized: false
     }),
+    analyzeTextWithAiAssist: async (text) => dependencies.analyzeText(text),
+    getPolicyForAction: async () => ({
+      allowUserOverride: true,
+      defaultAction: "redact"
+    }),
+    handleDestinationPolicy: async () => ({ blocked: false }),
+    shouldForceDestinationRedaction: () => false,
+    handleHttpSecretPolicy: async () => false,
+    isCurrentRiskSetAllowedOnce: () => false,
+    clearAllowedOnceIfRiskChanged: () => {},
+    promptForSensitiveContentDecision: async () => "redact",
     requestRedaction: async (text, findings) => {
       calls.redactions.push({ text, findings });
       return {
@@ -1203,6 +1214,43 @@ async function testGeminiQlEditorPasteIsSanitizedBeforePageHandlers() {
   assert.strictEqual(editor.text, "API_KEY=[PWM_1]");
   assert.strictEqual(editor.text.includes(rawSecret), false);
   assert.strictEqual(calls.redactions.length, 1);
+}
+
+async function testGeminiQlEditorPasteAllowOnceInsertsRawText() {
+  const rawSecret = "LeakGuardPasteApiKey1234567890";
+  const rawText = `API_KEY=${rawSecret}`;
+  const { editor, child } = createGeminiEditor("");
+  const decisions = [];
+  const { maybeHandlePaste, calls } = createHarness({
+    location: { hostname: "gemini.google.com" },
+    promptForSensitiveContentDecision: async (findings, mode, _policy, input, normalizedText) => {
+      decisions.push({ findings, mode, input, normalizedText });
+      return "allow";
+    },
+    document: {
+      activeElement: editor,
+      execCommand(command, _showUi, value) {
+        assert.strictEqual(command, "insertText");
+        editor.text += value;
+        return true;
+      }
+    }
+  });
+  const { event, calls: eventCalls } = createClipboardEvent({
+    text: rawText,
+    target: child
+  });
+
+  await maybeHandlePaste(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(eventCalls.stopImmediatePropagation, 1);
+  assert.strictEqual(decisions.length, 1, "Gemini paste should use the shared decision flow");
+  assert.strictEqual(decisions[0].mode, "paste");
+  assert.strictEqual(decisions[0].input, editor);
+  assert.strictEqual(editor.text, rawText, "Allow once should insert the original Gemini paste text");
+  assert.strictEqual(calls.redactions.length, 0, "Allow once should not request Gemini paste redaction");
+  assert.strictEqual(editor.inputEvents.length, 1, "Gemini editor should stay usable after Allow once");
 }
 
 async function testGeminiQlEditorDropTextFileIsSanitizedAndInserted() {
@@ -2129,9 +2177,8 @@ function buildLargeChatGptPastePayload() {
 function redactChatGptPasteFixture(text, repeatedKey, dbPassword, awsSecret) {
   return String(text || "")
     .replaceAll(repeatedKey, "[PWM_1]")
-    .replace("postgres://admin:", "postgres://[PWM_2]:")
-    .replace(dbPassword, "[PWM_3]")
-    .replace(awsSecret, "[PWM_4]");
+    .replace(dbPassword, "[PWM_2]")
+    .replace(awsSecret, "[PWM_3]");
 }
 
 async function testChatGptLargePasteCreatesSanitizedPlainTextFileHandoff() {
@@ -2192,11 +2239,11 @@ async function testChatGptLargePasteCreatesSanitizedPlainTextFileHandoff() {
   assert.ok(calls.createdFiles[0].text.includes("OPENAI_API_KEY=[PWM_1]"));
   assert.ok(calls.createdFiles[0].text.includes("backup_key=[PWM_1]"));
   assert.ok(
-    /DATABASE_URL=postgres:\/\/\[PWM_2\]:\[PWM_3\]@db\.example\.com:5432\/app/.test(
+    /DATABASE_URL=postgres:\/\/admin:\[PWM_2\]@db\.example\.com:5432\/app/.test(
       calls.createdFiles[0].text
     )
   );
-  assert.ok(calls.createdFiles[0].text.includes("AWS_SECRET_ACCESS_KEY=[PWM_4]"));
+  assert.ok(calls.createdFiles[0].text.includes("AWS_SECRET_ACCESS_KEY=[PWM_3]"));
   assert.strictEqual(calls.handoffs.length, 1);
   assert.strictEqual(calls.handoffs[0].context, "paste");
   assert.strictEqual(calls.handoffs[0].input, composer);
@@ -2557,6 +2604,7 @@ async function testChatGptAndClaudeStillUseSanitizedFileHandoffOnly() {
   await testGeminiDropSkipsDiscoveryPerDragSession();
   await testGeminiDropWithoutInputSkipsUploadHandoff();
   await testGeminiQlEditorPasteIsSanitizedBeforePageHandlers();
+  await testGeminiQlEditorPasteAllowOnceInsertsRawText();
   await testChatGptLargePasteCreatesSanitizedPlainTextFileHandoff();
   await testChatGptLargePasteFallsBackToSanitizedTextOnlyWhenFileHandoffFails();
   await testNonChatGptLargePasteDoesNotUsePlainTextFileHandoff();

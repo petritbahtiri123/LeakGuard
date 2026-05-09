@@ -2742,6 +2742,7 @@
   async function maybeHandleGeminiEditorPaste(event) {
     const editor = resolveGeminiEditorTarget(event?.target);
     if (!editor) return false;
+    noteActiveRiskEditor(editor);
 
     const pasted = event.clipboardData?.getData("text/plain") || "";
     if (!pasted) return false;
@@ -2759,8 +2760,72 @@
     }
 
     try {
-      const sanitizedText = await redactGeminiEditorText(pasted);
-      const applied = await applyGeminiEditorText(editor, sanitizedText, "gemini-paste");
+      const analysis = await analyzeTextWithAiAssist(pasted);
+      let textToInsert = analysis.normalizedText;
+
+      if (analysis.findings.length) {
+        if (isCurrentRiskSetAllowedOnce(editor, analysis.findings, analysis.normalizedText)) {
+          setBadge("Redaction skipped once");
+          hideBadgeSoon();
+        } else {
+          clearAllowedOnceIfRiskChanged(editor, analysis.findings, analysis.normalizedText);
+
+          const policy = await getPolicyForAction();
+          const destinationPolicy = await handleDestinationPolicy(analysis.findings, policy);
+          if (destinationPolicy.blocked) {
+            if (optimizedStatus) {
+              clearLocalPayloadOptimizationStatus(sizeInfo, "cancelled");
+            }
+            return true;
+          }
+
+          const destinationForceRedact = shouldForceDestinationRedaction(
+            destinationPolicy,
+            analysis.findings
+          );
+          const httpPolicyHandled = await handleHttpSecretPolicy(
+            policy,
+            analysis.secretFindings,
+            async () => {
+              const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
+              textToInsert = result.redactedText;
+            }
+          );
+
+          if (!httpPolicyHandled && destinationForceRedact) {
+            const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings, {
+              auditReason: destinationPolicy.reason
+            });
+            textToInsert = result.redactedText;
+          } else if (!httpPolicyHandled) {
+            const decisionAction = await promptForSensitiveContentDecision(
+              analysis.findings,
+              "paste",
+              policy,
+              editor,
+              analysis.normalizedText
+            );
+
+            if (decisionAction === "cancel") {
+              if (optimizedStatus) {
+                clearLocalPayloadOptimizationStatus(sizeInfo, "cancelled");
+              }
+              refreshBadgeFromCurrentInput();
+              return true;
+            }
+
+            if (decisionAction === "redact") {
+              const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
+              textToInsert = result.redactedText;
+            } else {
+              setBadge("Redaction skipped once");
+              hideBadgeSoon();
+            }
+          }
+        }
+      }
+
+      const applied = await applyGeminiEditorText(editor, textToInsert, "gemini-paste");
       if (applied === true || applied === "cancelled") {
         if (optimizedStatus) {
           clearLocalPayloadOptimizationStatus(sizeInfo, applied === true ? "complete" : "cancelled");
