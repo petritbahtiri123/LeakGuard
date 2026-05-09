@@ -302,6 +302,15 @@ async function testManagedProtectedSitesRegisterWithoutUserSiteToggle() {
 
   assert.strictEqual(registrations.length, 1, "managed sites should still register content scripts");
   assert.strictEqual(registrations[0].matches.join(","), "https://web.whatsapp.com/*");
+  assert.strictEqual(
+    registrations[0].matchOriginAsFallback,
+    true,
+    "dynamic site registration should cover about:, data:, and blob: child frames"
+  );
+  assert.ok(
+    !Object.hasOwn(registrations[0], "matchAboutBlank"),
+    "dynamic site registration should not use unsupported matchAboutBlank"
+  );
 }
 
 async function testManagedProtectedSitesCannotBeToggledOrDeleted() {

@@ -12,7 +12,9 @@
     "This file is over 50 MB. LeakGuard blocked the upload because it cannot safely sanitize it yet.";
   const REDACTED_PREVIEW_LIMIT = 4000;
   const UNSUPPORTED_TEXT_RELEASE_MESSAGE =
-    "This release safely redacts text-based files only. PDF/DOCX/image redaction is planned but not enabled yet.";
+    "This release scans text files only. Unsupported formats such as PDFs, DOCX files, images, archives, executables, and binary files are not scanned or redacted.";
+  const UNSUPPORTED_COMPOSER_FILE_MESSAGE =
+    "LeakGuard cannot scan or redact this file type in this release. Upload allowed through the site.";
   const SUPPORTED_TEXT_EXTENSIONS = new Set([
     ".txt",
     ".md",
@@ -70,7 +72,22 @@
     ".gif",
     ".bmp",
     ".ico",
-    ".svg"
+    ".svg",
+    ".zip",
+    ".7z",
+    ".rar",
+    ".tar",
+    ".gz",
+    ".tgz",
+    ".bz2",
+    ".xz",
+    ".exe",
+    ".dll",
+    ".dmg",
+    ".pkg",
+    ".app",
+    ".msi",
+    ".bin"
   ]);
 
   function normalizeFileName(fileName) {
@@ -120,7 +137,7 @@
         action: "allow",
         supported: false,
         extension,
-        message: "LeakGuard does not inspect this file type yet. Upload allowed."
+        message: UNSUPPORTED_COMPOSER_FILE_MESSAGE
       };
     }
 
@@ -129,7 +146,7 @@
       action: "allow",
       supported: false,
       extension,
-      message: "LeakGuard does not inspect this file type yet. Upload allowed."
+      message: UNSUPPORTED_COMPOSER_FILE_MESSAGE
     };
   }
 
@@ -201,7 +218,7 @@
     if (isNullHeavy(buffer)) {
       return validationError(
         "binary_content",
-        "This file looks binary, so LeakGuard did not scan it. This release safely redacts text-based files only."
+        "This file looks binary, so LeakGuard did not scan it. This release scans text files only."
       );
     }
 
@@ -466,6 +483,7 @@
     SUPPORTED_TEXT_BASENAMES,
     PASS_THROUGH_UNSUPPORTED_EXTENSIONS,
     UNSUPPORTED_TEXT_RELEASE_MESSAGE,
+    UNSUPPORTED_COMPOSER_FILE_MESSAGE,
     getFileExtension,
     getFileBasename,
     classifyFileForTextScan,

@@ -162,6 +162,11 @@ function testDynamicSiteSupportIsDeclaredMinimally(manifest) {
     "dynamic site sync should use the supported MV3 unregisterContentScripts API"
   );
   assert.ok(
+    backgroundSource.includes("matchOriginAsFallback: true") &&
+      !backgroundSource.includes("matchAboutBlank"),
+    "dynamic site sync should use the supported scripting related-frame option"
+  );
+  assert.ok(
     !manifest.content_scripts[0].js.some((script) => script.includes("scanner")),
     "scanner scripts should not be injected into protected sites"
   );

@@ -108,7 +108,25 @@ function testSupportedExtensionsAccepted() {
 }
 
 function testUnsupportedExtensionsRejected() {
-  for (const extension of [".pdf", ".docx", ".xlsx", ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".ico", ".svg"]) {
+  for (const extension of [
+    ".pdf",
+    ".docx",
+    ".xlsx",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+    ".gif",
+    ".bmp",
+    ".ico",
+    ".svg",
+    ".zip",
+    ".7z",
+    ".rar",
+    ".exe",
+    ".dll",
+    ".bin"
+  ]) {
     const result = validateFileForTextScan({
       fileName: `sample${extension}`,
       mimeType: "",
@@ -117,14 +135,22 @@ function testUnsupportedExtensionsRejected() {
     });
 
     assert.strictEqual(result.ok, false, `${extension} should be rejected`);
+    assert.ok(
+      result.message.includes("scans text files only"),
+      `${extension} should show text-only unsupported message`
+    );
     assert.strictEqual(
       classifyFileForTextScan({ fileName: `sample${extension}` }).action,
       "allow",
       `${extension} should be classified for pass-through upload`
     );
+    assert.ok(
+      classifyFileForTextScan({ fileName: `sample${extension}` }).message.includes("cannot scan or redact"),
+      `${extension} composer classification should warn without claiming sanitization`
+    );
   }
 
-  assert.strictEqual(classifyFileForTextScan({ fileName: "sample.bin" }).kind, "unknown");
+  assert.strictEqual(classifyFileForTextScan({ fileName: "sample.bin" }).kind, "known_unsupported");
   assert.strictEqual(classifyFileForTextScan({ fileName: "sample.bin" }).action, "allow");
 }
 

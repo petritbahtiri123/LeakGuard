@@ -82,7 +82,10 @@
 - Confirm the sanitized attached/uploaded file keeps `token_limit=4096` visible.
 - Confirm the sanitized attached/uploaded file pseudonymizes the public IP with a `[PUB_HOST_N]` placeholder.
 - Confirm the sanitized attached/uploaded file keeps the private IP visible.
-- Confirm unsupported PDF, DOCX, ZIP, image, binary, files above 50 MB, and invalid UTF-8 files do not upload raw content.
+- Confirm unsupported/binary/invalid UTF-8 files show a clear warning that LeakGuard cannot scan/redact them in this release.
+- Confirm unsupported files are not falsely marked as protected or sanitized.
+- Confirm supported text files above 50 MB are blocked from local redaction with a clear too-large warning.
+- Confirm supported text files are never uploaded raw if LeakGuard attempted sanitization and handoff failed.
 - Confirm raw upload is blocked and a local message appears if sanitized file handoff fails because the browser or site does not accept synthetic `DataTransfer`/file handoff.
 - Confirm the composer remains usable after unsupported-file or sanitized-handoff failure handling.
 - Confirm no raw synthetic secret appears in the DOM or browser console.

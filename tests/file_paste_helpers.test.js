@@ -144,7 +144,7 @@ async function testUnsupportedFilesPassThroughAndTextBinaryFilesRejected() {
   assert.strictEqual(unsupported.handled, false);
   assert.strictEqual(unsupported.ok, false);
   assert.strictEqual(unsupported.code, "unsupported_binary_or_document");
-  assert.strictEqual(unsupported.message, "LeakGuard does not inspect this file type yet. Upload allowed.");
+  assert.ok(unsupported.message.includes("cannot scan or redact"));
   assert.strictEqual(binary.handled, true);
   assert.strictEqual(binary.ok, false);
   assert.strictEqual(binary.code, "binary_content");

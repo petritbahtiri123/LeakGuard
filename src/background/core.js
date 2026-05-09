@@ -491,7 +491,7 @@ async function buildUserSiteRegistrations() {
       css: CONTENT_STYLE_FILES,
       runAt: "document_start",
       allFrames: true,
-      matchAboutBlank: true,
+      matchOriginAsFallback: true,
       persistAcrossSessions: true
     });
   }

@@ -9,6 +9,8 @@
   const LOCAL_FILE_TEXT_INSERTION_FALLBACK_ENABLED = false;
   const LOCAL_FILE_STREAMING_REQUIRED_MESSAGE =
     "LeakGuard will stream-redact this large text file locally before upload.";
+  const LOCAL_FILE_UNSUPPORTED_WARNING =
+    "LeakGuard cannot scan or redact this file type in this release. Upload allowed through the site.";
 
   function dataTransferHasFiles(dataTransfer) {
     if (!dataTransfer) return false;
@@ -47,7 +49,7 @@
         handled: false,
         ok: false,
         code: validation.code,
-        message: "LeakGuard does not inspect this file type yet. Upload allowed."
+        message: LOCAL_FILE_UNSUPPORTED_WARNING
       };
     }
 
@@ -198,6 +200,7 @@
     LOCAL_FILE_MULTI_MESSAGE,
     LOCAL_FILE_READ_MESSAGE,
     LOCAL_FILE_STREAMING_REQUIRED_MESSAGE,
+    LOCAL_FILE_UNSUPPORTED_WARNING,
     LOCAL_FILE_TEXT_INSERTION_FALLBACK_ENABLED,
     dataTransferHasFiles,
     listDataTransferFiles,
