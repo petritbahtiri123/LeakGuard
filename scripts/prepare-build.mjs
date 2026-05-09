@@ -14,6 +14,7 @@ const pythonBin = process.platform === "win32"
   ? path.join(venvRoot, "Scripts", "python.exe")
   : path.join(venvRoot, "bin", "python");
 const onnxRuntimeDist = path.join(repoRoot, "node_modules", "onnxruntime-web", "dist");
+const onnxRuntimePackageJson = path.join(repoRoot, "node_modules", "onnxruntime-web", "package.json");
 const generatedDataset = path.join(aiRoot, "dataset", "generated", "initial_dataset.jsonl");
 const generatedDatasetSourcePaths = [
   path.join(aiRoot, "scripts", "generate_dataset.py")
@@ -40,6 +41,10 @@ function pathExists(targetPath) {
   }
 }
 
+function readJson(filePath) {
+  return JSON.parse(fs.readFileSync(filePath, "utf8"));
+}
+
 function executable(command) {
   if (process.platform !== "win32") {
     return command;
@@ -64,11 +69,16 @@ function run(command, args, options = {}) {
 }
 
 function ensureNodeDependencies() {
-  if (pathExists(onnxRuntimeDist)) {
+  const expectedVersion = readJson(path.join(repoRoot, "package.json")).dependencies?.["onnxruntime-web"];
+  const installedVersion = pathExists(onnxRuntimePackageJson)
+    ? readJson(onnxRuntimePackageJson).version
+    : null;
+
+  if (pathExists(onnxRuntimeDist) && installedVersion === expectedVersion) {
     return;
   }
 
-  process.stdout.write("Missing npm dependencies; running npm install...\n");
+  process.stdout.write("Missing or stale npm dependencies; running npm install...\n");
   run(executable("npm"), ["install"]);
 }
 
