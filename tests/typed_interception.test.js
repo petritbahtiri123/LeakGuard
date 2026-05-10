@@ -253,14 +253,14 @@ function riskFingerprintForText(text) {
   return buildRiskFingerprint(combinedFindings(text), normalizeVisiblePlaceholders(text));
 }
 
-function testAllowOnceFingerprintSurvivesNormalTyping() {
+function testRiskFingerprintSurvivesNormalTyping() {
   const initial = "username=wayland.dev";
   const continued = `${initial} is the account name, not a password.`;
 
   const initialFingerprint = riskFingerprintForText(initial);
   const continuedFingerprint = riskFingerprintForText(continued);
 
-  assert.ok(initialFingerprint, "medium typed detection should produce an allow-once fingerprint");
+  assert.ok(initialFingerprint, "medium typed detection should produce a stable risk fingerprint");
   assert.strictEqual(
     continuedFingerprint,
     initialFingerprint,
@@ -268,7 +268,7 @@ function testAllowOnceFingerprintSurvivesNormalTyping() {
   );
 }
 
-function testAllowOnceFingerprintChangesWhenNewSuspiciousValueIsAdded() {
+function testRiskFingerprintChangesWhenNewSuspiciousValueIsAdded() {
   const initial = "username=wayland.dev";
   const withNewRisk = `${initial} public resolver 8.8.8.8`;
 
@@ -279,7 +279,7 @@ function testAllowOnceFingerprintChangesWhenNewSuspiciousValueIsAdded() {
   );
 }
 
-function testAllowOnceFingerprintChangesWhenSuspiciousValueIsReplaced() {
+function testRiskFingerprintChangesWhenSuspiciousValueIsReplaced() {
   const initial = "username=wayland.dev";
   const replaced = "username=other.dev";
 
@@ -290,8 +290,8 @@ function testAllowOnceFingerprintChangesWhenSuspiciousValueIsReplaced() {
   );
 }
 
-function testAllowOnceModalStateStaysLocalAndHasNoRawStorageHooks() {
-  const rawSecret = "AllowOnceStorageSecret123";
+function testPauseStateHasNoRawStorageHooks() {
+  const rawSecret = "PauseStorageSecret123";
   const fingerprint = buildRiskFingerprint([
     {
       type: "SECRET",
@@ -302,63 +302,64 @@ function testAllowOnceModalStateStaysLocalAndHasNoRawStorageHooks() {
 
   assert.strictEqual(fingerprint.includes(rawSecret), false, "fingerprint should not contain raw secrets");
   assert.strictEqual(
-    /allowedOnceFingerprint[\s\S]{0,240}(localStorage|chrome\.storage|sessionStorage)/.test(contentSource),
+    /protectionPause[\s\S]{0,240}(raw|secret|findings|localStorage|chrome\.storage\.local)/.test(contentSource),
     false,
-    "allow-once fingerprints should stay in per-editor memory, not browser storage"
+    "pause state should not store raw secrets, findings, or local persistent storage hooks"
   );
 }
 
-function testAllowOnceBypassGatesTypedRedactionPipeline() {
+function testPauseBypassRunsAfterPolicyInTypedRedactionPipeline() {
   const typedScanSource = extractFunctionSource(contentSource, "maybeHandleTypedSecrets");
-  const allowCheckIndex = typedScanSource.indexOf("isCurrentRiskSetAllowedOnce(input, analysis.findings");
+  const pauseCheckIndex = typedScanSource.indexOf("isProtectionPauseActiveAfterPolicy(policy, destinationPolicy)");
+  const policyIndex = typedScanSource.indexOf("const destinationPolicy = await handleDestinationPolicy");
   const firstRedactionIndex = typedScanSource.indexOf("requestRedaction(");
 
-  assert.ok(allowCheckIndex >= 0, "typed scanner should check allow-once before redaction");
+  assert.ok(pauseCheckIndex >= 0, "typed scanner should check protection pause");
   assert.ok(firstRedactionIndex >= 0, "typed scanner should still redact when Redact is chosen");
   assert.ok(
-    allowCheckIndex < firstRedactionIndex,
-    "allow-once must gate auto-redaction before requestRedaction can run"
+    policyIndex >= 0 && policyIndex < pauseCheckIndex,
+    "pause must be checked only after destination policy enforcement"
   );
   assert.ok(
     typedScanSource.includes("scanGeneration !== typedScanGeneration") &&
-      typedScanSource.includes("isCurrentRiskSetAllowedOnce(latestInput, analysis.findings"),
-    "stale typed scans should re-check allow-once before applying redacted text"
+      !typedScanSource.includes("isCurrentRiskSetAllowedOnce"),
+    "stale typed scans should still be superseded without allow-once bypasses"
   );
 }
 
-function testAllowOnceBypassGatesPasteAndSendPipelines() {
+function testPauseBypassGatesPasteAndSendAfterPolicy() {
   const pasteSource = extractFunctionSource(contentSource, "maybeHandlePaste");
   const submitSource = extractFunctionSource(contentSource, "maybeHandleSubmit");
   const fallbackSendSource = extractFunctionSource(contentSource, "maybeHandleFallbackSendKey");
   const geminiPasteSource = extractFunctionSource(contentSource, "maybeHandleGeminiEditorPaste");
 
   assert.ok(
-    pasteSource.indexOf("isCurrentRiskSetAllowedOnce(input, analysis.findings") <
-      pasteSource.indexOf("const policy = await getPolicyForAction();"),
-    "paste follow-up should bypass redaction/prompting for an already allowed risk set"
+    pasteSource.indexOf("const destinationPolicy = await handleDestinationPolicy") <
+      pasteSource.indexOf("isProtectionPauseActiveAfterPolicy(policy, destinationPolicy)"),
+    "paste pause bypass should run after destination policy"
   );
   assert.ok(
-    submitSource.indexOf("isCurrentRiskSetAllowedOnce(input, analysis.findings") <
-      submitSource.indexOf("const policy = analysis.findings.length"),
-    "submit should allow the already approved message without rewriting it"
+    submitSource.indexOf("const destinationPolicy = analysis.findings.length") <
+      submitSource.indexOf("isProtectionPauseActiveAfterPolicy(policy, destinationPolicy)"),
+    "submit pause bypass should run after destination policy"
   );
   assert.ok(
-    fallbackSendSource.indexOf("isCurrentRiskSetAllowedOnce(input, analysis.findings") <
-      fallbackSendSource.indexOf("const policy = analysis.findings.length"),
-    "fallback Enter send should bypass redaction for an already allowed risk set"
+    fallbackSendSource.indexOf("const destinationPolicy = analysis.findings.length") <
+      fallbackSendSource.indexOf("isProtectionPauseActiveAfterPolicy(policy, destinationPolicy)"),
+    "fallback Enter-send pause bypass should run after destination policy"
   );
   assert.ok(
     geminiPasteSource.includes("promptForSensitiveContentDecision(") &&
       geminiPasteSource.includes('"paste"') &&
-      geminiPasteSource.includes("isCurrentRiskSetAllowedOnce(editor, analysis.findings") &&
+      geminiPasteSource.includes("isProtectionPauseActiveAfterPolicy(policy, destinationPolicy)") &&
       geminiPasteSource.includes("applyGeminiEditorText(editor, textToInsert"),
-    "Gemini editor paste should expose the shared Allow once/Redact decision and then use the safe Gemini insertion path"
+    "Gemini editor paste should share pause-aware decision flow and then use the safe Gemini insertion path"
   );
   assert.ok(
-    geminiPasteSource.includes('if (decisionAction === "redact")') &&
-      geminiPasteSource.indexOf("promptForSensitiveContentDecision(") <
-        geminiPasteSource.indexOf('if (decisionAction === "redact")'),
-    "Gemini editor paste must offer Allow once before requesting normal redaction"
+    !geminiPasteSource.includes('decisionAction === "allow"') &&
+      geminiPasteSource.indexOf("isProtectionPauseActiveAfterPolicy(policy, destinationPolicy)") <
+        geminiPasteSource.indexOf("promptForSensitiveContentDecision("),
+    "Gemini editor paste must check pause before prompting and must not offer an allow decision"
   );
 }
 
@@ -474,10 +475,13 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
       contentSource.includes("function handOffSanitizedFileInput") &&
       contentSource.includes("resolveFileInputForHandoff(event, input)") &&
       contentSource.includes("isGeminiHost()") &&
-      contentSource.includes("file-handoff:gemini-file-upload-skipped") &&
+      contentSource.includes("isGrokHost()") &&
+      contentSource.includes("function handOffGeminiSanitizedFileUpload") &&
+      contentSource.includes("function handOffGrokSanitizedFileUpload") &&
+      contentSource.includes("file-handoff:site-native-upload-failed") &&
       contentSource.includes('dispatchSanitizedFileEvent(target, "drop", transfer)') &&
       contentSource.includes('dispatchSanitizedFileEvent(target, "paste", transfer)'),
-    "local file handling should hand off sanitized files on non-Gemini sites while Gemini skips file-upload handoff"
+    "local file handling should hand off sanitized files through native site upload adapters and fail closed when required handoff fails"
   );
   assert.ok(
     contentSource.includes("async function applyGeminiSanitizedTextFallback") &&
@@ -588,16 +592,17 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   );
   assert.ok(
     contentSource.includes("buildRiskFingerprint") &&
-      contentSource.includes("allowedOnceFingerprint") &&
       contentSource.includes("pendingDecisionFingerprint") &&
       contentSource.includes("pendingDecisionPromise"),
-    "allow once should use a per-editor risk fingerprint and single-flight modal state"
+    "decision prompts should use a per-editor risk fingerprint and single-flight modal state"
   );
   assert.ok(
     contentSource.includes("clearAllRiskSessionState();") &&
       contentSource.includes("typedScanGeneration"),
-    "allow-once state should reset on lifecycle/send boundaries and stale typed scans should be superseded"
+    "decision state should reset on lifecycle/send boundaries and stale typed scans should be superseded"
   );
+  assert.strictEqual(contentSource.includes("Allow once"), false, "content script must not render Allow once");
+  assert.strictEqual(contentSource.includes("isCurrentRiskSetAllowedOnce"), false, "content script must not keep allow-once bypass helpers");
 }
 
 function run() {
@@ -614,12 +619,12 @@ function run() {
   testTypedTrustedPlaceholderTailTargetsOnlyTailBeforeCommit();
   testTypedRepeatedSecretRewriteDoesNotLeakRawBoundaries();
   testCaretDerivationPrefersOriginalSuffixAnchor();
-  testAllowOnceFingerprintSurvivesNormalTyping();
-  testAllowOnceFingerprintChangesWhenNewSuspiciousValueIsAdded();
-  testAllowOnceFingerprintChangesWhenSuspiciousValueIsReplaced();
-  testAllowOnceModalStateStaysLocalAndHasNoRawStorageHooks();
-  testAllowOnceBypassGatesTypedRedactionPipeline();
-  testAllowOnceBypassGatesPasteAndSendPipelines();
+  testRiskFingerprintSurvivesNormalTyping();
+  testRiskFingerprintChangesWhenNewSuspiciousValueIsAdded();
+  testRiskFingerprintChangesWhenSuspiciousValueIsReplaced();
+  testPauseStateHasNoRawStorageHooks();
+  testPauseBypassRunsAfterPolicyInTypedRedactionPipeline();
+  testPauseBypassGatesPasteAndSendAfterPolicy();
   testContentScriptBindsBeforeInputAndKeepsFallbackGuard();
   console.log("PASS typed beforeinput interception regressions");
 }

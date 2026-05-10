@@ -76,6 +76,9 @@
       enterpriseMode: false,
       allowReveal: true,
       allowUserOverride: true,
+      allowProtectionPause: true,
+      protectionPauseMaxMinutes: 15,
+      protectionPauseRequiresUserAction: true,
       allowUserAddedSites: true,
       allowSiteRemoval: true,
       blockHttpSecrets: false,
@@ -97,6 +100,12 @@
       managedApplied: false,
       strictFailure: false,
       http: location.protocol === "http:"
+    },
+    protection: {
+      paused: false,
+      pausedUntil: 0,
+      allowProtectionPause: true,
+      protectionEnforced: false
     }
   };
   let badgeEl = null;
@@ -116,6 +125,7 @@
   let statusPanelSiteValueEl = null;
   let statusPanelComposerValueEl = null;
   let statusPanelSessionValueEl = null;
+  let statusPanelPauseBtn = null;
   let extensionRuntimeAvailable = true;
   const sanitizedFileInputHandoffs = new WeakSet();
   const rawFileDropInterceptions = new WeakSet();
@@ -686,10 +696,21 @@
             setBadge("LeakGuard settings unavailable");
             hideBadgeSoon(2200);
           });
-        });
+      });
     });
 
-    actions.appendChild(manageBtn);
+    statusPanelPauseBtn = document.createElement("button");
+    statusPanelPauseBtn.className = "pwm-btn pwm-panel-pause";
+    statusPanelPauseBtn.type = "button";
+    statusPanelPauseBtn.addEventListener("click", () => {
+      const protection = getActiveProtection();
+      setProtectionPaused(!protection.paused).catch((error) => {
+        setBadge(error?.message || "Protection pause unavailable");
+        hideBadgeSoon(2800);
+      });
+    });
+
+    actions.append(statusPanelPauseBtn, manageBtn);
     body.appendChild(actions);
 
     statusPanelEl.append(header, body);
@@ -699,10 +720,33 @@
     return statusPanelEl;
   }
 
+  function getActiveProtection() {
+    return {
+      paused: false,
+      pausedUntil: 0,
+      allowProtectionPause: false,
+      protectionEnforced: false,
+      ...(currentPublicState.protection || {})
+    };
+  }
+
   function updateStatusPanel(snapshot = {}) {
     ensureStatusPanel();
 
-    statusPanelProtectionValueEl.textContent = "Active";
+    const protection = getActiveProtection();
+    if (protection.protectionEnforced) {
+      statusPanelProtectionValueEl.textContent = "Enforced by policy";
+    } else if (protection.paused) {
+      statusPanelProtectionValueEl.textContent = "Paused";
+    } else {
+      statusPanelProtectionValueEl.textContent = "Active";
+    }
+
+    if (statusPanelPauseBtn) {
+      statusPanelPauseBtn.hidden = !protection.allowProtectionPause;
+      statusPanelPauseBtn.textContent = protection.paused ? "Resume Protection" : "Pause Protection";
+    }
+
     statusPanelSiteValueEl.textContent = location.host || "Protected site";
 
     if (!snapshot.hasComposer) {
@@ -761,6 +805,10 @@
       policy: {
         ...(currentPublicState.policy || {}),
         ...(state.policy || {})
+      },
+      protection: {
+        ...(currentPublicState.protection || {}),
+        ...(state.protection || {})
       }
     };
   }
@@ -770,6 +818,9 @@
       enterpriseMode: false,
       allowReveal: true,
       allowUserOverride: true,
+      allowProtectionPause: true,
+      protectionPauseMaxMinutes: 15,
+      protectionPauseRequiresUserAction: true,
       allowUserAddedSites: true,
       allowSiteRemoval: true,
       blockHttpSecrets: false,
@@ -834,6 +885,30 @@
     return getActivePolicy();
   }
 
+  async function setProtectionPaused(paused) {
+    const policy = await refreshPublicState();
+    const durationMinutes = Number(policy.protectionPauseMaxMinutes || 15);
+    const response = await sendRuntimeMessage({
+      type: "PWM_SET_PROTECTION_PAUSED",
+      url: location.href,
+      paused: Boolean(paused),
+      durationMinutes
+    });
+
+    if (!response?.ok) {
+      throw new Error(response?.error || "LeakGuard could not update protection pause.");
+    }
+
+    if (response.state) {
+      applyPublicState(response.state);
+    }
+
+    updateStatusPanel();
+    setBadge(paused ? "Protection paused" : "Protection resumed");
+    hideBadgeSoon(2600);
+    return getActiveProtection();
+  }
+
   async function getPolicyForAction() {
     try {
       return await refreshPublicState();
@@ -851,15 +926,22 @@
   }
 
   function resolveDecisionAction(action, policy) {
-    if (action !== "allow" || policy.allowUserOverride) {
-      return action;
-    }
-
-    return policy.defaultAction === "redact" ? "redact" : "cancel";
+    return action === "redact" ? "redact" : "cancel";
   }
 
   function getDestinationPolicyDecision(policy) {
     return evaluateDestinationPolicy(policy, location.href);
+  }
+
+  function isProtectionPauseActiveAfterPolicy(policy, destinationPolicy = null) {
+    const protection = getActiveProtection();
+    if (!protection.paused || !protection.allowProtectionPause) return false;
+    if (protection.protectionEnforced) return false;
+    if (policy?.strictFailure) return false;
+    if (destinationPolicy?.blocked || destinationPolicy?.requiresRedaction) return false;
+    if (policy?.enterpriseMode && policy?.http && policy?.blockHttpSecrets) return false;
+
+    return true;
   }
 
   function shouldForceDestinationRedaction(decision, findings) {
@@ -872,7 +954,6 @@
     let state = editorRiskState.get(input);
     if (!state) {
       state = {
-        allowedOnceFingerprint: "",
         pendingDecisionFingerprint: "",
         pendingDecisionPromise: null
       };
@@ -886,7 +967,6 @@
     const state = getEditorRiskState(input);
     if (!state) return;
 
-    state.allowedOnceFingerprint = "";
     state.pendingDecisionFingerprint = "";
     state.pendingDecisionPromise = null;
   }
@@ -916,31 +996,6 @@
     return buildRiskFingerprint(findings, normalizedText);
   }
 
-  function isCurrentRiskSetAllowedOnce(input, findings, normalizedText) {
-    const state = input ? getEditorRiskState(input) : null;
-    const riskFingerprint = getRiskFingerprintForFindings(findings, normalizedText);
-
-    return Boolean(state && riskFingerprint && state.allowedOnceFingerprint === riskFingerprint);
-  }
-
-  function clearAllowedOnceIfRiskChanged(input, findings, normalizedText) {
-    const state = input ? getEditorRiskState(input) : null;
-    if (!state?.allowedOnceFingerprint) return;
-
-    const riskFingerprint = getRiskFingerprintForFindings(findings, normalizedText);
-    if (riskFingerprint && riskFingerprint !== state.allowedOnceFingerprint) {
-      state.allowedOnceFingerprint = "";
-    }
-  }
-
-  function markRiskSetAllowedOnce(input, riskFingerprint) {
-    const state = input ? getEditorRiskState(input) : null;
-    if (!state || !riskFingerprint) return;
-
-    state.allowedOnceFingerprint = riskFingerprint;
-    typedScanGeneration += 1;
-  }
-
   async function handleDestinationPolicy(findings, policy) {
     const decision = getDestinationPolicyDecision(policy);
 
@@ -966,12 +1021,6 @@
     const riskFingerprint = getRiskFingerprintForFindings(findings, normalizedText);
     const state = input ? getEditorRiskState(input) : null;
 
-    if (isCurrentRiskSetAllowedOnce(input, findings, normalizedText)) {
-      return resolveDecisionAction("allow", policy);
-    }
-
-    clearAllowedOnceIfRiskChanged(input, findings, normalizedText);
-
     if (
       state &&
       state.pendingDecisionPromise &&
@@ -981,13 +1030,9 @@
     }
 
     const decisionPromise = showDecisionModal(findings, mode, {
-      allowUserOverride: policy.allowUserOverride
+      policy
     }).then((decision) => {
       const action = resolveDecisionAction(decision.action, policy);
-
-      if (state && action === "allow" && riskFingerprint) {
-        markRiskSetAllowedOnce(input, riskFingerprint);
-      }
 
       if (state && state.pendingDecisionPromise === decisionPromise) {
         state.pendingDecisionFingerprint = "";
@@ -1358,8 +1403,6 @@
     }
 
     modalOpen = true;
-    const allowUserOverride = options.allowUserOverride !== false;
-
     return new Promise((resolve) => {
       const backdrop = document.createElement("div");
       backdrop.className = "pwm-modal-backdrop";
@@ -1376,10 +1419,10 @@
       const desc = document.createElement("p");
       desc.textContent =
         mode === "paste"
-          ? "This pasted content appears to contain sensitive material. Redact it before it reaches the chat input."
+          ? "This pasted content appears to contain sensitive material. Redact it before it reaches the chat input, or cancel the paste."
           : mode === "input"
-            ? "This typed content may contain sensitive material. High-confidence detections auto-redact; review this one before it sits in the chat input."
-          : "This message appears to contain sensitive material. Redact it before sending.";
+            ? "This typed content may contain sensitive material. Redact it before it stays in the chat input, or cancel the edit."
+          : "This message appears to contain sensitive material. Redact it before sending, or cancel the send.";
 
       const findingsWrap = document.createElement("div");
       findingsWrap.className = "pwm-findings";
@@ -1392,11 +1435,6 @@
       cancelBtn.className = "pwm-btn";
       cancelBtn.type = "button";
       cancelBtn.textContent = "Cancel";
-
-      const allowBtn = document.createElement("button");
-      allowBtn.className = "pwm-btn";
-      allowBtn.type = "button";
-      allowBtn.textContent = "Allow once";
 
       const redactBtn = document.createElement("button");
       redactBtn.className = "pwm-btn pwm-btn-primary";
@@ -1414,7 +1452,6 @@
       const getFocusedAction = () => {
         const active = document.activeElement;
         if (active === redactBtn) return "redact";
-        if (allowUserOverride && active === allowBtn) return "allow";
         if (active === cancelBtn) return "cancel";
         if (modal.contains(active)) return "redact";
         return null;
@@ -1448,7 +1485,6 @@
       };
 
       cancelBtn.addEventListener("click", () => finish({ action: "cancel" }));
-      allowBtn.addEventListener("click", () => finish({ action: "allow" }));
       redactBtn.addEventListener("click", () => finish({ action: "redact" }));
 
       backdrop.addEventListener("click", (event) => {
@@ -1458,9 +1494,6 @@
       });
 
       actions.append(cancelBtn);
-      if (allowUserOverride) {
-        actions.appendChild(allowBtn);
-      }
       actions.appendChild(redactBtn);
       modal.append(title, desc, findingsWrap, actions);
       backdrop.appendChild(modal);
@@ -1889,25 +1922,6 @@
 
     consumeInterceptionEvent(event);
 
-    if (isCurrentRiskSetAllowedOnce(input, relevantFindings, nextAnalysis.normalizedText)) {
-      const ok = await applyTypedInterceptionRewrite(
-        input,
-        nextAnalysis.normalizedText,
-        originalText,
-        selection,
-        "input"
-      );
-
-      if (!ok) return;
-
-      lastTypedPromptText = nextAnalysis.normalizedText;
-      setBadge("Redaction skipped once");
-      hideBadgeSoon();
-      refreshBadgeFromCurrentInput();
-      return;
-    }
-    clearAllowedOnceIfRiskChanged(input, relevantFindings, nextAnalysis.normalizedText);
-
     const policy = await getPolicyForAction();
     const destinationPolicy = await handleDestinationPolicy(relevantFindings, policy);
     if (destinationPolicy.blocked) {
@@ -1963,6 +1977,24 @@
       return;
     }
 
+    if (isProtectionPauseActiveAfterPolicy(policy, destinationPolicy)) {
+      const ok = await applyTypedInterceptionRewrite(
+        input,
+        nextAnalysis.normalizedText,
+        originalText,
+        selection,
+        "input"
+      );
+
+      if (!ok) return;
+
+      lastTypedPromptText = nextAnalysis.normalizedText;
+      setBadge("Protection paused");
+      hideBadgeSoon();
+      refreshBadgeFromCurrentInput();
+      return;
+    }
+
     if (typedShouldAutoRedact) {
       const result = await requestRedaction(nextAnalysis.normalizedText, relevantSecretFindings);
       const ok = await applyTypedInterceptionRewrite(
@@ -2010,24 +2042,6 @@
       nextAnalysis.normalizedText
     );
     if (decisionAction === "cancel") {
-      refreshBadgeFromCurrentInput();
-      return;
-    }
-
-    if (decisionAction === "allow") {
-      const ok = await applyTypedInterceptionRewrite(
-        input,
-        nextAnalysis.normalizedText,
-        originalText,
-        selection,
-        "input"
-      );
-
-      if (!ok) return;
-
-      lastTypedPromptText = nextAnalysis.normalizedText;
-      setBadge("Redaction skipped once");
-      hideBadgeSoon();
       refreshBadgeFromCurrentInput();
       return;
     }
@@ -2101,23 +2115,6 @@
       return;
     }
 
-    if (isCurrentRiskSetAllowedOnce(input, analysis.findings, analysis.normalizedText)) {
-      const ok = await applyPasteDecision(
-        input,
-        originalText,
-        selection,
-        analysis.normalizedText,
-        "paste"
-      );
-      if (!ok) return;
-
-      setBadge("Redaction skipped once");
-      hideBadgeSoon();
-      refreshBadgeFromCurrentInput();
-      return;
-    }
-    clearAllowedOnceIfRiskChanged(input, analysis.findings, analysis.normalizedText);
-
     const policy = await getPolicyForAction();
     const destinationPolicy = await handleDestinationPolicy(analysis.findings, policy);
     if (destinationPolicy.blocked) {
@@ -2179,6 +2176,27 @@
       return;
     }
 
+    if (isProtectionPauseActiveAfterPolicy(policy, destinationPolicy)) {
+      const latestInput = findComposer(input);
+      if (!latestInput) return;
+
+      const latestText = getInputText(latestInput);
+      const baseText = latestText === originalText ? latestText : originalText;
+      const ok = await applyPasteDecision(
+        latestInput,
+        baseText,
+        selection,
+        analysis.normalizedText,
+        "paste"
+      );
+      if (!ok) return;
+
+      setBadge("Protection paused");
+      hideBadgeSoon();
+      refreshBadgeFromCurrentInput();
+      return;
+    }
+
     const decisionAction = await promptForSensitiveContentDecision(
       analysis.findings,
       "paste",
@@ -2193,22 +2211,6 @@
 
     const latestText = getInputText(latestInput);
     const baseText = latestText === originalText ? latestText : originalText;
-
-    if (decisionAction === "allow") {
-      const ok = await applyPasteDecision(
-        latestInput,
-        baseText,
-        selection,
-        analysis.normalizedText,
-        "paste"
-      );
-      if (!ok) return;
-
-      setBadge("Redaction skipped once");
-      hideBadgeSoon();
-      refreshBadgeFromCurrentInput();
-      return;
-    }
 
     const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
 
@@ -2253,6 +2255,31 @@
       transfer.items.add(sanitizedFile);
       return Number(transfer.files?.length || 0) > 0 ? transfer : null;
     } catch {
+      return null;
+    }
+  }
+
+  function createSanitizedDataTransferForHandoff(sanitizedFile, details) {
+    if (details) {
+      details.dataTransferConstructorSucceeded = false;
+      details.dataTransferItemsAddSucceeded = false;
+    }
+    if (!sanitizedFile || typeof DataTransfer !== "function") {
+      return null;
+    }
+
+    try {
+      const transfer = new DataTransfer();
+      if (details) details.dataTransferConstructorSucceeded = true;
+      if (typeof transfer.items?.add !== "function") return null;
+      transfer.items.add(sanitizedFile);
+      if (details) details.dataTransferItemsAddSucceeded = true;
+      return Number(transfer.files?.length || 0) > 0 ? transfer : null;
+    } catch (error) {
+      if (details) {
+        details.errorMessage = error?.message || String(error);
+        details.errorStack = error?.stack || "";
+      }
       return null;
     }
   }
@@ -2321,6 +2348,10 @@
 
   function isGeminiHost() {
     return location.hostname === "gemini.google.com";
+  }
+
+  function isGrokHost() {
+    return location.hostname === "grok.com" || location.hostname.endsWith(".grok.com");
   }
 
   function shouldHandleChatGptLargeTextPaste(pasted, quickAnalysis) {
@@ -2396,7 +2427,7 @@
         file: describeFileForDebug(sanitizedFile)
       });
 
-      if (sanitizedFile && handOffSanitizedLocalFile(event, input, sanitizedFile, "paste")) {
+      if (sanitizedFile && (await handOffSanitizedLocalFile(event, input, sanitizedFile, "paste"))) {
         if (optimizedStatus) {
           clearLocalPayloadOptimizationStatus(sizeInfo, "complete");
         }
@@ -2746,65 +2777,56 @@
       let textToInsert = analysis.normalizedText;
 
       if (analysis.findings.length) {
-        if (isCurrentRiskSetAllowedOnce(editor, analysis.findings, analysis.normalizedText)) {
-          setBadge("Redaction skipped once");
-          hideBadgeSoon();
-        } else {
-          clearAllowedOnceIfRiskChanged(editor, analysis.findings, analysis.normalizedText);
+        const policy = await getPolicyForAction();
+        const destinationPolicy = await handleDestinationPolicy(analysis.findings, policy);
+        if (destinationPolicy.blocked) {
+          if (optimizedStatus) {
+            clearLocalPayloadOptimizationStatus(sizeInfo, "cancelled");
+          }
+          return true;
+        }
 
-          const policy = await getPolicyForAction();
-          const destinationPolicy = await handleDestinationPolicy(analysis.findings, policy);
-          if (destinationPolicy.blocked) {
+        const destinationForceRedact = shouldForceDestinationRedaction(
+          destinationPolicy,
+          analysis.findings
+        );
+        const httpPolicyHandled = await handleHttpSecretPolicy(
+          policy,
+          analysis.secretFindings,
+          async () => {
+            const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
+            textToInsert = result.redactedText;
+          }
+        );
+
+        if (!httpPolicyHandled && destinationForceRedact) {
+          const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings, {
+            auditReason: destinationPolicy.reason
+          });
+          textToInsert = result.redactedText;
+        } else if (!httpPolicyHandled && !isProtectionPauseActiveAfterPolicy(policy, destinationPolicy)) {
+          const decisionAction = await promptForSensitiveContentDecision(
+            analysis.findings,
+            "paste",
+            policy,
+            editor,
+            analysis.normalizedText
+          );
+
+          if (decisionAction === "cancel") {
             if (optimizedStatus) {
               clearLocalPayloadOptimizationStatus(sizeInfo, "cancelled");
             }
+            refreshBadgeFromCurrentInput();
             return true;
           }
 
-          const destinationForceRedact = shouldForceDestinationRedaction(
-            destinationPolicy,
-            analysis.findings
-          );
-          const httpPolicyHandled = await handleHttpSecretPolicy(
-            policy,
-            analysis.secretFindings,
-            async () => {
-              const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
-              textToInsert = result.redactedText;
-            }
-          );
-
-          if (!httpPolicyHandled && destinationForceRedact) {
-            const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings, {
-              auditReason: destinationPolicy.reason
-            });
-            textToInsert = result.redactedText;
-          } else if (!httpPolicyHandled) {
-            const decisionAction = await promptForSensitiveContentDecision(
-              analysis.findings,
-              "paste",
-              policy,
-              editor,
-              analysis.normalizedText
-            );
-
-            if (decisionAction === "cancel") {
-              if (optimizedStatus) {
-                clearLocalPayloadOptimizationStatus(sizeInfo, "cancelled");
-              }
-              refreshBadgeFromCurrentInput();
-              return true;
-            }
-
-            if (decisionAction === "redact") {
-              const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
-              textToInsert = result.redactedText;
-            } else {
-              setBadge("Redaction skipped once");
-              hideBadgeSoon();
-            }
+          const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
+          textToInsert = result.redactedText;
+        } else if (!httpPolicyHandled) {
+          setBadge("Protection paused");
+          hideBadgeSoon();
           }
-        }
       }
 
       const applied = await applyGeminiEditorText(editor, textToInsert, "gemini-paste");
@@ -2887,95 +2909,7 @@
   }
 
   async function maybeHandleGeminiEditorDrop(event) {
-    const editor = resolveGeminiEditorTarget(event?.target);
-    if (!editor) return false;
-
-    const files = listLocalTransferFiles(event.dataTransfer);
-    if (files.length !== 1 || !isSupportedGeminiTextFile(files[0])) {
-      if (files.length) {
-        showUnsupportedFilePassThroughNotice(resolveLocalFileTransferPolicy(event.dataTransfer));
-      }
-      return false;
-    }
-
-    consumeInterceptionEvent(event);
-    const localFile =
-      typeof readLocalTextFileFromDataTransfer === "function"
-        ? await readLocalTextFileFromDataTransfer(event.dataTransfer)
-        : await readGeminiTextFile(files[0]);
-    if (!localFile.ok) {
-      if (localFile.code === "streaming_required" && localFile.sourceFile) {
-        const streamResult = await streamRedactLocalTextFile(localFile.sourceFile, localFile.file);
-        if (streamResult.action === "redacted" && streamResult.sanitizedFile) {
-          const handedOff = handOffGeminiSanitizedFileUpload(event, editor, streamResult.sanitizedFile);
-          if (handedOff) {
-            setBadge("LeakGuard attached a sanitized local file.");
-            hideBadgeSoon(3200);
-            refreshBadgeFromCurrentInput();
-            return true;
-          }
-
-          const fallbackText = await readSanitizedFileTextForFallback(streamResult.sanitizedFile);
-          if (fallbackText) {
-            const fallbackResult = await applyGeminiSanitizedTextFallback(event, editor, fallbackText);
-            if (fallbackResult === true || fallbackResult === "cancelled") {
-              return true;
-            }
-          }
-        }
-
-        return blockGeminiEditorRawContent(
-          event,
-          streamResult.title || "Raw file upload blocked",
-          streamResult.error || "LeakGuard blocked raw file upload because sanitized streaming handoff failed."
-        );
-      }
-
-      return blockGeminiEditorRawContent(
-        event,
-        "Raw file upload blocked",
-        localFile.message || "LeakGuard could not read this local file, so nothing was attached."
-      );
-    }
-
-    const sizeInfo = classifyLocalTextPayloadSize({
-      text: localFile.text,
-      sizeBytes: localFile.file?.sizeBytes
-    });
-    if (sizeInfo.zone === "blocked") {
-      await blockLargeLocalTextPayload(event, sizeInfo);
-      return true;
-    }
-
-    const optimizedStatus = sizeInfo.zone === "optimized";
-    if (optimizedStatus) {
-      showLocalPayloadOptimizationStatus(sizeInfo);
-    }
-
-    try {
-      const sanitizedText = await redactGeminiEditorText(localFile.text);
-      const applied = await applyGeminiEditorText(editor, sanitizedText, "gemini-drop");
-      if (applied === true || applied === "cancelled") {
-        if (optimizedStatus) {
-          clearLocalPayloadOptimizationStatus(sizeInfo, applied === true ? "complete" : "cancelled");
-        }
-        return true;
-      }
-    } catch (error) {
-      if (optimizedStatus) {
-        clearLocalPayloadOptimizationStatus(sizeInfo, "failed");
-      }
-      handleContentError(error);
-    }
-
-    if (optimizedStatus) {
-      clearLocalPayloadOptimizationStatus(sizeInfo, "failed");
-    }
-    return blockGeminiEditorRawContent(
-      event,
-      "Raw file upload blocked",
-      "LeakGuard blocked raw file upload because sanitized insertion failed."
-    );
+    return false;
   }
 
   function isFileInputElement(el) {
@@ -2998,13 +2932,103 @@
   function describeFileInputForDebug(fileInput, source = "") {
     if (!isFileInputElement(fileInput)) return null;
     return {
+      tag: fileInput.tagName || "",
       source,
       disabled: Boolean(fileInput.disabled),
       hidden: Boolean(fileInput.hidden),
+      className: typeof fileInput.className === "string" ? fileInput.className : fileInput.getAttribute?.("class") || "",
       accept: fileInput.accept || "",
       multiple: Boolean(fileInput.multiple),
       filesLength: Number(fileInput.files?.length || 0)
     };
+  }
+
+  function getSafeTextSnippet(el) {
+    if (!el) return "";
+    let text = "";
+    try {
+      text = String(el.innerText || el.textContent || "");
+    } catch {
+      text = "";
+    }
+    return text.replace(/\s+/g, " ").trim().slice(0, 80);
+  }
+
+  function describeElementForDebug(el, source = "") {
+    if (!el) return null;
+    let className = "";
+    try {
+      className =
+        typeof el.className === "string"
+          ? el.className
+          : el.getAttribute?.("class") || "";
+    } catch {
+      className = "";
+    }
+    return {
+      tag: el.tagName || "",
+      role: el.getAttribute?.("role") || el.role || "",
+      ariaLabel: el.getAttribute?.("aria-label") || el.ariaLabel || "",
+      title: el.getAttribute?.("title") || el.title || "",
+      className,
+      textSnippet: getSafeTextSnippet(el),
+      source
+    };
+  }
+
+  function originalFileMetadataFromEvent(event) {
+    try {
+      return describeFileForDebug(event?.dataTransfer?.files?.[0]);
+    } catch {
+      return null;
+    }
+  }
+
+  function createSanitizedFileHandoffDetails(event, sanitizedFile, stage) {
+    const target = normalizeTarget(event?.target);
+    return {
+      hostname: location.hostname || "",
+      eventType: event?.type || "",
+      handoffStage: stage || "",
+      targetTag: target?.tagName || "",
+      originalFile: originalFileMetadataFromEvent(event),
+      sanitizedFile: describeFileForDebug(sanitizedFile),
+      foundTopUploadTrigger: false,
+      uploadTrigger: null,
+      overlayItemCount: 0,
+      overlayCandidates: [],
+      selectedOverlayItem: null,
+      fileInputCountBeforeClick: 0,
+      fileInputCountAfterTopTriggerClick: 0,
+      fileInputCountAfterOverlayItemClick: 0,
+      openShadowRootCount: 0,
+      dataTransferConstructorSucceeded: false,
+      dataTransferItemsAddSucceeded: false,
+      inputFilesAssignmentSucceeded: false,
+      inputEventDispatched: false,
+      changeEventDispatched: false,
+      failureReason: "",
+      errorMessage: "",
+      errorStack: ""
+    };
+  }
+
+  function logSanitizedFileHandoffFailure(details, error) {
+    const payload = {
+      ...(details || {}),
+      errorMessage: details?.errorMessage || error?.message || (error ? String(error) : ""),
+      errorStack: details?.errorStack || error?.stack || ""
+    };
+    try {
+      debugReveal("sanitized-file-handoff:failed", payload);
+    } catch {
+      // Diagnostics must never affect blocking behavior.
+    }
+    try {
+      console.error("[LeakGuard] sanitized file handoff failed", payload, error || "");
+    } catch {
+      // Ignore console failures in host-controlled environments.
+    }
   }
 
   function clearFileDragSession() {
@@ -3079,6 +3103,215 @@
     });
   }
 
+  function describeUploadTriggerForDebug(trigger, source = "") {
+    return describeElementForDebug(trigger, source);
+  }
+
+  function collectFileHandoffElementsFromRoot(root, addInput, addUploadTrigger, visitedRoots, stats) {
+    if (!root || visitedRoots.has(root)) return;
+    visitedRoots.add(root);
+
+    try {
+      root.querySelectorAll?.("input[type='file']").forEach((candidate) => {
+        addInput(candidate, root === document ? "document" : "shadow-root");
+      });
+    } catch {
+      // Host-controlled roots can reject selectors; keep scanning other roots.
+    }
+
+    const uploadSelectors = [
+      'button[aria-label="Open upload file menu"]',
+      '[role="button"][aria-label*="upload" i]',
+      'button[aria-label*="upload" i]',
+      'button[aria-label*="file" i]',
+      'button[aria-label*="attach" i]'
+    ];
+    for (const selector of uploadSelectors) {
+      try {
+        root.querySelectorAll?.(selector).forEach((candidate) => {
+          addUploadTrigger(candidate, selector, root === document ? "document" : "shadow-root");
+        });
+      } catch {
+        // Case-insensitive attribute selectors are not universally available in synthetic DOMs.
+      }
+    }
+
+    let elements = [];
+    try {
+      elements = Array.from(root.querySelectorAll?.("*") || []);
+    } catch {
+      elements = [];
+    }
+
+    elements.forEach((element) => {
+      if (element?.shadowRoot) {
+        if (stats) {
+          stats.openShadowRootCount += 1;
+        }
+        collectFileHandoffElementsFromRoot(element.shadowRoot, addInput, addUploadTrigger, visitedRoots, stats);
+      }
+    });
+  }
+
+  function discoverGeminiFileHandoffElements(event, input) {
+    const inputs = [];
+    const uploadTriggers = [];
+    const seenInputs = new WeakSet();
+    const seenTriggers = new WeakSet();
+    const stats = { openShadowRootCount: 0 };
+    const addInput = (candidate, source = "") => {
+      if (!isFileInputElement(candidate) || seenInputs.has(candidate)) return;
+      seenInputs.add(candidate);
+      inputs.push({ input: candidate, source });
+    };
+    const addUploadTrigger = (candidate, selector = "", source = "") => {
+      if (!candidate || seenTriggers.has(candidate)) return;
+      seenTriggers.add(candidate);
+      uploadTriggers.push({ trigger: candidate, selector, source });
+    };
+
+    collectFileInputsFromAncestry(event?.target, addInput);
+
+    const target = normalizeTarget(event?.target);
+    const preferredInputSelectors = [
+      "input[type='file'][accept*='text']",
+      "input[type='file'][accept*='.txt']",
+      "input[type='file'][accept*='.md']",
+      "input[type='file'][accept*='.json']",
+      "input[type='file'][accept*='.csv']",
+      "input[type='file']"
+    ];
+    for (const selector of preferredInputSelectors) {
+      try {
+        target?.closest?.("[role='dialog'], form, main, body")?.querySelectorAll?.(selector).forEach((candidate) => {
+          addInput(candidate, "target-scope");
+        });
+      } catch {
+        // Host-controlled selectors can fail; broader discovery below remains fail-closed.
+      }
+    }
+    target?.closest?.("form")?.querySelectorAll?.("input[type='file']").forEach((candidate) => {
+      addInput(candidate, "target-form");
+    });
+    input?.closest?.("form")?.querySelectorAll?.("input[type='file']").forEach((candidate) => {
+      addInput(candidate, "composer-form");
+    });
+
+    collectFileHandoffElementsFromRoot(document, addInput, addUploadTrigger, new WeakSet(), stats);
+
+    const fileInput = inputs.find(({ input: candidate }) => !candidate.disabled)?.input || null;
+    const uploadTrigger =
+      uploadTriggers.find(({ trigger }) => {
+        const label = trigger.getAttribute?.("aria-label") || trigger.ariaLabel || "";
+        return label === "Open upload file menu" && !trigger.disabled;
+      })?.trigger ||
+      uploadTriggers.find(({ trigger }) => !trigger.disabled)?.trigger ||
+      null;
+
+    return {
+      fileInput,
+      uploadTrigger,
+      fileInputCount: inputs.length,
+      uploadTriggerCount: uploadTriggers.length,
+      openShadowRootCount: stats.openShadowRootCount,
+      fileInputs: inputs,
+      uploadTriggers
+    };
+  }
+
+  function collectRootsWithOpenShadow(root, roots, visitedRoots, stats) {
+    if (!root || visitedRoots.has(root)) return;
+    visitedRoots.add(root);
+    roots.push(root);
+
+    let elements = [];
+    try {
+      elements = Array.from(root.querySelectorAll?.("*") || []);
+    } catch {
+      elements = [];
+    }
+
+    elements.forEach((element) => {
+      if (element?.shadowRoot) {
+        if (stats) stats.openShadowRootCount += 1;
+        collectRootsWithOpenShadow(element.shadowRoot, roots, visitedRoots, stats);
+      }
+    });
+  }
+
+  function isRejectedGeminiUploadMenuItem(candidate) {
+    const meta = describeElementForDebug(candidate);
+    const haystack = `${meta?.ariaLabel || ""} ${meta?.title || ""} ${meta?.textSnippet || ""}`.toLowerCase();
+    return haystack.includes("drive") || haystack.includes("photos") || haystack.includes("notebooklm");
+  }
+
+  function scoreGeminiUploadMenuItem(candidate) {
+    if (!candidate || isRejectedGeminiUploadMenuItem(candidate)) return 0;
+    const meta = describeElementForDebug(candidate);
+    const label = meta?.ariaLabel || "";
+    const text = meta?.textSnippet || "";
+    const role = meta?.role || "";
+    if (role === "menuitem" && label === "Upload files. Documents, data, code files") return 100;
+    if (role === "menuitem" && /upload files/i.test(label)) return 80;
+    if (role === "menuitem" && /upload files/i.test(text)) return 70;
+    if (/upload files/i.test(label) || /upload files/i.test(text)) return 50;
+    return 0;
+  }
+
+  function discoverGeminiUploadOverlayItem(details) {
+    const roots = [];
+    const stats = { openShadowRootCount: 0 };
+    collectRootsWithOpenShadow(document, roots, new WeakSet(), stats);
+    const candidates = [];
+    const seen = new WeakSet();
+    const selectors = [
+      ".cdk-overlay-container",
+      ".cdk-overlay-pane",
+      ".mat-mdc-menu-panel",
+      'mat-action-list[role="menu"]',
+      '[role="menuitem"]',
+      "button"
+    ];
+
+    const addCandidate = (candidate, source) => {
+      if (!candidate || seen.has(candidate)) return;
+      seen.add(candidate);
+      if (candidate.matches?.(".cdk-overlay-container, .cdk-overlay-pane, .mat-mdc-menu-panel, mat-action-list")) {
+        return;
+      }
+      const score = scoreGeminiUploadMenuItem(candidate);
+      candidates.push({ candidate, source, score });
+    };
+
+    roots.forEach((root) => {
+      selectors.forEach((selector) => {
+        try {
+          root.querySelectorAll?.(selector).forEach((candidate) => addCandidate(candidate, selector));
+        } catch {
+          // Keep diagnostics best-effort.
+        }
+      });
+    });
+
+    const selected = candidates
+      .filter(({ score }) => score > 0)
+      .sort((a, b) => b.score - a.score)[0]?.candidate || null;
+
+    if (details) {
+      details.openShadowRootCount = Math.max(Number(details.openShadowRootCount || 0), stats.openShadowRootCount);
+      details.overlayItemCount = candidates.length;
+      details.overlayCandidates = candidates
+        .slice(0, 20)
+        .map(({ candidate, source, score }) => ({
+          ...describeElementForDebug(candidate, source),
+          score
+        }));
+      details.selectedOverlayItem = describeElementForDebug(selected, "gemini-upload-overlay-item");
+    }
+
+    return selected;
+  }
+
   function discoverFileInputForHandoff(event, input) {
     const candidates = [];
     const seen = new WeakSet();
@@ -3091,6 +3324,23 @@
     collectFileInputsFromAncestry(event?.target, addCandidate);
 
     const target = normalizeTarget(event?.target);
+    const preferredSelectors = [
+      "input[type='file'][accept*='text']",
+      "input[type='file'][accept*='.txt']",
+      "input[type='file'][accept*='.md']",
+      "input[type='file'][accept*='.json']",
+      "input[type='file'][accept*='.csv']",
+      "input[type='file']"
+    ];
+    for (const selector of preferredSelectors) {
+      try {
+        target?.closest?.("[role='dialog'], form, main, body")?.querySelectorAll?.(selector).forEach((candidate) => {
+          addCandidate(candidate, "target-scope");
+        });
+      } catch {
+        // Host-controlled selectors can fail; broader discovery below remains fail-closed.
+      }
+    }
     target?.closest?.("form")?.querySelectorAll?.("input[type='file']").forEach((candidate) => {
       addCandidate(candidate, "target-form");
     });
@@ -3109,6 +3359,34 @@
     });
 
     return fileInput;
+  }
+
+  async function waitForGeminiUploadMenuInput() {
+    await new Promise((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        resolve();
+      };
+      const raf = typeof requestAnimationFrame === "function" ? requestAnimationFrame : null;
+      if (raf) {
+        try {
+          raf(() => {
+            try {
+              raf(finish);
+            } catch {
+              finish();
+            }
+          });
+        } catch {
+          setTimeout(finish, 0);
+        }
+      } else {
+        setTimeout(finish, 0);
+      }
+      setTimeout(finish, 120);
+    });
   }
 
   function resolveFileInputForHandoff(event, input) {
@@ -3144,10 +3422,6 @@
   }
 
   function handleFileDragDetected(event) {
-    if (isGeminiHost()) {
-      return;
-    }
-
     scheduleFileDragSessionReset();
     if (!fileDragDetectedLogged) {
       fileDragDetectedLogged = true;
@@ -3163,11 +3437,13 @@
     if (!isFileInputElement(fileInput) || !transfer?.files) return false;
 
     const handoffOptions = options || {};
+    const details = handoffOptions.details || null;
     const dispatchInputEvent = handoffOptions.dispatchInput !== false;
     const events = [];
     try {
       sanitizedFileInputHandoffs.add(fileInput);
       fileInput.files = transfer.files;
+      if (details) details.inputFilesAssignmentSucceeded = true;
       if (dispatchInputEvent) {
         fileInput.dispatchEvent(
           new Event("input", {
@@ -3176,6 +3452,7 @@
           })
         );
         events.push("input");
+        if (details) details.inputEventDispatched = true;
       }
       fileInput.dispatchEvent(
         new Event("change", {
@@ -3184,13 +3461,19 @@
         })
       );
       events.push("change");
+      if (details) details.changeEventDispatched = true;
       debugReveal("file-handoff:assignment-success", {
         input: describeFileInputForDebug(fileInput, "resolved"),
         files: Array.from(fileInput.files || []).map(describeFileForDebug),
         events
       });
       return true;
-    } catch {
+    } catch (error) {
+      if (details) {
+        details.failureReason = "input_assignment_or_event_dispatch_failed";
+        details.errorMessage = error?.message || String(error);
+        details.errorStack = error?.stack || "";
+      }
       debugReveal("file-handoff:assignment-failure", {
         input: describeFileInputForDebug(fileInput, "resolved"),
         files: Array.from(transfer.files || []).map(describeFileForDebug)
@@ -3205,7 +3488,18 @@
     }
   }
 
-  function handOffSanitizedLocalFile(event, input, sanitizedFile, context) {
+  async function handOffSanitizedLocalFile(event, input, sanitizedFile, context) {
+    const target = event?.target || input;
+    if (context === "drop") {
+      if (isGeminiHost()) {
+        return handOffGeminiSanitizedFileUpload(event, input, sanitizedFile);
+      }
+
+      if (isGrokHost()) {
+        return handOffGrokSanitizedFileUpload(event, input, sanitizedFile);
+      }
+    }
+
     const transfer = createSanitizedDataTransfer(sanitizedFile);
     if (!transfer) {
       debugReveal("file-handoff:data-transfer-create-failed", {
@@ -3221,16 +3515,7 @@
       });
     }
 
-    const target = event?.target || input;
     if (context === "drop") {
-      if (isGeminiHost()) {
-        debugReveal("file-handoff:gemini-file-upload-skipped", {
-          context,
-          targetTag: event?.target?.tagName || "",
-          sanitizedFile: describeFileForDebug(sanitizedFile)
-        });
-        return false;
-      }
 
       try {
         transfer.dropEffect = "copy";
@@ -3247,28 +3532,194 @@
     return false;
   }
 
-  function handOffGeminiSanitizedFileUpload(event, input, sanitizedFile) {
+  async function handOffGeminiSanitizedFileUpload(event, input, sanitizedFile) {
     if (!isGeminiHost()) return false;
 
-    const transfer = createSanitizedDataTransfer(sanitizedFile);
+    const details = createSanitizedFileHandoffDetails(event, sanitizedFile, "gemini:start");
+    const transfer = createSanitizedDataTransferForHandoff(sanitizedFile, details);
     if (!transfer) {
+      details.handoffStage = "gemini:data-transfer";
+      details.failureReason = "data_transfer_failed";
       debugReveal("file-handoff:gemini-data-transfer-create-failed", {
         sanitizedFile: describeFileForDebug(sanitizedFile)
       });
+      logSanitizedFileHandoffFailure(details);
       return false;
     }
 
-    const fileInput = resolveFileInputForHandoff(event, input);
+    const cachedFileInput =
+      fileDragDiscoveryCompleted && isFileInputElement(lastDiscoveredFileInput) && !lastDiscoveredFileInput.disabled
+        ? lastDiscoveredFileInput
+        : null;
+    if (cachedFileInput) {
+      details.handoffStage = "gemini:cached-input";
+      details.fileInputCountBeforeClick = 1;
+      const assigned = handOffSanitizedFileInput(cachedFileInput, transfer, {
+        dispatchInput: true,
+        details
+      });
+      if (!assigned) {
+        logSanitizedFileHandoffFailure(details);
+      }
+      return assigned;
+    }
+
+    let discovery = discoverGeminiFileHandoffElements(event, input);
+    let fileInput = discovery.fileInput;
+    details.handoffStage = "gemini:initial-discovery";
+    details.fileInputCountBeforeClick = discovery.fileInputCount;
+    details.fileInputCountAfterTopTriggerClick = discovery.fileInputCount;
+    details.fileInputCountAfterOverlayItemClick = discovery.fileInputCount;
+    details.openShadowRootCount = discovery.openShadowRootCount;
+    const uploadTrigger = discovery.uploadTrigger;
+    details.foundTopUploadTrigger = Boolean(uploadTrigger);
+    details.uploadTrigger = describeUploadTriggerForDebug(uploadTrigger, "gemini-upload-trigger");
+
+    if (!fileInput && uploadTrigger) {
+      try {
+        uploadTrigger.click?.();
+      } catch (error) {
+        try {
+          uploadTrigger.dispatchEvent?.(
+            new MouseEvent("click", {
+              bubbles: true,
+              cancelable: true
+            })
+          );
+        } catch (fallbackError) {
+          details.handoffStage = "gemini:top-trigger-click";
+          details.failureReason = "top_upload_trigger_click_failed";
+          details.errorMessage = fallbackError?.message || error?.message || String(fallbackError || error);
+          details.errorStack = fallbackError?.stack || error?.stack || "";
+          // The raw file remains blocked if Gemini's upload trigger cannot be activated.
+        }
+      }
+
+      await waitForGeminiUploadMenuInput();
+      discovery = discoverGeminiFileHandoffElements(event, input);
+      fileInput = discovery.fileInput;
+      details.fileInputCountAfterTopTriggerClick = discovery.fileInputCount;
+      details.fileInputCountAfterOverlayItemClick = discovery.fileInputCount;
+      details.openShadowRootCount = Math.max(details.openShadowRootCount, discovery.openShadowRootCount);
+    }
+
     if (!fileInput) {
+      details.handoffStage = "gemini:overlay-discovery";
+      const overlayItem = discoverGeminiUploadOverlayItem(details);
+      if (overlayItem) {
+        try {
+          overlayItem.click?.();
+        } catch (error) {
+          try {
+            overlayItem.dispatchEvent?.(
+              new MouseEvent("click", {
+                bubbles: true,
+                cancelable: true
+              })
+            );
+          } catch (fallbackError) {
+            details.handoffStage = "gemini:overlay-item-click";
+            details.failureReason = "overlay_upload_item_click_failed";
+            details.errorMessage = fallbackError?.message || error?.message || String(fallbackError || error);
+            details.errorStack = fallbackError?.stack || error?.stack || "";
+          }
+        }
+
+        await waitForGeminiUploadMenuInput();
+        discovery = discoverGeminiFileHandoffElements(event, input);
+        fileInput = discovery.fileInput;
+        details.fileInputCountAfterOverlayItemClick = discovery.fileInputCount;
+        details.openShadowRootCount = Math.max(details.openShadowRootCount, discovery.openShadowRootCount);
+      } else {
+        details.failureReason = "no_overlay_upload_item";
+      }
+    }
+
+    lastDiscoveredFileInput = fileInput;
+    fileDragDiscoveryCompleted = true;
+    fileDragDiscoveryScheduled = false;
+
+    if (!fileInput) {
+      details.handoffStage = details.failureReason === "no_overlay_upload_item"
+        ? "gemini:no-overlay-upload-item"
+        : "gemini:no-file-input-after-overlay";
+      if (!details.failureReason) {
+        details.failureReason = uploadTrigger ? "no_file_input_after_overlay_click" : "no_upload_trigger";
+      }
       debugReveal("file-handoff:gemini-input-not-found", {
+        foundUploadTrigger: Boolean(uploadTrigger),
+        trigger: describeUploadTriggerForDebug(uploadTrigger, "gemini-upload-trigger"),
+        fileInputCountBeforeClick: details.fileInputCountBeforeClick,
+        fileInputCountAfterClick: details.fileInputCountAfterTopTriggerClick,
+        fileInputCountAfterOverlayItemClick: details.fileInputCountAfterOverlayItemClick,
+        openShadowRootCount: details.openShadowRootCount,
         sanitizedFile: describeFileForDebug(sanitizedFile)
       });
+      logSanitizedFileHandoffFailure(details);
       return false;
     }
 
-    return handOffSanitizedFileInput(fileInput, transfer, {
-      dispatchInput: false
+    details.handoffStage = "gemini:file-input-assignment";
+    const assigned = handOffSanitizedFileInput(fileInput, transfer, {
+      dispatchInput: true,
+      details
     });
+    if (!assigned) {
+      logSanitizedFileHandoffFailure(details);
+    }
+    return assigned;
+  }
+
+  function handOffGrokSanitizedFileUpload(event, input, sanitizedFile) {
+    if (!isGrokHost()) return false;
+
+    const details = createSanitizedFileHandoffDetails(event, sanitizedFile, "grok:start");
+    const transfer = createSanitizedDataTransferForHandoff(sanitizedFile, details);
+    if (!transfer) {
+      details.handoffStage = "grok:data-transfer";
+      details.failureReason = "data_transfer_failed";
+      debugReveal("file-handoff:grok-data-transfer-create-failed", {
+        sanitizedFile: describeFileForDebug(sanitizedFile)
+      });
+      logSanitizedFileHandoffFailure(details);
+      return false;
+    }
+
+    details.handoffStage = "grok:file-input-discovery";
+    const fileInput = resolveFileInputForHandoff(event, input);
+    details.fileInputCountBeforeClick = fileInput ? 1 : 0;
+    details.fileInputCountAfterTopTriggerClick = fileInput ? 1 : 0;
+    details.fileInputCountAfterOverlayItemClick = fileInput ? 1 : 0;
+    if (fileInput) {
+      const assigned = handOffSanitizedFileInput(fileInput, transfer, { dispatchInput: true, details });
+      if (assigned) {
+        return true;
+      }
+      logSanitizedFileHandoffFailure(details);
+      return false;
+    }
+
+    const target = event?.target || input;
+    try {
+      transfer.dropEffect = "copy";
+    } catch {
+      // Some synthetic DataTransfer objects expose dropEffect as read-only.
+    }
+
+    if (dispatchSanitizedFileEvent(target, "drop", transfer)) {
+      debugReveal("file-handoff:grok-drop-success", {
+        sanitizedFile: describeFileForDebug(sanitizedFile)
+      });
+      return true;
+    }
+
+    details.handoffStage = "grok:drop-dispatch";
+    details.failureReason = "no_file_input_or_drop_target";
+    debugReveal("file-handoff:grok-upload-failed", {
+      sanitizedFile: describeFileForDebug(sanitizedFile)
+    });
+    logSanitizedFileHandoffFailure(details);
+    return false;
   }
 
   async function applyGeminiSanitizedTextFallback(event, input, redactedText) {
@@ -3452,8 +3903,8 @@
 
         const handedOff =
           context === "drop" && isGeminiHost()
-            ? handOffGeminiSanitizedFileUpload(event, input, streamResult.sanitizedFile)
-            : handOffSanitizedLocalFile(event, input, streamResult.sanitizedFile, context);
+            ? await handOffGeminiSanitizedFileUpload(event, input, streamResult.sanitizedFile)
+            : await handOffSanitizedLocalFile(event, input, streamResult.sanitizedFile, context);
         if (handedOff) {
           setBadge("LeakGuard attached a sanitized local file.");
           hideBadgeSoon(3200);
@@ -3465,7 +3916,7 @@
           };
         }
 
-        if (isGeminiHost()) {
+        if (isGeminiHost() && context !== "drop") {
           const fallbackText = await readSanitizedFileTextForFallback(streamResult.sanitizedFile);
           if (fallbackText) {
             const fallbackResult = await applyGeminiSanitizedTextFallback(event, input, fallbackText);
@@ -3521,54 +3972,35 @@
       showLocalPayloadOptimizationStatus(sizeInfo);
     }
 
-    const analysis = analyzeText(localFile.text);
-    const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
-
-    if (context === "drop" && isGeminiHost()) {
-      const geminiTextResult = await insertGeminiLocalFileText(event, input, result.redactedText);
-      if (geminiTextResult === true) {
-        if (optimizedStatus) {
-          clearLocalPayloadOptimizationStatus(sizeInfo, "complete");
-        }
-        setBadge("Sanitized content inserted as text");
-        hideBadgeSoon(4200);
-        refreshBadgeFromCurrentInput();
-        return {
-          handled: true,
-          ok: true,
-          strategy: "gemini-direct-text"
-        };
-      }
-
-      if (geminiTextResult === "cancelled") {
-        if (optimizedStatus) {
-          clearLocalPayloadOptimizationStatus(sizeInfo, "cancelled");
-        }
-        return {
-          handled: true,
-          ok: false,
-          reason: "gemini_large_text_cancelled"
-        };
-      }
-
+    let analysis;
+    let result;
+    let sanitizedFile;
+    try {
+      analysis = analyzeText(localFile.text);
+      result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
+      sanitizedFile = createSanitizedTextFile(localFile.file, result.redactedText);
+    } catch (error) {
       if (optimizedStatus) {
         clearLocalPayloadOptimizationStatus(sizeInfo, "failed");
       }
+      debugReveal("file-handoff:redaction-failed", {
+        context,
+        error: error?.message || String(error)
+      });
       setBadge("Raw file upload blocked");
       hideBadgeSoon(4200);
       await showMessageModal(
         "Raw file upload blocked",
-        "LeakGuard blocked raw file upload because sanitized text insertion failed."
+        "LeakGuard blocked raw file upload because local sanitization failed."
       );
       refreshBadgeFromCurrentInput();
       return {
         handled: true,
         ok: false,
-        reason: "gemini_direct_text_failed"
+        reason: "local_file_sanitization_failed"
       };
     }
 
-    const sanitizedFile = createSanitizedTextFile(localFile.file, result.redactedText);
     debugReveal("file-handoff:sanitized-file-created", {
       context,
       originalFile: describeFileForDebug(localFile.file),
@@ -3576,9 +4008,33 @@
       findingsCount: analysis.secretFindings.length,
       redactedLength: result.redactedText.length
     });
-    const handedOff = handOffSanitizedLocalFile(event, input, sanitizedFile, context);
+    const handedOff = await handOffSanitizedLocalFile(event, input, sanitizedFile, context);
 
     if (!handedOff) {
+      if (context === "drop" && (isGeminiHost() || isGrokHost())) {
+        if (optimizedStatus) {
+          clearLocalPayloadOptimizationStatus(sizeInfo, "failed");
+        }
+        debugReveal("file-handoff:site-native-upload-failed", {
+          site: isGeminiHost() ? "gemini" : "grok",
+          sanitizedFile: describeFileForDebug(sanitizedFile)
+        });
+        setBadge("Raw file upload blocked");
+        hideBadgeSoon(4200);
+        await showMessageModal(
+          "Raw file upload blocked",
+          isGeminiHost()
+            ? "Raw file upload blocked. LeakGuard sanitized the file, but Gemini did not expose a safe browser file handoff target. Use LeakGuard File Scanner and upload the sanitized output manually."
+            : "Raw file upload blocked. LeakGuard sanitized the file, but Grok did not expose a safe browser file handoff target. Use LeakGuard File Scanner and upload the sanitized output manually."
+        );
+        refreshBadgeFromCurrentInput();
+        return {
+          handled: true,
+          ok: false,
+          reason: "sanitized_file_handoff_failed"
+        };
+      }
+
       const fallbackResult = await applyGeminiSanitizedTextFallback(event, input, result.redactedText);
       if (fallbackResult === true) {
         if (optimizedStatus) {
@@ -3777,15 +4233,6 @@
     const analysis = await analyzeTextWithAiAssist(text);
     if (!analysis.findings.length && !analysis.placeholderNormalized) return;
 
-    if (
-      analysis.findings.length &&
-      isCurrentRiskSetAllowedOnce(input, analysis.findings, analysis.normalizedText)
-    ) {
-      clearAllRiskSessionState();
-      return;
-    }
-    clearAllowedOnceIfRiskChanged(input, analysis.findings, analysis.normalizedText);
-
     consumeInterceptionEvent(event);
 
     const policy = analysis.findings.length ? await getPolicyForAction() : getActivePolicy();
@@ -3872,6 +4319,13 @@
       return;
     }
 
+    if (analysis.findings.length && isProtectionPauseActiveAfterPolicy(policy, destinationPolicy)) {
+      clearAllRiskSessionState();
+      bypassNextSubmit = true;
+      submitComposer(form, input);
+      return;
+    }
+
     if (!analysis.findings.length) {
       const normalized = await applyNormalizedComposerRewrite(input, text, "submit");
       if (!normalized.ok) return;
@@ -3898,33 +4352,6 @@
       analysis.normalizedText
     );
     if (decisionAction === "cancel") return;
-
-    if (decisionAction === "allow") {
-      if (analysis.placeholderNormalized) {
-        const rewritten = await applyNormalizedComposerRewrite(input, text, "submit");
-        if (!rewritten.ok) {
-          await showRewriteFailure(
-            "submit",
-            collectFailureDetails(input, rewritten.text, getInputText(input), "submit")
-          );
-          refreshBadgeFromCurrentInput();
-          return;
-        }
-
-        if (!(await ensureExactComposerState(input, rewritten.text))) {
-          await showRewriteFailure(
-            "submit",
-            collectFailureDetails(input, rewritten.text, getInputText(input), "submit")
-          );
-          refreshBadgeFromCurrentInput();
-          return;
-        }
-      }
-
-      bypassNextSubmit = true;
-      submitComposer(form, input);
-      return;
-    }
 
     const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
 
@@ -3987,17 +4414,6 @@
 
     consumeInterceptionEvent(event);
 
-    if (
-      analysis.findings.length &&
-      isCurrentRiskSetAllowedOnce(input, analysis.findings, analysis.normalizedText)
-    ) {
-      const button = findSendButton(input);
-      clearAllRiskSessionState();
-      if (button) button.click();
-      return;
-    }
-    clearAllowedOnceIfRiskChanged(input, analysis.findings, analysis.normalizedText);
-
     const policy = analysis.findings.length ? await getPolicyForAction() : getActivePolicy();
     const destinationPolicy = analysis.findings.length
       ? await handleDestinationPolicy(analysis.findings, policy)
@@ -4102,6 +4518,13 @@
       return;
     }
 
+    if (analysis.findings.length && isProtectionPauseActiveAfterPolicy(policy, destinationPolicy)) {
+      const button = findSendButton(input);
+      clearAllRiskSessionState();
+      if (button) button.click();
+      return;
+    }
+
     if (!analysis.findings.length) {
       const normalized = await applyNormalizedComposerRewrite(input, text, "submit");
       if (!normalized.ok) return;
@@ -4138,18 +4561,6 @@
       analysis.normalizedText
     );
     if (decisionAction === "cancel") return;
-
-    if (decisionAction === "allow") {
-      if (analysis.placeholderNormalized) {
-        const rewritten = await applyNormalizedComposerRewrite(input, text, "submit");
-        if (!rewritten.ok) return;
-      }
-
-      const button = findSendButton(input);
-      clearAllRiskSessionState();
-      if (button) button.click();
-      return;
-    }
 
     const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
 
@@ -4240,13 +4651,6 @@
       return;
     }
 
-    if (isCurrentRiskSetAllowedOnce(input, analysis.findings, analysis.normalizedText)) {
-      lastTypedPromptText = analysis.normalizedText;
-      refreshBadgeFromCurrentInput();
-      return;
-    }
-    clearAllowedOnceIfRiskChanged(input, analysis.findings, analysis.normalizedText);
-
     lastTypedPromptText = analysis.normalizedText;
     const typedShouldAutoRedact = shouldAutoRedactTypedSecrets(
       analysis.secretFindings,
@@ -4271,10 +4675,7 @@
       }
 
       const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
-      if (
-        scanGeneration !== typedScanGeneration ||
-        isCurrentRiskSetAllowedOnce(latestInput, analysis.findings, analysis.normalizedText)
-      ) {
+      if (scanGeneration !== typedScanGeneration) {
         lastTypedPromptText = analysis.normalizedText;
         refreshBadgeFromCurrentInput();
         return;
@@ -4317,10 +4718,7 @@
       const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings, {
         auditReason: destinationPolicy.reason
       });
-      if (
-        scanGeneration !== typedScanGeneration ||
-        isCurrentRiskSetAllowedOnce(latestInput, analysis.findings, analysis.normalizedText)
-      ) {
+      if (scanGeneration !== typedScanGeneration) {
         lastTypedPromptText = analysis.normalizedText;
         refreshBadgeFromCurrentInput();
         return;
@@ -4347,6 +4745,14 @@
       return;
     }
 
+    if (isProtectionPauseActiveAfterPolicy(policy, destinationPolicy)) {
+      lastTypedPromptText = analysis.normalizedText;
+      setBadge("Protection paused");
+      hideBadgeSoon();
+      refreshBadgeFromCurrentInput();
+      return;
+    }
+
     if (typedShouldAutoRedact) {
       const latestInput = findComposer(input);
       if (!latestInput) return;
@@ -4358,10 +4764,7 @@
       }
 
       const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
-      if (
-        scanGeneration !== typedScanGeneration ||
-        isCurrentRiskSetAllowedOnce(latestInput, analysis.findings, analysis.normalizedText)
-      ) {
+      if (scanGeneration !== typedScanGeneration) {
         lastTypedPromptText = analysis.normalizedText;
         refreshBadgeFromCurrentInput();
         return;
@@ -4412,10 +4815,7 @@
     }
 
     const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
-    if (
-      scanGeneration !== typedScanGeneration ||
-      isCurrentRiskSetAllowedOnce(latestInput, analysis.findings, analysis.normalizedText)
-    ) {
+    if (scanGeneration !== typedScanGeneration) {
       lastTypedPromptText = analysis.normalizedText;
       refreshBadgeFromCurrentInput();
       return;

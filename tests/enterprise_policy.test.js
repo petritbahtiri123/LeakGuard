@@ -98,29 +98,28 @@ function testDestinationPoliciesSupportAllowRedactAndBlock() {
   assert.strictEqual(unmatchedDecision.reason, "destination_not_approved");
 }
 
-function testOverrideDefaultsAndUiHooksExist() {
+function testProtectionPauseDefaultsAndUiHooksExist() {
   assert.strictEqual(
-    policyModule.DEFAULT_CONSUMER_POLICY.allowUserOverride,
+    policyModule.DEFAULT_CONSUMER_POLICY.allowProtectionPause,
     true,
-    "consumer defaults should keep Allow once enabled"
+    "consumer defaults should allow temporary protection pause"
   );
   assert.strictEqual(
-    policyModule.DEFAULT_ENTERPRISE_POLICY.allowUserOverride,
+    policyModule.DEFAULT_ENTERPRISE_POLICY.allowProtectionPause,
     false,
-    "enterprise defaults should disable Allow once"
+    "enterprise defaults should disable protection pause"
   );
+  assert.strictEqual(policyModule.DEFAULT_CONSUMER_POLICY.protectionPauseMaxMinutes, 15);
+  assert.strictEqual(policyModule.DEFAULT_ENTERPRISE_POLICY.protectionPauseMaxMinutes, 0);
+  assert.ok(!contentSource.includes("Allow once"), "content UI should not render Allow once");
+  assert.ok(!contentSource.includes("allowedOnceFingerprint"), "content state should not keep allow-once fingerprints");
   assert.ok(
-    contentSource.includes("allowUserOverride: policy.allowUserOverride"),
-    "content modal flow should pass allowUserOverride into the decision UI"
+    contentSource.includes("isProtectionPauseActiveAfterPolicy(policy, destinationPolicy)"),
+    "content flow should check pause only after policy decisions"
   );
   assert.ok(
     contentSource.includes("resolveDecisionAction(decision.action, policy)"),
-    "content flow should refuse stale allow-once decisions when policy disables overrides"
-  );
-  assert.ok(
-    contentSource.includes("if (allowUserOverride) {") &&
-      contentSource.includes("actions.appendChild(allowBtn);"),
-    "Allow once button should only render when policy explicitly allows it"
+    "content modal decisions should still be normalized centrally"
   );
 }
 
@@ -450,6 +449,8 @@ async function testMalformedStrictEnterprisePolicyFailsClosed() {
       );
 
       assert.strictEqual(loaded.meta.strictFailure, true, "strict policy load should fail closed");
+      assert.strictEqual(loaded.policy.allowProtectionPause, false, "fail-closed policy should disable pause");
+      assert.strictEqual(loaded.policy.protectionPauseMaxMinutes, 0, "fail-closed policy should clear pause duration");
       assert.strictEqual(decision.blocked, true, "strict failure should block sensitive actions");
       assert.strictEqual(decision.reason, "policy_fail_closed");
     }
@@ -458,6 +459,9 @@ async function testMalformedStrictEnterprisePolicyFailsClosed() {
 
 function testPolicySchemaAndUiSurfaceNewFields() {
   assert.strictEqual(managedPolicySchema.properties.allowUserOverride.type, "boolean");
+  assert.strictEqual(managedPolicySchema.properties.allowProtectionPause.type, "boolean");
+  assert.strictEqual(managedPolicySchema.properties.protectionPauseMaxMinutes.type, "number");
+  assert.strictEqual(managedPolicySchema.properties.protectionPauseRequiresUserAction.type, "boolean");
   assert.strictEqual(managedPolicySchema.properties.allowSiteRemoval.type, "boolean");
   assert.strictEqual(managedPolicySchema.properties.managedProtectedSites.type, "array");
   assert.deepStrictEqual(
@@ -483,6 +487,11 @@ function testPolicySchemaAndUiSurfaceNewFields() {
     "popup UI should disable site removal when policy blocks it"
   );
   assert.ok(
+    popupSource.includes("PWM_SET_PROTECTION_PAUSED") &&
+      popupSource.includes("Protection is enforced by policy"),
+    "popup UI should expose pause controls and enforced-policy messaging"
+  );
+  assert.ok(
     popupSource.includes("renderManagedSites(response.managedSites || []);") &&
       optionsSource.includes("renderManagedSites(response.managedSites || []);"),
     "popup and options should render managed protected sites"
@@ -498,7 +507,7 @@ async function run() {
   testApprovedDestinationsAllowApprovedHosts();
   testApprovedDestinationsBlockUnapprovedHostsInEnterpriseMode();
   testDestinationPoliciesSupportAllowRedactAndBlock();
-  testOverrideDefaultsAndUiHooksExist();
+  testProtectionPauseDefaultsAndUiHooksExist();
   await testAllowSiteRemovalTrueAllowsDeletion();
   await testAllowSiteRemovalFalseBlocksDeletion();
   await testManagedProtectedSitesRegisterWithoutUserSiteToggle();

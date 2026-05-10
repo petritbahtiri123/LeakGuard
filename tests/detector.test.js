@@ -26,6 +26,8 @@ const NEW_PATTERN_NAMES = [
   "aws_session_token_assignment",
   "aws_access_key_id_assignment",
   "azure_storage_account_key_assignment",
+  "twilio_auth_token_assignment",
+  "datadog_app_key_assignment",
   "anthropic_api_key",
   "slack_webhook",
   "discord_webhook",
@@ -297,6 +299,52 @@ function testProviderTokenShortAndTemplateValuesStayVisible() {
     const result = redactor.redact(text, findings);
     assert.strictEqual(findings.length, 0, `${text}: expected provider token suppression`);
     assert.strictEqual(result.redactedText, text, `${text}: safe value should remain visible`);
+  }
+}
+
+function testProviderSpecificHexAssignmentsDetectAndRedact() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const cases = [
+    {
+      name: "Twilio auth token",
+      text: "TWILIO_AUTH_TOKEN=1234567890abcdef1234567890abcdef",
+      type: "TOKEN",
+      raw: "1234567890abcdef1234567890abcdef",
+      expected: /^TWILIO_AUTH_TOKEN=\[PWM_\d+\]$/
+    },
+    {
+      name: "Datadog app key",
+      text: "DD_APP_KEY=abcdef1234567890abcdef1234567890abcdef12",
+      type: "API_KEY",
+      raw: "abcdef1234567890abcdef1234567890abcdef12",
+      expected: /^DD_APP_KEY=\[PWM_\d+\]$/
+    },
+    {
+      name: "Datadog app key long name",
+      text: 'DATADOG_APP_KEY="abcdef1234567890abcdef1234567890abcdef12"',
+      type: "API_KEY",
+      raw: "abcdef1234567890abcdef1234567890abcdef12",
+      expected: /^DATADOG_APP_KEY="\[PWM_\d+\]"$/
+    }
+  ];
+
+  for (const fixture of cases) {
+    const findings = detector.scan(fixture.text);
+    const finding = findings.find(
+      (entry) => entry.type === fixture.type && entry.raw === fixture.raw
+    );
+    assert.ok(finding, `${fixture.name}: expected exact provider assignment finding`);
+    assert.strictEqual(finding.severity, "high", `${fixture.name}: expected high severity`);
+
+    const result = redactor.redact(fixture.text, findings);
+    assert.ok(fixture.expected.test(result.redactedText), `${fixture.name}: expected full value redaction`);
+    assert.strictEqual(
+      result.redactedText.includes(fixture.raw),
+      false,
+      `${fixture.name}: raw token must not remain after redaction`
+    );
   }
 }
 
@@ -1858,7 +1906,7 @@ function testTechnicalPathAndProseFalsePositivesStayVisible() {
 function testUnsupportedVendorPlainHexAssignmentsStayVisible() {
   const detector = new Detector();
   const cases = [
-    "TWILIO_AUTH_TOKEN=abcdef1234567890abcdef1234567890",
+    "TWILIO_ACCOUNT_SID=AC_example_account_identifier",
     "MAILCHIMP_API_KEY=0123456789abcdef0123456789abcdef-us1"
   ];
 
@@ -2180,6 +2228,7 @@ function run() {
   testNegativeExamples();
   testProviderTokenFamiliesDetectAndRedact();
   testProviderTokenShortAndTemplateValuesStayVisible();
+  testProviderSpecificHexAssignmentsDetectAndRedact();
   testMixedGitlabRedactionKeepsConfigReadable();
   testLegacyPlaceholderNormalizationHelper();
   testRepeatedSameSecret();

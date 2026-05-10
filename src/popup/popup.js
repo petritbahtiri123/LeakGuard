@@ -12,8 +12,10 @@
 
   const siteLabelEl = document.getElementById("site-label");
   const statusCopyEl = document.getElementById("status-copy");
+  const protectionCopyEl = document.getElementById("protection-copy");
   const policyWarningEl = document.getElementById("policy-warning");
   const feedbackEl = document.getElementById("feedback");
+  const pauseBtn = document.getElementById("pause-btn");
   const protectBtn = document.getElementById("protect-btn");
   const manageBtn = document.getElementById("manage-btn");
   const fileScannerBtn = document.getElementById("file-scanner-btn");
@@ -40,12 +42,20 @@
   let activeRevealRequestId = null;
   let currentPolicy = {
     allowReveal: true,
+    allowProtectionPause: true,
+    protectionPauseMaxMinutes: 15,
     allowUserAddedSites: true,
     allowSiteRemoval: true,
     enterpriseMode: false,
     managedAvailable: false,
     managedApplied: false,
     strictFailure: false
+  };
+  let currentProtection = {
+    paused: false,
+    pausedUntil: 0,
+    allowProtectionPause: false,
+    protectionEnforced: false
   };
 
   function setFeedback(text) {
@@ -81,6 +91,12 @@
       );
     }
 
+    if (currentProtection.protectionEnforced) {
+      warnings.push(
+        "Protection is enforced by policy on this destination. Redaction or blocking cannot be paused."
+      );
+    }
+
     if (tabIncognito && (!currentPolicy.enterpriseMode || !currentPolicy.managedApplied)) {
       warnings.push(
         "Incognito detected. LeakGuard cannot force incognito coverage from extension code alone. Use browser policy to disable incognito or explicitly allow the extension there."
@@ -98,6 +114,25 @@
 
     inputEl.disabled = !currentPolicy.allowUserAddedSites;
     formEl.querySelector('button[type="submit"]').disabled = !currentPolicy.allowUserAddedSites;
+    renderPolicyWarning();
+  }
+
+  function updateProtection(protection) {
+    currentProtection = {
+      ...currentProtection,
+      ...(protection || {})
+    };
+
+    if (currentProtection.protectionEnforced) {
+      protectionCopyEl.textContent = "Protection is enforced by policy.";
+    } else if (currentProtection.paused) {
+      protectionCopyEl.textContent = "Protection is temporarily paused.";
+    } else {
+      protectionCopyEl.textContent = "Protection is active.";
+    }
+
+    pauseBtn.hidden = !currentProtection.allowProtectionPause;
+    pauseBtn.textContent = currentProtection.paused ? "Resume Protection" : "Pause Protection";
     renderPolicyWarning();
   }
 
@@ -159,6 +194,7 @@
   function renderOverview(overview) {
     currentOverview = overview || null;
     updatePolicy(overview?.policy);
+    updateProtection(overview?.state?.protection || overview?.protection);
     const site = overview?.currentSite || null;
 
     if (!site) {
@@ -208,7 +244,8 @@
 
     const response = await ext.runtime.sendMessage({
       type: "PWM_GET_PROTECTED_SITE_OVERVIEW",
-      url: activeTab.url
+      url: activeTab.url,
+      tabId: activeTab.id
     });
 
     if (!response?.ok) {
@@ -220,7 +257,9 @@
 
   async function refreshSiteData() {
     const response = await ext.runtime.sendMessage({
-      type: "PWM_GET_PROTECTED_SITE_OVERVIEW"
+      type: "PWM_GET_PROTECTED_SITE_OVERVIEW",
+      url: activeTab?.url || "",
+      tabId: activeTab?.id
     });
 
     if (!response?.ok) {
@@ -299,6 +338,31 @@
 
     renderOverview(response.overview);
     setFeedback("LeakGuard is now active on this site.");
+  }
+
+  async function setProtectionPaused(paused) {
+    if (!activeTab?.url) return;
+
+    pauseBtn.disabled = true;
+    try {
+      const response = await ext.runtime.sendMessage({
+        type: "PWM_SET_PROTECTION_PAUSED",
+        url: activeTab.url,
+        tabId: activeTab.id,
+        paused: Boolean(paused),
+        durationMinutes: currentPolicy.protectionPauseMaxMinutes || 15
+      });
+
+      if (!response?.ok) {
+        throw new Error(response?.error || "LeakGuard could not update protection pause.");
+      }
+
+      updatePolicy(response.state?.policy || currentPolicy);
+      updateProtection(response.state?.protection);
+      setFeedback(paused ? "Protection paused for this tab." : "Protection resumed.");
+    } finally {
+      pauseBtn.disabled = false;
+    }
   }
 
   function renderBuiltinSites(builtinSites) {
@@ -619,6 +683,12 @@
     protectCurrentSite().catch((error) => {
       protectBtn.disabled = false;
       setFeedback(error?.message || "LeakGuard could not protect this site.");
+    });
+  });
+
+  pauseBtn.addEventListener("click", () => {
+    setProtectionPaused(!currentProtection.paused).catch((error) => {
+      setFeedback(error?.message || "LeakGuard could not update protection pause.");
     });
   });
 

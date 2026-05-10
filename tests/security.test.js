@@ -328,12 +328,14 @@ function testLocalFilePasteDoesNotExposeRawFileContent() {
       localFileSource.includes("handOffSanitizedLocalFile(event, input, sanitizedFile, context)") &&
       contentSource.includes("function handOffSanitizedLocalFile") &&
       contentSource.includes("fileInput.files = transfer.files") &&
-      contentSource.includes("file-handoff:gemini-file-upload-skipped"),
-    "local file paste/drop should create sanitized in-memory files while Gemini drop skips upload handoff"
+      contentSource.includes("function handOffGeminiSanitizedFileUpload") &&
+      contentSource.includes("function handOffGrokSanitizedFileUpload") &&
+      contentSource.includes("file-handoff:site-native-upload-failed"),
+    "local file paste/drop should create sanitized in-memory files and use native upload adapters for site file drops"
   );
   assert.ok(
     localFileSource.includes("sanitized_file_handoff_failed") &&
-      localFileSource.includes("LeakGuard blocked raw file upload. Sanitized file handoff failed"),
+      localFileSource.includes("Raw file upload blocked. LeakGuard sanitized the file, but Gemini did not expose a safe browser file handoff target."),
     "local file paste/drop should fail closed when sanitized handoff cannot be completed"
   );
   assert.ok(
