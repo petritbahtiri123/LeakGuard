@@ -576,7 +576,36 @@ function createFileInput({ source = "light-dom", disabled = false } = {}) {
   };
 }
 
-function createHandoffHarness({ hostname = "gemini.google.com", fileInputs = [], shadowInputs = [] } = {}) {
+function createUploadTrigger({ ariaLabel = "Open upload file menu", className = "upload-card", onClick = null } = {}) {
+  const events = [];
+  return {
+    tagName: "BUTTON",
+    className,
+    disabled: false,
+    events,
+    getAttribute(name) {
+      if (name === "aria-label") return ariaLabel;
+      if (name === "class") return className;
+      return "";
+    },
+    click() {
+      events.push("click");
+      if (typeof onClick === "function") {
+        onClick();
+      }
+      return true;
+    },
+    dispatchEvent(event) {
+      events.push(event.type);
+      if (event.type === "click" && typeof onClick === "function") {
+        onClick();
+      }
+      return true;
+    }
+  };
+}
+
+function createHandoffHarness({ hostname = "gemini.google.com", fileInputs = [], shadowInputs = [], uploadTriggers = [] } = {}) {
   const debugEvents = [];
   const fallbackDrops = [];
   const stats = {
@@ -606,6 +635,15 @@ function createHandoffHarness({ hostname = "gemini.google.com", fileInputs = [],
     shadowRoot: {
       querySelectorAll(selector) {
         if (selector === "input[type='file']") return [input];
+        if (
+          selector === 'button[aria-label="Open upload file menu"]' ||
+          selector === '[role="button"][aria-label*="upload" i]' ||
+          selector === 'button[aria-label*="upload" i]' ||
+          selector === 'button[aria-label*="file" i]' ||
+          selector === 'button[aria-label*="attach" i]'
+        ) {
+          return [];
+        }
         if (selector === "*") return [];
         return [];
       }
@@ -615,6 +653,15 @@ function createHandoffHarness({ hostname = "gemini.google.com", fileInputs = [],
     querySelectorAll(selector) {
       stats.documentQueries += 1;
       if (selector === "input[type='file']") return fileInputs;
+      if (
+        selector === 'button[aria-label="Open upload file menu"]' ||
+        selector === '[role="button"][aria-label*="upload" i]' ||
+        selector === 'button[aria-label*="upload" i]' ||
+        selector === 'button[aria-label*="file" i]' ||
+        selector === 'button[aria-label*="attach" i]'
+      ) {
+        return uploadTriggers;
+      }
       if (selector === "*") return shadowHosts;
       return [];
     }
@@ -653,10 +700,14 @@ function createHandoffHarness({ hostname = "gemini.google.com", fileInputs = [],
       extractFunctionSource(contentSource, "isFileInputElement"),
       extractFunctionSource(contentSource, "describeFileForDebug"),
       extractFunctionSource(contentSource, "describeFileInputForDebug"),
+      extractFunctionSource(contentSource, "describeUploadTriggerForDebug"),
       extractFunctionSource(contentSource, "collectFileInputsFromAncestry"),
       extractFunctionSource(contentSource, "collectFileInputsFromRoot"),
+      extractFunctionSource(contentSource, "collectFileHandoffElementsFromRoot"),
+      extractFunctionSource(contentSource, "discoverGeminiFileHandoffElements"),
       extractFunctionSource(contentSource, "discoverFileInputForHandoff"),
       extractFunctionSource(contentSource, "resolveFileInputForHandoff"),
+      extractFunctionSource(contentSource, "waitForGeminiUploadMenuInput"),
       extractFunctionSource(contentSource, "handOffSanitizedFileInput"),
       extractFunctionSource(contentSource, "handOffSanitizedLocalFile"),
       extractFunctionSource(contentSource, "handOffGeminiSanitizedFileUpload"),
@@ -907,7 +958,7 @@ async function testGeminiDropUsesDiscoveredFileInputHandoff() {
     dataTransfer: { files: [rawFile] }
   };
 
-  const handedOff = handOffSanitizedLocalFile(event, null, sanitizedFile, "drop");
+  const handedOff = await handOffSanitizedLocalFile(event, null, sanitizedFile, "drop");
 
   assert.strictEqual(handedOff, true);
   assert.deepStrictEqual(shadowInput.events, ["input", "change"]);
@@ -942,7 +993,7 @@ async function testGeminiStreamingHandoffUsesDiscoveredFileInput() {
     dataTransfer: createDataTransfer()
   };
 
-  const handedOff = handOffGeminiSanitizedFileUpload(event, null, sanitizedFile);
+  const handedOff = await handOffGeminiSanitizedFileUpload(event, null, sanitizedFile);
 
   assert.strictEqual(handedOff, true);
   assert.strictEqual(shadowInput.files.length, 1);
@@ -952,6 +1003,56 @@ async function testGeminiStreamingHandoffUsesDiscoveredFileInput() {
   assert.ok(
     debugEvents.some((entry) => entry.label === "file-handoff:assignment-success"),
     "expected Gemini streaming handoff to assign sanitized file input"
+  );
+}
+
+async function testGeminiUploadMenuClickDiscoversLazyFileInput() {
+  const rawSecret = "LeakGuardDropApiKey1234567890";
+  const sanitizedFile = {
+    name: "lazy-gemini.env",
+    type: "text/plain",
+    size: 37,
+    text: `API_KEY=[PWM_1]\ntoken_limit=4096`
+  };
+  const fileInputs = [];
+  const uploadTrigger = createUploadTrigger({
+    ariaLabel: "Open upload file menu",
+    className: "upload-card mat-mdc-button",
+    onClick: () => {
+      if (!fileInputs.length) {
+        fileInputs.push(createFileInput({ source: "light-dom" }));
+      }
+    }
+  });
+  const { handOffGeminiSanitizedFileUpload, debugEvents, fallbackDrops } = createHandoffHarness({
+    fileInputs,
+    uploadTriggers: [uploadTrigger]
+  });
+  const event = {
+    target: {
+      nodeType: 1,
+      tagName: "DIV",
+      dispatchEvent() {
+        throw new Error("Gemini lazy input handoff should not fall back to text/drop replay");
+      }
+    },
+    dataTransfer: createDataTransfer()
+  };
+
+  const handedOff = await handOffGeminiSanitizedFileUpload(event, null, sanitizedFile);
+
+  assert.strictEqual(handedOff, true);
+  assert.deepStrictEqual(uploadTrigger.events, ["click"]);
+  assert.strictEqual(fileInputs.length, 1);
+  assert.strictEqual(fileInputs[0].files.length, 1);
+  assert.strictEqual(fileInputs[0].files[0], sanitizedFile);
+  assert.deepStrictEqual(fileInputs[0].events, ["input", "change"]);
+  assert.strictEqual(fallbackDrops.length, 0);
+  assert.strictEqual(sanitizedFile.text.includes(rawSecret), false);
+  assert.ok(sanitizedFile.text.includes("[PWM_1]"));
+  assert.ok(
+    debugEvents.some((entry) => entry.label === "file-handoff:assignment-success"),
+    "expected lazy Gemini file input assignment to succeed"
   );
 }
 
@@ -1139,7 +1240,7 @@ async function testGeminiDropDiscoversEnabledInput() {
     dataTransfer: createDataTransfer()
   };
 
-  const handedOff = handOffSanitizedLocalFile(event, null, sanitizedFile, "drop");
+  const handedOff = await handOffSanitizedLocalFile(event, null, sanitizedFile, "drop");
 
   assert.strictEqual(handedOff, true);
   assert.strictEqual(disabledInput.files.length, 0);
@@ -1164,9 +1265,9 @@ async function testGeminiDropCachesDiscoveryPerDragSession() {
     dataTransfer: createDataTransfer()
   };
 
-  assert.strictEqual(handOffSanitizedLocalFile(event, null, sanitizedFile, "drop"), true);
+  assert.strictEqual(await handOffSanitizedLocalFile(event, null, sanitizedFile, "drop"), true);
   const queriesAfterFirstDrop = stats.documentQueries;
-  assert.strictEqual(handOffSanitizedLocalFile(event, null, sanitizedFile, "drop"), true);
+  assert.strictEqual(await handOffSanitizedLocalFile(event, null, sanitizedFile, "drop"), true);
 
   assert.ok(queriesAfterFirstDrop > 0, "expected Gemini drop to discover file input once");
   assert.strictEqual(stats.documentQueries, queriesAfterFirstDrop);
@@ -1191,7 +1292,7 @@ async function testGeminiDropWithoutInputSkipsUploadHandoff() {
     dataTransfer: createDataTransfer()
   };
 
-  const handedOff = handOffSanitizedLocalFile(event, null, sanitizedFile, "drop");
+  const handedOff = await handOffSanitizedLocalFile(event, null, sanitizedFile, "drop");
 
   assert.strictEqual(handedOff, false);
   assert.strictEqual(fallbackDrops.length, 0);
@@ -1224,7 +1325,7 @@ async function testGrokDropUsesDiscoveredFileInputHandoff() {
     dataTransfer: createDataTransfer()
   };
 
-  const handedOff = handOffSanitizedLocalFile(event, null, sanitizedFile, "drop");
+  const handedOff = await handOffSanitizedLocalFile(event, null, sanitizedFile, "drop");
 
   assert.strictEqual(handedOff, true);
   assert.strictEqual(fileInput.files.length, 1);
@@ -2922,6 +3023,7 @@ async function testChatGptAndClaudeStillUseSanitizedFileHandoffOnly() {
   await testComposerTargetDropStillPassesComposer();
   await testGeminiDropUsesDiscoveredFileInputHandoff();
   await testGeminiStreamingHandoffUsesDiscoveredFileInput();
+  await testGeminiUploadMenuClickDiscoversLazyFileInput();
   await testGeminiLargeFileInputWithoutComposerUsesStreamingSanitizedHandoff();
   await testNonGeminiFileInputWithoutComposerStillIgnored();
   await testChangeListenerUsesCapturePhaseForFileInputInterception();

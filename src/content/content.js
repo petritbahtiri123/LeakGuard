@@ -2402,7 +2402,7 @@
         file: describeFileForDebug(sanitizedFile)
       });
 
-      if (sanitizedFile && handOffSanitizedLocalFile(event, input, sanitizedFile, "paste")) {
+      if (sanitizedFile && (await handOffSanitizedLocalFile(event, input, sanitizedFile, "paste"))) {
         if (optimizedStatus) {
           clearLocalPayloadOptimizationStatus(sizeInfo, "complete");
         }
@@ -2988,6 +2988,137 @@
     });
   }
 
+  function describeUploadTriggerForDebug(trigger, source = "") {
+    if (!trigger) return null;
+    let className = "";
+    try {
+      className =
+        typeof trigger.className === "string"
+          ? trigger.className
+          : trigger.getAttribute?.("class") || "";
+    } catch {
+      className = "";
+    }
+    return {
+      tag: trigger.tagName || "",
+      ariaLabel: trigger.getAttribute?.("aria-label") || trigger.ariaLabel || "",
+      className,
+      source
+    };
+  }
+
+  function collectFileHandoffElementsFromRoot(root, addInput, addUploadTrigger, visitedRoots, stats) {
+    if (!root || visitedRoots.has(root)) return;
+    visitedRoots.add(root);
+
+    try {
+      root.querySelectorAll?.("input[type='file']").forEach((candidate) => {
+        addInput(candidate, root === document ? "document" : "shadow-root");
+      });
+    } catch {
+      // Host-controlled roots can reject selectors; keep scanning other roots.
+    }
+
+    const uploadSelectors = [
+      'button[aria-label="Open upload file menu"]',
+      '[role="button"][aria-label*="upload" i]',
+      'button[aria-label*="upload" i]',
+      'button[aria-label*="file" i]',
+      'button[aria-label*="attach" i]'
+    ];
+    for (const selector of uploadSelectors) {
+      try {
+        root.querySelectorAll?.(selector).forEach((candidate) => {
+          addUploadTrigger(candidate, selector, root === document ? "document" : "shadow-root");
+        });
+      } catch {
+        // Case-insensitive attribute selectors are not universally available in synthetic DOMs.
+      }
+    }
+
+    let elements = [];
+    try {
+      elements = Array.from(root.querySelectorAll?.("*") || []);
+    } catch {
+      elements = [];
+    }
+
+    elements.forEach((element) => {
+      if (element?.shadowRoot) {
+        if (stats) {
+          stats.openShadowRootCount += 1;
+        }
+        collectFileHandoffElementsFromRoot(element.shadowRoot, addInput, addUploadTrigger, visitedRoots, stats);
+      }
+    });
+  }
+
+  function discoverGeminiFileHandoffElements(event, input) {
+    const inputs = [];
+    const uploadTriggers = [];
+    const seenInputs = new WeakSet();
+    const seenTriggers = new WeakSet();
+    const stats = { openShadowRootCount: 0 };
+    const addInput = (candidate, source = "") => {
+      if (!isFileInputElement(candidate) || seenInputs.has(candidate)) return;
+      seenInputs.add(candidate);
+      inputs.push({ input: candidate, source });
+    };
+    const addUploadTrigger = (candidate, selector = "", source = "") => {
+      if (!candidate || seenTriggers.has(candidate)) return;
+      seenTriggers.add(candidate);
+      uploadTriggers.push({ trigger: candidate, selector, source });
+    };
+
+    collectFileInputsFromAncestry(event?.target, addInput);
+
+    const target = normalizeTarget(event?.target);
+    const preferredInputSelectors = [
+      "input[type='file'][accept*='text']",
+      "input[type='file'][accept*='.txt']",
+      "input[type='file'][accept*='.md']",
+      "input[type='file'][accept*='.json']",
+      "input[type='file'][accept*='.csv']",
+      "input[type='file']"
+    ];
+    for (const selector of preferredInputSelectors) {
+      try {
+        target?.closest?.("[role='dialog'], form, main, body")?.querySelectorAll?.(selector).forEach((candidate) => {
+          addInput(candidate, "target-scope");
+        });
+      } catch {
+        // Host-controlled selectors can fail; broader discovery below remains fail-closed.
+      }
+    }
+    target?.closest?.("form")?.querySelectorAll?.("input[type='file']").forEach((candidate) => {
+      addInput(candidate, "target-form");
+    });
+    input?.closest?.("form")?.querySelectorAll?.("input[type='file']").forEach((candidate) => {
+      addInput(candidate, "composer-form");
+    });
+
+    collectFileHandoffElementsFromRoot(document, addInput, addUploadTrigger, new WeakSet(), stats);
+
+    const fileInput = inputs.find(({ input: candidate }) => !candidate.disabled)?.input || null;
+    const uploadTrigger =
+      uploadTriggers.find(({ trigger }) => {
+        const label = trigger.getAttribute?.("aria-label") || trigger.ariaLabel || "";
+        return label === "Open upload file menu" && !trigger.disabled;
+      })?.trigger ||
+      uploadTriggers.find(({ trigger }) => !trigger.disabled)?.trigger ||
+      null;
+
+    return {
+      fileInput,
+      uploadTrigger,
+      fileInputCount: inputs.length,
+      uploadTriggerCount: uploadTriggers.length,
+      openShadowRootCount: stats.openShadowRootCount,
+      fileInputs: inputs,
+      uploadTriggers
+    };
+  }
+
   function discoverFileInputForHandoff(event, input) {
     const candidates = [];
     const seen = new WeakSet();
@@ -3035,6 +3166,34 @@
     });
 
     return fileInput;
+  }
+
+  async function waitForGeminiUploadMenuInput() {
+    await new Promise((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        resolve();
+      };
+      const raf = typeof requestAnimationFrame === "function" ? requestAnimationFrame : null;
+      if (raf) {
+        try {
+          raf(() => {
+            try {
+              raf(finish);
+            } catch {
+              finish();
+            }
+          });
+        } catch {
+          setTimeout(finish, 0);
+        }
+      } else {
+        setTimeout(finish, 0);
+      }
+      setTimeout(finish, 120);
+    });
   }
 
   function resolveFileInputForHandoff(event, input) {
@@ -3127,7 +3286,7 @@
     }
   }
 
-  function handOffSanitizedLocalFile(event, input, sanitizedFile, context) {
+  async function handOffSanitizedLocalFile(event, input, sanitizedFile, context) {
     const transfer = createSanitizedDataTransfer(sanitizedFile);
     if (!transfer) {
       debugReveal("file-handoff:data-transfer-create-failed", {
@@ -3168,7 +3327,7 @@
     return false;
   }
 
-  function handOffGeminiSanitizedFileUpload(event, input, sanitizedFile) {
+  async function handOffGeminiSanitizedFileUpload(event, input, sanitizedFile) {
     if (!isGeminiHost()) return false;
 
     const transfer = createSanitizedDataTransfer(sanitizedFile);
@@ -3179,9 +3338,57 @@
       return false;
     }
 
-    const fileInput = resolveFileInputForHandoff(event, input);
+    const cachedFileInput =
+      fileDragDiscoveryCompleted && isFileInputElement(lastDiscoveredFileInput) && !lastDiscoveredFileInput.disabled
+        ? lastDiscoveredFileInput
+        : null;
+    if (cachedFileInput) {
+      return handOffSanitizedFileInput(cachedFileInput, transfer, {
+        dispatchInput: true
+      });
+    }
+
+    let discovery = discoverGeminiFileHandoffElements(event, input);
+    let fileInput = discovery.fileInput;
+    let fileInputCountBeforeClick = discovery.fileInputCount;
+    let fileInputCountAfterClick = discovery.fileInputCount;
+    let openShadowRootCount = discovery.openShadowRootCount;
+    const uploadTrigger = discovery.uploadTrigger;
+
+    if (!fileInput && uploadTrigger) {
+      try {
+        uploadTrigger.click?.();
+      } catch {
+        try {
+          uploadTrigger.dispatchEvent?.(
+            new MouseEvent("click", {
+              bubbles: true,
+              cancelable: true
+            })
+          );
+        } catch {
+          // The raw file remains blocked if Gemini's upload trigger cannot be activated.
+        }
+      }
+
+      await waitForGeminiUploadMenuInput();
+      discovery = discoverGeminiFileHandoffElements(event, input);
+      fileInput = discovery.fileInput;
+      fileInputCountAfterClick = discovery.fileInputCount;
+      openShadowRootCount = Math.max(openShadowRootCount, discovery.openShadowRootCount);
+    }
+
+    lastDiscoveredFileInput = fileInput;
+    fileDragDiscoveryCompleted = true;
+    fileDragDiscoveryScheduled = false;
+
     if (!fileInput) {
       debugReveal("file-handoff:gemini-input-not-found", {
+        foundUploadTrigger: Boolean(uploadTrigger),
+        trigger: describeUploadTriggerForDebug(uploadTrigger, "gemini-upload-trigger"),
+        fileInputCountBeforeClick,
+        fileInputCountAfterClick,
+        openShadowRootCount,
         sanitizedFile: describeFileForDebug(sanitizedFile)
       });
       return false;
@@ -3409,8 +3616,8 @@
 
         const handedOff =
           context === "drop" && isGeminiHost()
-            ? handOffGeminiSanitizedFileUpload(event, input, streamResult.sanitizedFile)
-            : handOffSanitizedLocalFile(event, input, streamResult.sanitizedFile, context);
+            ? await handOffGeminiSanitizedFileUpload(event, input, streamResult.sanitizedFile)
+            : await handOffSanitizedLocalFile(event, input, streamResult.sanitizedFile, context);
         if (handedOff) {
           setBadge("LeakGuard attached a sanitized local file.");
           hideBadgeSoon(3200);
@@ -3514,7 +3721,7 @@
       findingsCount: analysis.secretFindings.length,
       redactedLength: result.redactedText.length
     });
-    const handedOff = handOffSanitizedLocalFile(event, input, sanitizedFile, context);
+    const handedOff = await handOffSanitizedLocalFile(event, input, sanitizedFile, context);
 
     if (!handedOff) {
       if (context === "drop" && (isGeminiHost() || isGrokHost())) {
