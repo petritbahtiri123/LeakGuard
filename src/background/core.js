@@ -62,6 +62,7 @@ const DESTINATION_POLICY_BLOCK_MESSAGE =
   "LeakGuard blocked this action because this destination is not approved by enterprise policy.";
 const PROTECTED_SITE_REMOVAL_BLOCK_MESSAGE =
   "Managed policy blocks removing protected sites.";
+const DEFAULT_PROTECTION_PAUSE_MINUTES = 15;
 
 function createPolicyDecisionError(decision) {
   const error = new Error(decision?.message || DESTINATION_POLICY_BLOCK_MESSAGE);
@@ -176,6 +177,45 @@ function urlKeyFrom(url) {
 
 function newState(urlKey) {
   return createSessionState(urlKey);
+}
+
+function normalizePauseDurationMinutes(value, policySummary) {
+  const maxMinutes = Number(policySummary?.protectionPauseMaxMinutes || 0);
+  const requestedMinutes = Number(value || DEFAULT_PROTECTION_PAUSE_MINUTES);
+  const finiteRequested = Number.isFinite(requestedMinutes)
+    ? requestedMinutes
+    : DEFAULT_PROTECTION_PAUSE_MINUTES;
+
+  return Math.max(0, Math.min(maxMinutes, finiteRequested));
+}
+
+function isProtectionPolicyEnforced(policySummary) {
+  if (!policySummary) return false;
+  if (policySummary.strictFailure) return true;
+  if (policySummary.destinationAction === "block" || policySummary.destinationRequiresRedaction) {
+    return true;
+  }
+  return Boolean(policySummary.enterpriseMode && policySummary.http && policySummary.blockHttpSecrets);
+}
+
+function canPauseProtection(policySummary) {
+  return Boolean(
+    policySummary?.allowProtectionPause &&
+      Number(policySummary?.protectionPauseMaxMinutes || 0) > 0 &&
+      !isProtectionPolicyEnforced(policySummary)
+  );
+}
+
+function getProtectionPause(state, policySummary) {
+  const pausedUntil = Number(state?.protectionPause?.pausedUntil || 0);
+  const active = Boolean(canPauseProtection(policySummary) && pausedUntil > Date.now());
+
+  return {
+    paused: active,
+    pausedUntil: active ? pausedUntil : 0,
+    allowProtectionPause: canPauseProtection(policySummary),
+    protectionEnforced: isProtectionPolicyEnforced(policySummary)
+  };
 }
 
 function isLegacyState(state) {
@@ -299,9 +339,11 @@ async function enrichProtectedSites(rules, policySummary) {
   );
 }
 
-async function getProtectedSiteOverview(url) {
+async function getProtectedSiteOverview(url, tabId = null) {
   const loadedPolicy = await loadPolicy();
   const policy = await getPolicySummary(url);
+  const state = typeof tabId === "number" ? await getState(tabId) : null;
+  const protection = getProtectionPause(state, policy);
   const managedSites = await enrichProtectedSites(await getManagedProtectedSites(loadedPolicy), policy);
   const userSites = await enrichProtectedSites(await getStoredProtectedSites(), policy);
   const normalized = normalizeProtectedSiteInput(url);
@@ -309,6 +351,7 @@ async function getProtectedSiteOverview(url) {
   if (!normalized.ok) {
     return {
       policy,
+      protection,
       builtInSites: BUILTIN_PROTECTED_SITES,
       managedSites,
       userSites,
@@ -331,6 +374,7 @@ async function getProtectedSiteOverview(url) {
   if (builtInRule) {
     return {
       policy,
+      protection,
       builtInSites: BUILTIN_PROTECTED_SITES,
       managedSites,
       userSites,
@@ -348,6 +392,7 @@ async function getProtectedSiteOverview(url) {
   if (managedRule?.active) {
     return {
       policy,
+      protection,
       builtInSites: BUILTIN_PROTECTED_SITES,
       managedSites,
       userSites,
@@ -365,6 +410,7 @@ async function getProtectedSiteOverview(url) {
   if (managedRule && !managedRule.hasPermission) {
     return {
       policy,
+      protection,
       builtInSites: BUILTIN_PROTECTED_SITES,
       managedSites,
       userSites,
@@ -382,6 +428,7 @@ async function getProtectedSiteOverview(url) {
   if (storedRule?.active) {
     return {
       policy,
+      protection,
       builtInSites: BUILTIN_PROTECTED_SITES,
       managedSites,
       userSites,
@@ -399,6 +446,7 @@ async function getProtectedSiteOverview(url) {
   if (storedRule && !storedRule.hasPermission) {
     return {
       policy,
+      protection,
       builtInSites: BUILTIN_PROTECTED_SITES,
       managedSites,
       userSites,
@@ -418,6 +466,7 @@ async function getProtectedSiteOverview(url) {
   if (storedRule && !policy.allowUserAddedSites) {
     return {
       policy,
+      protection,
       builtInSites: BUILTIN_PROTECTED_SITES,
       managedSites,
       userSites,
@@ -453,6 +502,7 @@ async function getProtectedSiteOverview(url) {
 
   return {
     policy,
+    protection,
     builtInSites: BUILTIN_PROTECTED_SITES,
     managedSites,
     userSites,
@@ -687,12 +737,14 @@ function toPublicState(state, policySummary = null) {
   const manager = new PlaceholderManager();
   manager.setPrivateState(state || {});
   const publicState = manager.exportPublicState();
+  const pause = getProtectionPause(state, policySummary);
 
   return {
     transformMode: normalizeTransformMode(state?.transformMode || DEFAULT_TRANSFORM_MODE),
     placeholderCount: publicState.knownPlaceholders.length,
     trustedPlaceholders: publicState.knownPlaceholders,
-    policy: policySummary || null
+    policy: policySummary || null,
+    protection: pause
   };
 }
 
@@ -746,6 +798,34 @@ async function setState(tabId, state) {
   });
 
   return next;
+}
+
+async function setProtectionPaused(tabId, url, paused, durationMinutes) {
+  const policySummary = await getPolicySummary(url);
+  const current = await initState(tabId, url);
+
+  if (paused && !canPauseProtection(policySummary)) {
+    throw new Error(
+      isProtectionPolicyEnforced(policySummary)
+        ? "Protection cannot be paused while policy requires redaction or blocking."
+        : "Protection pause is disabled by policy."
+    );
+  }
+
+  const minutes = paused ? normalizePauseDurationMinutes(durationMinutes, policySummary) : 0;
+  if (paused && minutes <= 0) {
+    throw new Error("Protection pause is disabled by policy.");
+  }
+
+  const nextState = await setState(tabId, {
+    ...current,
+    protectionPause: {
+      pausedUntil: paused ? Date.now() + minutes * 60 * 1000 : 0,
+      updatedAt: Date.now()
+    }
+  });
+
+  return toPublicState(nextState, policySummary);
 }
 
 async function removeState(tabId) {
@@ -1076,6 +1156,17 @@ ext.runtime?.onMessage?.addListener((message, sender, sendResponse) => {
       return;
     }
 
+    if (message?.type === "PWM_SET_PROTECTION_PAUSED") {
+      const state = await setProtectionPaused(
+        message.tabId ?? tabId,
+        message.url || sender?.tab?.url || "",
+        Boolean(message.paused),
+        message.durationMinutes
+      );
+      sendResponse({ ok: true, state });
+      return;
+    }
+
     if (message?.type === "PWM_REDACT_TEXT") {
       const payload = await redactForTab(tabId, message.url, message.text, message.findings, {
         auditReason: message.auditReason,
@@ -1102,7 +1193,7 @@ ext.runtime?.onMessage?.addListener((message, sender, sendResponse) => {
     }
 
     if (message?.type === "PWM_GET_PROTECTED_SITE_OVERVIEW") {
-      const overview = await getProtectedSiteOverview(message.url);
+      const overview = await getProtectedSiteOverview(message.url, message.tabId ?? tabId);
       sendResponse({ ok: true, ...overview });
       return;
     }

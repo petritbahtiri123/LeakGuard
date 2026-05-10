@@ -76,6 +76,9 @@
       enterpriseMode: false,
       allowReveal: true,
       allowUserOverride: true,
+      allowProtectionPause: true,
+      protectionPauseMaxMinutes: 15,
+      protectionPauseRequiresUserAction: true,
       allowUserAddedSites: true,
       allowSiteRemoval: true,
       blockHttpSecrets: false,
@@ -97,6 +100,12 @@
       managedApplied: false,
       strictFailure: false,
       http: location.protocol === "http:"
+    },
+    protection: {
+      paused: false,
+      pausedUntil: 0,
+      allowProtectionPause: true,
+      protectionEnforced: false
     }
   };
   let badgeEl = null;
@@ -116,6 +125,7 @@
   let statusPanelSiteValueEl = null;
   let statusPanelComposerValueEl = null;
   let statusPanelSessionValueEl = null;
+  let statusPanelPauseBtn = null;
   let extensionRuntimeAvailable = true;
   const sanitizedFileInputHandoffs = new WeakSet();
   const rawFileDropInterceptions = new WeakSet();
@@ -686,10 +696,21 @@
             setBadge("LeakGuard settings unavailable");
             hideBadgeSoon(2200);
           });
-        });
+      });
     });
 
-    actions.appendChild(manageBtn);
+    statusPanelPauseBtn = document.createElement("button");
+    statusPanelPauseBtn.className = "pwm-btn pwm-panel-pause";
+    statusPanelPauseBtn.type = "button";
+    statusPanelPauseBtn.addEventListener("click", () => {
+      const protection = getActiveProtection();
+      setProtectionPaused(!protection.paused).catch((error) => {
+        setBadge(error?.message || "Protection pause unavailable");
+        hideBadgeSoon(2800);
+      });
+    });
+
+    actions.append(statusPanelPauseBtn, manageBtn);
     body.appendChild(actions);
 
     statusPanelEl.append(header, body);
@@ -699,10 +720,33 @@
     return statusPanelEl;
   }
 
+  function getActiveProtection() {
+    return {
+      paused: false,
+      pausedUntil: 0,
+      allowProtectionPause: false,
+      protectionEnforced: false,
+      ...(currentPublicState.protection || {})
+    };
+  }
+
   function updateStatusPanel(snapshot = {}) {
     ensureStatusPanel();
 
-    statusPanelProtectionValueEl.textContent = "Active";
+    const protection = getActiveProtection();
+    if (protection.protectionEnforced) {
+      statusPanelProtectionValueEl.textContent = "Enforced by policy";
+    } else if (protection.paused) {
+      statusPanelProtectionValueEl.textContent = "Paused";
+    } else {
+      statusPanelProtectionValueEl.textContent = "Active";
+    }
+
+    if (statusPanelPauseBtn) {
+      statusPanelPauseBtn.hidden = !protection.allowProtectionPause;
+      statusPanelPauseBtn.textContent = protection.paused ? "Resume Protection" : "Pause Protection";
+    }
+
     statusPanelSiteValueEl.textContent = location.host || "Protected site";
 
     if (!snapshot.hasComposer) {
@@ -761,6 +805,10 @@
       policy: {
         ...(currentPublicState.policy || {}),
         ...(state.policy || {})
+      },
+      protection: {
+        ...(currentPublicState.protection || {}),
+        ...(state.protection || {})
       }
     };
   }
@@ -770,6 +818,9 @@
       enterpriseMode: false,
       allowReveal: true,
       allowUserOverride: true,
+      allowProtectionPause: true,
+      protectionPauseMaxMinutes: 15,
+      protectionPauseRequiresUserAction: true,
       allowUserAddedSites: true,
       allowSiteRemoval: true,
       blockHttpSecrets: false,
@@ -834,6 +885,30 @@
     return getActivePolicy();
   }
 
+  async function setProtectionPaused(paused) {
+    const policy = await refreshPublicState();
+    const durationMinutes = Number(policy.protectionPauseMaxMinutes || 15);
+    const response = await sendRuntimeMessage({
+      type: "PWM_SET_PROTECTION_PAUSED",
+      url: location.href,
+      paused: Boolean(paused),
+      durationMinutes
+    });
+
+    if (!response?.ok) {
+      throw new Error(response?.error || "LeakGuard could not update protection pause.");
+    }
+
+    if (response.state) {
+      applyPublicState(response.state);
+    }
+
+    updateStatusPanel();
+    setBadge(paused ? "Protection paused" : "Protection resumed");
+    hideBadgeSoon(2600);
+    return getActiveProtection();
+  }
+
   async function getPolicyForAction() {
     try {
       return await refreshPublicState();
@@ -851,15 +926,22 @@
   }
 
   function resolveDecisionAction(action, policy) {
-    if (action !== "allow" || policy.allowUserOverride) {
-      return action;
-    }
-
-    return policy.defaultAction === "redact" ? "redact" : "cancel";
+    return action === "redact" ? "redact" : "cancel";
   }
 
   function getDestinationPolicyDecision(policy) {
     return evaluateDestinationPolicy(policy, location.href);
+  }
+
+  function isProtectionPauseActiveAfterPolicy(policy, destinationPolicy = null) {
+    const protection = getActiveProtection();
+    if (!protection.paused || !protection.allowProtectionPause) return false;
+    if (protection.protectionEnforced) return false;
+    if (policy?.strictFailure) return false;
+    if (destinationPolicy?.blocked || destinationPolicy?.requiresRedaction) return false;
+    if (policy?.enterpriseMode && policy?.http && policy?.blockHttpSecrets) return false;
+
+    return true;
   }
 
   function shouldForceDestinationRedaction(decision, findings) {
@@ -872,7 +954,6 @@
     let state = editorRiskState.get(input);
     if (!state) {
       state = {
-        allowedOnceFingerprint: "",
         pendingDecisionFingerprint: "",
         pendingDecisionPromise: null
       };
@@ -886,7 +967,6 @@
     const state = getEditorRiskState(input);
     if (!state) return;
 
-    state.allowedOnceFingerprint = "";
     state.pendingDecisionFingerprint = "";
     state.pendingDecisionPromise = null;
   }
@@ -916,31 +996,6 @@
     return buildRiskFingerprint(findings, normalizedText);
   }
 
-  function isCurrentRiskSetAllowedOnce(input, findings, normalizedText) {
-    const state = input ? getEditorRiskState(input) : null;
-    const riskFingerprint = getRiskFingerprintForFindings(findings, normalizedText);
-
-    return Boolean(state && riskFingerprint && state.allowedOnceFingerprint === riskFingerprint);
-  }
-
-  function clearAllowedOnceIfRiskChanged(input, findings, normalizedText) {
-    const state = input ? getEditorRiskState(input) : null;
-    if (!state?.allowedOnceFingerprint) return;
-
-    const riskFingerprint = getRiskFingerprintForFindings(findings, normalizedText);
-    if (riskFingerprint && riskFingerprint !== state.allowedOnceFingerprint) {
-      state.allowedOnceFingerprint = "";
-    }
-  }
-
-  function markRiskSetAllowedOnce(input, riskFingerprint) {
-    const state = input ? getEditorRiskState(input) : null;
-    if (!state || !riskFingerprint) return;
-
-    state.allowedOnceFingerprint = riskFingerprint;
-    typedScanGeneration += 1;
-  }
-
   async function handleDestinationPolicy(findings, policy) {
     const decision = getDestinationPolicyDecision(policy);
 
@@ -966,12 +1021,6 @@
     const riskFingerprint = getRiskFingerprintForFindings(findings, normalizedText);
     const state = input ? getEditorRiskState(input) : null;
 
-    if (isCurrentRiskSetAllowedOnce(input, findings, normalizedText)) {
-      return resolveDecisionAction("allow", policy);
-    }
-
-    clearAllowedOnceIfRiskChanged(input, findings, normalizedText);
-
     if (
       state &&
       state.pendingDecisionPromise &&
@@ -981,13 +1030,9 @@
     }
 
     const decisionPromise = showDecisionModal(findings, mode, {
-      allowUserOverride: policy.allowUserOverride
+      policy
     }).then((decision) => {
       const action = resolveDecisionAction(decision.action, policy);
-
-      if (state && action === "allow" && riskFingerprint) {
-        markRiskSetAllowedOnce(input, riskFingerprint);
-      }
 
       if (state && state.pendingDecisionPromise === decisionPromise) {
         state.pendingDecisionFingerprint = "";
@@ -1358,8 +1403,6 @@
     }
 
     modalOpen = true;
-    const allowUserOverride = options.allowUserOverride !== false;
-
     return new Promise((resolve) => {
       const backdrop = document.createElement("div");
       backdrop.className = "pwm-modal-backdrop";
@@ -1376,10 +1419,10 @@
       const desc = document.createElement("p");
       desc.textContent =
         mode === "paste"
-          ? "This pasted content appears to contain sensitive material. Redact it before it reaches the chat input."
+          ? "This pasted content appears to contain sensitive material. Redact it before it reaches the chat input, or cancel the paste."
           : mode === "input"
-            ? "This typed content may contain sensitive material. High-confidence detections auto-redact; review this one before it sits in the chat input."
-          : "This message appears to contain sensitive material. Redact it before sending.";
+            ? "This typed content may contain sensitive material. Redact it before it stays in the chat input, or cancel the edit."
+          : "This message appears to contain sensitive material. Redact it before sending, or cancel the send.";
 
       const findingsWrap = document.createElement("div");
       findingsWrap.className = "pwm-findings";
@@ -1392,11 +1435,6 @@
       cancelBtn.className = "pwm-btn";
       cancelBtn.type = "button";
       cancelBtn.textContent = "Cancel";
-
-      const allowBtn = document.createElement("button");
-      allowBtn.className = "pwm-btn";
-      allowBtn.type = "button";
-      allowBtn.textContent = "Allow once";
 
       const redactBtn = document.createElement("button");
       redactBtn.className = "pwm-btn pwm-btn-primary";
@@ -1414,7 +1452,6 @@
       const getFocusedAction = () => {
         const active = document.activeElement;
         if (active === redactBtn) return "redact";
-        if (allowUserOverride && active === allowBtn) return "allow";
         if (active === cancelBtn) return "cancel";
         if (modal.contains(active)) return "redact";
         return null;
@@ -1448,7 +1485,6 @@
       };
 
       cancelBtn.addEventListener("click", () => finish({ action: "cancel" }));
-      allowBtn.addEventListener("click", () => finish({ action: "allow" }));
       redactBtn.addEventListener("click", () => finish({ action: "redact" }));
 
       backdrop.addEventListener("click", (event) => {
@@ -1458,9 +1494,6 @@
       });
 
       actions.append(cancelBtn);
-      if (allowUserOverride) {
-        actions.appendChild(allowBtn);
-      }
       actions.appendChild(redactBtn);
       modal.append(title, desc, findingsWrap, actions);
       backdrop.appendChild(modal);
@@ -1889,25 +1922,6 @@
 
     consumeInterceptionEvent(event);
 
-    if (isCurrentRiskSetAllowedOnce(input, relevantFindings, nextAnalysis.normalizedText)) {
-      const ok = await applyTypedInterceptionRewrite(
-        input,
-        nextAnalysis.normalizedText,
-        originalText,
-        selection,
-        "input"
-      );
-
-      if (!ok) return;
-
-      lastTypedPromptText = nextAnalysis.normalizedText;
-      setBadge("Redaction skipped once");
-      hideBadgeSoon();
-      refreshBadgeFromCurrentInput();
-      return;
-    }
-    clearAllowedOnceIfRiskChanged(input, relevantFindings, nextAnalysis.normalizedText);
-
     const policy = await getPolicyForAction();
     const destinationPolicy = await handleDestinationPolicy(relevantFindings, policy);
     if (destinationPolicy.blocked) {
@@ -1963,6 +1977,24 @@
       return;
     }
 
+    if (isProtectionPauseActiveAfterPolicy(policy, destinationPolicy)) {
+      const ok = await applyTypedInterceptionRewrite(
+        input,
+        nextAnalysis.normalizedText,
+        originalText,
+        selection,
+        "input"
+      );
+
+      if (!ok) return;
+
+      lastTypedPromptText = nextAnalysis.normalizedText;
+      setBadge("Protection paused");
+      hideBadgeSoon();
+      refreshBadgeFromCurrentInput();
+      return;
+    }
+
     if (typedShouldAutoRedact) {
       const result = await requestRedaction(nextAnalysis.normalizedText, relevantSecretFindings);
       const ok = await applyTypedInterceptionRewrite(
@@ -2010,24 +2042,6 @@
       nextAnalysis.normalizedText
     );
     if (decisionAction === "cancel") {
-      refreshBadgeFromCurrentInput();
-      return;
-    }
-
-    if (decisionAction === "allow") {
-      const ok = await applyTypedInterceptionRewrite(
-        input,
-        nextAnalysis.normalizedText,
-        originalText,
-        selection,
-        "input"
-      );
-
-      if (!ok) return;
-
-      lastTypedPromptText = nextAnalysis.normalizedText;
-      setBadge("Redaction skipped once");
-      hideBadgeSoon();
       refreshBadgeFromCurrentInput();
       return;
     }
@@ -2101,23 +2115,6 @@
       return;
     }
 
-    if (isCurrentRiskSetAllowedOnce(input, analysis.findings, analysis.normalizedText)) {
-      const ok = await applyPasteDecision(
-        input,
-        originalText,
-        selection,
-        analysis.normalizedText,
-        "paste"
-      );
-      if (!ok) return;
-
-      setBadge("Redaction skipped once");
-      hideBadgeSoon();
-      refreshBadgeFromCurrentInput();
-      return;
-    }
-    clearAllowedOnceIfRiskChanged(input, analysis.findings, analysis.normalizedText);
-
     const policy = await getPolicyForAction();
     const destinationPolicy = await handleDestinationPolicy(analysis.findings, policy);
     if (destinationPolicy.blocked) {
@@ -2179,6 +2176,27 @@
       return;
     }
 
+    if (isProtectionPauseActiveAfterPolicy(policy, destinationPolicy)) {
+      const latestInput = findComposer(input);
+      if (!latestInput) return;
+
+      const latestText = getInputText(latestInput);
+      const baseText = latestText === originalText ? latestText : originalText;
+      const ok = await applyPasteDecision(
+        latestInput,
+        baseText,
+        selection,
+        analysis.normalizedText,
+        "paste"
+      );
+      if (!ok) return;
+
+      setBadge("Protection paused");
+      hideBadgeSoon();
+      refreshBadgeFromCurrentInput();
+      return;
+    }
+
     const decisionAction = await promptForSensitiveContentDecision(
       analysis.findings,
       "paste",
@@ -2193,22 +2211,6 @@
 
     const latestText = getInputText(latestInput);
     const baseText = latestText === originalText ? latestText : originalText;
-
-    if (decisionAction === "allow") {
-      const ok = await applyPasteDecision(
-        latestInput,
-        baseText,
-        selection,
-        analysis.normalizedText,
-        "paste"
-      );
-      if (!ok) return;
-
-      setBadge("Redaction skipped once");
-      hideBadgeSoon();
-      refreshBadgeFromCurrentInput();
-      return;
-    }
 
     const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
 
@@ -2746,65 +2748,56 @@
       let textToInsert = analysis.normalizedText;
 
       if (analysis.findings.length) {
-        if (isCurrentRiskSetAllowedOnce(editor, analysis.findings, analysis.normalizedText)) {
-          setBadge("Redaction skipped once");
-          hideBadgeSoon();
-        } else {
-          clearAllowedOnceIfRiskChanged(editor, analysis.findings, analysis.normalizedText);
+        const policy = await getPolicyForAction();
+        const destinationPolicy = await handleDestinationPolicy(analysis.findings, policy);
+        if (destinationPolicy.blocked) {
+          if (optimizedStatus) {
+            clearLocalPayloadOptimizationStatus(sizeInfo, "cancelled");
+          }
+          return true;
+        }
 
-          const policy = await getPolicyForAction();
-          const destinationPolicy = await handleDestinationPolicy(analysis.findings, policy);
-          if (destinationPolicy.blocked) {
+        const destinationForceRedact = shouldForceDestinationRedaction(
+          destinationPolicy,
+          analysis.findings
+        );
+        const httpPolicyHandled = await handleHttpSecretPolicy(
+          policy,
+          analysis.secretFindings,
+          async () => {
+            const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
+            textToInsert = result.redactedText;
+          }
+        );
+
+        if (!httpPolicyHandled && destinationForceRedact) {
+          const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings, {
+            auditReason: destinationPolicy.reason
+          });
+          textToInsert = result.redactedText;
+        } else if (!httpPolicyHandled && !isProtectionPauseActiveAfterPolicy(policy, destinationPolicy)) {
+          const decisionAction = await promptForSensitiveContentDecision(
+            analysis.findings,
+            "paste",
+            policy,
+            editor,
+            analysis.normalizedText
+          );
+
+          if (decisionAction === "cancel") {
             if (optimizedStatus) {
               clearLocalPayloadOptimizationStatus(sizeInfo, "cancelled");
             }
+            refreshBadgeFromCurrentInput();
             return true;
           }
 
-          const destinationForceRedact = shouldForceDestinationRedaction(
-            destinationPolicy,
-            analysis.findings
-          );
-          const httpPolicyHandled = await handleHttpSecretPolicy(
-            policy,
-            analysis.secretFindings,
-            async () => {
-              const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
-              textToInsert = result.redactedText;
-            }
-          );
-
-          if (!httpPolicyHandled && destinationForceRedact) {
-            const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings, {
-              auditReason: destinationPolicy.reason
-            });
-            textToInsert = result.redactedText;
-          } else if (!httpPolicyHandled) {
-            const decisionAction = await promptForSensitiveContentDecision(
-              analysis.findings,
-              "paste",
-              policy,
-              editor,
-              analysis.normalizedText
-            );
-
-            if (decisionAction === "cancel") {
-              if (optimizedStatus) {
-                clearLocalPayloadOptimizationStatus(sizeInfo, "cancelled");
-              }
-              refreshBadgeFromCurrentInput();
-              return true;
-            }
-
-            if (decisionAction === "redact") {
-              const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
-              textToInsert = result.redactedText;
-            } else {
-              setBadge("Redaction skipped once");
-              hideBadgeSoon();
-            }
+          const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
+          textToInsert = result.redactedText;
+        } else if (!httpPolicyHandled) {
+          setBadge("Protection paused");
+          hideBadgeSoon();
           }
-        }
       }
 
       const applied = await applyGeminiEditorText(editor, textToInsert, "gemini-paste");
@@ -3777,15 +3770,6 @@
     const analysis = await analyzeTextWithAiAssist(text);
     if (!analysis.findings.length && !analysis.placeholderNormalized) return;
 
-    if (
-      analysis.findings.length &&
-      isCurrentRiskSetAllowedOnce(input, analysis.findings, analysis.normalizedText)
-    ) {
-      clearAllRiskSessionState();
-      return;
-    }
-    clearAllowedOnceIfRiskChanged(input, analysis.findings, analysis.normalizedText);
-
     consumeInterceptionEvent(event);
 
     const policy = analysis.findings.length ? await getPolicyForAction() : getActivePolicy();
@@ -3872,6 +3856,13 @@
       return;
     }
 
+    if (analysis.findings.length && isProtectionPauseActiveAfterPolicy(policy, destinationPolicy)) {
+      clearAllRiskSessionState();
+      bypassNextSubmit = true;
+      submitComposer(form, input);
+      return;
+    }
+
     if (!analysis.findings.length) {
       const normalized = await applyNormalizedComposerRewrite(input, text, "submit");
       if (!normalized.ok) return;
@@ -3898,33 +3889,6 @@
       analysis.normalizedText
     );
     if (decisionAction === "cancel") return;
-
-    if (decisionAction === "allow") {
-      if (analysis.placeholderNormalized) {
-        const rewritten = await applyNormalizedComposerRewrite(input, text, "submit");
-        if (!rewritten.ok) {
-          await showRewriteFailure(
-            "submit",
-            collectFailureDetails(input, rewritten.text, getInputText(input), "submit")
-          );
-          refreshBadgeFromCurrentInput();
-          return;
-        }
-
-        if (!(await ensureExactComposerState(input, rewritten.text))) {
-          await showRewriteFailure(
-            "submit",
-            collectFailureDetails(input, rewritten.text, getInputText(input), "submit")
-          );
-          refreshBadgeFromCurrentInput();
-          return;
-        }
-      }
-
-      bypassNextSubmit = true;
-      submitComposer(form, input);
-      return;
-    }
 
     const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
 
@@ -3987,17 +3951,6 @@
 
     consumeInterceptionEvent(event);
 
-    if (
-      analysis.findings.length &&
-      isCurrentRiskSetAllowedOnce(input, analysis.findings, analysis.normalizedText)
-    ) {
-      const button = findSendButton(input);
-      clearAllRiskSessionState();
-      if (button) button.click();
-      return;
-    }
-    clearAllowedOnceIfRiskChanged(input, analysis.findings, analysis.normalizedText);
-
     const policy = analysis.findings.length ? await getPolicyForAction() : getActivePolicy();
     const destinationPolicy = analysis.findings.length
       ? await handleDestinationPolicy(analysis.findings, policy)
@@ -4102,6 +4055,13 @@
       return;
     }
 
+    if (analysis.findings.length && isProtectionPauseActiveAfterPolicy(policy, destinationPolicy)) {
+      const button = findSendButton(input);
+      clearAllRiskSessionState();
+      if (button) button.click();
+      return;
+    }
+
     if (!analysis.findings.length) {
       const normalized = await applyNormalizedComposerRewrite(input, text, "submit");
       if (!normalized.ok) return;
@@ -4138,18 +4098,6 @@
       analysis.normalizedText
     );
     if (decisionAction === "cancel") return;
-
-    if (decisionAction === "allow") {
-      if (analysis.placeholderNormalized) {
-        const rewritten = await applyNormalizedComposerRewrite(input, text, "submit");
-        if (!rewritten.ok) return;
-      }
-
-      const button = findSendButton(input);
-      clearAllRiskSessionState();
-      if (button) button.click();
-      return;
-    }
 
     const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
 
@@ -4240,13 +4188,6 @@
       return;
     }
 
-    if (isCurrentRiskSetAllowedOnce(input, analysis.findings, analysis.normalizedText)) {
-      lastTypedPromptText = analysis.normalizedText;
-      refreshBadgeFromCurrentInput();
-      return;
-    }
-    clearAllowedOnceIfRiskChanged(input, analysis.findings, analysis.normalizedText);
-
     lastTypedPromptText = analysis.normalizedText;
     const typedShouldAutoRedact = shouldAutoRedactTypedSecrets(
       analysis.secretFindings,
@@ -4271,10 +4212,7 @@
       }
 
       const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
-      if (
-        scanGeneration !== typedScanGeneration ||
-        isCurrentRiskSetAllowedOnce(latestInput, analysis.findings, analysis.normalizedText)
-      ) {
+      if (scanGeneration !== typedScanGeneration) {
         lastTypedPromptText = analysis.normalizedText;
         refreshBadgeFromCurrentInput();
         return;
@@ -4317,10 +4255,7 @@
       const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings, {
         auditReason: destinationPolicy.reason
       });
-      if (
-        scanGeneration !== typedScanGeneration ||
-        isCurrentRiskSetAllowedOnce(latestInput, analysis.findings, analysis.normalizedText)
-      ) {
+      if (scanGeneration !== typedScanGeneration) {
         lastTypedPromptText = analysis.normalizedText;
         refreshBadgeFromCurrentInput();
         return;
@@ -4347,6 +4282,14 @@
       return;
     }
 
+    if (isProtectionPauseActiveAfterPolicy(policy, destinationPolicy)) {
+      lastTypedPromptText = analysis.normalizedText;
+      setBadge("Protection paused");
+      hideBadgeSoon();
+      refreshBadgeFromCurrentInput();
+      return;
+    }
+
     if (typedShouldAutoRedact) {
       const latestInput = findComposer(input);
       if (!latestInput) return;
@@ -4358,10 +4301,7 @@
       }
 
       const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
-      if (
-        scanGeneration !== typedScanGeneration ||
-        isCurrentRiskSetAllowedOnce(latestInput, analysis.findings, analysis.normalizedText)
-      ) {
+      if (scanGeneration !== typedScanGeneration) {
         lastTypedPromptText = analysis.normalizedText;
         refreshBadgeFromCurrentInput();
         return;
@@ -4412,10 +4352,7 @@
     }
 
     const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
-    if (
-      scanGeneration !== typedScanGeneration ||
-      isCurrentRiskSetAllowedOnce(latestInput, analysis.findings, analysis.normalizedText)
-    ) {
+    if (scanGeneration !== typedScanGeneration) {
       lastTypedPromptText = analysis.normalizedText;
       refreshBadgeFromCurrentInput();
       return;
