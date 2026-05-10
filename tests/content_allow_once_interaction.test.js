@@ -216,7 +216,7 @@ function analyzeInteractionText(text) {
       findings.push({
         type: raw === "8.8.8.8" ? "PUBLIC_IP" : "USERNAME",
         severity: "medium",
-        method: "allow-once-browser-regression",
+        method: "strict-protection-browser-regression",
         raw,
         start,
         end: start + raw.length
@@ -234,7 +234,7 @@ function analyzeInteractionText(text) {
   };
 }
 
-function createHarness() {
+function createHarness(options = {}) {
   const document = new FakeDocument();
   const windowListeners = new Map();
   const calls = {
@@ -308,15 +308,20 @@ function createHarness() {
     },
     getPolicyForAction: async () => ({
       allowUserOverride: true,
+      allowProtectionPause: true,
+      protectionPauseMaxMinutes: 15,
       defaultAction: "redact"
     }),
     getActivePolicy: () => ({
       allowUserOverride: true,
+      allowProtectionPause: true,
+      protectionPauseMaxMinutes: 15,
       defaultAction: "redact"
     }),
     resolveDecisionAction: (action) => action,
     handleDestinationPolicy: async () => ({ blocked: false }),
     shouldForceDestinationRedaction: () => false,
+    isProtectionPauseActiveAfterPolicy: () => Boolean(options.paused),
     handleHttpSecretPolicy: async () => false,
     shouldAutoRedactTypedSecrets: () => false,
     requestRedaction: async (text, findings) => {
@@ -359,9 +364,6 @@ function createHarness() {
       extractFunctionSource(contentSource, "noteActiveRiskEditor"),
       extractFunctionSource(contentSource, "clearAllRiskSessionState"),
       extractFunctionSource(contentSource, "getRiskFingerprintForFindings"),
-      extractFunctionSource(contentSource, "isCurrentRiskSetAllowedOnce"),
-      extractFunctionSource(contentSource, "clearAllowedOnceIfRiskChanged"),
-      extractFunctionSource(contentSource, "markRiskSetAllowedOnce"),
       extractFunctionSource(contentSource, "closeModal"),
       extractFunctionSource(contentSource, "appendFindingRow"),
       extractFunctionSource(contentSource, "showDecisionModal"),
@@ -409,38 +411,38 @@ async function pasteAndClickDecision(harness, text, decisionText) {
   return paste;
 }
 
-async function testAllowOnceBrowserInteractionKeepsRawTextUntilRiskChanges() {
+async function testStrictModalHasNoAllowOnceAndCancelKeepsRawTextOut() {
   const harness = createHarness();
-  const { calls, composer, document, maybeHandleTypedSecrets } = harness;
+  const { calls, composer, document } = harness;
 
   const suspicious = "username=wayland.dev";
-  const paste = await pasteAndClickDecision(harness, suspicious, "Allow once");
+  const paste = createPasteEvent(suspicious, composer);
+  const pastePromise = harness.maybeHandlePaste(paste);
+
+  await waitForMicrotasks();
+  assert.strictEqual(countDecisionModals(document), 1, "suspicious paste should open one decision modal");
+  assert.strictEqual(findButtonByText(document, "Allow once"), null, "strict modal should not expose Allow once");
+  findButtonByText(document, "Cancel").click();
+  await pastePromise;
 
   assert.strictEqual(paste.defaultPrevented, true);
-  assert.strictEqual(composer.value, suspicious, "Allow once should insert the original raw text");
-  assert.strictEqual(calls.redactions.length, 0, "Allow once should not request redaction");
-  assert.strictEqual(countDecisionModals(document), 0, "modal should close after Allow once");
+  assert.strictEqual(composer.value, "", "cancelled strict modal should not insert raw paste text");
+  assert.strictEqual(calls.redactions.length, 0, "cancel should not request redaction");
+  assert.strictEqual(countDecisionModals(document), 0, "modal should close after Cancel");
+}
 
-  composer.value += " is the customer login, not a password.";
-  composer.selectionStart = composer.value.length;
-  composer.selectionEnd = composer.value.length;
-  await maybeHandleTypedSecrets();
+async function testPausedBrowserInteractionKeepsRawTextWithoutPrompt() {
+  const harness = createHarness({ paused: true });
+  const { calls, composer, document } = harness;
+  const suspicious = "username=wayland.dev";
+  const paste = createPasteEvent(suspicious, composer);
 
-  assert.strictEqual(countDecisionModals(document), 0, "normal typing should not reopen the modal");
-  assert.ok(composer.value.includes("wayland.dev"), "already allowed value should remain raw");
-  assert.strictEqual(composer.value.includes("[PWM_1]"), false, "already allowed value should not be rewritten");
-  assert.strictEqual(calls.redactions.length, 0, "same allowed risk set should not request redaction");
+  await harness.maybeHandlePaste(paste);
 
-  composer.value += " Also check 8.8.8.8";
-  composer.selectionStart = composer.value.length;
-  composer.selectionEnd = composer.value.length;
-  const typedPromise = maybeHandleTypedSecrets();
-  await waitForMicrotasks();
-
-  assert.strictEqual(countDecisionModals(document), 1, "new suspicious value should open the modal again");
-  assert.ok(findButtonByText(document, "Allow once"), "new decision modal should expose Allow once");
-  findButtonByText(document, "Cancel").click();
-  await typedPromise;
+  assert.strictEqual(paste.defaultPrevented, true);
+  assert.strictEqual(composer.value, suspicious, "paused protection should insert the original raw text");
+  assert.strictEqual(calls.redactions.length, 0, "paused protection should not request redaction");
+  assert.strictEqual(countDecisionModals(document), 0, "paused protection should not open a decision modal");
 }
 
 async function testRedactStillRewritesFromBrowserDecisionModal() {
@@ -454,9 +456,10 @@ async function testRedactStillRewritesFromBrowserDecisionModal() {
 }
 
 async function run() {
-  await testAllowOnceBrowserInteractionKeepsRawTextUntilRiskChanges();
+  await testStrictModalHasNoAllowOnceAndCancelKeepsRawTextOut();
+  await testPausedBrowserInteractionKeepsRawTextWithoutPrompt();
   await testRedactStillRewritesFromBrowserDecisionModal();
-  console.log("PASS content allow-once browser interaction regressions");
+  console.log("PASS content strict protection browser interaction regressions");
 }
 
 run().catch((error) => {

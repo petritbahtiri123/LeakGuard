@@ -10,6 +10,17 @@
     "allowUserOverride": {
       "type": "boolean"
     },
+    "allowProtectionPause": {
+      "type": "boolean"
+    },
+    "protectionPauseMaxMinutes": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 60
+    },
+    "protectionPauseRequiresUserAction": {
+      "type": "boolean"
+    },
     "allowUserAddedSites": {
       "type": "boolean"
     },

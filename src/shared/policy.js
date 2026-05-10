@@ -11,6 +11,9 @@
     enterpriseMode: false,
     allowReveal: true,
     allowUserOverride: true,
+    allowProtectionPause: true,
+    protectionPauseMaxMinutes: 15,
+    protectionPauseRequiresUserAction: true,
     allowUserAddedSites: true,
     allowSiteRemoval: true,
     blockHttpSecrets: false,
@@ -29,6 +32,9 @@
     enterpriseMode: true,
     allowReveal: false,
     allowUserOverride: false,
+    allowProtectionPause: false,
+    protectionPauseMaxMinutes: 0,
+    protectionPauseRequiresUserAction: true,
     allowUserAddedSites: false,
     allowSiteRemoval: true,
     blockHttpSecrets: true,
@@ -165,6 +171,22 @@
     return normalized;
   }
 
+  function asNumberInRange(value, fallback, min, max) {
+    if (value === undefined) {
+      return fallback;
+    }
+
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      throw new Error("Expected a number.");
+    }
+
+    if (value < min || value > max) {
+      throw new Error(`Expected a number from ${min} to ${max}.`);
+    }
+
+    return value;
+  }
+
   function asDestinationPolicies(value, fallback) {
     if (value === undefined) {
       return Array.isArray(fallback) ? cloneValue(fallback) : [];
@@ -214,6 +236,17 @@
 
     assign("allowReveal", asBoolean);
     assign("allowUserOverride", asBoolean);
+    assign("allowProtectionPause", (value, fallback) => {
+      const legacyOverride =
+        value === undefined && typeof input.allowUserOverride === "boolean"
+          ? input.allowUserOverride
+          : value;
+      return asBoolean(legacyOverride, fallback);
+    });
+    assign("protectionPauseMaxMinutes", (value, fallback) =>
+      asNumberInRange(value, fallback, 0, 60)
+    );
+    assign("protectionPauseRequiresUserAction", asBoolean);
     assign("allowUserAddedSites", asBoolean);
     assign("allowSiteRemoval", asBoolean);
     assign("blockHttpSecrets", asBoolean);
@@ -245,6 +278,9 @@
       enterpriseMode: Boolean(buildInfo.enterprise),
       allowReveal: false,
       allowUserOverride: false,
+      allowProtectionPause: false,
+      protectionPauseMaxMinutes: 0,
+      protectionPauseRequiresUserAction: true,
       allowUserAddedSites: false,
       allowSiteRemoval: true,
       blockHttpSecrets: true,
@@ -551,6 +587,9 @@
       enterpriseMode: Boolean(policy.enterpriseMode),
       allowReveal: Boolean(policy.allowReveal),
       allowUserOverride: Boolean(policy.allowUserOverride),
+      allowProtectionPause: Boolean(policy.allowProtectionPause),
+      protectionPauseMaxMinutes: Number(policy.protectionPauseMaxMinutes || 0),
+      protectionPauseRequiresUserAction: policy.protectionPauseRequiresUserAction !== false,
       allowUserAddedSites: Boolean(policy.allowUserAddedSites),
       allowSiteRemoval: Boolean(policy.allowSiteRemoval),
       blockHttpSecrets: Boolean(policy.blockHttpSecrets),

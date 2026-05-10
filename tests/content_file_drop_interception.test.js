@@ -397,8 +397,7 @@ function createHarness(overrides = {}) {
     handleDestinationPolicy: async () => ({ blocked: false }),
     shouldForceDestinationRedaction: () => false,
     handleHttpSecretPolicy: async () => false,
-    isCurrentRiskSetAllowedOnce: () => false,
-    clearAllowedOnceIfRiskChanged: () => {},
+    isProtectionPauseActiveAfterPolicy: () => false,
     promptForSensitiveContentDecision: async () => "redact",
     requestRedaction: async (text, findings, options) => {
       calls.redactions.push({ text, findings, options });
@@ -1228,16 +1227,15 @@ async function testGeminiQlEditorPasteIsSanitizedBeforePageHandlers() {
   assert.strictEqual(calls.redactions.length, 1);
 }
 
-async function testGeminiQlEditorPasteAllowOnceInsertsRawText() {
+async function testGeminiQlEditorPastePauseInsertsRawText() {
   const rawSecret = "LeakGuardPasteApiKey1234567890";
   const rawText = `API_KEY=${rawSecret}`;
   const { editor, child } = createGeminiEditor("");
-  const decisions = [];
   const { maybeHandlePaste, calls } = createHarness({
     location: { hostname: "gemini.google.com" },
+    isProtectionPauseActiveAfterPolicy: () => true,
     promptForSensitiveContentDecision: async (findings, mode, _policy, input, normalizedText) => {
-      decisions.push({ findings, mode, input, normalizedText });
-      return "allow";
+      throw new Error("paused Gemini paste should not prompt");
     },
     document: {
       activeElement: editor,
@@ -1257,12 +1255,9 @@ async function testGeminiQlEditorPasteAllowOnceInsertsRawText() {
 
   assert.strictEqual(event.defaultPrevented, true);
   assert.strictEqual(eventCalls.stopImmediatePropagation, 1);
-  assert.strictEqual(decisions.length, 1, "Gemini paste should use the shared decision flow");
-  assert.strictEqual(decisions[0].mode, "paste");
-  assert.strictEqual(decisions[0].input, editor);
-  assert.strictEqual(editor.text, rawText, "Allow once should insert the original Gemini paste text");
-  assert.strictEqual(calls.redactions.length, 0, "Allow once should not request Gemini paste redaction");
-  assert.strictEqual(editor.inputEvents.length, 1, "Gemini editor should stay usable after Allow once");
+  assert.strictEqual(editor.text, rawText, "paused Gemini paste should insert the original text");
+  assert.strictEqual(calls.redactions.length, 0, "paused Gemini paste should not request redaction");
+  assert.strictEqual(editor.inputEvents.length, 1, "Gemini editor should stay usable after pause");
 }
 
 async function testGeminiQlEditorDropTextFileIsSanitizedAndInserted() {
@@ -2904,7 +2899,7 @@ async function testChatGptAndClaudeStillUseSanitizedFileHandoffOnly() {
   await testGeminiDropSkipsDiscoveryPerDragSession();
   await testGeminiDropWithoutInputSkipsUploadHandoff();
   await testGeminiQlEditorPasteIsSanitizedBeforePageHandlers();
-  await testGeminiQlEditorPasteAllowOnceInsertsRawText();
+  await testGeminiQlEditorPastePauseInsertsRawText();
   await testChatGptLargePasteCreatesSanitizedPlainTextFileHandoff();
   await testChatGptLargePasteFallsBackToSanitizedTextOnlyWhenFileHandoffFails();
   await testNonChatGptLargePasteDoesNotUsePlainTextFileHandoff();
