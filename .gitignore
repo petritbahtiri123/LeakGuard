@@ -1,12 +1,15 @@
-# Nestjs specific
+# NestJS / build output
 /dist
 /node_modules
 /build
 /tmp
+
+# Python / AI local env
 /ai/venv
 /ai/.venv
 __pycache__/
 *.pyc
+
 # Logs
 logs
 *.log
@@ -25,6 +28,9 @@ lerna-debug.log*
 # temp directory
 .temp
 .tmp
+
+# Google Drive shortcut files
+*.gdoc
 
 # Codex local reproducibility captures
 /docs/codex-runs/*.json
