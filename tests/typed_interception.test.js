@@ -475,10 +475,13 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
       contentSource.includes("function handOffSanitizedFileInput") &&
       contentSource.includes("resolveFileInputForHandoff(event, input)") &&
       contentSource.includes("isGeminiHost()") &&
-      contentSource.includes("file-handoff:gemini-file-upload-skipped") &&
+      contentSource.includes("isGrokHost()") &&
+      contentSource.includes("function handOffGeminiSanitizedFileUpload") &&
+      contentSource.includes("function handOffGrokSanitizedFileUpload") &&
+      contentSource.includes("file-handoff:site-native-upload-failed") &&
       contentSource.includes('dispatchSanitizedFileEvent(target, "drop", transfer)') &&
       contentSource.includes('dispatchSanitizedFileEvent(target, "paste", transfer)'),
-    "local file handling should hand off sanitized files on non-Gemini sites while Gemini skips file-upload handoff"
+    "local file handling should hand off sanitized files through native site upload adapters and fail closed when required handoff fails"
   );
   assert.ok(
     contentSource.includes("async function applyGeminiSanitizedTextFallback") &&

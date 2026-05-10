@@ -2325,6 +2325,10 @@
     return location.hostname === "gemini.google.com";
   }
 
+  function isGrokHost() {
+    return location.hostname === "grok.com" || location.hostname.endsWith(".grok.com");
+  }
+
   function shouldHandleChatGptLargeTextPaste(pasted, quickAnalysis) {
     return Boolean(
       isChatGptHost() &&
@@ -2880,95 +2884,7 @@
   }
 
   async function maybeHandleGeminiEditorDrop(event) {
-    const editor = resolveGeminiEditorTarget(event?.target);
-    if (!editor) return false;
-
-    const files = listLocalTransferFiles(event.dataTransfer);
-    if (files.length !== 1 || !isSupportedGeminiTextFile(files[0])) {
-      if (files.length) {
-        showUnsupportedFilePassThroughNotice(resolveLocalFileTransferPolicy(event.dataTransfer));
-      }
-      return false;
-    }
-
-    consumeInterceptionEvent(event);
-    const localFile =
-      typeof readLocalTextFileFromDataTransfer === "function"
-        ? await readLocalTextFileFromDataTransfer(event.dataTransfer)
-        : await readGeminiTextFile(files[0]);
-    if (!localFile.ok) {
-      if (localFile.code === "streaming_required" && localFile.sourceFile) {
-        const streamResult = await streamRedactLocalTextFile(localFile.sourceFile, localFile.file);
-        if (streamResult.action === "redacted" && streamResult.sanitizedFile) {
-          const handedOff = handOffGeminiSanitizedFileUpload(event, editor, streamResult.sanitizedFile);
-          if (handedOff) {
-            setBadge("LeakGuard attached a sanitized local file.");
-            hideBadgeSoon(3200);
-            refreshBadgeFromCurrentInput();
-            return true;
-          }
-
-          const fallbackText = await readSanitizedFileTextForFallback(streamResult.sanitizedFile);
-          if (fallbackText) {
-            const fallbackResult = await applyGeminiSanitizedTextFallback(event, editor, fallbackText);
-            if (fallbackResult === true || fallbackResult === "cancelled") {
-              return true;
-            }
-          }
-        }
-
-        return blockGeminiEditorRawContent(
-          event,
-          streamResult.title || "Raw file upload blocked",
-          streamResult.error || "LeakGuard blocked raw file upload because sanitized streaming handoff failed."
-        );
-      }
-
-      return blockGeminiEditorRawContent(
-        event,
-        "Raw file upload blocked",
-        localFile.message || "LeakGuard could not read this local file, so nothing was attached."
-      );
-    }
-
-    const sizeInfo = classifyLocalTextPayloadSize({
-      text: localFile.text,
-      sizeBytes: localFile.file?.sizeBytes
-    });
-    if (sizeInfo.zone === "blocked") {
-      await blockLargeLocalTextPayload(event, sizeInfo);
-      return true;
-    }
-
-    const optimizedStatus = sizeInfo.zone === "optimized";
-    if (optimizedStatus) {
-      showLocalPayloadOptimizationStatus(sizeInfo);
-    }
-
-    try {
-      const sanitizedText = await redactGeminiEditorText(localFile.text);
-      const applied = await applyGeminiEditorText(editor, sanitizedText, "gemini-drop");
-      if (applied === true || applied === "cancelled") {
-        if (optimizedStatus) {
-          clearLocalPayloadOptimizationStatus(sizeInfo, applied === true ? "complete" : "cancelled");
-        }
-        return true;
-      }
-    } catch (error) {
-      if (optimizedStatus) {
-        clearLocalPayloadOptimizationStatus(sizeInfo, "failed");
-      }
-      handleContentError(error);
-    }
-
-    if (optimizedStatus) {
-      clearLocalPayloadOptimizationStatus(sizeInfo, "failed");
-    }
-    return blockGeminiEditorRawContent(
-      event,
-      "Raw file upload blocked",
-      "LeakGuard blocked raw file upload because sanitized insertion failed."
-    );
+    return false;
   }
 
   function isFileInputElement(el) {
@@ -3084,6 +3000,23 @@
     collectFileInputsFromAncestry(event?.target, addCandidate);
 
     const target = normalizeTarget(event?.target);
+    const preferredSelectors = [
+      "input[type='file'][accept*='text']",
+      "input[type='file'][accept*='.txt']",
+      "input[type='file'][accept*='.md']",
+      "input[type='file'][accept*='.json']",
+      "input[type='file'][accept*='.csv']",
+      "input[type='file']"
+    ];
+    for (const selector of preferredSelectors) {
+      try {
+        target?.closest?.("[role='dialog'], form, main, body")?.querySelectorAll?.(selector).forEach((candidate) => {
+          addCandidate(candidate, "target-scope");
+        });
+      } catch {
+        // Host-controlled selectors can fail; broader discovery below remains fail-closed.
+      }
+    }
     target?.closest?.("form")?.querySelectorAll?.("input[type='file']").forEach((candidate) => {
       addCandidate(candidate, "target-form");
     });
@@ -3137,10 +3070,6 @@
   }
 
   function handleFileDragDetected(event) {
-    if (isGeminiHost()) {
-      return;
-    }
-
     scheduleFileDragSessionReset();
     if (!fileDragDetectedLogged) {
       fileDragDetectedLogged = true;
@@ -3217,12 +3146,11 @@
     const target = event?.target || input;
     if (context === "drop") {
       if (isGeminiHost()) {
-        debugReveal("file-handoff:gemini-file-upload-skipped", {
-          context,
-          targetTag: event?.target?.tagName || "",
-          sanitizedFile: describeFileForDebug(sanitizedFile)
-        });
-        return false;
+        return handOffGeminiSanitizedFileUpload(event, input, sanitizedFile);
+      }
+
+      if (isGrokHost()) {
+        return handOffGrokSanitizedFileUpload(event, input, sanitizedFile);
       }
 
       try {
@@ -3260,8 +3188,44 @@
     }
 
     return handOffSanitizedFileInput(fileInput, transfer, {
-      dispatchInput: false
+      dispatchInput: true
     });
+  }
+
+  function handOffGrokSanitizedFileUpload(event, input, sanitizedFile) {
+    if (!isGrokHost()) return false;
+
+    const transfer = createSanitizedDataTransfer(sanitizedFile);
+    if (!transfer) {
+      debugReveal("file-handoff:grok-data-transfer-create-failed", {
+        sanitizedFile: describeFileForDebug(sanitizedFile)
+      });
+      return false;
+    }
+
+    const fileInput = resolveFileInputForHandoff(event, input);
+    if (fileInput && handOffSanitizedFileInput(fileInput, transfer, { dispatchInput: true })) {
+      return true;
+    }
+
+    const target = event?.target || input;
+    try {
+      transfer.dropEffect = "copy";
+    } catch {
+      // Some synthetic DataTransfer objects expose dropEffect as read-only.
+    }
+
+    if (dispatchSanitizedFileEvent(target, "drop", transfer)) {
+      debugReveal("file-handoff:grok-drop-success", {
+        sanitizedFile: describeFileForDebug(sanitizedFile)
+      });
+      return true;
+    }
+
+    debugReveal("file-handoff:grok-upload-failed", {
+      sanitizedFile: describeFileForDebug(sanitizedFile)
+    });
+    return false;
   }
 
   async function applyGeminiSanitizedTextFallback(event, input, redactedText) {
@@ -3458,7 +3422,7 @@
           };
         }
 
-        if (isGeminiHost()) {
+        if (isGeminiHost() && context !== "drop") {
           const fallbackText = await readSanitizedFileTextForFallback(streamResult.sanitizedFile);
           if (fallbackText) {
             const fallbackResult = await applyGeminiSanitizedTextFallback(event, input, fallbackText);
@@ -3514,54 +3478,35 @@
       showLocalPayloadOptimizationStatus(sizeInfo);
     }
 
-    const analysis = analyzeText(localFile.text);
-    const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
-
-    if (context === "drop" && isGeminiHost()) {
-      const geminiTextResult = await insertGeminiLocalFileText(event, input, result.redactedText);
-      if (geminiTextResult === true) {
-        if (optimizedStatus) {
-          clearLocalPayloadOptimizationStatus(sizeInfo, "complete");
-        }
-        setBadge("Sanitized content inserted as text");
-        hideBadgeSoon(4200);
-        refreshBadgeFromCurrentInput();
-        return {
-          handled: true,
-          ok: true,
-          strategy: "gemini-direct-text"
-        };
-      }
-
-      if (geminiTextResult === "cancelled") {
-        if (optimizedStatus) {
-          clearLocalPayloadOptimizationStatus(sizeInfo, "cancelled");
-        }
-        return {
-          handled: true,
-          ok: false,
-          reason: "gemini_large_text_cancelled"
-        };
-      }
-
+    let analysis;
+    let result;
+    let sanitizedFile;
+    try {
+      analysis = analyzeText(localFile.text);
+      result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
+      sanitizedFile = createSanitizedTextFile(localFile.file, result.redactedText);
+    } catch (error) {
       if (optimizedStatus) {
         clearLocalPayloadOptimizationStatus(sizeInfo, "failed");
       }
+      debugReveal("file-handoff:redaction-failed", {
+        context,
+        error: error?.message || String(error)
+      });
       setBadge("Raw file upload blocked");
       hideBadgeSoon(4200);
       await showMessageModal(
         "Raw file upload blocked",
-        "LeakGuard blocked raw file upload because sanitized text insertion failed."
+        "LeakGuard blocked raw file upload because local sanitization failed."
       );
       refreshBadgeFromCurrentInput();
       return {
         handled: true,
         ok: false,
-        reason: "gemini_direct_text_failed"
+        reason: "local_file_sanitization_failed"
       };
     }
 
-    const sanitizedFile = createSanitizedTextFile(localFile.file, result.redactedText);
     debugReveal("file-handoff:sanitized-file-created", {
       context,
       originalFile: describeFileForDebug(localFile.file),
@@ -3572,6 +3517,28 @@
     const handedOff = handOffSanitizedLocalFile(event, input, sanitizedFile, context);
 
     if (!handedOff) {
+      if (context === "drop" && (isGeminiHost() || isGrokHost())) {
+        if (optimizedStatus) {
+          clearLocalPayloadOptimizationStatus(sizeInfo, "failed");
+        }
+        debugReveal("file-handoff:site-native-upload-failed", {
+          site: isGeminiHost() ? "gemini" : "grok",
+          sanitizedFile: describeFileForDebug(sanitizedFile)
+        });
+        setBadge("Raw file upload blocked");
+        hideBadgeSoon(4200);
+        await showMessageModal(
+          "Raw file upload blocked",
+          "LeakGuard blocked raw file upload because sanitized file upload handoff failed."
+        );
+        refreshBadgeFromCurrentInput();
+        return {
+          handled: true,
+          ok: false,
+          reason: "sanitized_file_handoff_failed"
+        };
+      }
+
       const fallbackResult = await applyGeminiSanitizedTextFallback(event, input, result.redactedText);
       if (fallbackResult === true) {
         if (optimizedStatus) {
