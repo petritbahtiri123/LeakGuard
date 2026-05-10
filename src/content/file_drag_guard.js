@@ -92,7 +92,22 @@
     ".gif",
     ".bmp",
     ".ico",
-    ".svg"
+    ".svg",
+    ".zip",
+    ".7z",
+    ".rar",
+    ".tar",
+    ".gz",
+    ".tgz",
+    ".bz2",
+    ".xz",
+    ".exe",
+    ".dll",
+    ".dmg",
+    ".pkg",
+    ".app",
+    ".msi",
+    ".bin"
   ]);
 
   function dataTransferLooksLikeFiles(dataTransfer) {

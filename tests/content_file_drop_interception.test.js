@@ -4,6 +4,7 @@ const path = require("path");
 
 const repoRoot = path.join(__dirname, "..");
 const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
+const backgroundSource = fs.readFileSync(path.join(repoRoot, "src/background/core.js"), "utf8");
 
 require(path.join(repoRoot, "src/content/file_paste_helpers.js"));
 require(path.join(repoRoot, "src/content/composer_helpers.js"));
@@ -188,6 +189,17 @@ function createClipboardEvent({
   };
 
   return { event, calls };
+}
+
+function assertExplicitUnsupportedWarning(message, context) {
+  const text = String(message || "").toLowerCase();
+  assert.ok(text.includes("did not scan"), `${context}: warning should say the file was not scanned`);
+  assert.ok(text.includes("redact"), `${context}: warning should say the file was not redacted`);
+  assert.ok(text.includes("unsupported file types"), `${context}: warning should identify unsupported file types`);
+  assert.ok(text.includes("not protected in this release"), `${context}: warning should say unsupported files are not protected in this release`);
+  assert.ok(text.includes("normal upload may continue"), `${context}: warning should say normal upload may continue`);
+  assert.strictEqual(text.includes("sanitized"), false, `${context}: warning must not claim sanitization`);
+  assert.strictEqual(text.includes(" safe"), false, `${context}: warning must not call the file safe`);
 }
 
 function createGeminiEditor(initialText = "") {
@@ -388,8 +400,8 @@ function createHarness(overrides = {}) {
     isCurrentRiskSetAllowedOnce: () => false,
     clearAllowedOnceIfRiskChanged: () => {},
     promptForSensitiveContentDecision: async () => "redact",
-    requestRedaction: async (text, findings) => {
-      calls.redactions.push({ text, findings });
+    requestRedaction: async (text, findings, options) => {
+      calls.redactions.push({ text, findings, options });
       return {
         redactedText: text.replace(
           /LeakGuard(?:Drop|Paste|File)ApiKey1234567890/g,
@@ -478,7 +490,6 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "consumeInterceptionEvent"),
       extractFunctionSource(contentSource, "dataTransferLooksLikeFiles"),
       extractFunctionSource(contentSource, "listLocalTransferFiles"),
-      extractFunctionSource(contentSource, "isStrictUnsupportedFileMode"),
       extractFunctionSource(contentSource, "classifyLocalFile"),
       extractFunctionSource(contentSource, "resolveLocalFileTransferPolicy"),
       extractFunctionSource(contentSource, "resolveFileDragGuardPolicy"),
@@ -527,6 +538,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "maybeHandleGeminiEditorDrop"),
       extractFunctionSource(contentSource, "describeFileForDebug"),
       extractFunctionSource(contentSource, "applyGeminiSanitizedTextFallback"),
+      extractFunctionSource(contentSource, "readSanitizedFileTextForFallback"),
       extractFunctionSource(contentSource, "insertGeminiLocalFileText"),
       extractFunctionSource(contentSource, "maybeHandleLocalFileInsert"),
       extractFunctionSource(contentSource, "maybeHandlePaste"),
@@ -1850,6 +1862,7 @@ async function testDropOverHardLimitUsesStreamingSanitizedFileHandoff() {
       redactTextFileStream: async (file, options) => {
         assert.strictEqual(file, sourceFile);
         options.onProgress?.({ bytesProcessed: sourceFile.size, totalBytes: sourceFile.size });
+        await options.redactText("API_KEY=LeakGuardDropApiKey1234567890");
         return {
           action: "redacted",
           sanitizedFile,
@@ -1872,12 +1885,174 @@ async function testDropOverHardLimitUsesStreamingSanitizedFileHandoff() {
   await maybeHandleDrop(event);
 
   assert.strictEqual(event.defaultPrevented, true);
-  assert.strictEqual(calls.redactions.length, 0, "large streaming path should not use single-shot redaction");
+  assert.strictEqual(calls.redactions.length, 1, "large streaming path should redact only through streaming chunks");
+  assert.strictEqual(calls.redactions[0].options?.skipBackgroundScan, true);
+  assert.strictEqual(calls.redactions[0].options?.auditReason, "streaming_file_redaction");
   assert.strictEqual(calls.handoffs.length, 1);
   assert.strictEqual(calls.handoffs[0].sanitizedFile, sanitizedFile);
   assert.strictEqual(calls.handoffs[0].context, "drop");
   assert.ok(calls.badges.some(([message]) => String(message || "").includes("Streaming redaction")));
   assert.ok(calls.badges.some(([message]) => message === "LeakGuard attached a sanitized local file."));
+}
+
+async function testGeminiStreamingDropFallsBackToSanitizedTextWhenUploadRejected() {
+  const rawSecret = "LeakGuardDropApiKey1234567890";
+  const sanitizedText = "API_KEY=[PWM_1]\ntoken_limit=4096";
+  const sourceFile = {
+    name: "large-stream.env",
+    type: "text/plain",
+    size: 5 * 1024 * 1024,
+    async text() {
+      throw new Error("streaming Gemini drop must not read raw file text");
+    }
+  };
+  const sanitizedFile = {
+    name: "large-stream.env",
+    type: "text/plain",
+    size: sanitizedText.length,
+    async text() {
+      return sanitizedText;
+    }
+  };
+  const { editor, child } = createGeminiEditor("");
+  const { maybeHandleDrop, calls } = createHarness({
+    location: { hostname: "gemini.google.com" },
+    findComposer: () => editor,
+    readLocalTextFileFromDataTransfer: async (transfer) => {
+      calls.reads.push(transfer);
+      return {
+        handled: true,
+        ok: false,
+        code: "streaming_required",
+        sourceFile,
+        file: {
+          name: sourceFile.name,
+          type: sourceFile.type,
+          sizeBytes: sourceFile.size
+        }
+      };
+    },
+    StreamingFileRedactor: {
+      LARGE_TEXT_STREAMING_MAX_BYTES: 50 * 1024 * 1024,
+      redactTextFileStream: async (file, options) => {
+        assert.strictEqual(file, sourceFile);
+        await options.redactText(`API_KEY=${rawSecret}`);
+        return {
+          action: "redacted",
+          sanitizedFile,
+          findingsCount: 1,
+          bytesProcessed: sourceFile.size
+        };
+      }
+    },
+    handOffGeminiSanitizedFileUpload: (event, input, file) => {
+      calls.handoffs.push({ event, input, sanitizedFile: file, context: "gemini-file-input" });
+      return false;
+    }
+  });
+  const { event } = createEvent({
+    dataTransfer: {
+      types: ["Files"],
+      files: [sourceFile],
+      items: [],
+      dropEffect: "none"
+    },
+    target: child
+  });
+
+  await maybeHandleDrop(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(calls.handoffs.length, 1);
+  assert.strictEqual(calls.textFallbacks.length, 1);
+  assert.strictEqual(calls.textFallbacks[0].context, "file-text-fallback");
+  assert.strictEqual(calls.textFallbacks[0].insertedText.includes(rawSecret), false);
+  assert.strictEqual(editor.text.includes(rawSecret), false);
+  assert.ok(editor.text.includes("API_KEY=[PWM_1]"));
+  assert.ok(editor.text.includes("token_limit=4096"));
+  assert.ok(
+    calls.badges.some(([message]) =>
+      message === "Sanitized content inserted as text because Gemini rejected sanitized file upload."
+    )
+  );
+  assert.strictEqual(calls.modals.some(([title]) => title === "Raw file upload blocked"), false);
+}
+
+async function testGeminiStreamingFileInputFallsBackToSanitizedTextWhenUploadRejected() {
+  const rawSecret = "LeakGuardFileApiKey1234567890";
+  const sanitizedText = "API_KEY=[PWM_1]\ndevelopment_mode=true";
+  const sourceFile = {
+    name: "large-input.env",
+    type: "text/plain",
+    size: 5 * 1024 * 1024
+  };
+  const sanitizedFile = {
+    name: "large-input.env",
+    type: "text/plain",
+    size: sanitizedText.length,
+    async text() {
+      return sanitizedText;
+    }
+  };
+  const fileInput = createFileInput();
+  fileInput.files = [sourceFile];
+  fileInput.value = "C:\\fakepath\\large-input.env";
+  const composer = {
+    tagName: "TEXTAREA",
+    text: "",
+    selection: { start: 0, end: 0 }
+  };
+  const { maybeHandleFileInputChange, calls } = createHarness({
+    location: { hostname: "gemini.google.com" },
+    findComposer: () => composer,
+    readLocalTextFileFromDataTransfer: async (transfer) => {
+      calls.reads.push(transfer);
+      return {
+        handled: true,
+        ok: false,
+        code: "streaming_required",
+        sourceFile,
+        file: {
+          name: sourceFile.name,
+          type: sourceFile.type,
+          sizeBytes: sourceFile.size
+        }
+      };
+    },
+    StreamingFileRedactor: {
+      LARGE_TEXT_STREAMING_MAX_BYTES: 50 * 1024 * 1024,
+      redactTextFileStream: async (file, options) => {
+        assert.strictEqual(file, sourceFile);
+        await options.redactText(`API_KEY=${rawSecret}`);
+        return {
+          action: "redacted",
+          sanitizedFile,
+          findingsCount: 1,
+          bytesProcessed: sourceFile.size
+        };
+      }
+    },
+    handOffSanitizedLocalFile: (event, input, file, context) => {
+      calls.handoffs.push({ event, input, sanitizedFile: file, context });
+      return false;
+    }
+  });
+  const { event } = createEvent({
+    target: fileInput
+  });
+
+  await maybeHandleFileInputChange(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(fileInput.value, "");
+  assert.strictEqual(calls.handoffs.length, 1);
+  assert.strictEqual(calls.handoffs[0].context, "file-input");
+  assert.strictEqual(calls.textFallbacks.length, 1);
+  assert.strictEqual(calls.textFallbacks[0].context, "file-text-fallback");
+  assert.strictEqual(calls.textFallbacks[0].insertedText.includes(rawSecret), false);
+  assert.ok(composer.text.includes("API_KEY=[PWM_1]"));
+  assert.ok(composer.text.includes("development_mode=true"));
+  assert.strictEqual(calls.modals.some(([title]) => title === "Raw file upload blocked"), false);
 }
 
 async function testDropOverFiftyMiBBlocksBeforeStreaming() {
@@ -1937,6 +2112,19 @@ async function testDropOverFiftyMiBBlocksBeforeStreaming() {
   assert.strictEqual(calls.handoffs.length, 0);
   assert.ok(calls.modals.some(([title]) => title === "File too large for local redaction"));
   assert.ok(calls.modals.flat().join("\n").includes("over 50 MB"));
+}
+
+function testBackgroundSkipsDuplicateDetectorScanForStreamingChunks() {
+  assert.ok(
+    contentSource.includes("skipBackgroundScan: true") &&
+      contentSource.includes('auditReason: "streaming_file_redaction"'),
+    "streaming file redaction should request background detector skip"
+  );
+  assert.ok(
+    backgroundSource.includes("const shouldScanInBackground = !options.skipBackgroundScan") &&
+      backgroundSource.includes("skipBackgroundScan: Boolean(message.skipBackgroundScan)"),
+    "background redaction should honor streaming skipBackgroundScan flag"
+  );
 }
 
 async function testGeminiTextLikeFileExtensionsAreSanitized() {
@@ -2016,13 +2204,73 @@ async function testGeminiTextLikeSanitizerFailureBlocksRawFile() {
   assert.strictEqual(calls.modals.flat().join("\n").includes(rawSecret), false);
 }
 
+async function testSupportedTextFileHandoffFailureBlocksRawUpload() {
+  const rawSecret = "LeakGuardDropApiKey1234567890";
+  const file = createTextFile({
+    name: "secrets.env",
+    text: `API_KEY=${rawSecret}`
+  });
+  const composer = {
+    tagName: "TEXTAREA",
+    text: "",
+    selection: { start: 0, end: 0 }
+  };
+  const { maybeHandleDrop, calls } = createHarness({
+    location: { hostname: "chatgpt.com" },
+    findComposer: () => composer,
+    readLocalTextFileFromDataTransfer: async (transfer) => {
+      calls.reads.push(transfer);
+      return {
+        handled: true,
+        ok: true,
+        text: `API_KEY=${rawSecret}`,
+        file: {
+          name: "secrets.env",
+          type: "text/plain",
+          sizeBytes: Buffer.byteLength(`API_KEY=${rawSecret}`, "utf8")
+        }
+      };
+    },
+    handOffSanitizedLocalFile: (event, input, sanitizedFile, context) => {
+      calls.handoffs.push({ event, input, sanitizedFile, context });
+      return false;
+    }
+  });
+  const { event } = createEvent({
+    dataTransfer: {
+      types: ["Files"],
+      files: [file],
+      items: [],
+      dropEffect: "none"
+    },
+    target: composer
+  });
+
+  await maybeHandleDrop(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(calls.redactions.length, 1);
+  assert.strictEqual(calls.handoffs.length, 1);
+  assert.strictEqual(calls.handoffs[0].sanitizedFile.text.includes(rawSecret), false);
+  assert.strictEqual(calls.textFallbacks.length, 0, "supported text files should not raw-fallback");
+  assert.strictEqual(composer.text.includes(rawSecret), false);
+  assert.ok(calls.modals.some(([title]) => title === "Raw file upload blocked"));
+  assert.ok(
+    calls.modals.flat().join("\n").includes("Sanitized file handoff failed"),
+    "expected fail-closed handoff message"
+  );
+  assert.strictEqual(calls.modals.flat().join("\n").includes(rawSecret), false);
+}
+
 async function testUnsupportedDocumentAndImageFilesPassThroughByDefault() {
   for (const name of [
     "brief.pdf",
     "brief.docx",
+    "archive.zip",
     "sheet.xlsx",
     "image.png",
     "photo.jpg",
+    "installer.exe",
     "archive.bin"
   ]) {
     const { editor, child } = createGeminiEditor("");
@@ -2056,18 +2304,65 @@ async function testUnsupportedDocumentAndImageFilesPassThroughByDefault() {
     assert.strictEqual(event.defaultPrevented, false, `expected ${name} to pass through`);
     assert.strictEqual(calls.redactions.length, 0, `expected ${name} not to redact`);
     assert.strictEqual(calls.handoffs.length, 0, `expected ${name} not to hand off`);
+    assert.strictEqual(editor.inputEvents.length, 0, `expected ${name} not to be marked protected or sanitized`);
     assert.ok(
-      calls.badges.some(([message]) => message === "LeakGuard does not inspect this file type yet. Upload allowed."),
+      calls.badges.some(([message]) => String(message || "").includes("not scanned or redacted")),
       `expected ${name} pass-through notice`
     );
+    assert.strictEqual(calls.modals.length, 1, `expected ${name} explicit warning modal`);
+    assertExplicitUnsupportedWarning(calls.modals[0].join("\n"), name);
   }
 }
 
-async function testUnknownBinaryBlocksInStrictMode() {
+async function testUnsupportedFileInputWarnsAndKeepsComposerUsable() {
+  for (const name of ["brief.pdf", "brief.docx", "archive.zip", "installer.exe", "photo.png"]) {
+    const { editor } = createGeminiEditor("Existing prompt");
+    const rawFile = createTextFile({
+      name,
+      type: name.endsWith(".png") ? "image/png" : "application/octet-stream",
+      text: "binary"
+    });
+    const fileInput = createFileInput({ source: "shadow-root" });
+    fileInput.files = [rawFile];
+    fileInput.value = `C:\\fakepath\\${name}`;
+    const { maybeHandleFileInputChange, calls } = createHarness({
+      location: { hostname: "gemini.google.com" },
+      findComposer: () => editor,
+      document: {
+        activeElement: editor,
+        execCommand() {
+          throw new Error(`${name} should not be inserted by LeakGuard`);
+        }
+      }
+    });
+    const { event, calls: eventCalls } = createEvent({
+      target: fileInput
+    });
+
+    await maybeHandleFileInputChange(event);
+
+    assert.strictEqual(event.defaultPrevented, false, `expected ${name} file input to continue`);
+    assert.strictEqual(eventCalls.stopImmediatePropagation, 0, `expected ${name} not to be stopped`);
+    assert.strictEqual(fileInput.value, `C:\\fakepath\\${name}`, `expected ${name} selection to remain`);
+    assert.strictEqual(calls.reads.length, 0, `expected ${name} not to be read`);
+    assert.strictEqual(calls.redactions.length, 0, `expected ${name} not to redact`);
+    assert.strictEqual(calls.createdFiles.length, 0, `expected ${name} not to create sanitized file`);
+    assert.strictEqual(calls.handoffs.length, 0, `expected ${name} not to hand off sanitized file`);
+    assert.strictEqual(editor.text, "Existing prompt", `expected ${name} not to alter composer text`);
+    assert.strictEqual(editor.inputEvents.length, 0, `expected ${name} composer to remain usable`);
+    assert.ok(
+      calls.badges.some(([message]) => String(message || "").includes("not scanned or redacted")),
+      `expected ${name} warning`
+    );
+    assert.strictEqual(calls.modals.length, 1, `expected ${name} explicit warning modal`);
+    assertExplicitUnsupportedWarning(calls.modals[0].join("\n"), name);
+  }
+}
+
+async function testUnsupportedBinaryPassesThroughWithoutSanitizedState() {
   const { editor, child } = createGeminiEditor("");
   const { maybeHandleDrop, calls } = createHarness({
     location: { hostname: "gemini.google.com" },
-    getActivePolicy: () => ({ strictUnsupportedFileBlocking: true }),
     document: {
       activeElement: editor,
       execCommand() {
@@ -2093,9 +2388,14 @@ async function testUnknownBinaryBlocksInStrictMode() {
 
   await maybeHandleDrop(event);
 
-  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(event.defaultPrevented, false);
   assert.strictEqual(calls.redactions.length, 0);
-  assert.ok(calls.modals.some(([title]) => title === "Raw file upload blocked"));
+  assert.strictEqual(calls.handoffs.length, 0);
+  assert.strictEqual(calls.modals.length, 1);
+  assert.ok(
+    calls.badges.some(([message]) => String(message || "").includes("not scanned or redacted"))
+  );
+  assertExplicitUnsupportedWarning(calls.modals[0].join("\n"), "payload.bin");
 }
 
 async function testGeminiEditorResolvesContenteditableFallback() {
@@ -2618,11 +2918,16 @@ async function testChatGptAndClaudeStillUseSanitizedFileHandoffOnly() {
   await testChatGptOverHardLimitPasteIsBlockedBeforeHandoff();
   await testGeminiOverHardLimitDropIsBlockedBeforeInsertion();
   await testDropOverHardLimitUsesStreamingSanitizedFileHandoff();
+  await testGeminiStreamingDropFallsBackToSanitizedTextWhenUploadRejected();
+  await testGeminiStreamingFileInputFallsBackToSanitizedTextWhenUploadRejected();
   await testDropOverFiftyMiBBlocksBeforeStreaming();
+  testBackgroundSkipsDuplicateDetectorScanForStreamingChunks();
   await testGeminiTextLikeFileExtensionsAreSanitized();
   await testGeminiTextLikeSanitizerFailureBlocksRawFile();
+  await testSupportedTextFileHandoffFailureBlocksRawUpload();
   await testUnsupportedDocumentAndImageFilesPassThroughByDefault();
-  await testUnknownBinaryBlocksInStrictMode();
+  await testUnsupportedFileInputWarnsAndKeepsComposerUsable();
+  await testUnsupportedBinaryPassesThroughWithoutSanitizedState();
   await testGeminiEditorResolvesContenteditableFallback();
   await testGeminiNonEditorPasteAndDropAreIgnoredByEditorHandler();
   await testGeminiSanitizerFailureBlocksRawPasteAndDrop();

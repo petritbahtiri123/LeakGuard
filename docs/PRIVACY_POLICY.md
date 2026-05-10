@@ -21,6 +21,8 @@ LeakGuard may access text you type, paste, or submit in protected site composers
 
 LeakGuard may also access a local text file only after you choose it in the File Scanner page or paste, drop, or select it through a protected AI composer. This release supports text-based files only and can export a redacted text copy or a sanitized JSON findings report from the File Scanner page.
 
+LeakGuard scans and redacts supported text files locally. Unsupported formats such as PDFs, DOCX files, images, archives, executables, and binary files are not scanned, redacted, or protected in this release. LeakGuard warns before these unsupported files continue through the normal site upload flow.
+
 For protected AI composers, larger supported text files may be redacted with streaming/chunked local processing before LeakGuard hands off a sanitized in-memory file to the site. This avoids sending raw text-file content through protected upload paths while keeping processing local to your browser.
 
 ## What LeakGuard Stores
@@ -74,11 +76,11 @@ LeakGuard is a risk-reduction tool, not a guarantee of secrecy or privacy, and i
 - browser compromise or malware
 - OS-level clipboard/history capture
 - screenshots or shoulder surfing
-- unsupported binary document or image redaction flows such as PDF, DOCX, screenshots, or image OCR
+- unsupported binary document, archive, executable, or image redaction flows such as PDF, DOCX, ZIP, EXE, screenshots, or image OCR
 - websites or editors whose DOM changes break interception logic
 - raw values that you intentionally reveal or manually send
 
-PDF, DOCX, and image redaction are planned but not enabled in this release. The current file protection paths safely redact text-based files only. Supported text files above the current local streaming limit are blocked rather than uploaded raw through protected text-file paths.
+PDF, DOCX, image, archive, executable, and binary-file redaction are not enabled in this release. The current file protection paths redact supported text-based files only. Unsupported files are not marked as scanned, protected, or sanitized. Supported text files above the current local streaming limit are blocked rather than uploaded raw through protected text-file paths.
 
 ## Data Retention
 

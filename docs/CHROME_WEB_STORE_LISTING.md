@@ -27,7 +27,9 @@ Before text is sent from a protected site, LeakGuard can:
 
 LeakGuard also includes a local File Scanner page for text-based files such as `.env`, `.json`, `.log`, `.md`, source files, and config files. It can export redacted text copies and sanitized JSON findings reports without storing file contents or uploading them.
 
-For protected AI composers, supported local UTF-8 text files pasted, dropped, or selected in the page can be locally validated, redacted, and replaced with sanitized in-memory `File`/`Blob` objects where the browser and site upload flow accept synthetic file handoff. Larger supported text files above 4 MiB and up to 50 MB are redacted locally with streaming/chunked processing before sanitized handoff. If the file is unsupported or invalid, if it is above 50 MB, or if sanitized file handoff fails, LeakGuard blocks raw upload and shows a local message.
+For protected AI composers, supported local UTF-8 text files pasted, dropped, or selected in the page can be locally validated, redacted, and replaced with sanitized in-memory `File`/`Blob` objects where the browser and site upload flow accept synthetic file handoff. Larger supported text files above 4 MiB and up to 50 MB are redacted locally with streaming/chunked processing before sanitized handoff. Supported text files above 50 MB are blocked from local redaction with a clear too-large warning. If LeakGuard attempts sanitization and sanitized file handoff fails, LeakGuard blocks raw upload and shows a local message.
+
+LeakGuard scans and redacts supported text files locally. Unsupported formats such as PDFs, DOCX files, images, archives, executables, and binary files are not scanned, redacted, or protected in this release. LeakGuard warns before these unsupported files continue through the normal site upload flow.
 
 LeakGuard also protects ChatGPT large-paste flows that can become generated `Plain Text` attachments, and includes Gemini-specific mitigations for sanitized file handoff and large text fallback behavior.
 
@@ -45,7 +47,8 @@ LeakGuard is designed for risk reduction, not as a complete data-loss-prevention
 - streaming local redaction for supported text-file composer uploads above 4 MiB and up to 50 MB
 - ChatGPT large paste / generated Plain Text attachment protection
 - Gemini sanitized file handoff and large text fallback protection
-- fail-closed blocking on unsupported files, files above 50 MB, or failed sanitized file handoff
+- warning-only pass-through for unsupported files without claiming they were scanned, protected, or sanitized
+- fail-closed blocking for supported text files above 50 MB or failed sanitized file handoff after LeakGuard attempts sanitization
 - Manifest V3 service-worker architecture
 - deterministic per-session placeholder mapping
 - secure reveal only inside extension-owned UI
@@ -58,6 +61,7 @@ LeakGuard is designed for risk reduction, not as a complete data-loss-prevention
 - no backend service
 - no promise of perfect privacy or complete secret protection
 - no PDF, DOCX, image OCR, or visual image redaction in this release
+- no archive, executable, or binary-file redaction in this release
 - no support for every editor, upload flow, browser, or synthetic `DataTransfer` file handoff path
 
 ## Store Category Suggestion
@@ -107,6 +111,7 @@ Use real extension screenshots with production copy. Avoid showing raw real cred
 - The extension processes text locally in the browser.
 - The File Scanner processes explicitly selected text files locally and does not upload or store file contents.
 - Supported local text files pasted, dropped, or selected in protected AI composers are processed locally, including streaming/chunked local redaction for supported text files above 4 MiB and up to 50 MB.
+- Unsupported formats such as PDFs, DOCX files, images, archives, executables, and binary files are not scanned, redacted, or protected in this release; LeakGuard warns before those files continue through the normal site upload flow.
 - Raw text-file uploads are blocked if sanitized file handoff cannot complete.
 - Raw secrets are not sent to external services by the extension.
 - Likely email addresses are redacted locally; LeakGuard does not upload email text for scanning.

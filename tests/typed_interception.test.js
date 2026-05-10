@@ -411,8 +411,8 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   assert.ok(
       fs.readFileSync(path.join(repoRoot, "src/background/core.js"), "utf8").includes('runAt: "document_start"') &&
       fs.readFileSync(path.join(repoRoot, "src/background/core.js"), "utf8").includes("allFrames: true") &&
-      fs.readFileSync(path.join(repoRoot, "src/background/core.js"), "utf8").includes("matchAboutBlank: true"),
-    "dynamic protected-site content scripts should also install at document_start in all frames"
+      fs.readFileSync(path.join(repoRoot, "src/background/core.js"), "utf8").includes("matchOriginAsFallback: true"),
+    "dynamic protected-site content scripts should also install at document_start in related frames"
   );
   assert.ok(
     contentSource.includes("function bindFileDragEvents") &&

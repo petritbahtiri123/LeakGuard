@@ -167,7 +167,9 @@
     if (file.size > scanner.MAX_TEXT_FILE_SIZE_BYTES) {
       return {
         ok: false,
-        message: "This release scans text files up to 50 MB. Choose a smaller file or split it before scanning."
+        message:
+          scanner.LARGE_TEXT_STREAMING_BLOCK_MESSAGE ||
+          "File too large for local redaction. Choose a smaller file or split it before scanning."
       };
     }
 

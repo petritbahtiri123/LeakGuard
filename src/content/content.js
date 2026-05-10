@@ -314,15 +314,6 @@
       .filter(Boolean);
   }
 
-  function isStrictUnsupportedFileMode() {
-    const policy = getActivePolicy();
-    return Boolean(
-      policy.strictUnsupportedFileBlocking ||
-        policy.blockUnsupportedFileUploads ||
-        policy.fileUploadMode === "strict"
-    );
-  }
-
   function classifyLocalFile(file) {
     const FileScanner = globalThis.PWM?.FileScanner || {};
     if (typeof FileScanner.classifyFileForTextScan === "function") {
@@ -335,7 +326,8 @@
     return {
       kind: "unknown",
       action: "allow",
-      message: "LeakGuard does not inspect this file type yet. Upload allowed."
+      message:
+        "LeakGuard did not scan or redact this file. Unsupported file types such as PDF, DOCX, images, archives, executables, and binary files are not protected in this release. Normal upload may continue through the site."
     };
   }
 
@@ -350,19 +342,6 @@
       return { action: "scan", files, classifications };
     }
 
-    if (
-      isStrictUnsupportedFileMode() &&
-      classifications.some((classification) => classification.kind === "unknown")
-    ) {
-      return {
-        action: "block",
-        reason: "unknown_binary_strict",
-        files,
-        classifications,
-        message: "LeakGuard blocked this unsupported file type because strict file handling is enabled."
-      };
-    }
-
     return {
       action: "allow",
       reason: "unsupported_file_pass_through",
@@ -370,7 +349,7 @@
       classifications,
       message:
         classifications.find((classification) => classification.message)?.message ||
-        "LeakGuard does not inspect this file type yet. Upload allowed."
+        "LeakGuard did not scan or redact this file. Unsupported file types such as PDF, DOCX, images, archives, executables, and binary files are not protected in this release. Normal upload may continue through the site."
     };
   }
 
@@ -384,8 +363,9 @@
 
   function showUnsupportedFilePassThroughNotice(policy) {
     if (!policy?.message) return;
-    setBadge(policy.message);
-    hideBadgeSoon(3200);
+    setBadge("Unsupported file not scanned or redacted");
+    hideBadgeSoon(4200);
+    void showMessageModal("Unsupported file not protected", policy.message);
   }
 
   function getLocalTextPayloadByteLength(text, fallbackBytes = 0) {
@@ -539,7 +519,8 @@
       redactText: async (text) => {
         const analysis = analyzeText(text);
         return requestRedaction(analysis.normalizedText, analysis.secretFindings, {
-          auditReason: "streaming_file_redaction"
+          auditReason: "streaming_file_redaction",
+          skipBackgroundScan: true
         });
       }
     });
@@ -1041,7 +1022,8 @@
       url: location.href,
       text,
       findings,
-      auditReason: options.auditReason || null
+      auditReason: options.auditReason || null,
+      skipBackgroundScan: Boolean(options.skipBackgroundScan)
     });
 
     if (!response?.ok || !response?.result) {
@@ -2864,7 +2846,8 @@
     if (!isSupportedGeminiTextFile(file) || typeof file?.text !== "function") {
       return {
         ok: false,
-        message: "This release safely redacts text-based files only. PDF/DOCX/image redaction is planned but not enabled yet."
+        message:
+          "LeakGuard did not scan or redact this file. Unsupported file types such as PDF, DOCX, images, archives, executables, and binary files are not protected in this release. Normal upload may continue through the site."
       };
     }
 
@@ -2909,6 +2892,9 @@
 
     const files = listLocalTransferFiles(event.dataTransfer);
     if (files.length !== 1 || !isSupportedGeminiTextFile(files[0])) {
+      if (files.length) {
+        showUnsupportedFilePassThroughNotice(resolveLocalFileTransferPolicy(event.dataTransfer));
+      }
       return false;
     }
 
@@ -2927,6 +2913,14 @@
             hideBadgeSoon(3200);
             refreshBadgeFromCurrentInput();
             return true;
+          }
+
+          const fallbackText = await readSanitizedFileTextForFallback(streamResult.sanitizedFile);
+          if (fallbackText) {
+            const fallbackResult = await applyGeminiSanitizedTextFallback(event, editor, fallbackText);
+            if (fallbackResult === true || fallbackResult === "cancelled") {
+              return true;
+            }
           }
         }
 
@@ -3344,6 +3338,17 @@
     return true;
   }
 
+  async function readSanitizedFileTextForFallback(sanitizedFile) {
+    if (!sanitizedFile) return "";
+    if (typeof sanitizedFile.text === "function") {
+      return String(await sanitizedFile.text());
+    }
+    if (typeof sanitizedFile.text === "string") {
+      return sanitizedFile.text;
+    }
+    return "";
+  }
+
   async function insertGeminiLocalFileText(event, input, redactedText) {
     if (!isGeminiHost()) {
       return false;
@@ -3397,27 +3402,6 @@
 
     const transferPolicy = resolveLocalFileTransferPolicy(dataTransfer);
     if (transferPolicy.action === "allow") {
-      if (context === "file-input" && isGeminiHost()) {
-        if (event?.target?.tagName === "INPUT" && String(event.target.type || "").toLowerCase() === "file") {
-          try {
-            event.target.value = "";
-          } catch {
-            // The raw FileList has already been stopped from reaching Gemini.
-          }
-        }
-        setBadge("Raw file upload blocked");
-        hideBadgeSoon(4200);
-        await showMessageModal(
-          "Raw file upload blocked",
-          transferPolicy.message || "LeakGuard blocked this unsupported file type for Gemini upload."
-        );
-        refreshBadgeFromCurrentInput();
-        return {
-          handled: true,
-          ok: false,
-          reason: transferPolicy.reason || "unsupported_file_blocked_for_gemini"
-        };
-      }
       showUnsupportedFilePassThroughNotice(transferPolicy);
       return false;
     }
@@ -3479,6 +3463,28 @@
             ok: true,
             strategy: "streaming-sanitized-file-handoff"
           };
+        }
+
+        if (isGeminiHost()) {
+          const fallbackText = await readSanitizedFileTextForFallback(streamResult.sanitizedFile);
+          if (fallbackText) {
+            const fallbackResult = await applyGeminiSanitizedTextFallback(event, input, fallbackText);
+            if (fallbackResult === true) {
+              return {
+                handled: true,
+                ok: true,
+                strategy: "gemini-streaming-sanitized-text-fallback"
+              };
+            }
+
+            if (fallbackResult === "cancelled") {
+              return {
+                handled: true,
+                ok: false,
+                reason: "gemini_large_text_cancelled"
+              };
+            }
+          }
         }
 
         return blockStreamingLocalFile(
@@ -3726,9 +3732,6 @@
     }
 
     const selectedFiles = Array.from(event.target.files || []);
-    if (isGeminiHost()) {
-      consumeInterceptionEvent(event);
-    }
 
     const input = findComposer(event.target);
     if (!input && !isGeminiHost()) return;

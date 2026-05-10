@@ -491,7 +491,7 @@ async function buildUserSiteRegistrations() {
       css: CONTENT_STYLE_FILES,
       runAt: "document_start",
       allFrames: true,
-      matchAboutBlank: true,
+      matchOriginAsFallback: true,
       persistAcrossSessions: true
     });
   }
@@ -868,8 +868,9 @@ async function redactForTab(tabId, url, text, findings, options = {}) {
   manager.setPrivateState(current || {});
 
   const normalizedFindings = (findings || []).map(normalizeFinding).filter((finding) => finding.raw);
+  const shouldScanInBackground = !options.skipBackgroundScan && typeof Detector === "function";
   const backgroundFindings =
-    typeof Detector === "function"
+    shouldScanInBackground
       ? new Detector()
           .scan(text, { manager })
           .filter((finding) => finding.severity !== "low")
@@ -1077,7 +1078,8 @@ ext.runtime?.onMessage?.addListener((message, sender, sendResponse) => {
 
     if (message?.type === "PWM_REDACT_TEXT") {
       const payload = await redactForTab(tabId, message.url, message.text, message.findings, {
-        auditReason: message.auditReason
+        auditReason: message.auditReason,
+        skipBackgroundScan: Boolean(message.skipBackgroundScan)
       });
       sendResponse({ ok: true, ...payload });
       return;
