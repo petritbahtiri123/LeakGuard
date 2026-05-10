@@ -90,6 +90,28 @@
       captureGroups: [1, 2, 3]
     },
     {
+      name: "twilio_auth_token_assignment",
+      type: "TOKEN",
+      category: "credential",
+      baseScore: 91,
+      suppressionNotes:
+        "Twilio auth tokens are 32 hex characters, so require the explicit TWILIO_AUTH_TOKEN key instead of broad hex matching.",
+      regex:
+        /\bTWILIO_AUTH_TOKEN\b\s*[:=]\s*(?:"([a-f0-9]{32})"|'([a-f0-9]{32})'|([a-f0-9]{32}))/gi,
+      captureGroups: [1, 2, 3]
+    },
+    {
+      name: "datadog_app_key_assignment",
+      type: "API_KEY",
+      category: "credential",
+      baseScore: 90,
+      suppressionNotes:
+        "Datadog application keys are high-signal only when attached to DD_APP_KEY or DATADOG_APP_KEY.",
+      regex:
+        /\b(?:DD_APP_KEY|DATADOG_APP_KEY)\b\s*[:=]\s*(?:"([a-f0-9]{40})"|'([a-f0-9]{40})'|([a-f0-9]{40}))/gi,
+      captureGroups: [1, 2, 3]
+    },
+    {
       name: "openai_api_key",
       type: "API_KEY",
       category: "credential",

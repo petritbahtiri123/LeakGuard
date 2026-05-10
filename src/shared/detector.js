@@ -91,6 +91,8 @@
     aws_access_key_id_assignment: ["aws_access_key_id"],
     aws_access_key: ["akia"],
     azure_storage_account_key_assignment: ["azure_storage_account_key", "azurewebjobsstorage__accountkey", "accountkey", "account_key", "account-key"],
+    twilio_auth_token_assignment: ["twilio_auth_token"],
+    datadog_app_key_assignment: ["dd_app_key", "datadog_app_key"],
     openai_api_key: ["sk-"],
     anthropic_api_key: ["sk-ant-"],
     github_pat: ["github_pat_"],
