@@ -2259,6 +2259,31 @@
     }
   }
 
+  function createSanitizedDataTransferForHandoff(sanitizedFile, details) {
+    if (details) {
+      details.dataTransferConstructorSucceeded = false;
+      details.dataTransferItemsAddSucceeded = false;
+    }
+    if (!sanitizedFile || typeof DataTransfer !== "function") {
+      return null;
+    }
+
+    try {
+      const transfer = new DataTransfer();
+      if (details) details.dataTransferConstructorSucceeded = true;
+      if (typeof transfer.items?.add !== "function") return null;
+      transfer.items.add(sanitizedFile);
+      if (details) details.dataTransferItemsAddSucceeded = true;
+      return Number(transfer.files?.length || 0) > 0 ? transfer : null;
+    } catch (error) {
+      if (details) {
+        details.errorMessage = error?.message || String(error);
+        details.errorStack = error?.stack || "";
+      }
+      return null;
+    }
+  }
+
   function attachEventDataTransfer(event, propertyName, transfer) {
     try {
       Object.defineProperty(event, propertyName, {
@@ -2907,13 +2932,103 @@
   function describeFileInputForDebug(fileInput, source = "") {
     if (!isFileInputElement(fileInput)) return null;
     return {
+      tag: fileInput.tagName || "",
       source,
       disabled: Boolean(fileInput.disabled),
       hidden: Boolean(fileInput.hidden),
+      className: typeof fileInput.className === "string" ? fileInput.className : fileInput.getAttribute?.("class") || "",
       accept: fileInput.accept || "",
       multiple: Boolean(fileInput.multiple),
       filesLength: Number(fileInput.files?.length || 0)
     };
+  }
+
+  function getSafeTextSnippet(el) {
+    if (!el) return "";
+    let text = "";
+    try {
+      text = String(el.innerText || el.textContent || "");
+    } catch {
+      text = "";
+    }
+    return text.replace(/\s+/g, " ").trim().slice(0, 80);
+  }
+
+  function describeElementForDebug(el, source = "") {
+    if (!el) return null;
+    let className = "";
+    try {
+      className =
+        typeof el.className === "string"
+          ? el.className
+          : el.getAttribute?.("class") || "";
+    } catch {
+      className = "";
+    }
+    return {
+      tag: el.tagName || "",
+      role: el.getAttribute?.("role") || el.role || "",
+      ariaLabel: el.getAttribute?.("aria-label") || el.ariaLabel || "",
+      title: el.getAttribute?.("title") || el.title || "",
+      className,
+      textSnippet: getSafeTextSnippet(el),
+      source
+    };
+  }
+
+  function originalFileMetadataFromEvent(event) {
+    try {
+      return describeFileForDebug(event?.dataTransfer?.files?.[0]);
+    } catch {
+      return null;
+    }
+  }
+
+  function createSanitizedFileHandoffDetails(event, sanitizedFile, stage) {
+    const target = normalizeTarget(event?.target);
+    return {
+      hostname: location.hostname || "",
+      eventType: event?.type || "",
+      handoffStage: stage || "",
+      targetTag: target?.tagName || "",
+      originalFile: originalFileMetadataFromEvent(event),
+      sanitizedFile: describeFileForDebug(sanitizedFile),
+      foundTopUploadTrigger: false,
+      uploadTrigger: null,
+      overlayItemCount: 0,
+      overlayCandidates: [],
+      selectedOverlayItem: null,
+      fileInputCountBeforeClick: 0,
+      fileInputCountAfterTopTriggerClick: 0,
+      fileInputCountAfterOverlayItemClick: 0,
+      openShadowRootCount: 0,
+      dataTransferConstructorSucceeded: false,
+      dataTransferItemsAddSucceeded: false,
+      inputFilesAssignmentSucceeded: false,
+      inputEventDispatched: false,
+      changeEventDispatched: false,
+      failureReason: "",
+      errorMessage: "",
+      errorStack: ""
+    };
+  }
+
+  function logSanitizedFileHandoffFailure(details, error) {
+    const payload = {
+      ...(details || {}),
+      errorMessage: details?.errorMessage || error?.message || (error ? String(error) : ""),
+      errorStack: details?.errorStack || error?.stack || ""
+    };
+    try {
+      debugReveal("sanitized-file-handoff:failed", payload);
+    } catch {
+      // Diagnostics must never affect blocking behavior.
+    }
+    try {
+      console.error("[LeakGuard] sanitized file handoff failed", payload, error || "");
+    } catch {
+      // Ignore console failures in host-controlled environments.
+    }
   }
 
   function clearFileDragSession() {
@@ -2989,22 +3104,7 @@
   }
 
   function describeUploadTriggerForDebug(trigger, source = "") {
-    if (!trigger) return null;
-    let className = "";
-    try {
-      className =
-        typeof trigger.className === "string"
-          ? trigger.className
-          : trigger.getAttribute?.("class") || "";
-    } catch {
-      className = "";
-    }
-    return {
-      tag: trigger.tagName || "",
-      ariaLabel: trigger.getAttribute?.("aria-label") || trigger.ariaLabel || "",
-      className,
-      source
-    };
+    return describeElementForDebug(trigger, source);
   }
 
   function collectFileHandoffElementsFromRoot(root, addInput, addUploadTrigger, visitedRoots, stats) {
@@ -3117,6 +3217,99 @@
       fileInputs: inputs,
       uploadTriggers
     };
+  }
+
+  function collectRootsWithOpenShadow(root, roots, visitedRoots, stats) {
+    if (!root || visitedRoots.has(root)) return;
+    visitedRoots.add(root);
+    roots.push(root);
+
+    let elements = [];
+    try {
+      elements = Array.from(root.querySelectorAll?.("*") || []);
+    } catch {
+      elements = [];
+    }
+
+    elements.forEach((element) => {
+      if (element?.shadowRoot) {
+        if (stats) stats.openShadowRootCount += 1;
+        collectRootsWithOpenShadow(element.shadowRoot, roots, visitedRoots, stats);
+      }
+    });
+  }
+
+  function isRejectedGeminiUploadMenuItem(candidate) {
+    const meta = describeElementForDebug(candidate);
+    const haystack = `${meta?.ariaLabel || ""} ${meta?.title || ""} ${meta?.textSnippet || ""}`.toLowerCase();
+    return haystack.includes("drive") || haystack.includes("photos") || haystack.includes("notebooklm");
+  }
+
+  function scoreGeminiUploadMenuItem(candidate) {
+    if (!candidate || isRejectedGeminiUploadMenuItem(candidate)) return 0;
+    const meta = describeElementForDebug(candidate);
+    const label = meta?.ariaLabel || "";
+    const text = meta?.textSnippet || "";
+    const role = meta?.role || "";
+    if (role === "menuitem" && label === "Upload files. Documents, data, code files") return 100;
+    if (role === "menuitem" && /upload files/i.test(label)) return 80;
+    if (role === "menuitem" && /upload files/i.test(text)) return 70;
+    if (/upload files/i.test(label) || /upload files/i.test(text)) return 50;
+    return 0;
+  }
+
+  function discoverGeminiUploadOverlayItem(details) {
+    const roots = [];
+    const stats = { openShadowRootCount: 0 };
+    collectRootsWithOpenShadow(document, roots, new WeakSet(), stats);
+    const candidates = [];
+    const seen = new WeakSet();
+    const selectors = [
+      ".cdk-overlay-container",
+      ".cdk-overlay-pane",
+      ".mat-mdc-menu-panel",
+      'mat-action-list[role="menu"]',
+      '[role="menuitem"]',
+      "button"
+    ];
+
+    const addCandidate = (candidate, source) => {
+      if (!candidate || seen.has(candidate)) return;
+      seen.add(candidate);
+      if (candidate.matches?.(".cdk-overlay-container, .cdk-overlay-pane, .mat-mdc-menu-panel, mat-action-list")) {
+        return;
+      }
+      const score = scoreGeminiUploadMenuItem(candidate);
+      candidates.push({ candidate, source, score });
+    };
+
+    roots.forEach((root) => {
+      selectors.forEach((selector) => {
+        try {
+          root.querySelectorAll?.(selector).forEach((candidate) => addCandidate(candidate, selector));
+        } catch {
+          // Keep diagnostics best-effort.
+        }
+      });
+    });
+
+    const selected = candidates
+      .filter(({ score }) => score > 0)
+      .sort((a, b) => b.score - a.score)[0]?.candidate || null;
+
+    if (details) {
+      details.openShadowRootCount = Math.max(Number(details.openShadowRootCount || 0), stats.openShadowRootCount);
+      details.overlayItemCount = candidates.length;
+      details.overlayCandidates = candidates
+        .slice(0, 20)
+        .map(({ candidate, source, score }) => ({
+          ...describeElementForDebug(candidate, source),
+          score
+        }));
+      details.selectedOverlayItem = describeElementForDebug(selected, "gemini-upload-overlay-item");
+    }
+
+    return selected;
   }
 
   function discoverFileInputForHandoff(event, input) {
@@ -3244,11 +3437,13 @@
     if (!isFileInputElement(fileInput) || !transfer?.files) return false;
 
     const handoffOptions = options || {};
+    const details = handoffOptions.details || null;
     const dispatchInputEvent = handoffOptions.dispatchInput !== false;
     const events = [];
     try {
       sanitizedFileInputHandoffs.add(fileInput);
       fileInput.files = transfer.files;
+      if (details) details.inputFilesAssignmentSucceeded = true;
       if (dispatchInputEvent) {
         fileInput.dispatchEvent(
           new Event("input", {
@@ -3257,6 +3452,7 @@
           })
         );
         events.push("input");
+        if (details) details.inputEventDispatched = true;
       }
       fileInput.dispatchEvent(
         new Event("change", {
@@ -3265,13 +3461,19 @@
         })
       );
       events.push("change");
+      if (details) details.changeEventDispatched = true;
       debugReveal("file-handoff:assignment-success", {
         input: describeFileInputForDebug(fileInput, "resolved"),
         files: Array.from(fileInput.files || []).map(describeFileForDebug),
         events
       });
       return true;
-    } catch {
+    } catch (error) {
+      if (details) {
+        details.failureReason = "input_assignment_or_event_dispatch_failed";
+        details.errorMessage = error?.message || String(error);
+        details.errorStack = error?.stack || "";
+      }
       debugReveal("file-handoff:assignment-failure", {
         input: describeFileInputForDebug(fileInput, "resolved"),
         files: Array.from(transfer.files || []).map(describeFileForDebug)
@@ -3287,6 +3489,17 @@
   }
 
   async function handOffSanitizedLocalFile(event, input, sanitizedFile, context) {
+    const target = event?.target || input;
+    if (context === "drop") {
+      if (isGeminiHost()) {
+        return handOffGeminiSanitizedFileUpload(event, input, sanitizedFile);
+      }
+
+      if (isGrokHost()) {
+        return handOffGrokSanitizedFileUpload(event, input, sanitizedFile);
+      }
+    }
+
     const transfer = createSanitizedDataTransfer(sanitizedFile);
     if (!transfer) {
       debugReveal("file-handoff:data-transfer-create-failed", {
@@ -3302,15 +3515,7 @@
       });
     }
 
-    const target = event?.target || input;
     if (context === "drop") {
-      if (isGeminiHost()) {
-        return handOffGeminiSanitizedFileUpload(event, input, sanitizedFile);
-      }
-
-      if (isGrokHost()) {
-        return handOffGrokSanitizedFileUpload(event, input, sanitizedFile);
-      }
 
       try {
         transfer.dropEffect = "copy";
@@ -3330,11 +3535,15 @@
   async function handOffGeminiSanitizedFileUpload(event, input, sanitizedFile) {
     if (!isGeminiHost()) return false;
 
-    const transfer = createSanitizedDataTransfer(sanitizedFile);
+    const details = createSanitizedFileHandoffDetails(event, sanitizedFile, "gemini:start");
+    const transfer = createSanitizedDataTransferForHandoff(sanitizedFile, details);
     if (!transfer) {
+      details.handoffStage = "gemini:data-transfer";
+      details.failureReason = "data_transfer_failed";
       debugReveal("file-handoff:gemini-data-transfer-create-failed", {
         sanitizedFile: describeFileForDebug(sanitizedFile)
       });
+      logSanitizedFileHandoffFailure(details);
       return false;
     }
 
@@ -3343,22 +3552,33 @@
         ? lastDiscoveredFileInput
         : null;
     if (cachedFileInput) {
-      return handOffSanitizedFileInput(cachedFileInput, transfer, {
-        dispatchInput: true
+      details.handoffStage = "gemini:cached-input";
+      details.fileInputCountBeforeClick = 1;
+      const assigned = handOffSanitizedFileInput(cachedFileInput, transfer, {
+        dispatchInput: true,
+        details
       });
+      if (!assigned) {
+        logSanitizedFileHandoffFailure(details);
+      }
+      return assigned;
     }
 
     let discovery = discoverGeminiFileHandoffElements(event, input);
     let fileInput = discovery.fileInput;
-    let fileInputCountBeforeClick = discovery.fileInputCount;
-    let fileInputCountAfterClick = discovery.fileInputCount;
-    let openShadowRootCount = discovery.openShadowRootCount;
+    details.handoffStage = "gemini:initial-discovery";
+    details.fileInputCountBeforeClick = discovery.fileInputCount;
+    details.fileInputCountAfterTopTriggerClick = discovery.fileInputCount;
+    details.fileInputCountAfterOverlayItemClick = discovery.fileInputCount;
+    details.openShadowRootCount = discovery.openShadowRootCount;
     const uploadTrigger = discovery.uploadTrigger;
+    details.foundTopUploadTrigger = Boolean(uploadTrigger);
+    details.uploadTrigger = describeUploadTriggerForDebug(uploadTrigger, "gemini-upload-trigger");
 
     if (!fileInput && uploadTrigger) {
       try {
         uploadTrigger.click?.();
-      } catch {
+      } catch (error) {
         try {
           uploadTrigger.dispatchEvent?.(
             new MouseEvent("click", {
@@ -3366,7 +3586,11 @@
               cancelable: true
             })
           );
-        } catch {
+        } catch (fallbackError) {
+          details.handoffStage = "gemini:top-trigger-click";
+          details.failureReason = "top_upload_trigger_click_failed";
+          details.errorMessage = fallbackError?.message || error?.message || String(fallbackError || error);
+          details.errorStack = fallbackError?.stack || error?.stack || "";
           // The raw file remains blocked if Gemini's upload trigger cannot be activated.
         }
       }
@@ -3374,8 +3598,41 @@
       await waitForGeminiUploadMenuInput();
       discovery = discoverGeminiFileHandoffElements(event, input);
       fileInput = discovery.fileInput;
-      fileInputCountAfterClick = discovery.fileInputCount;
-      openShadowRootCount = Math.max(openShadowRootCount, discovery.openShadowRootCount);
+      details.fileInputCountAfterTopTriggerClick = discovery.fileInputCount;
+      details.fileInputCountAfterOverlayItemClick = discovery.fileInputCount;
+      details.openShadowRootCount = Math.max(details.openShadowRootCount, discovery.openShadowRootCount);
+    }
+
+    if (!fileInput) {
+      details.handoffStage = "gemini:overlay-discovery";
+      const overlayItem = discoverGeminiUploadOverlayItem(details);
+      if (overlayItem) {
+        try {
+          overlayItem.click?.();
+        } catch (error) {
+          try {
+            overlayItem.dispatchEvent?.(
+              new MouseEvent("click", {
+                bubbles: true,
+                cancelable: true
+              })
+            );
+          } catch (fallbackError) {
+            details.handoffStage = "gemini:overlay-item-click";
+            details.failureReason = "overlay_upload_item_click_failed";
+            details.errorMessage = fallbackError?.message || error?.message || String(fallbackError || error);
+            details.errorStack = fallbackError?.stack || error?.stack || "";
+          }
+        }
+
+        await waitForGeminiUploadMenuInput();
+        discovery = discoverGeminiFileHandoffElements(event, input);
+        fileInput = discovery.fileInput;
+        details.fileInputCountAfterOverlayItemClick = discovery.fileInputCount;
+        details.openShadowRootCount = Math.max(details.openShadowRootCount, discovery.openShadowRootCount);
+      } else {
+        details.failureReason = "no_overlay_upload_item";
+      }
     }
 
     lastDiscoveredFileInput = fileInput;
@@ -3383,36 +3640,63 @@
     fileDragDiscoveryScheduled = false;
 
     if (!fileInput) {
+      details.handoffStage = details.failureReason === "no_overlay_upload_item"
+        ? "gemini:no-overlay-upload-item"
+        : "gemini:no-file-input-after-overlay";
+      if (!details.failureReason) {
+        details.failureReason = uploadTrigger ? "no_file_input_after_overlay_click" : "no_upload_trigger";
+      }
       debugReveal("file-handoff:gemini-input-not-found", {
         foundUploadTrigger: Boolean(uploadTrigger),
         trigger: describeUploadTriggerForDebug(uploadTrigger, "gemini-upload-trigger"),
-        fileInputCountBeforeClick,
-        fileInputCountAfterClick,
-        openShadowRootCount,
+        fileInputCountBeforeClick: details.fileInputCountBeforeClick,
+        fileInputCountAfterClick: details.fileInputCountAfterTopTriggerClick,
+        fileInputCountAfterOverlayItemClick: details.fileInputCountAfterOverlayItemClick,
+        openShadowRootCount: details.openShadowRootCount,
         sanitizedFile: describeFileForDebug(sanitizedFile)
       });
+      logSanitizedFileHandoffFailure(details);
       return false;
     }
 
-    return handOffSanitizedFileInput(fileInput, transfer, {
-      dispatchInput: true
+    details.handoffStage = "gemini:file-input-assignment";
+    const assigned = handOffSanitizedFileInput(fileInput, transfer, {
+      dispatchInput: true,
+      details
     });
+    if (!assigned) {
+      logSanitizedFileHandoffFailure(details);
+    }
+    return assigned;
   }
 
   function handOffGrokSanitizedFileUpload(event, input, sanitizedFile) {
     if (!isGrokHost()) return false;
 
-    const transfer = createSanitizedDataTransfer(sanitizedFile);
+    const details = createSanitizedFileHandoffDetails(event, sanitizedFile, "grok:start");
+    const transfer = createSanitizedDataTransferForHandoff(sanitizedFile, details);
     if (!transfer) {
+      details.handoffStage = "grok:data-transfer";
+      details.failureReason = "data_transfer_failed";
       debugReveal("file-handoff:grok-data-transfer-create-failed", {
         sanitizedFile: describeFileForDebug(sanitizedFile)
       });
+      logSanitizedFileHandoffFailure(details);
       return false;
     }
 
+    details.handoffStage = "grok:file-input-discovery";
     const fileInput = resolveFileInputForHandoff(event, input);
-    if (fileInput && handOffSanitizedFileInput(fileInput, transfer, { dispatchInput: true })) {
-      return true;
+    details.fileInputCountBeforeClick = fileInput ? 1 : 0;
+    details.fileInputCountAfterTopTriggerClick = fileInput ? 1 : 0;
+    details.fileInputCountAfterOverlayItemClick = fileInput ? 1 : 0;
+    if (fileInput) {
+      const assigned = handOffSanitizedFileInput(fileInput, transfer, { dispatchInput: true, details });
+      if (assigned) {
+        return true;
+      }
+      logSanitizedFileHandoffFailure(details);
+      return false;
     }
 
     const target = event?.target || input;
@@ -3429,9 +3713,12 @@
       return true;
     }
 
+    details.handoffStage = "grok:drop-dispatch";
+    details.failureReason = "no_file_input_or_drop_target";
     debugReveal("file-handoff:grok-upload-failed", {
       sanitizedFile: describeFileForDebug(sanitizedFile)
     });
+    logSanitizedFileHandoffFailure(details);
     return false;
   }
 
@@ -3736,7 +4023,9 @@
         hideBadgeSoon(4200);
         await showMessageModal(
           "Raw file upload blocked",
-          "LeakGuard blocked raw file upload because sanitized file upload handoff failed."
+          isGeminiHost()
+            ? "Raw file upload blocked. LeakGuard sanitized the file, but Gemini did not expose a safe browser file handoff target. Use LeakGuard File Scanner and upload the sanitized output manually."
+            : "Raw file upload blocked. LeakGuard sanitized the file, but Grok did not expose a safe browser file handoff target. Use LeakGuard File Scanner and upload the sanitized output manually."
         );
         refreshBadgeFromCurrentInput();
         return {

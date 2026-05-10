@@ -605,8 +605,57 @@ function createUploadTrigger({ ariaLabel = "Open upload file menu", className = 
   };
 }
 
-function createHandoffHarness({ hostname = "gemini.google.com", fileInputs = [], shadowInputs = [], uploadTriggers = [] } = {}) {
+function createOverlayItem({
+  ariaLabel = "Upload files. Documents, data, code files",
+  text = "Upload files",
+  role = "menuitem",
+  className = "mat-mdc-menu-item",
+  onClick = null
+} = {}) {
+  const events = [];
+  return {
+    tagName: "BUTTON",
+    className,
+    role,
+    innerText: text,
+    textContent: text,
+    disabled: false,
+    events,
+    getAttribute(name) {
+      if (name === "aria-label") return ariaLabel;
+      if (name === "class") return className;
+      if (name === "role") return role;
+      return "";
+    },
+    matches(selector) {
+      return selector === '[role="menuitem"]' || selector === "button";
+    },
+    click() {
+      events.push("click");
+      if (typeof onClick === "function") {
+        onClick();
+      }
+      return true;
+    },
+    dispatchEvent(event) {
+      events.push(event.type);
+      if (event.type === "click" && typeof onClick === "function") {
+        onClick();
+      }
+      return true;
+    }
+  };
+}
+
+function createHandoffHarness({
+  hostname = "gemini.google.com",
+  fileInputs = [],
+  shadowInputs = [],
+  uploadTriggers = [],
+  overlayItems = []
+} = {}) {
   const debugEvents = [];
+  const consoleErrors = [];
   const fallbackDrops = [];
   const stats = {
     documentQueries: 0
@@ -631,6 +680,8 @@ function createHandoffHarness({ hostname = "gemini.google.com", fileInputs = [],
     }
   }
 
+  class TestMouseEvent extends TestEvent {}
+
   const shadowHosts = shadowInputs.map((input) => ({
     shadowRoot: {
       querySelectorAll(selector) {
@@ -654,6 +705,16 @@ function createHandoffHarness({ hostname = "gemini.google.com", fileInputs = [],
       stats.documentQueries += 1;
       if (selector === "input[type='file']") return fileInputs;
       if (
+        selector === ".cdk-overlay-container" ||
+        selector === ".cdk-overlay-pane" ||
+        selector === ".mat-mdc-menu-panel" ||
+        selector === 'mat-action-list[role="menu"]' ||
+        selector === '[role="menuitem"]' ||
+        selector === "button"
+      ) {
+        return selector === "button" ? [...uploadTriggers, ...overlayItems] : overlayItems;
+      }
+      if (
         selector === 'button[aria-label="Open upload file menu"]' ||
         selector === '[role="button"][aria-label*="upload" i]' ||
         selector === 'button[aria-label*="upload" i]' ||
@@ -670,11 +731,15 @@ function createHandoffHarness({ hostname = "gemini.google.com", fileInputs = [],
   const dependencies = {
     Node: { ELEMENT_NODE: 1 },
     Event: TestEvent,
+    MouseEvent: TestMouseEvent,
     DragEvent: undefined,
     ClipboardEvent: undefined,
     DataTransfer: TestDataTransfer,
     location: { hostname },
     document: documentRoot,
+    console: {
+      error: (...args) => consoleErrors.push(args)
+    },
     sanitizedFileInputHandoffs: new WeakSet(),
     fallbackDrops,
     debugReveal: (label, payload) => debugEvents.push({ label, payload })
@@ -690,6 +755,7 @@ function createHandoffHarness({ hostname = "gemini.google.com", fileInputs = [],
       extractFunctionSource(contentSource, "isSanitizedFileHandoffEvent"),
       extractFunctionSource(contentSource, "markSanitizedFileHandoffEvent"),
       extractFunctionSource(contentSource, "createSanitizedDataTransfer"),
+      extractFunctionSource(contentSource, "createSanitizedDataTransferForHandoff"),
       extractFunctionSource(contentSource, "attachEventDataTransfer"),
       extractFunctionSource(contentSource, "dispatchSanitizedFileEvent").replace(
         "target.dispatchEvent(handoffEvent);",
@@ -700,11 +766,20 @@ function createHandoffHarness({ hostname = "gemini.google.com", fileInputs = [],
       extractFunctionSource(contentSource, "isFileInputElement"),
       extractFunctionSource(contentSource, "describeFileForDebug"),
       extractFunctionSource(contentSource, "describeFileInputForDebug"),
+      extractFunctionSource(contentSource, "getSafeTextSnippet"),
+      extractFunctionSource(contentSource, "describeElementForDebug"),
+      extractFunctionSource(contentSource, "originalFileMetadataFromEvent"),
+      extractFunctionSource(contentSource, "createSanitizedFileHandoffDetails"),
+      extractFunctionSource(contentSource, "logSanitizedFileHandoffFailure"),
       extractFunctionSource(contentSource, "describeUploadTriggerForDebug"),
       extractFunctionSource(contentSource, "collectFileInputsFromAncestry"),
       extractFunctionSource(contentSource, "collectFileInputsFromRoot"),
       extractFunctionSource(contentSource, "collectFileHandoffElementsFromRoot"),
       extractFunctionSource(contentSource, "discoverGeminiFileHandoffElements"),
+      extractFunctionSource(contentSource, "collectRootsWithOpenShadow"),
+      extractFunctionSource(contentSource, "isRejectedGeminiUploadMenuItem"),
+      extractFunctionSource(contentSource, "scoreGeminiUploadMenuItem"),
+      extractFunctionSource(contentSource, "discoverGeminiUploadOverlayItem"),
       extractFunctionSource(contentSource, "discoverFileInputForHandoff"),
       extractFunctionSource(contentSource, "resolveFileInputForHandoff"),
       extractFunctionSource(contentSource, "waitForGeminiUploadMenuInput"),
@@ -720,6 +795,7 @@ function createHandoffHarness({ hostname = "gemini.google.com", fileInputs = [],
   return {
     ...handlers,
     debugEvents,
+    consoleErrors,
     fallbackDrops,
     stats
   };
@@ -1015,6 +1091,155 @@ async function testGeminiUploadMenuClickDiscoversLazyFileInput() {
     text: `API_KEY=[PWM_1]\ntoken_limit=4096`
   };
   const fileInputs = [];
+  const overlayItems = [];
+  const uploadTrigger = createUploadTrigger({
+    ariaLabel: "Open upload file menu",
+    className: "upload-card mat-mdc-button",
+    onClick: () => {
+      if (!overlayItems.length) {
+        overlayItems.push(
+          createOverlayItem({
+            ariaLabel: "Upload files. Documents, data, code files",
+            text: "Upload files",
+            onClick: () => {
+              if (!fileInputs.length) {
+                fileInputs.push(createFileInput({ source: "light-dom" }));
+              }
+            }
+          })
+        );
+      }
+    }
+  });
+  const { handOffGeminiSanitizedFileUpload, debugEvents, fallbackDrops, consoleErrors } = createHandoffHarness({
+    fileInputs,
+    uploadTriggers: [uploadTrigger],
+    overlayItems
+  });
+  const event = {
+    type: "drop",
+    target: {
+      nodeType: 1,
+      tagName: "DIV",
+      dispatchEvent() {
+        throw new Error("Gemini lazy input handoff should not fall back to text/drop replay");
+      }
+    },
+    dataTransfer: createDataTransfer({
+      files: [
+        {
+          name: "lazy-gemini.env",
+          type: "text/plain",
+          size: 58
+        }
+      ]
+    })
+  };
+
+  const handedOff = await handOffGeminiSanitizedFileUpload(event, null, sanitizedFile);
+
+  assert.strictEqual(handedOff, true);
+  assert.deepStrictEqual(uploadTrigger.events, ["click"]);
+  assert.strictEqual(overlayItems.length, 1);
+  assert.deepStrictEqual(overlayItems[0].events, ["click"]);
+  assert.strictEqual(fileInputs.length, 1);
+  assert.strictEqual(fileInputs[0].files.length, 1);
+  assert.strictEqual(fileInputs[0].files[0], sanitizedFile);
+  assert.deepStrictEqual(fileInputs[0].events, ["input", "change"]);
+  assert.strictEqual(fallbackDrops.length, 0);
+  assert.strictEqual(consoleErrors.length, 0);
+  assert.strictEqual(sanitizedFile.text.includes(rawSecret), false);
+  assert.ok(sanitizedFile.text.includes("[PWM_1]"));
+  assert.ok(
+    debugEvents.some((entry) => entry.label === "file-handoff:assignment-success"),
+    "expected lazy Gemini file input assignment to succeed"
+  );
+}
+
+async function testGeminiUploadOverlayFailureLogsMetadataOnly() {
+  const rawSecret = "LeakGuardDropApiKey1234567890";
+  const sanitizedFile = {
+    name: "13-large-25mb.txt",
+    type: "text/plain",
+    size: 26213285,
+    text: `API_KEY=[PWM_1]\ntoken_limit=4096`
+  };
+  const overlayItems = [];
+  const uploadTrigger = createUploadTrigger({
+    ariaLabel: "Open upload file menu",
+    className: "upload-card mat-mdc-button",
+    onClick: () => {
+      if (!overlayItems.length) {
+        overlayItems.push(
+          createOverlayItem({
+            ariaLabel: "Upload files. Documents, data, code files",
+            text: "Upload files",
+            onClick: () => {}
+          })
+        );
+      }
+    }
+  });
+  const { handOffGeminiSanitizedFileUpload, debugEvents, fallbackDrops, consoleErrors } = createHandoffHarness({
+    fileInputs: [],
+    uploadTriggers: [uploadTrigger],
+    overlayItems
+  });
+  const event = {
+    type: "drop",
+    target: { nodeType: 1, tagName: "DIV", dispatchEvent: () => true },
+    dataTransfer: createDataTransfer({
+      files: [
+        {
+          name: "13-large-25mb.txt",
+          type: "text/plain",
+          size: 26213285
+        }
+      ]
+    })
+  };
+
+  const handedOff = await handOffGeminiSanitizedFileUpload(event, null, sanitizedFile);
+
+  assert.strictEqual(handedOff, false);
+  assert.deepStrictEqual(uploadTrigger.events, ["click"]);
+  assert.strictEqual(overlayItems.length, 1);
+  assert.deepStrictEqual(overlayItems[0].events, ["click"]);
+  assert.strictEqual(fallbackDrops.length, 0);
+  assert.strictEqual(consoleErrors.length, 1);
+  assert.strictEqual(consoleErrors[0][0], "[LeakGuard] sanitized file handoff failed");
+  const details = consoleErrors[0][1];
+  assert.strictEqual(details.hostname, "gemini.google.com");
+  assert.strictEqual(details.eventType, "drop");
+  assert.strictEqual(details.sanitizedFile.size, 26213285);
+  assert.strictEqual(details.foundTopUploadTrigger, true);
+  assert.strictEqual(details.fileInputCountBeforeClick, 0);
+  assert.strictEqual(details.fileInputCountAfterTopTriggerClick, 0);
+  assert.strictEqual(details.fileInputCountAfterOverlayItemClick, 0);
+  assert.ok(details.overlayItemCount >= 1);
+  assert.ok(details.overlayCandidates.some((candidate) => candidate.ariaLabel === "Upload files. Documents, data, code files"));
+  assert.strictEqual(details.selectedOverlayItem.ariaLabel, "Upload files. Documents, data, code files");
+  assert.strictEqual(details.dataTransferConstructorSucceeded, true);
+  assert.strictEqual(details.dataTransferItemsAddSucceeded, true);
+  assert.strictEqual(details.inputFilesAssignmentSucceeded, false);
+  assert.strictEqual(details.inputEventDispatched, false);
+  assert.strictEqual(details.changeEventDispatched, false);
+  const serialized = JSON.stringify(details);
+  assert.strictEqual(serialized.includes(rawSecret), false);
+  assert.ok(
+    debugEvents.some((entry) => entry.label === "sanitized-file-handoff:failed"),
+    "expected metadata-only debugReveal failure breadcrumb"
+  );
+}
+
+async function testGeminiUploadMenuDirectInputStillWorks() {
+  const sanitizedFile = {
+    name: "lazy-gemini.env",
+    type: "text/plain",
+    size: 37,
+    text: `API_KEY=[PWM_1]\ntoken_limit=4096`
+  };
+  const fileInputs = [];
   const uploadTrigger = createUploadTrigger({
     ariaLabel: "Open upload file menu",
     className: "upload-card mat-mdc-button",
@@ -1048,7 +1273,6 @@ async function testGeminiUploadMenuClickDiscoversLazyFileInput() {
   assert.strictEqual(fileInputs[0].files[0], sanitizedFile);
   assert.deepStrictEqual(fileInputs[0].events, ["input", "change"]);
   assert.strictEqual(fallbackDrops.length, 0);
-  assert.strictEqual(sanitizedFile.text.includes(rawSecret), false);
   assert.ok(sanitizedFile.text.includes("[PWM_1]"));
   assert.ok(
     debugEvents.some((entry) => entry.label === "file-handoff:assignment-success"),
@@ -3024,6 +3248,8 @@ async function testChatGptAndClaudeStillUseSanitizedFileHandoffOnly() {
   await testGeminiDropUsesDiscoveredFileInputHandoff();
   await testGeminiStreamingHandoffUsesDiscoveredFileInput();
   await testGeminiUploadMenuClickDiscoversLazyFileInput();
+  await testGeminiUploadOverlayFailureLogsMetadataOnly();
+  await testGeminiUploadMenuDirectInputStillWorks();
   await testGeminiLargeFileInputWithoutComposerUsesStreamingSanitizedHandoff();
   await testNonGeminiFileInputWithoutComposerStillIgnored();
   await testChangeListenerUsesCapturePhaseForFileInputInterception();

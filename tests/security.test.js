@@ -335,7 +335,7 @@ function testLocalFilePasteDoesNotExposeRawFileContent() {
   );
   assert.ok(
     localFileSource.includes("sanitized_file_handoff_failed") &&
-      localFileSource.includes("LeakGuard blocked raw file upload because sanitized file upload handoff failed."),
+      localFileSource.includes("Raw file upload blocked. LeakGuard sanitized the file, but Gemini did not expose a safe browser file handoff target."),
     "local file paste/drop should fail closed when sanitized handoff cannot be completed"
   );
   assert.ok(
