@@ -19,6 +19,7 @@ require(path.join(repoRoot, "src/content/composer_helpers.js"));
 const {
   Detector,
   PlaceholderManager,
+  PLACEHOLDER_TOKEN_REGEX,
   normalizeVisiblePlaceholders,
   buildNetworkUiFindings,
   transformOutboundPrompt,
@@ -478,19 +479,20 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
       contentSource.includes("isGrokHost()") &&
       contentSource.includes("function handOffGeminiSanitizedFileUpload") &&
       contentSource.includes("function handOffGrokSanitizedFileUpload") &&
-      contentSource.includes("file-handoff:site-native-upload-failed") &&
+      contentSource.includes("file-handoff:fail-closed") &&
       contentSource.includes('dispatchSanitizedFileEvent(target, "drop", transfer)') &&
       contentSource.includes('dispatchSanitizedFileEvent(target, "paste", transfer)'),
     "local file handling should hand off sanitized files through native site upload adapters and fail closed when required handoff fails"
   );
   assert.ok(
-    contentSource.includes("async function applyGeminiSanitizedTextFallback") &&
+    contentSource.includes("async function applySanitizedTextFallback") &&
+      contentSource.includes("async function applyGeminiSanitizedTextFallback") &&
+      contentSource.includes("Sanitized content inserted as text because the site did not accept a sanitized file upload.") &&
       contentSource.includes("Sanitized content inserted as text because Gemini rejected sanitized file upload.") &&
-      contentSource.includes("isGeminiHost()") &&
       !contentSource.includes("async function applyLocalFileRedactedText") &&
       !contentSource.includes("setInputTextDirect(input, next.text") &&
       !contentSource.includes("insertContentEditableTextCommand(input, next.text"),
-    "local file handling should only fall back to sanitized composer text for Gemini handoff rejection"
+    "local file handling should fall back to sanitized composer text only after supported file redaction and failed sanitized handoff"
   );
   assert.ok(
     fileInsertSource.includes("sanitized_file_handoff_failed") &&
@@ -605,6 +607,50 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   assert.strictEqual(contentSource.includes("isCurrentRiskSetAllowedOnce"), false, "content script must not keep allow-once bypass helpers");
 }
 
+function testPerplexityStyleRewriteVerificationToleratesWhitespaceNormalization() {
+  const factory = new Function(
+    "normalizeVisiblePlaceholders",
+    "normalizeComposerText",
+    "normalizeEditorInnerText",
+    "PLACEHOLDER_TOKEN_REGEX",
+    [
+      extractFunctionSource(contentSource, "normalizeVerificationText"),
+      extractFunctionSource(contentSource, "normalizeLooseVerificationText"),
+      extractFunctionSource(contentSource, "listExpectedPlaceholders"),
+      extractFunctionSource(contentSource, "actualContainsExpectedPlaceholders"),
+      extractFunctionSource(contentSource, "matchesComposerPlan"),
+      "return { matchesComposerPlan, normalizeVerificationText };"
+    ].join("\n\n")
+  );
+  const { matchesComposerPlan } = factory(
+    normalizeVisiblePlaceholders,
+    ComposerHelpers.normalizeComposerText,
+    ComposerHelpers.normalizeEditorInnerText,
+    PLACEHOLDER_TOKEN_REGEX
+  );
+  const rawSecret = "blablabmy password is blablabmy password is blablabmy";
+  const expected = "password is [PWM_1]";
+  const plan = {
+    canonical: expected,
+    writeText: expected,
+    acceptableTexts: [expected]
+  };
+  const perplexityVisibleText = "password is\n[PWM_1]\n";
+
+  assert.strictEqual(perplexityVisibleText.includes(rawSecret), false);
+  assert.ok(perplexityVisibleText.includes("[PWM_1]"));
+  assert.strictEqual(
+    matchesComposerPlan(plan, perplexityVisibleText),
+    true,
+    "Perplexity-like contenteditable wrapping should verify after raw secret removal"
+  );
+  assert.strictEqual(
+    matchesComposerPlan(plan, `password is [PWM_1]\n${rawSecret}`),
+    false,
+    "rewrite verification must still fail if raw sensitive text remains"
+  );
+}
+
 function run() {
   testBeforeInputGuardStaysConservative();
   testTypedAssignmentSecretIsCaughtBeforeCommit();
@@ -626,6 +672,7 @@ function run() {
   testPauseBypassRunsAfterPolicyInTypedRedactionPipeline();
   testPauseBypassGatesPasteAndSendAfterPolicy();
   testContentScriptBindsBeforeInputAndKeepsFallbackGuard();
+  testPerplexityStyleRewriteVerificationToleratesWhitespaceNormalization();
   console.log("PASS typed beforeinput interception regressions");
 }
 

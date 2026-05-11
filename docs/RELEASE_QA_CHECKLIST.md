@@ -86,9 +86,21 @@
 - Confirm unsupported files are not falsely marked as protected or sanitized.
 - Confirm supported text files above 50 MB are blocked from local redaction with a clear too-large warning.
 - Confirm supported text files are never uploaded raw if LeakGuard attempted sanitization and handoff failed.
-- Confirm raw upload is blocked and a local message appears if sanitized file handoff fails because the browser or site does not accept synthetic `DataTransfer`/file handoff.
+- Confirm small supported text files fall back to sanitized composer text when the browser or site does not accept synthetic `DataTransfer`/file handoff, and confirm raw upload is blocked if that safe fallback cannot complete.
 - Confirm the composer remains usable after unsupported-file or sanitized-handoff failure handling.
 - Confirm no raw synthetic secret appears in the DOM or browser console.
+
+## Firefox Protected-Site File/Drop Checks
+
+- In Firefox on ChatGPT, upload unsupported files such as PDF, DOCX, image, archive, executable, binary, and invalid UTF-8 text files; confirm LeakGuard shows only a non-blocking warning that the file was not scanned/redacted and normal site upload continues.
+- In Firefox on ChatGPT, confirm unsupported and invalid UTF-8 uploads do not show `Local file not attached`, do not claim sanitization, and do not block native upload by default.
+- In Firefox on Gemini, drag and drop a supported UTF-8 text file and confirm LeakGuard scans/redacts locally, then hands off a sanitized file or inserts sanitized text without leaking raw content.
+- In Firefox on ChatGPT, Grok, Gemini, Perplexity, and one user-managed protected site, drag and drop a supported UTF-8 text file and confirm either sanitized file handoff or sanitized text insertion succeeds without raw secrets.
+- In Chrome on Gemini, drag and drop supported UTF-8 text/config/code files at small size, 5 MB, 25 MB, and exactly 50 MiB; confirm LeakGuard redacts locally and Gemini receives only sanitized content.
+- In Firefox and Chrome on Gemini, confirm dropping a file does not unexpectedly open the operating system file picker or duplicate upload dialogs.
+- In Firefox on Gemini, drag and drop unsupported or invalid UTF-8 files and confirm LeakGuard warns once, allows native upload where possible, and does not open duplicate picker/modal loops.
+- In Firefox on Perplexity or another user-managed protected site, type a synthetic password and confirm redaction succeeds without `Rewrite verification failed` when the raw secret is removed and placeholders remain visible.
+- If Claude manual access is unavailable, keep Claude covered through automated selector and smoke tests rather than blocking release QA on manual validation.
 
 ## Size-Aware Local Payload Flow
 

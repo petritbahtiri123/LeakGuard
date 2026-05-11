@@ -43,7 +43,9 @@
   function resultFromValidation(validation) {
     if (
       validation?.code === "unsupported_binary_or_document" ||
-      validation?.code === "unsupported_file_type"
+      validation?.code === "unsupported_file_type" ||
+      validation?.code === "binary_content" ||
+      validation?.code === "invalid_utf8"
     ) {
       return {
         handled: false,
@@ -139,10 +141,10 @@
       text = FileScanner.decodeUtf8Text(buffer);
     } catch {
       return {
-        handled: true,
+        handled: false,
         ok: false,
         code: "invalid_utf8",
-        message: "This file is not valid UTF-8 text, so LeakGuard did not attach it."
+        message: LOCAL_FILE_UNSUPPORTED_WARNING
       };
     }
 

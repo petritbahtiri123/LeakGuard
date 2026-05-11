@@ -155,12 +155,16 @@ async function testUnsupportedFilesPassThroughAndTextBinaryFilesRejected() {
   assert.strictEqual(unsupported.ok, false);
   assert.strictEqual(unsupported.code, "unsupported_binary_or_document");
   assertExplicitUnsupportedWarning(unsupported.message);
-  assert.strictEqual(binary.handled, true);
+  assert.strictEqual(binary.handled, false);
   assert.strictEqual(binary.ok, false);
   assert.strictEqual(binary.code, "binary_content");
-  assert.strictEqual(invalidUtf8.handled, true);
+  assertExplicitUnsupportedWarning(binary.message);
+  assert.strictEqual(invalidUtf8.handled, false);
   assert.strictEqual(invalidUtf8.ok, false);
   assert.strictEqual(invalidUtf8.code, "invalid_utf8");
+  assertExplicitUnsupportedWarning(invalidUtf8.message);
+  assert.strictEqual(invalidUtf8.message.includes("not valid UTF-8"), false);
+  assert.strictEqual(invalidUtf8.message.includes("did not attach"), false);
 }
 
 async function testNoFileTransferIgnored() {

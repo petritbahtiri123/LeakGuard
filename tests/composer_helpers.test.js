@@ -7,6 +7,7 @@ require(path.join(__dirname, "../src/content/composer_helpers.js"));
 const {
   normalizeEditorInnerText,
   serializeContentEditableRoot,
+  isContentEditable,
   buildRiskFingerprint
 } = globalThis.PWM.ComposerHelpers;
 
@@ -150,6 +151,22 @@ function testContentEditableRewritePathsSyncHostState() {
   assert.ok(
     setInputSource?.includes("rewriteMatchesExpected"),
     "contenteditable rewrite orchestration should fall through when a strategy reports success but leaves mismatched text"
+  );
+}
+
+function testContentEditableAttributeDetectionSupportsGenericEditors() {
+  const editor = {
+    tagName: "DIV",
+    isContentEditable: false,
+    getAttribute(name) {
+      return name === "contenteditable" ? "plaintext-only" : null;
+    }
+  };
+
+  assert.strictEqual(
+    isContentEditable(editor),
+    true,
+    "generic protected-site editors should be recognized from contenteditable attributes"
   );
 }
 
@@ -345,6 +362,7 @@ function run() {
   testTrimsEditorGeneratedTrailingBlankLines();
   testSerializesTopLevelBreakRunsAsBlankLines();
   testContentEditableRewritePathsSyncHostState();
+  testContentEditableAttributeDetectionSupportsGenericEditors();
   testLocalFileFallbackHelpersUsePlainEvents();
   testRiskFingerprintIgnoresNormalComposerTextChanges();
   testRiskFingerprintChangesWhenFindingsChange();

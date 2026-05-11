@@ -20,7 +20,11 @@
   }
 
   function isContentEditable(el) {
-    return !!el && !isTextArea(el) && !!el.isContentEditable;
+    if (!el || isTextArea(el)) return false;
+    if (el.isContentEditable) return true;
+    const value =
+      typeof el.getAttribute === "function" ? el.getAttribute("contenteditable") : null;
+    return value != null && String(value).toLowerCase() !== "false";
   }
 
   function isTextNode(node) {

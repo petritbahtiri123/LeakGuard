@@ -330,23 +330,25 @@ function testLocalFilePasteDoesNotExposeRawFileContent() {
       contentSource.includes("fileInput.files = transfer.files") &&
       contentSource.includes("function handOffGeminiSanitizedFileUpload") &&
       contentSource.includes("function handOffGrokSanitizedFileUpload") &&
-      contentSource.includes("file-handoff:site-native-upload-failed"),
+      contentSource.includes("file-handoff:fail-closed"),
     "local file paste/drop should create sanitized in-memory files and use native upload adapters for site file drops"
   );
   assert.ok(
     localFileSource.includes("sanitized_file_handoff_failed") &&
-      localFileSource.includes("Raw file upload blocked. LeakGuard sanitized the file, but Gemini did not expose a safe browser file handoff target."),
-    "local file paste/drop should fail closed when sanitized handoff cannot be completed"
+      localFileSource.includes("applySanitizedTextFallback(event, input, result.redactedText)") &&
+      localFileSource.includes("LeakGuard blocked raw file upload. Sanitized file handoff failed"),
+    "local file paste/drop should fail closed when sanitized handoff and safe sanitized text fallback cannot be completed"
   );
   assert.ok(
-    localFileSource.includes("LOCAL_FILE_TEXT_INSERTION_FALLBACK_ENABLED = false") &&
+    contentSource.includes("async function applySanitizedTextFallback") &&
       contentSource.includes("async function applyGeminiSanitizedTextFallback") &&
+      contentSource.includes("Sanitized content inserted as text because the site did not accept a sanitized file upload.") &&
       contentSource.includes("Sanitized content inserted as text because Gemini rejected sanitized file upload.") &&
-      contentSource.includes("isGeminiHost()") &&
+      contentSource.includes('"file-text-fallback"') &&
       !contentSource.includes("async function applyLocalFileRedactedText") &&
       !contentSource.includes("setInputTextDirect(input, next.text") &&
       !contentSource.includes("insertContentEditableTextCommand(input, next.text"),
-    "local file paste/drop text fallback should stay limited to Gemini sanitized handoff failures"
+    "local file paste/drop text fallback should only insert sanitized text after a sanitized handoff failure"
   );
   assertNotIncludes(
     localFileSource,
