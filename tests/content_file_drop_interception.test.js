@@ -854,6 +854,8 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "clearPendingGeminiSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "isLikelyGeminiUploadClickTarget"),
       extractFunctionSource(contentSource, "schedulePendingGeminiSanitizedFileAttempt"),
+      extractFunctionSource(contentSource, "describeGeminiHandoffDiscovery"),
+      extractFunctionSource(contentSource, "describeGeminiOverlayExposure"),
       extractFunctionSource(contentSource, "attemptPendingGeminiSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "queuePendingGeminiSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "hasPendingGeminiSanitizedFileHandoff"),
@@ -1356,6 +1358,70 @@ async function testGeminiPendingDropAssignsSanitizedFileWhenInputLaterAppears() 
     debugEvents.some((entry) => entry.label === "file-handoff:gemini-pending-assigned"),
     "expected pending Gemini sanitized file to attach when a real input appears"
   );
+}
+
+async function testGeminiPendingDropLogsExposureDiagnosticsWithoutRawContent() {
+  const rawSecret = "LeakGuardDropApiKey1234567890";
+  const sanitizedFile = {
+    name: "diagnostic-gemini.env",
+    type: "text/plain",
+    size: 18,
+    text: "API_KEY=[PWM_1]"
+  };
+  const overlayItem = createOverlayItem({
+    ariaLabel: "Upload files. Documents, data, code files",
+    text: "Upload files"
+  });
+  const uploadTrigger = createUploadTrigger({
+    ariaLabel: "Open upload file menu",
+    className: "upload-card-button"
+  });
+  const {
+    handOffGeminiSanitizedFileUpload,
+    attemptPendingGeminiSanitizedFileHandoff,
+    debugEvents,
+    fallbackDrops,
+    consoleErrors
+  } = createHandoffHarness({
+    uploadTriggers: [uploadTrigger],
+    overlayItems: [overlayItem]
+  });
+  const event = {
+    type: "drop",
+    target: {
+      nodeType: 1,
+      tagName: "P",
+      dispatchEvent() {
+        throw new Error("Gemini diagnostics must not replay a synthetic drop");
+      }
+    },
+    dataTransfer: createDataTransfer({
+      files: [
+        {
+          name: "diagnostic-gemini.env",
+          type: "text/plain",
+          size: 42
+        }
+      ]
+    })
+  };
+
+  await handOffGeminiSanitizedFileUpload(event, null, sanitizedFile);
+  const assigned = attemptPendingGeminiSanitizedFileHandoff("manual-diagnostics");
+
+  assert.strictEqual(assigned, false);
+  assert.strictEqual(fallbackDrops.length, 0);
+  assert.strictEqual(consoleErrors.length, 0);
+  const diagnostic = debugEvents.find(
+    (entry) =>
+      entry.label === "file-handoff:gemini-pending-input-not-found" &&
+      entry.payload.reason === "manual-diagnostics"
+  );
+  assert.ok(diagnostic, "expected pending not-found diagnostics");
+  assert.strictEqual(diagnostic.payload.fileInputCount, 0);
+  assert.ok(diagnostic.payload.uploadTriggerCandidates.length >= 1);
+  assert.ok(diagnostic.payload.overlay.overlayCandidates.length >= 1);
+  assert.strictEqual(JSON.stringify(diagnostic).includes(rawSecret), false);
 }
 
 async function testGeminiNonDropUploadFlowMayClickWhenInputAppearsAfterClick() {
@@ -3921,6 +3987,7 @@ async function testGenericTextFallbackFailureStillBlocksRawUpload() {
   await testGeminiDropNeverClicksUploadFlowWhenInputAppearsAfterClick();
   await testGeminiDropNeverClicksExistingOverlayMenuItem();
   await testGeminiPendingDropAssignsSanitizedFileWhenInputLaterAppears();
+  await testGeminiPendingDropLogsExposureDiagnosticsWithoutRawContent();
   await testGeminiNonDropUploadFlowMayClickWhenInputAppearsAfterClick();
   await testGeminiUploadOverlayFailureLogsMetadataOnly();
   await testGeminiUploadMenuDirectInputStillWorks();

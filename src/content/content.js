@@ -3315,6 +3315,48 @@
     setTimeout(attempt, 1000);
   }
 
+  function describeGeminiHandoffDiscovery(discovery) {
+    const summary = discovery || {};
+    return {
+      fileInputCount: Number(summary.fileInputCount || 0),
+      uploadTriggerCount: Number(summary.uploadTriggerCount || 0),
+      openShadowRootCount: Number(summary.openShadowRootCount || 0),
+      selectedFileInput: describeFileInputForDebug(summary.fileInput, "selected-gemini-file-input"),
+      selectedUploadTrigger: describeUploadTriggerForDebug(
+        summary.uploadTrigger,
+        "selected-gemini-upload-trigger"
+      ),
+      fileInputCandidates: Array.from(summary.fileInputs || [])
+        .slice(0, 20)
+        .map(({ input, source }) => ({
+          ...describeFileInputForDebug(input, source),
+          score: scoreGeminiFileInput(input, source)
+        })),
+      uploadTriggerCandidates: Array.from(summary.uploadTriggers || [])
+        .slice(0, 20)
+        .map(({ trigger, selector, source }) => ({
+          ...describeUploadTriggerForDebug(trigger, source || selector),
+          selector
+        }))
+    };
+  }
+
+  function describeGeminiOverlayExposure() {
+    const details = {
+      openShadowRootCount: 0,
+      overlayItemCount: 0,
+      overlayCandidates: [],
+      selectedOverlayItem: null
+    };
+    discoverGeminiUploadOverlayItem(details);
+    return {
+      openShadowRootCount: details.openShadowRootCount,
+      overlayItemCount: details.overlayItemCount,
+      selectedOverlayItem: details.selectedOverlayItem,
+      overlayCandidates: details.overlayCandidates
+    };
+  }
+
   function attemptPendingGeminiSanitizedFileHandoff(reason = "") {
     const pending = pendingGeminiSanitizedFileHandoff;
     if (!pending || !isGeminiHost()) return false;
@@ -3333,9 +3375,8 @@
     if (!fileInput) {
       debugReveal("file-handoff:gemini-pending-input-not-found", {
         reason,
-        fileInputCount: discovery.fileInputCount,
-        uploadTriggerCount: discovery.uploadTriggerCount,
-        openShadowRootCount: discovery.openShadowRootCount,
+        ...describeGeminiHandoffDiscovery(discovery),
+        overlay: describeGeminiOverlayExposure(),
         sanitizedFile: describeFileForDebug(pending.sanitizedFile)
       });
       return false;
@@ -3415,6 +3456,13 @@
     pendingGeminiSanitizedFileClickHandler = (clickEvent) => {
       if (!pendingGeminiSanitizedFileHandoff) return;
       if (isLikelyGeminiUploadClickTarget(clickEvent?.target)) {
+        debugReveal("file-handoff:gemini-upload-click-observed", {
+          target: describeElementForDebug(normalizeTarget(clickEvent?.target), "pending-upload-click"),
+          pendingAgeMs: Math.max(
+            0,
+            Date.now() - Number(pendingGeminiSanitizedFileHandoff.createdAt || 0)
+          )
+        });
         schedulePendingGeminiSanitizedFileAttempt("upload-click");
       }
     };
