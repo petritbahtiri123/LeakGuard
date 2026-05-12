@@ -3878,9 +3878,9 @@
     const uploadTrigger = discovery.uploadTrigger;
     details.foundTopUploadTrigger = Boolean(uploadTrigger);
     details.uploadTrigger = describeUploadTriggerForDebug(uploadTrigger, "gemini-upload-trigger");
-    const mayOpenUploadPicker = true;
+    const mayClickGeminiUploadUi = event?.type !== "drop";
 
-    if (!fileInput && uploadTrigger && mayOpenUploadPicker) {
+    if (!fileInput && uploadTrigger && mayClickGeminiUploadUi) {
       try {
         uploadTrigger.click?.();
       } catch (error) {
@@ -3908,7 +3908,7 @@
       details.openShadowRootCount = Math.max(details.openShadowRootCount, discovery.openShadowRootCount);
     }
 
-    if (!fileInput && mayOpenUploadPicker) {
+    if (!fileInput && mayClickGeminiUploadUi) {
       details.handoffStage = "gemini:overlay-discovery";
       const overlayItem = discoverGeminiUploadOverlayItem(details);
       if (overlayItem) {
