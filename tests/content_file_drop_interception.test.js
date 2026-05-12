@@ -405,6 +405,7 @@ function createHarness(overrides = {}) {
       calls.handoffs.push({ event, input, sanitizedFile, context: "gemini-file-input" });
       return true;
     },
+    hasPendingGeminiSanitizedFileHandoff: () => false,
     resolveFileInputForHandoff: () => null,
     handOffSanitizedFileInput: (fileInput, transfer) => {
       calls.originalFileInputHandoffs = calls.originalFileInputHandoffs || [];
@@ -675,6 +676,10 @@ function createHandoffHarness({
   const debugEvents = [];
   const consoleErrors = [];
   const fallbackDrops = [];
+  const badges = [];
+  const clickHandlers = [];
+  const timeoutCallbacks = [];
+  const observers = [];
   const stats = {
     documentQueries: 0
   };
@@ -701,6 +706,27 @@ function createHandoffHarness({
 
   class TestMouseEvent extends TestEvent {}
 
+  class TestMutationObserver {
+    constructor(callback) {
+      this.callback = callback;
+      this.observed = [];
+      this.disconnected = false;
+      observers.push(this);
+    }
+
+    observe(target, options) {
+      this.observed.push({ target, options });
+    }
+
+    disconnect() {
+      this.disconnected = true;
+    }
+
+    trigger() {
+      this.callback([]);
+    }
+  }
+
   const shadowHosts = shadowInputs.map((input) => ({
     shadowRoot: {
       querySelectorAll(selector) {
@@ -723,6 +749,15 @@ function createHandoffHarness({
     }
   }));
   const documentRoot = {
+    documentElement: null,
+    addEventListener(type, handler) {
+      if (type === "click") clickHandlers.push(handler);
+    },
+    removeEventListener(type, handler) {
+      if (type !== "click") return;
+      const index = clickHandlers.indexOf(handler);
+      if (index !== -1) clickHandlers.splice(index, 1);
+    },
     querySelectorAll(selector) {
       stats.documentQueries += 1;
       if (selector === "input[type='file']") return fileInputs;
@@ -760,8 +795,21 @@ function createHandoffHarness({
     DragEvent: undefined,
     ClipboardEvent: undefined,
     DataTransfer: TestDataTransfer,
+    MutationObserver: TestMutationObserver,
     location: { hostname },
     document: documentRoot,
+    setBadge: (...args) => badges.push(args),
+    hideBadgeSoon: () => {},
+    refreshBadgeFromCurrentInput: () => {},
+    handleContentError: (error) => {
+      throw error;
+    },
+    setTimeout: (callback, delay = 0) => {
+      timeoutCallbacks.push({ callback, delay });
+      if (delay === 0) callback();
+      return timeoutCallbacks.length;
+    },
+    clearTimeout: () => {},
     console: {
       error: (...args) => consoleErrors.push(args)
     },
@@ -778,6 +826,11 @@ function createHandoffHarness({
       "let fileDragDiscoveryScheduled = false;",
       'let lastGeminiDropSessionHash = "";',
       "const GEMINI_UPLOAD_INPUT_WAIT_MS = 450;",
+      "const GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MS = 30000;",
+      "let pendingGeminiSanitizedFileHandoff = null;",
+      "let pendingGeminiSanitizedFileObserver = null;",
+      "let pendingGeminiSanitizedFileTimer = 0;",
+      "let pendingGeminiSanitizedFileClickHandler = null;",
       extractFunctionSource(contentSource, "normalizeTarget"),
       extractFunctionSource(contentSource, "isSanitizedFileHandoffEvent"),
       extractFunctionSource(contentSource, "markSanitizedFileHandoffEvent"),
@@ -798,6 +851,12 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "originalFileMetadataFromEvent"),
       extractFunctionSource(contentSource, "createSanitizedFileHandoffDetails"),
       extractFunctionSource(contentSource, "logSanitizedFileHandoffFailure"),
+      extractFunctionSource(contentSource, "clearPendingGeminiSanitizedFileHandoff"),
+      extractFunctionSource(contentSource, "isLikelyGeminiUploadClickTarget"),
+      extractFunctionSource(contentSource, "schedulePendingGeminiSanitizedFileAttempt"),
+      extractFunctionSource(contentSource, "attemptPendingGeminiSanitizedFileHandoff"),
+      extractFunctionSource(contentSource, "queuePendingGeminiSanitizedFileHandoff"),
+      extractFunctionSource(contentSource, "hasPendingGeminiSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "describeUploadTriggerForDebug"),
       extractFunctionSource(contentSource, "collectFileInputsFromAncestry"),
       extractFunctionSource(contentSource, "collectFileInputsFromRoot"),
@@ -816,7 +875,7 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "handOffSanitizedLocalFile"),
       extractFunctionSource(contentSource, "handOffGeminiSanitizedFileUpload"),
       extractFunctionSource(contentSource, "handOffGrokSanitizedFileUpload"),
-      "return { handOffSanitizedLocalFile, handOffGeminiSanitizedFileUpload, handOffGrokSanitizedFileUpload, resolveFileInputForHandoff };"
+      "return { handOffSanitizedLocalFile, handOffGeminiSanitizedFileUpload, handOffGrokSanitizedFileUpload, resolveFileInputForHandoff, attemptPendingGeminiSanitizedFileHandoff, hasPendingGeminiSanitizedFileHandoff };"
     ].join("\n\n")
   );
 
@@ -826,6 +885,10 @@ function createHandoffHarness({
     debugEvents,
     consoleErrors,
     fallbackDrops,
+    badges,
+    clickHandlers,
+    timeoutCallbacks,
+    observers,
     stats
   };
 }
@@ -1141,7 +1204,14 @@ async function testGeminiDropNeverClicksUploadFlowWhenInputAppearsAfterClick() {
       }
     }
   });
-  const { handOffGeminiSanitizedFileUpload, debugEvents, fallbackDrops, consoleErrors } = createHandoffHarness({
+  const {
+    handOffGeminiSanitizedFileUpload,
+    hasPendingGeminiSanitizedFileHandoff,
+    debugEvents,
+    fallbackDrops,
+    consoleErrors,
+    badges
+  } = createHandoffHarness({
     fileInputs,
     uploadTriggers: [uploadTrigger],
     overlayItems
@@ -1173,14 +1243,19 @@ async function testGeminiDropNeverClicksUploadFlowWhenInputAppearsAfterClick() {
   assert.strictEqual(overlayItems.length, 0);
   assert.strictEqual(fileInputs.length, 0);
   assert.strictEqual(fallbackDrops.length, 0);
-  assert.strictEqual(consoleErrors.length, 1);
+  assert.strictEqual(consoleErrors.length, 0);
+  assert.strictEqual(hasPendingGeminiSanitizedFileHandoff(sanitizedFile), true);
   assert.strictEqual(sanitizedFile.text.includes(rawSecret), false);
   assert.ok(sanitizedFile.text.includes("[PWM_1]"));
+  assert.ok(badges.some(([message]) => /Sanitized file ready/.test(message)));
   assert.ok(
     debugEvents.some((entry) => entry.label === "file-handoff:gemini-input-not-found"),
     "expected Gemini drop to fail closed without opening the upload picker"
   );
-  assert.strictEqual(consoleErrors[0][1].failureReason, "no_file_input_without_opening_picker");
+  assert.ok(
+    debugEvents.some((entry) => entry.label === "file-handoff:gemini-pending-queued"),
+    "expected Gemini drop to queue a sanitized-only pending handoff"
+  );
 }
 
 async function testGeminiDropNeverClicksExistingOverlayMenuItem() {
@@ -1197,7 +1272,12 @@ async function testGeminiDropNeverClicksExistingOverlayMenuItem() {
       throw new Error("Gemini drop must not click existing upload overlay items");
     }
   });
-  const { handOffGeminiSanitizedFileUpload, fallbackDrops, consoleErrors } = createHandoffHarness({
+  const {
+    handOffGeminiSanitizedFileUpload,
+    hasPendingGeminiSanitizedFileHandoff,
+    fallbackDrops,
+    consoleErrors
+  } = createHandoffHarness({
     overlayItems: [overlayItem]
   });
   const event = {
@@ -1211,8 +1291,71 @@ async function testGeminiDropNeverClicksExistingOverlayMenuItem() {
   assert.strictEqual(handedOff, false);
   assert.deepStrictEqual(overlayItem.events, []);
   assert.strictEqual(fallbackDrops.length, 0);
-  assert.strictEqual(consoleErrors.length, 1);
-  assert.strictEqual(consoleErrors[0][1].failureReason, "no_file_input_without_opening_picker");
+  assert.strictEqual(consoleErrors.length, 0);
+  assert.strictEqual(hasPendingGeminiSanitizedFileHandoff(sanitizedFile), true);
+}
+
+async function testGeminiPendingDropAssignsSanitizedFileWhenInputLaterAppears() {
+  const rawSecret = "LeakGuardDropApiKey1234567890";
+  const sanitizedFile = {
+    name: "pending-gemini.env",
+    type: "text/plain",
+    size: 18,
+    text: "API_KEY=[PWM_1]"
+  };
+  const fileInputs = [];
+  const uploadTrigger = createUploadTrigger({
+    ariaLabel: "Open upload file menu",
+    className: "upload-card mat-mdc-button"
+  });
+  const {
+    handOffGeminiSanitizedFileUpload,
+    attemptPendingGeminiSanitizedFileHandoff,
+    hasPendingGeminiSanitizedFileHandoff,
+    debugEvents,
+    fallbackDrops,
+    consoleErrors
+  } = createHandoffHarness({
+    fileInputs,
+    uploadTriggers: [uploadTrigger]
+  });
+  const event = {
+    type: "drop",
+    target: {
+      nodeType: 1,
+      tagName: "DIV",
+      dispatchEvent() {
+        throw new Error("Gemini pending file handoff must not replay a synthetic drop");
+      }
+    },
+    dataTransfer: createDataTransfer({
+      files: [
+        {
+          name: "pending-gemini.env",
+          type: "text/plain",
+          size: 42
+        }
+      ]
+    })
+  };
+
+  const handedOff = await handOffGeminiSanitizedFileUpload(event, null, sanitizedFile);
+  fileInputs.push(createFileInput({ source: "light-dom" }));
+  const assigned = attemptPendingGeminiSanitizedFileHandoff("test-input-added");
+
+  assert.strictEqual(handedOff, false);
+  assert.strictEqual(assigned, true);
+  assert.strictEqual(hasPendingGeminiSanitizedFileHandoff(sanitizedFile), false);
+  assert.strictEqual(fileInputs[0].files.length, 1);
+  assert.strictEqual(fileInputs[0].files[0], sanitizedFile);
+  assert.deepStrictEqual(fileInputs[0].events, ["input", "change"]);
+  assert.strictEqual(fallbackDrops.length, 0);
+  assert.strictEqual(consoleErrors.length, 0);
+  assert.strictEqual(JSON.stringify(debugEvents).includes(rawSecret), false);
+  assert.ok(
+    debugEvents.some((entry) => entry.label === "file-handoff:gemini-pending-assigned"),
+    "expected pending Gemini sanitized file to attach when a real input appears"
+  );
 }
 
 async function testGeminiNonDropUploadFlowMayClickWhenInputAppearsAfterClick() {
@@ -1243,7 +1386,12 @@ async function testGeminiNonDropUploadFlowMayClickWhenInputAppearsAfterClick() {
       }
     }
   });
-  const { handOffGeminiSanitizedFileUpload, debugEvents, fallbackDrops, consoleErrors } = createHandoffHarness({
+  const {
+    handOffGeminiSanitizedFileUpload,
+    debugEvents,
+    fallbackDrops,
+    consoleErrors
+  } = createHandoffHarness({
     fileInputs,
     uploadTriggers: [uploadTrigger],
     overlayItems
@@ -1300,7 +1448,13 @@ async function testGeminiUploadOverlayFailureLogsMetadataOnly() {
       }
     }
   });
-  const { handOffGeminiSanitizedFileUpload, debugEvents, fallbackDrops, consoleErrors } = createHandoffHarness({
+  const {
+    handOffGeminiSanitizedFileUpload,
+    hasPendingGeminiSanitizedFileHandoff,
+    debugEvents,
+    fallbackDrops,
+    consoleErrors
+  } = createHandoffHarness({
     fileInputs: [],
     uploadTriggers: [uploadTrigger],
     overlayItems
@@ -1325,30 +1479,16 @@ async function testGeminiUploadOverlayFailureLogsMetadataOnly() {
   assert.deepStrictEqual(uploadTrigger.events, []);
   assert.strictEqual(overlayItems.length, 0);
   assert.strictEqual(fallbackDrops.length, 0);
-  assert.strictEqual(consoleErrors.length, 1);
-  assert.strictEqual(consoleErrors[0][0], "[LeakGuard] sanitized file handoff failed");
-  const details = consoleErrors[0][1];
-  assert.strictEqual(details.hostname, "gemini.google.com");
-  assert.strictEqual(details.eventType, "drop");
-  assert.strictEqual(details.sanitizedFile.size, 26213285);
-  assert.strictEqual(details.foundTopUploadTrigger, true);
-  assert.strictEqual(details.fileInputCountBeforeClick, 0);
-  assert.strictEqual(details.fileInputCountAfterTopTriggerClick, 0);
-  assert.strictEqual(details.fileInputCountAfterOverlayItemClick, 0);
-  assert.strictEqual(details.overlayItemCount, 0);
-  assert.deepStrictEqual(details.overlayCandidates, []);
-  assert.strictEqual(details.selectedOverlayItem, null);
-  assert.strictEqual(details.failureReason, "no_file_input_without_opening_picker");
-  assert.strictEqual(details.dataTransferConstructorSucceeded, true);
-  assert.strictEqual(details.dataTransferItemsAddSucceeded, true);
-  assert.strictEqual(details.inputFilesAssignmentSucceeded, false);
-  assert.strictEqual(details.inputEventDispatched, false);
-  assert.strictEqual(details.changeEventDispatched, false);
-  const serialized = JSON.stringify(details);
+  assert.strictEqual(consoleErrors.length, 0);
+  assert.strictEqual(hasPendingGeminiSanitizedFileHandoff(sanitizedFile), true);
+  const queued = debugEvents.find((entry) => entry.label === "file-handoff:gemini-pending-queued");
+  assert.ok(queued, "expected metadata-only pending queue breadcrumb");
+  assert.strictEqual(queued.payload.sanitizedFile.size, 26213285);
+  const serialized = JSON.stringify(queued.payload);
   assert.strictEqual(serialized.includes(rawSecret), false);
   assert.ok(
-    debugEvents.some((entry) => entry.label === "sanitized-file-handoff:failed"),
-    "expected metadata-only debugReveal failure breadcrumb"
+    debugEvents.some((entry) => entry.label === "file-handoff:gemini-pending-after-input-not-found"),
+    "expected Gemini drop to leave sanitized file pending instead of opening the picker"
   );
 }
 
@@ -3780,6 +3920,7 @@ async function testGenericTextFallbackFailureStillBlocksRawUpload() {
   await testGeminiStreamingHandoffUsesDiscoveredFileInput();
   await testGeminiDropNeverClicksUploadFlowWhenInputAppearsAfterClick();
   await testGeminiDropNeverClicksExistingOverlayMenuItem();
+  await testGeminiPendingDropAssignsSanitizedFileWhenInputLaterAppears();
   await testGeminiNonDropUploadFlowMayClickWhenInputAppearsAfterClick();
   await testGeminiUploadOverlayFailureLogsMetadataOnly();
   await testGeminiUploadMenuDirectInputStillWorks();
