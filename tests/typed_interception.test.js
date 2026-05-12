@@ -445,7 +445,7 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
       dropSource.indexOf("findComposer(event.target) || findComposer(document.activeElement)") &&
       dropSource.includes("rawFileDropInterceptions") &&
       dropSource.includes("dataTransferLooksLikeFiles(event.dataTransfer)") &&
-      dropSource.includes('maybeHandleLocalFileInsert(event, input, event.dataTransfer, "drop")') &&
+      dropSource.includes('maybeHandleLocalFileInsert(event, input, snapshotDataTransfer, "drop")') &&
       !dropSource.includes("if (!input) return"),
     "file drop should consume raw files immediately and continue local handling without a composer target"
   );
