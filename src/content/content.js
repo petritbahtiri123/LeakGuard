@@ -3368,9 +3368,9 @@
 
     const event = {
       type: "pending-gemini-sanitized-file",
-      target: pending.target
+      target: null
     };
-    const discovery = discoverGeminiFileHandoffElements(event, pending.input);
+    const discovery = discoverGeminiFileHandoffElements(event, null);
     const fileInput = discovery.fileInput;
     if (!fileInput) {
       debugReveal("file-handoff:gemini-pending-input-not-found", {
@@ -3427,8 +3427,6 @@
     clearPendingGeminiSanitizedFileHandoff("replaced");
     pendingGeminiSanitizedFileHandoff = {
       sanitizedFile,
-      input: input || null,
-      target: event?.target || null,
       createdAt: Date.now(),
       expiresAt: Date.now() + GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MS,
       sessionHash: lastGeminiDropSessionHash || ""
@@ -3492,6 +3490,17 @@
       pendingGeminiSanitizedFileHandoff &&
         (!sanitizedFile || pendingGeminiSanitizedFileHandoff.sanitizedFile === sanitizedFile)
     );
+  }
+
+  function getPendingGeminiSanitizedFileHandoffDebug() {
+    if (!pendingGeminiSanitizedFileHandoff) return null;
+    return {
+      keys: Object.keys(pendingGeminiSanitizedFileHandoff),
+      sanitizedFile: pendingGeminiSanitizedFileHandoff.sanitizedFile,
+      sanitizedFileDebug: describeFileForDebug(pendingGeminiSanitizedFileHandoff.sanitizedFile),
+      expiresAt: pendingGeminiSanitizedFileHandoff.expiresAt,
+      sessionHash: pendingGeminiSanitizedFileHandoff.sessionHash || ""
+    };
   }
 
   function clearFileDragSession() {
@@ -5788,6 +5797,7 @@
     if (location.href === currentUrl) return;
 
     currentUrl = location.href;
+    clearPendingGeminiSanitizedFileHandoff("navigation");
     clearAllRiskSessionState();
     await initState();
     rehydrateTree(document.body);
