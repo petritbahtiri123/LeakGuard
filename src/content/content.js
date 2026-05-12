@@ -164,6 +164,10 @@
   const FILE_DRAG_SESSION_RESET_MS = 5000;
   const GEMINI_UPLOAD_INPUT_WAIT_MS = 450;
   const GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MS = 30000;
+  const GEMINI_SANITIZED_DOWNLOAD_MESSAGE =
+    "Sanitized file downloaded. Upload the LeakGuard redacted copy to Gemini.";
+  const GEMINI_SANITIZED_DOWNLOAD_MODAL_MESSAGE =
+    "Gemini does not expose a safe upload target. LeakGuard downloaded a sanitized copy. Upload that redacted file manually.";
   const GEMINI_SANITIZED_TEXT_FALLBACK_MESSAGE =
     "Sanitized content inserted as text because Gemini rejected sanitized file upload.";
   const LOCAL_FILE_SANITIZED_TEXT_FALLBACK_MESSAGE =
@@ -176,6 +180,7 @@
   let fileDragSessionId = 0;
   let fileDragDetectedLogged = false;
   let lastGeminiDropSessionHash = "";
+  const geminiSanitizedDownloadFallbacks = new WeakSet();
   let pendingGeminiSanitizedFileHandoff = null;
   let pendingGeminiSanitizedFileObserver = null;
   let pendingGeminiSanitizedFileTimer = 0;
@@ -195,6 +200,7 @@
 
   function markExtensionContextInvalidated() {
     extensionRuntimeAvailable = false;
+    clearPendingGeminiSanitizedFileHandoff("extension-context-invalidated");
     setBadge("LeakGuard reloaded. Refresh this page.");
     hideBadgeSoon(5000);
   }
@@ -3240,6 +3246,78 @@
     };
   }
 
+  function sanitizeDownloadFileNameSegment(value, fallback = "sanitized-file.txt") {
+    const unsafePathChars = new RegExp('[\\\\/:*?"<>|\\u0000-\\u001f]+', "g");
+    const normalized = String(value || fallback)
+      .replace(unsafePathChars, "-")
+      .replace(/\s+/g, " ")
+      .trim()
+      .replace(/^\.+|\.+$/g, "");
+    return normalized || fallback;
+  }
+
+  function buildGeminiSanitizedDownloadFileName(sanitizedFile) {
+    const originalName = sanitizeDownloadFileNameSegment(sanitizedFile?.name || "sanitized-file.txt");
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "").replace(/\d{3}Z$/, "Z");
+    return `LeakGuard/redacted/${timestamp}-${originalName}`;
+  }
+
+  async function downloadGeminiSanitizedFileFallback(event, input, sanitizedFile, details = null) {
+    if (!isGeminiHost() || event?.type !== "drop" || !sanitizedFile) return false;
+
+    let redactedText = "";
+    try {
+      redactedText = await readSanitizedFileTextForFallback(sanitizedFile);
+    } catch (error) {
+      if (details) {
+        details.failureReason = "sanitized_download_read_failed";
+        details.errorMessage = error?.message || String(error);
+        details.errorStack = error?.stack || "";
+      }
+      return false;
+    }
+
+    try {
+      const response = await sendRuntimeMessage({
+        type: "PWM_DOWNLOAD_SANITIZED_FILE",
+        fileName: buildGeminiSanitizedDownloadFileName(sanitizedFile),
+        mimeType: sanitizedFile.type || "text/plain",
+        redactedText
+      });
+
+      if (!response?.ok) {
+        if (details) {
+          details.failureReason = "sanitized_download_failed";
+          details.errorMessage = response?.error || "Background download request failed.";
+        }
+        return false;
+      }
+
+      geminiSanitizedDownloadFallbacks.add(sanitizedFile);
+      clearPendingGeminiSanitizedFileHandoff("download-fallback");
+      debugReveal("file-handoff:gemini-sanitized-download", {
+        sanitizedFile: describeFileForDebug(sanitizedFile),
+        downloadId: response.downloadId ?? null
+      });
+      setBadge(GEMINI_SANITIZED_DOWNLOAD_MESSAGE);
+      hideBadgeSoon(6500);
+      await showMessageModal("Sanitized file downloaded", GEMINI_SANITIZED_DOWNLOAD_MODAL_MESSAGE);
+      refreshBadgeFromCurrentInput();
+      return true;
+    } catch (error) {
+      if (details) {
+        details.failureReason = "sanitized_download_failed";
+        details.errorMessage = error?.message || String(error);
+        details.errorStack = error?.stack || "";
+      }
+      return false;
+    }
+  }
+
+  function hasGeminiSanitizedDownloadFallback(sanitizedFile) {
+    return Boolean(sanitizedFile && geminiSanitizedDownloadFallbacks.has(sanitizedFile));
+  }
+
   function logSanitizedFileHandoffFailure(details, error) {
     const payload = {
       ...(details || {}),
@@ -3791,7 +3869,6 @@
     const selectors = [
       ".cdk-overlay-container",
       ".cdk-overlay-pane",
-      ".mat-mdc-menu-panel",
       'mat-action-list[role="menu"]',
       '[role="menuitem"]',
       "button"
@@ -3800,7 +3877,7 @@
     const addCandidate = (candidate, source) => {
       if (!candidate || seen.has(candidate)) return;
       seen.add(candidate);
-      if (candidate.matches?.(".cdk-overlay-container, .cdk-overlay-pane, .mat-mdc-menu-panel, mat-action-list")) {
+      if (candidate.matches?.(".cdk-overlay-container, .cdk-overlay-pane, mat-action-list")) {
         return;
       }
       const score = scoreGeminiUploadMenuItem(candidate);
@@ -4215,15 +4292,13 @@
         openShadowRootCount: details.openShadowRootCount,
         sanitizedFile: describeFileForDebug(sanitizedFile)
       });
-      if (
-        event?.type === "drop" &&
-        details.failureReason === "no_file_input_without_opening_picker" &&
-        queuePendingGeminiSanitizedFileHandoff(event, input, sanitizedFile, details)
-      ) {
-        debugReveal("file-handoff:gemini-pending-after-input-not-found", {
-          sanitizedFile: describeFileForDebug(sanitizedFile)
-        });
-        return false;
+      if (event?.type === "drop" && details.failureReason === "no_file_input_without_opening_picker") {
+        if (await downloadGeminiSanitizedFileFallback(event, input, sanitizedFile, details)) {
+          debugReveal("file-handoff:gemini-download-after-input-not-found", {
+            sanitizedFile: describeFileForDebug(sanitizedFile)
+          });
+          return false;
+        }
       }
       logSanitizedFileHandoffFailure(details);
       return false;
@@ -4553,16 +4628,12 @@
           };
         }
 
-        if (
-          context === "drop" &&
-          isGeminiHost() &&
-          hasPendingGeminiSanitizedFileHandoff(streamResult.sanitizedFile)
-        ) {
+        if (context === "drop" && isGeminiHost() && hasGeminiSanitizedDownloadFallback(streamResult.sanitizedFile)) {
           refreshBadgeFromCurrentInput();
           return {
             handled: true,
             ok: true,
-            strategy: "gemini-drop-pending-sanitized-file-handoff"
+            strategy: "gemini-drop-sanitized-download-fallback"
           };
         }
 
@@ -4663,11 +4734,7 @@
     const handedOff = await handOffSanitizedLocalFile(event, input, sanitizedFile, context);
 
     if (!handedOff) {
-      if (
-        context === "drop" &&
-        isGeminiHost() &&
-        hasPendingGeminiSanitizedFileHandoff(sanitizedFile)
-      ) {
+      if (context === "drop" && isGeminiHost() && hasGeminiSanitizedDownloadFallback(sanitizedFile)) {
         if (optimizedStatus) {
           clearLocalPayloadOptimizationStatus(sizeInfo, "complete");
         }
@@ -4675,7 +4742,30 @@
         return {
           handled: true,
           ok: true,
-          strategy: "gemini-drop-pending-sanitized-file-handoff"
+          strategy: "gemini-drop-sanitized-download-fallback"
+        };
+      }
+
+      if (context === "drop" && isGeminiHost()) {
+        if (optimizedStatus) {
+          clearLocalPayloadOptimizationStatus(sizeInfo, "failed");
+        }
+        debugReveal("file-handoff:fail-closed", {
+          context,
+          reason: "gemini_sanitized_download_failed",
+          sanitizedFile: describeFileForDebug(sanitizedFile)
+        });
+        setBadge("Raw file upload blocked");
+        hideBadgeSoon(4200);
+        await showMessageModal(
+          "Raw file upload blocked",
+          "LeakGuard blocked raw upload because Gemini did not expose a safe upload target and the sanitized download failed."
+        );
+        refreshBadgeFromCurrentInput();
+        return {
+          handled: true,
+          ok: false,
+          reason: "gemini_sanitized_download_failed"
         };
       }
 

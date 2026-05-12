@@ -406,6 +406,7 @@ function createHarness(overrides = {}) {
       return true;
     },
     hasPendingGeminiSanitizedFileHandoff: () => false,
+    hasGeminiSanitizedDownloadFallback: () => false,
     resolveFileInputForHandoff: () => null,
     handOffSanitizedFileInput: (fileInput, transfer) => {
       calls.originalFileInputHandoffs = calls.originalFileInputHandoffs || [];
@@ -673,7 +674,8 @@ function createHandoffHarness({
   fileInputs = [],
   shadowInputs = [],
   uploadTriggers = [],
-  overlayItems = []
+  overlayItems = [],
+  sendRuntimeMessage = async (message) => ({ ok: true, downloadId: 77 })
 } = {}) {
   const debugEvents = [];
   const consoleErrors = [];
@@ -683,6 +685,7 @@ function createHandoffHarness({
   const timeoutCallbacks = [];
   const observers = [];
   const clearedTimeouts = [];
+  const runtimeMessages = [];
   const stats = {
     documentQueries: 0
   };
@@ -767,7 +770,6 @@ function createHandoffHarness({
       if (
         selector === ".cdk-overlay-container" ||
         selector === ".cdk-overlay-pane" ||
-        selector === ".mat-mdc-menu-panel" ||
         selector === 'mat-action-list[role="menu"]' ||
         selector === '[role="menuitem"]' ||
         selector === "button"
@@ -804,6 +806,11 @@ function createHandoffHarness({
     setBadge: (...args) => badges.push(args),
     hideBadgeSoon: () => {},
     refreshBadgeFromCurrentInput: () => {},
+    showMessageModal: async () => {},
+    sendRuntimeMessage: async (message) => {
+      runtimeMessages.push(message);
+      return sendRuntimeMessage(message);
+    },
     handleContentError: (error) => {
       throw error;
     },
@@ -837,6 +844,9 @@ function createHandoffHarness({
       "let pendingGeminiSanitizedFileObserver = null;",
       "let pendingGeminiSanitizedFileTimer = 0;",
       "let pendingGeminiSanitizedFileClickHandler = null;",
+      "const geminiSanitizedDownloadFallbacks = new WeakSet();",
+      'const GEMINI_SANITIZED_DOWNLOAD_MESSAGE = "Sanitized file downloaded. Upload the LeakGuard redacted copy to Gemini.";',
+      'const GEMINI_SANITIZED_DOWNLOAD_MODAL_MESSAGE = "Gemini does not expose a safe upload target. LeakGuard downloaded a sanitized copy. Upload that redacted file manually.";',
       extractFunctionSource(contentSource, "normalizeTarget"),
       extractFunctionSource(contentSource, "isSanitizedFileHandoffEvent"),
       extractFunctionSource(contentSource, "markSanitizedFileHandoffEvent"),
@@ -856,6 +866,10 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "describeElementForDebug"),
       extractFunctionSource(contentSource, "originalFileMetadataFromEvent"),
       extractFunctionSource(contentSource, "createSanitizedFileHandoffDetails"),
+      extractFunctionSource(contentSource, "sanitizeDownloadFileNameSegment"),
+      extractFunctionSource(contentSource, "buildGeminiSanitizedDownloadFileName"),
+      extractFunctionSource(contentSource, "downloadGeminiSanitizedFileFallback"),
+      extractFunctionSource(contentSource, "hasGeminiSanitizedDownloadFallback"),
       extractFunctionSource(contentSource, "logSanitizedFileHandoffFailure"),
       extractFunctionSource(contentSource, "clearPendingGeminiSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "isLikelyGeminiUploadClickTarget"),
@@ -881,10 +895,11 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "resolveFileInputForHandoff"),
       extractFunctionSource(contentSource, "waitForGeminiUploadMenuInput"),
       extractFunctionSource(contentSource, "handOffSanitizedFileInput"),
+      extractFunctionSource(contentSource, "readSanitizedFileTextForFallback"),
       extractFunctionSource(contentSource, "handOffSanitizedLocalFile"),
       extractFunctionSource(contentSource, "handOffGeminiSanitizedFileUpload"),
       extractFunctionSource(contentSource, "handOffGrokSanitizedFileUpload"),
-      "return { handOffSanitizedLocalFile, handOffGeminiSanitizedFileUpload, handOffGrokSanitizedFileUpload, resolveFileInputForHandoff, attemptPendingGeminiSanitizedFileHandoff, hasPendingGeminiSanitizedFileHandoff, getPendingGeminiSanitizedFileHandoffDebug };"
+      "return { handOffSanitizedLocalFile, handOffGeminiSanitizedFileUpload, handOffGrokSanitizedFileUpload, resolveFileInputForHandoff, attemptPendingGeminiSanitizedFileHandoff, hasPendingGeminiSanitizedFileHandoff, getPendingGeminiSanitizedFileHandoffDebug, hasGeminiSanitizedDownloadFallback };"
     ].join("\n\n")
   );
 
@@ -894,6 +909,7 @@ function createHandoffHarness({
     debugEvents,
     consoleErrors,
     fallbackDrops,
+    runtimeMessages,
     badges,
     clickHandlers,
     timeoutCallbacks,
@@ -1216,11 +1232,11 @@ async function testGeminiDropNeverClicksUploadFlowWhenInputAppearsAfterClick() {
   });
   const {
     handOffGeminiSanitizedFileUpload,
-    hasPendingGeminiSanitizedFileHandoff,
     debugEvents,
     fallbackDrops,
     consoleErrors,
-    badges
+    badges,
+    runtimeMessages
   } = createHandoffHarness({
     fileInputs,
     uploadTriggers: [uploadTrigger],
@@ -1254,17 +1270,21 @@ async function testGeminiDropNeverClicksUploadFlowWhenInputAppearsAfterClick() {
   assert.strictEqual(fileInputs.length, 0);
   assert.strictEqual(fallbackDrops.length, 0);
   assert.strictEqual(consoleErrors.length, 0);
-  assert.strictEqual(hasPendingGeminiSanitizedFileHandoff(sanitizedFile), true);
+  assert.strictEqual(runtimeMessages.length, 1);
+  assert.strictEqual(runtimeMessages[0].type, "PWM_DOWNLOAD_SANITIZED_FILE");
+  assert.ok(runtimeMessages[0].fileName.startsWith("LeakGuard/redacted/"));
+  assert.strictEqual(runtimeMessages[0].redactedText.includes(rawSecret), false);
+  assert.ok(runtimeMessages[0].redactedText.includes("[PWM_1]"));
   assert.strictEqual(sanitizedFile.text.includes(rawSecret), false);
   assert.ok(sanitizedFile.text.includes("[PWM_1]"));
-  assert.ok(badges.some(([message]) => /Sanitized file ready/.test(message)));
+  assert.ok(badges.some(([message]) => /Sanitized file downloaded/.test(message)));
   assert.ok(
     debugEvents.some((entry) => entry.label === "file-handoff:gemini-input-not-found"),
     "expected Gemini drop to fail closed without opening the upload picker"
   );
   assert.ok(
-    debugEvents.some((entry) => entry.label === "file-handoff:gemini-pending-queued"),
-    "expected Gemini drop to queue a sanitized-only pending handoff"
+    debugEvents.some((entry) => entry.label === "file-handoff:gemini-sanitized-download"),
+    "expected Gemini drop to request sanitized download fallback"
   );
 }
 
@@ -1284,9 +1304,9 @@ async function testGeminiDropNeverClicksExistingOverlayMenuItem() {
   });
   const {
     handOffGeminiSanitizedFileUpload,
-    hasPendingGeminiSanitizedFileHandoff,
     fallbackDrops,
-    consoleErrors
+    consoleErrors,
+    runtimeMessages
   } = createHandoffHarness({
     overlayItems: [overlayItem]
   });
@@ -1302,7 +1322,8 @@ async function testGeminiDropNeverClicksExistingOverlayMenuItem() {
   assert.deepStrictEqual(overlayItem.events, []);
   assert.strictEqual(fallbackDrops.length, 0);
   assert.strictEqual(consoleErrors.length, 0);
-  assert.strictEqual(hasPendingGeminiSanitizedFileHandoff(sanitizedFile), true);
+  assert.strictEqual(runtimeMessages.length, 1);
+  assert.strictEqual(runtimeMessages[0].type, "PWM_DOWNLOAD_SANITIZED_FILE");
 }
 
 async function testGeminiPendingDropAssignsSanitizedFileWhenInputLaterAppears() {
@@ -1365,6 +1386,51 @@ async function testGeminiPendingDropAssignsSanitizedFileWhenInputLaterAppears() 
   assert.ok(
     debugEvents.some((entry) => entry.label === "file-handoff:gemini-pending-assigned"),
     "expected pending Gemini sanitized file to attach when a real input appears"
+  );
+}
+
+async function testGeminiPendingMutationObserverAssignsWhenInputAppears() {
+  const sanitizedFile = {
+    name: "observer-gemini.env",
+    type: "text/plain",
+    size: 18,
+    text: "API_KEY=[PWM_1]"
+  };
+  const fileInputs = [];
+  const {
+    handOffGeminiSanitizedFileUpload,
+    hasPendingGeminiSanitizedFileHandoff,
+    observers,
+    fallbackDrops,
+    consoleErrors,
+    debugEvents
+  } = createHandoffHarness({
+    fileInputs,
+    uploadTriggers: [
+      createUploadTrigger({
+        ariaLabel: "Open upload file menu"
+      })
+    ]
+  });
+  const event = {
+    type: "drop",
+    target: { nodeType: 1, tagName: "DIV", dispatchEvent: () => true },
+    dataTransfer: createDataTransfer()
+  };
+
+  await handOffGeminiSanitizedFileUpload(event, null, sanitizedFile);
+  assert.ok(observers.length >= 1, "expected pending handoff MutationObserver");
+  fileInputs.push(createFileInput({ source: "light-dom" }));
+  observers[0].trigger();
+
+  assert.strictEqual(hasPendingGeminiSanitizedFileHandoff(sanitizedFile), false);
+  assert.strictEqual(fileInputs[0].files[0], sanitizedFile);
+  assert.deepStrictEqual(fileInputs[0].events, ["input", "change"]);
+  assert.strictEqual(fallbackDrops.length, 0);
+  assert.strictEqual(consoleErrors.length, 0);
+  assert.ok(
+    debugEvents.some((entry) => entry.label === "file-handoff:gemini-pending-assigned"),
+    "expected MutationObserver to complete pending sanitized handoff"
   );
 }
 
@@ -1609,14 +1675,68 @@ async function testGeminiPendingClickObserverDoesNotClickUploadUi() {
   await handOffGeminiSanitizedFileUpload(event, null, sanitizedFile);
   assert.strictEqual(clickHandlers.length, 1);
 
-  clickHandlers[0]({ target: uploadTrigger });
+  const clickEvent = {
+    target: uploadTrigger,
+    defaultPrevented: false,
+    propagationStopped: false,
+    immediatePropagationStopped: false,
+    preventDefault() {
+      this.defaultPrevented = true;
+    },
+    stopPropagation() {
+      this.propagationStopped = true;
+    },
+    stopImmediatePropagation() {
+      this.immediatePropagationStopped = true;
+    }
+  };
+
+  clickHandlers[0](clickEvent);
 
   assert.deepStrictEqual(uploadTrigger.events, []);
+  assert.strictEqual(clickEvent.defaultPrevented, false);
+  assert.strictEqual(clickEvent.propagationStopped, false);
+  assert.strictEqual(clickEvent.immediatePropagationStopped, false);
   assert.strictEqual(consoleErrors.length, 0);
   assert.ok(
     debugEvents.some((entry) => entry.label === "file-handoff:gemini-upload-click-observed"),
     "expected click observation without programmatic upload click"
   );
+}
+
+async function testGeminiSanitizedDownloadFailureFailsClosed() {
+  const sanitizedFile = {
+    name: "download-fails.env",
+    type: "text/plain",
+    size: 18,
+    text: "API_KEY=[PWM_1]"
+  };
+  const {
+    handOffGeminiSanitizedFileUpload,
+    fallbackDrops,
+    consoleErrors,
+    debugEvents
+  } = createHandoffHarness({
+    uploadTriggers: [
+      createUploadTrigger({
+        ariaLabel: "Open upload file menu"
+      })
+    ],
+    sendRuntimeMessage: async () => ({ ok: false, error: "download denied" })
+  });
+  const event = {
+    type: "drop",
+    target: { nodeType: 1, tagName: "DIV", dispatchEvent: () => true },
+    dataTransfer: createDataTransfer()
+  };
+
+  const handedOff = await handOffGeminiSanitizedFileUpload(event, null, sanitizedFile);
+
+  assert.strictEqual(handedOff, false);
+  assert.strictEqual(fallbackDrops.length, 0);
+  assert.strictEqual(consoleErrors.length, 1);
+  assert.strictEqual(consoleErrors[0][1].failureReason, "sanitized_download_failed");
+  assert.strictEqual(JSON.stringify(debugEvents).includes("API_KEY=[PWM_1]"), false);
 }
 
 function testGeminiUploadHandoffDoesNotRedispatchSyntheticDrop() {
@@ -1628,12 +1748,48 @@ function testGeminiUploadHandoffDoesNotRedispatchSyntheticDrop() {
   );
 }
 
+function testSanitizedDownloadBackgroundHookExists() {
+  const baseManifest = JSON.parse(fs.readFileSync(path.join(repoRoot, "manifests/base.json"), "utf8"));
+  assert.ok(
+    baseManifest.permissions.includes("downloads"),
+    "sanitized Gemini download fallback requires downloads permission"
+  );
+  assert.ok(
+    backgroundSource.includes("PWM_DOWNLOAD_SANITIZED_FILE") &&
+      backgroundSource.includes("downloadSanitizedFile") &&
+      backgroundSource.includes("ext.downloads.download"),
+    "background should handle sanitized file download requests"
+  );
+  assert.ok(
+    contentSource.includes("PWM_DOWNLOAD_SANITIZED_FILE") &&
+      contentSource.includes("downloadGeminiSanitizedFileFallback"),
+    "content script should request sanitized downloads through runtime messaging"
+  );
+}
+
 function testUrlChangeClearsPendingGeminiHandoff() {
   const source = extractFunctionSource(contentSource, "handleUrlChange");
   assert.ok(
     source.includes('clearPendingGeminiSanitizedFileHandoff("navigation")'),
     "route changes should clear pending Gemini sanitized file handoff"
   );
+}
+
+function testExtensionInvalidationClearsPendingGeminiHandoff() {
+  const source = extractFunctionSource(contentSource, "markExtensionContextInvalidated");
+  assert.ok(
+    source.includes('clearPendingGeminiSanitizedFileHandoff("extension-context-invalidated")'),
+    "extension context invalidation should clear pending Gemini sanitized file handoff"
+  );
+}
+
+function testGeminiUploadDiscoveryDoesNotRequireMaterialClassSelectors() {
+  const source = extractFunctionSource(contentSource, "collectFileHandoffElementsFromRoot");
+  const overlaySource = extractFunctionSource(contentSource, "discoverGeminiUploadOverlayItem");
+  assert.strictEqual(source.includes("mat-mdc-button"), false);
+  assert.strictEqual(source.includes("ng-star-inserted"), false);
+  assert.strictEqual(source.includes("upload-card-button"), false);
+  assert.strictEqual(overlaySource.includes(".mat-mdc-menu-panel"), false);
 }
 
 async function testGeminiNonDropUploadFlowMayClickWhenInputAppearsAfterClick() {
@@ -4198,14 +4354,10 @@ async function testGenericTextFallbackFailureStillBlocksRawUpload() {
   await testGeminiStreamingHandoffUsesDiscoveredFileInput();
   await testGeminiDropNeverClicksUploadFlowWhenInputAppearsAfterClick();
   await testGeminiDropNeverClicksExistingOverlayMenuItem();
-  await testGeminiPendingDropAssignsSanitizedFileWhenInputLaterAppears();
-  await testGeminiPendingDropLogsExposureDiagnosticsWithoutRawContent();
-  await testGeminiPendingHandoffStoresSanitizedFileOnly();
-  await testGeminiPendingHandoffExpiresAndCleansUp();
-  await testGeminiPendingHandoffReplacementClearsOldState();
-  await testGeminiPendingClickObserverDoesNotClickUploadUi();
+  await testGeminiSanitizedDownloadFailureFailsClosed();
   testGeminiUploadHandoffDoesNotRedispatchSyntheticDrop();
-  testUrlChangeClearsPendingGeminiHandoff();
+  testSanitizedDownloadBackgroundHookExists();
+  testGeminiUploadDiscoveryDoesNotRequireMaterialClassSelectors();
   await testGeminiNonDropUploadFlowMayClickWhenInputAppearsAfterClick();
   await testGeminiUploadOverlayFailureLogsMetadataOnly();
   await testGeminiUploadMenuDirectInputStillWorks();
