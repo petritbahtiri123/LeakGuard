@@ -315,15 +315,28 @@ function createHarness(overrides = {}) {
     refreshBadge: 0,
     modals: [],
     debugEvents: [],
+    runtimeMessages: [],
     dragDetections: 0,
     clearedDragSessions: 0
   };
   const activeElement = { tagName: "TEXTAREA" };
+  class HarnessDataTransfer {
+    constructor() {
+      this.files = [];
+      this.items = {
+        add: (file) => {
+          this.files.push(file);
+        }
+      };
+      this.dropEffect = "none";
+    }
+  }
   const dependencies = {
     extensionRuntimeAvailable: true,
     modalOpen: false,
     Node: { ELEMENT_NODE: 1 },
     Event,
+    DataTransfer: HarnessDataTransfer,
     InputEvent: typeof InputEvent === "function" ? InputEvent : Event,
     window: {
       getSelection: () => null,
@@ -405,6 +418,10 @@ function createHarness(overrides = {}) {
       calls.handoffs.push({ event, input, sanitizedFile, context: "gemini-file-input" });
       return true;
     },
+    handOffGrokSanitizedFileUpload: (event, input, sanitizedFile) => {
+      calls.handoffs.push({ event, input, sanitizedFile, context: "grok-file-input" });
+      return true;
+    },
     hasPendingGeminiSanitizedFileHandoff: () => false,
     hasGeminiSanitizedDownloadFallback: () => false,
     resolveFileInputForHandoff: () => null,
@@ -436,6 +453,10 @@ function createHarness(overrides = {}) {
     },
     showMessageModal: async (...args) => {
       calls.modals.push(args);
+    },
+    sendRuntimeMessage: async (message) => {
+      calls.runtimeMessages.push(message);
+      return { ok: true, downloadId: 77 };
     },
     showGeminiLargeTextConfirmationModal: async (...args) => {
       calls.largeTextConfirmations = calls.largeTextConfirmations || [];
@@ -487,6 +508,8 @@ function createHarness(overrides = {}) {
       'const LOCAL_TEXT_HARD_BLOCK_TITLE = "Large payload blocked for browser stability";',
       'const LOCAL_TEXT_HARD_BLOCK_MESSAGE = "This content is over 4 MB. LeakGuard did not process or send it automatically to avoid browser instability. Split the file into smaller parts, or sanitize it separately before upload.";',
       "let suppressInputScanUntil = 0;",
+      "function setDmzOverlayState() {}",
+      "function scheduleDmzOverlayCleanup() {}",
       "function setGeminiDmzOverlayState() {}",
       "function scheduleGeminiDmzOverlayCleanup() {}",
       "function createSanitizedFileHandoffDetails() { return {}; }",
@@ -516,7 +539,9 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "normalizeTarget"),
       extractFunctionSource(contentSource, "isChatGptHost"),
       extractFunctionSource(contentSource, "isGeminiHost"),
+      extractFunctionSource(contentSource, "isClaudeHost"),
       extractFunctionSource(contentSource, "isGrokHost"),
+      extractFunctionSource(contentSource, "getCurrentHandoffDriverId"),
       extractFunctionSource(contentSource, "shouldHandleChatGptLargeTextPaste"),
       extractFunctionSource(contentSource, "createSanitizedChatGptPasteFile"),
       extractFunctionSource(contentSource, "applyChatGptLargePasteTextFallback"),
@@ -547,17 +572,29 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "maybeHandleGeminiEditorDrop"),
       extractFunctionSource(contentSource, "markSanitizedFileHandoffEvent"),
       extractFunctionSource(contentSource, "createSanitizedDataTransfer"),
+      extractFunctionSource(contentSource, "createSanitizedDataTransferForHandoff"),
       extractFunctionSource(contentSource, "attachEventDataTransfer"),
       extractFunctionSource(contentSource, "dispatchSanitizedFileEvent"),
       extractFunctionSource(contentSource, "isFileInputElement"),
       extractFunctionSource(contentSource, "handOffOriginalLocalFile"),
       extractFunctionSource(contentSource, "describeFileForDebug"),
+      extractFunctionSource(contentSource, "sanitizeDownloadFileNameSegment"),
+      extractFunctionSource(contentSource, "logSanitizedFileHandoffFailure"),
       extractFunctionSource(contentSource, "originalFileMetadataFromLocalFile"),
+      extractFunctionSource(contentSource, "createSanitizedPayload"),
       extractFunctionSource(contentSource, "createGeminiSanitizedPayload"),
+      extractFunctionSource(contentSource, "fallbackLanguageFromFileName"),
       extractFunctionSource(contentSource, "geminiFallbackLanguageFromFileName"),
+      extractFunctionSource(contentSource, "formatSanitizedFileFallbackText"),
       extractFunctionSource(contentSource, "formatGeminiSanitizedFileFallbackText"),
       extractFunctionSource(contentSource, "insertGeminiSanitizedText"),
       extractFunctionSource(contentSource, "tryGeminiSanitizedFileAttach"),
+      extractFunctionSource(contentSource, "tryRealFileInputSanitizedFileAttach"),
+      extractFunctionSource(contentSource, "insertSanitizedPayloadText"),
+      extractFunctionSource(contentSource, "buildSanitizedDownloadFileName"),
+      extractFunctionSource(contentSource, "downloadSanitizedFileFallback"),
+      extractFunctionSource(contentSource, "getCurrentHandoffDriver"),
+      extractFunctionSource(contentSource, "handoffSanitizedPayload"),
       extractFunctionSource(contentSource, "applyGeminiSanitizedTextFallback"),
       extractFunctionSource(contentSource, "applySanitizedTextFallback"),
       extractFunctionSource(contentSource, "readSanitizedFileTextForFallback"),
@@ -997,11 +1034,11 @@ async function testFileDropIsHandledWithoutComposerTarget() {
   assert.deepStrictEqual(calls.reads[0].files, dataTransfer.files);
   assert.strictEqual(calls.redactions.length, 1);
   assert.strictEqual(calls.createdFiles.length, 1);
-  assert.strictEqual(calls.handoffs.length, 1);
-  assert.strictEqual(calls.handoffs[0].input, null);
-  assert.strictEqual(calls.handoffs[0].context, "drop");
+  assert.strictEqual(calls.handoffs.length, 0);
+  assert.strictEqual(calls.runtimeMessages.length, 1);
+  assert.strictEqual(calls.runtimeMessages[0].type, "PWM_DOWNLOAD_SANITIZED_FILE");
+  assert.strictEqual(calls.runtimeMessages[0].redactedText.includes("LeakGuardDropApiKey1234567890"), false);
   assert.strictEqual(calls.createdFiles[0].text.includes("LeakGuardDropApiKey"), false);
-  assert.strictEqual(calls.handoffs[0].sanitizedFile.text.includes("LeakGuardDropApiKey"), false);
   assert.strictEqual(event.defaultPrevented, true);
   assert.strictEqual(eventCalls.stopImmediatePropagation, 2);
 }
@@ -1061,7 +1098,8 @@ async function testDuplicateDropListenerDoesNotDoubleHandleSameEvent() {
 
   assert.strictEqual(calls.reads.length, 1);
   assert.strictEqual(calls.redactions.length, 1);
-  assert.strictEqual(calls.handoffs.length, 1);
+  assert.strictEqual(calls.handoffs.length, 0);
+  assert.strictEqual(calls.runtimeMessages.length, 1);
   assert.strictEqual(eventCalls.stopImmediatePropagation, 2);
 }
 
@@ -1078,8 +1116,8 @@ async function testFileDropHandlesEarlierPreventDefaultWithoutComposerTarget() {
   await maybeHandleDrop(event);
 
   assert.strictEqual(calls.reads.length, 1);
-  assert.strictEqual(calls.handoffs.length, 1);
-  assert.strictEqual(calls.handoffs[0].input, null);
+  assert.strictEqual(calls.handoffs.length, 0);
+  assert.strictEqual(calls.runtimeMessages.length, 1);
   assert.strictEqual(event.defaultPrevented, true);
   assert.strictEqual(eventCalls.stopImmediatePropagation, 2);
 }
@@ -1136,9 +1174,10 @@ async function testComposerTargetDropStillPassesComposer() {
   await maybeHandleDrop(event);
 
   assert.deepStrictEqual(findComposerCalls, [dropTarget]);
-  assert.strictEqual(calls.handoffs.length, 1);
-  assert.strictEqual(calls.handoffs[0].input, composer);
-  assert.strictEqual(calls.handoffs[0].context, "drop");
+  assert.strictEqual(calls.handoffs.length, 0);
+  assert.strictEqual(calls.textFallbacks.length, 1);
+  assert.strictEqual(calls.textFallbacks[0].input, composer);
+  assert.strictEqual(calls.textFallbacks[0].context, "file-text-fallback");
 }
 
 async function testGeminiDropUsesDiscoveredFileInputHandoff() {
@@ -2394,7 +2433,7 @@ async function testGrokDropCreatesSanitizedFileWithoutComposerTextFallback() {
   assert.ok(calls.createdFiles[0].sanitizedFile.text.includes("API_KEY=[PWM_1]"));
   assert.ok(calls.createdFiles[0].sanitizedFile.text.includes("token_limit=4096"));
   assert.strictEqual(calls.handoffs.length, 1);
-  assert.strictEqual(calls.handoffs[0].context, "drop");
+  assert.strictEqual(calls.handoffs[0].context, "grok-file-input");
   assert.strictEqual(calls.textFallbacks.length, 0);
   assert.strictEqual(composer.text, "");
 }
@@ -2864,8 +2903,9 @@ async function testFastLocalFileDropDoesNotShowOptimizationStatus() {
 
   assert.strictEqual(event.defaultPrevented, true);
   assert.strictEqual(calls.redactions.length, 1);
-  assert.strictEqual(calls.handoffs.length, 1);
-  assert.strictEqual(calls.handoffs[0].sanitizedFile.text.includes(rawSecret), false);
+  assert.strictEqual(calls.handoffs.length, 0);
+  assert.strictEqual(calls.textFallbacks.length, 1);
+  assert.strictEqual(calls.textFallbacks[0].insertedText.includes(rawSecret), false);
   assert.strictEqual(
     calls.debugEvents.some((entry) => entry.label === "local-payload:optimization-started"),
     false,
@@ -2922,9 +2962,11 @@ async function testOptimizedLocalFileDropShowsStatusAndProcessesSanitizedContent
 
   assert.strictEqual(event.defaultPrevented, true);
   assert.strictEqual(calls.redactions.length, 1);
-  assert.strictEqual(calls.handoffs.length, 1);
-  assert.strictEqual(calls.handoffs[0].sanitizedFile.text.includes(rawSecret), false);
-  assert.ok(calls.handoffs[0].sanitizedFile.text.includes("[PWM_1]"));
+  assert.strictEqual(calls.handoffs.length, 0);
+  assert.strictEqual(calls.textFallbacks.length, 0);
+  assert.strictEqual(calls.runtimeMessages.length, 1);
+  assert.strictEqual(calls.runtimeMessages[0].redactedText.includes(rawSecret), false);
+  assert.ok(calls.runtimeMessages[0].redactedText.includes("[PWM_1]"));
   assert.ok(
     calls.debugEvents.some((entry) => entry.label === "local-payload:optimization-started"),
     "optimized-zone payload should show optimization status"
@@ -3104,11 +3146,11 @@ async function testDropOverHardLimitUsesStreamingSanitizedFileHandoff() {
   assert.strictEqual(calls.redactions.length, 1, "large streaming path should redact only through streaming chunks");
   assert.strictEqual(calls.redactions[0].options?.skipBackgroundScan, true);
   assert.strictEqual(calls.redactions[0].options?.auditReason, "streaming_file_redaction");
-  assert.strictEqual(calls.handoffs.length, 1);
-  assert.strictEqual(calls.handoffs[0].sanitizedFile, sanitizedFile);
-  assert.strictEqual(calls.handoffs[0].context, "drop");
+  assert.strictEqual(calls.handoffs.length, 0);
+  assert.strictEqual(calls.runtimeMessages.length, 1);
+  assert.strictEqual(calls.runtimeMessages[0].redactedText, sanitizedFile.text);
   assert.ok(calls.badges.some(([message]) => String(message || "").includes("Streaming redaction")));
-  assert.ok(calls.badges.some(([message]) => message === "LeakGuard attached a sanitized local file."));
+  assert.ok(calls.badges.some(([message]) => message === "Sanitized download ready"));
 }
 
 async function testGeminiStreamingDropBlocksWhenNativeUploadRejected() {
@@ -3541,8 +3583,7 @@ async function testSupportedTextFileHandoffFailureFallsBackToSanitizedText() {
 
   assert.strictEqual(event.defaultPrevented, true);
   assert.strictEqual(calls.redactions.length, 1);
-  assert.strictEqual(calls.handoffs.length, 1);
-  assert.strictEqual(calls.handoffs[0].sanitizedFile.text.includes(rawSecret), false);
+  assert.strictEqual(calls.handoffs.length, 0);
   assert.strictEqual(calls.textFallbacks.length, 1, "supported text fallback should use redacted content");
   assert.strictEqual(calls.textFallbacks[0].insertedText.includes(rawSecret), false);
   assert.ok(calls.textFallbacks[0].insertedText.includes("API_KEY=[PWM_1]"));
@@ -4251,7 +4292,7 @@ async function testGeminiTextFallbackFailureNeverLeaksRawContent() {
   assert.strictEqual(calls.modals.flat().join("\n").includes(rawSecret), false);
 }
 
-async function testChatGptAndClaudeStillUseSanitizedFileHandoffOnly() {
+async function testChatGptAndClaudeUseStructuredSanitizedTextWhenFileAttachUnavailable() {
   for (const hostname of ["chatgpt.com", "claude.ai"]) {
     const composer = {
       tagName: "TEXTAREA",
@@ -4269,12 +4310,10 @@ async function testChatGptAndClaudeStillUseSanitizedFileHandoffOnly() {
 
     await maybeHandleDrop(event);
 
-    assert.strictEqual(calls.handoffs.length, 1, `expected ${hostname} sanitized handoff`);
-    assert.strictEqual(calls.textFallbacks.length, 0, `expected no text fallback for ${hostname}`);
-    assert.ok(
-      calls.badges.some(([message]) => message === "LeakGuard attached a sanitized local file."),
-      `expected ${hostname} attachment status`
-    );
+    assert.strictEqual(calls.handoffs.length, 0, `expected ${hostname} no unsafe synthetic handoff`);
+    assert.strictEqual(calls.textFallbacks.length, 1, `expected structured text fallback for ${hostname}`);
+    assert.ok(calls.textFallbacks[0].insertedText.includes("LeakGuard sanitized file: secrets.env"));
+    assert.ok(calls.textFallbacks[0].insertedText.includes("API_KEY=[PWM_1]"));
   }
 }
 
@@ -4309,12 +4348,10 @@ async function testUserManagedProtectedSiteDropUsesGenericSanitizedHandoff() {
 
   assert.strictEqual(event.defaultPrevented, true);
   assert.strictEqual(calls.redactions.length, 1);
-  assert.strictEqual(calls.handoffs.length, 1);
-  assert.strictEqual(calls.handoffs[0].context, "drop");
-  assert.notStrictEqual(calls.handoffs[0].context, "gemini-file-input");
-  assert.strictEqual(calls.handoffs[0].sanitizedFile.text.includes(rawSecret), false);
-  assert.ok(calls.handoffs[0].sanitizedFile.text.includes("API_KEY=[PWM_1]"));
-  assert.strictEqual(calls.textFallbacks.length, 0);
+  assert.strictEqual(calls.handoffs.length, 0);
+  assert.strictEqual(calls.textFallbacks.length, 1);
+  assert.strictEqual(calls.textFallbacks[0].insertedText.includes(rawSecret), false);
+  assert.ok(calls.textFallbacks[0].insertedText.includes("API_KEY=[PWM_1]"));
 }
 
 async function testUserManagedProtectedSiteDropFallsBackToSanitizedTextWhenHandoffRejected() {
@@ -4351,7 +4388,7 @@ async function testUserManagedProtectedSiteDropFallsBackToSanitizedTextWhenHando
   await maybeHandleDrop(event);
 
   assert.strictEqual(event.defaultPrevented, true);
-  assert.strictEqual(calls.handoffs.length, 1);
+  assert.strictEqual(calls.handoffs.length, 0);
   assert.strictEqual(calls.textFallbacks.length, 1);
   assert.strictEqual(calls.textFallbacks[0].context, "file-text-fallback");
   assert.strictEqual(calls.textFallbacks[0].insertedText.includes(rawSecret), false);
@@ -4360,7 +4397,7 @@ async function testUserManagedProtectedSiteDropFallsBackToSanitizedTextWhenHando
   assert.strictEqual(calls.modals.some(([title]) => title === "Raw file upload blocked"), false);
 }
 
-async function testGenericTextFallbackFailureStillBlocksRawUpload() {
+async function testGenericTextFallbackFailureUsesSanitizedDownload() {
   const rawSecret = "LeakGuardDropApiKey1234567890";
   const composer = {
     tagName: "TEXTAREA",
@@ -4397,12 +4434,14 @@ async function testGenericTextFallbackFailureStillBlocksRawUpload() {
   await maybeHandleDrop(event);
 
   assert.strictEqual(event.defaultPrevented, true);
-  assert.strictEqual(calls.handoffs.length, 1);
+  assert.strictEqual(calls.handoffs.length, 0);
   assert.strictEqual(calls.textFallbacks.length, 1);
   assert.strictEqual(calls.textFallbacks[0].insertedText.includes(rawSecret), false);
   assert.strictEqual(composer.text.includes(rawSecret), false);
   assert.strictEqual(composer.text, "");
-  assert.ok(calls.modals.some(([title]) => title === "Raw file upload blocked"));
+  assert.strictEqual(calls.runtimeMessages.length, 1);
+  assert.strictEqual(calls.runtimeMessages[0].redactedText.includes(rawSecret), false);
+  assert.strictEqual(calls.modals.some(([title]) => title === "Raw file upload blocked"), false);
   assert.strictEqual(calls.modals.flat().join("\n").includes(rawSecret), false);
 }
 
@@ -4474,10 +4513,10 @@ async function testGenericTextFallbackFailureStillBlocksRawUpload() {
   await testGeminiDropFallsBackToSanitizedComposerTextWhenNativeUploadUnavailable();
   await testGeminiHiddenFileDropUsesSnapshotThenSanitizedTextFallback();
   await testGeminiTextFallbackFailureNeverLeaksRawContent();
-  await testChatGptAndClaudeStillUseSanitizedFileHandoffOnly();
+  await testChatGptAndClaudeUseStructuredSanitizedTextWhenFileAttachUnavailable();
   await testUserManagedProtectedSiteDropUsesGenericSanitizedHandoff();
   await testUserManagedProtectedSiteDropFallsBackToSanitizedTextWhenHandoffRejected();
-  await testGenericTextFallbackFailureStillBlocksRawUpload();
+  await testGenericTextFallbackFailureUsesSanitizedDownload();
   console.log("PASS content file drop interception regressions");
 })().catch((error) => {
   console.error(error);

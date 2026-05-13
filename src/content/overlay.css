@@ -171,6 +171,7 @@
   color: #cbd5e1;
 }
 
+.pwm-dmz,
 .pwm-gemini-dmz {
   position: fixed;
   inset: 0;
@@ -186,6 +187,7 @@
   backdrop-filter: blur(4px);
 }
 
+.pwm-dmz-box,
 .pwm-gemini-dmz-box {
   width: min(520px, calc(100vw - 48px));
   min-height: 180px;
@@ -202,6 +204,7 @@
   text-align: center;
 }
 
+.pwm-dmz-eyebrow,
 .pwm-gemini-dmz-eyebrow {
   margin: 0;
   color: #67e8f9;
@@ -211,6 +214,7 @@
   text-transform: uppercase;
 }
 
+.pwm-dmz-status,
 .pwm-gemini-dmz-status {
   margin: 0;
   color: #f8fafc;
@@ -218,15 +222,24 @@
   font-weight: 700;
 }
 
+.pwm-dmz[data-pwm-state="redacting"] .pwm-dmz-box,
 .pwm-gemini-dmz[data-pwm-state="redacting"] .pwm-gemini-dmz-box {
   border-color: rgba(250, 204, 21, 0.82);
 }
 
+.pwm-dmz[data-pwm-state="attached"] .pwm-dmz-box,
+.pwm-dmz[data-pwm-state="inserted"] .pwm-dmz-box,
 .pwm-gemini-dmz[data-pwm-state="attached"] .pwm-gemini-dmz-box,
 .pwm-gemini-dmz[data-pwm-state="inserted"] .pwm-gemini-dmz-box {
   border-color: rgba(52, 211, 153, 0.86);
 }
 
+.pwm-dmz[data-pwm-state="fallback"] .pwm-dmz-box,
+.pwm-gemini-dmz[data-pwm-state="fallback"] .pwm-gemini-dmz-box {
+  border-color: rgba(96, 165, 250, 0.86);
+}
+
+.pwm-dmz[data-pwm-state="failed"] .pwm-dmz-box,
 .pwm-gemini-dmz[data-pwm-state="failed"] .pwm-gemini-dmz-box {
   border-color: rgba(251, 113, 133, 0.9);
 }

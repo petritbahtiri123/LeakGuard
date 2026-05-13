@@ -186,9 +186,9 @@
   let pendingGeminiSanitizedFileObserver = null;
   let pendingGeminiSanitizedFileTimer = 0;
   let pendingGeminiSanitizedFileClickHandler = null;
-  let geminiDmzOverlayEl = null;
-  let geminiDmzOverlayStatusEl = null;
-  let geminiDmzOverlayTimer = 0;
+  let dmzOverlayEl = null;
+  let dmzOverlayStatusEl = null;
+  let dmzOverlayTimer = 0;
 
   function isExtensionContextInvalidatedError(error) {
     const message = String(error?.message || error || "");
@@ -456,79 +456,99 @@
     hideBadgeSoon(5200);
   }
 
-  function clearGeminiDmzOverlayTimer() {
-    if (geminiDmzOverlayTimer) {
-      clearTimeout(geminiDmzOverlayTimer);
-      geminiDmzOverlayTimer = 0;
+  function clearDmzOverlayTimer() {
+    if (dmzOverlayTimer) {
+      clearTimeout(dmzOverlayTimer);
+      dmzOverlayTimer = 0;
     }
   }
 
-  function hideGeminiDmzOverlay() {
-    clearGeminiDmzOverlayTimer();
-    if (geminiDmzOverlayEl?.parentNode) {
+  function hideDmzOverlay() {
+    clearDmzOverlayTimer();
+    if (dmzOverlayEl?.parentNode) {
       try {
-        geminiDmzOverlayEl.parentNode.removeChild(geminiDmzOverlayEl);
+        dmzOverlayEl.parentNode.removeChild(dmzOverlayEl);
       } catch {
         // Best-effort cleanup only.
       }
     }
-    geminiDmzOverlayEl = null;
-    geminiDmzOverlayStatusEl = null;
+    dmzOverlayEl = null;
+    dmzOverlayStatusEl = null;
+  }
+
+  function clearGeminiDmzOverlayTimer() {
+    clearDmzOverlayTimer();
+  }
+
+  function hideGeminiDmzOverlay() {
+    hideDmzOverlay();
+  }
+
+  function setDmzOverlayState(message, state = "") {
+    if (!getCurrentHandoffDriver()?.usesDmzOverlay) return;
+    if (!dmzOverlayEl) {
+      showDmzOverlay();
+    }
+    if (dmzOverlayStatusEl) {
+      dmzOverlayStatusEl.textContent = message;
+    }
+    if (dmzOverlayEl) {
+      dmzOverlayEl.dataset.pwmState = state;
+    }
   }
 
   function setGeminiDmzOverlayState(message, state = "") {
-    if (!isGeminiHost()) return;
-    if (!geminiDmzOverlayEl) {
-      showGeminiDmzOverlay();
-    }
-    if (geminiDmzOverlayStatusEl) {
-      geminiDmzOverlayStatusEl.textContent = message;
-    }
-    if (geminiDmzOverlayEl) {
-      geminiDmzOverlayEl.dataset.pwmState = state;
-    }
+    setDmzOverlayState(message, state);
   }
 
-  function scheduleGeminiDmzOverlayCleanup(delayMs = 1200) {
-    clearGeminiDmzOverlayTimer();
-    geminiDmzOverlayTimer = setTimeout(() => {
-      hideGeminiDmzOverlay();
+  function scheduleDmzOverlayCleanup(delayMs = 1200) {
+    clearDmzOverlayTimer();
+    dmzOverlayTimer = setTimeout(() => {
+      hideDmzOverlay();
     }, delayMs);
   }
 
-  function showGeminiDmzOverlay() {
-    if (!isGeminiHost() || geminiDmzOverlayEl?.isConnected) {
-      return geminiDmzOverlayEl;
+  function scheduleGeminiDmzOverlayCleanup(delayMs = 1200) {
+    scheduleDmzOverlayCleanup(delayMs);
+  }
+
+  function showDmzOverlay() {
+    if (!getCurrentHandoffDriver()?.usesDmzOverlay || dmzOverlayEl?.isConnected) {
+      return dmzOverlayEl;
     }
     if (typeof document?.createElement !== "function" || !document.documentElement?.appendChild) {
       return null;
     }
 
     const overlay = document.createElement("div");
-    overlay.className = "pwm-gemini-dmz";
+    overlay.className = "pwm-dmz pwm-gemini-dmz";
     overlay.setAttribute("role", "presentation");
 
     const box = document.createElement("div");
-    box.className = "pwm-gemini-dmz-box";
+    box.className = "pwm-dmz-box pwm-gemini-dmz-box";
     box.setAttribute("role", "status");
     box.setAttribute("aria-live", "polite");
 
     const eyebrow = document.createElement("p");
-    eyebrow.className = "pwm-gemini-dmz-eyebrow";
+    eyebrow.className = "pwm-dmz-eyebrow pwm-gemini-dmz-eyebrow";
     eyebrow.textContent = "LeakGuard Transparent DMZ";
 
     const status = document.createElement("p");
-    status.className = "pwm-gemini-dmz-status";
+    status.className = "pwm-dmz-status pwm-gemini-dmz-status";
     status.textContent = "Drop file to sanitize with LeakGuard";
 
     box.append(eyebrow, status);
     overlay.appendChild(box);
     document.documentElement.appendChild(overlay);
 
-    geminiDmzOverlayEl = overlay;
-    geminiDmzOverlayStatusEl = status;
-    scheduleGeminiDmzOverlayCleanup(FILE_DRAG_SESSION_RESET_MS);
+    dmzOverlayEl = overlay;
+    dmzOverlayStatusEl = status;
+    scheduleDmzOverlayCleanup(FILE_DRAG_SESSION_RESET_MS);
     return overlay;
+  }
+
+  function showGeminiDmzOverlay() {
+    return showDmzOverlay();
   }
 
   function getLocalTextPayloadByteLength(text, fallbackBytes = 0) {
@@ -2585,8 +2605,20 @@
     return location.hostname === "gemini.google.com";
   }
 
+  function isClaudeHost() {
+    return location.hostname === "claude.ai" || location.hostname.endsWith(".claude.ai");
+  }
+
   function isGrokHost() {
     return location.hostname === "grok.com" || location.hostname.endsWith(".grok.com");
+  }
+
+  function getCurrentHandoffDriverId() {
+    if (isGeminiHost()) return "gemini";
+    if (isChatGptHost()) return "chatgpt";
+    if (isClaudeHost()) return "claude";
+    if (isGrokHost()) return "grok";
+    return "generic";
   }
 
   function shouldHandleChatGptLargeTextPaste(pasted, quickAnalysis) {
@@ -3305,7 +3337,7 @@
     };
   }
 
-  function createGeminiSanitizedPayload(sanitizedFile, redactedText, localFile, analysis, result) {
+  function createSanitizedPayload(sanitizedFile, redactedText, localFile, analysis, result) {
     return {
       sanitizedFile,
       redactedText: String(redactedText || ""),
@@ -3323,7 +3355,11 @@
     };
   }
 
-  function geminiFallbackLanguageFromFileName(fileName) {
+  function createGeminiSanitizedPayload(sanitizedFile, redactedText, localFile, analysis, result) {
+    return createSanitizedPayload(sanitizedFile, redactedText, localFile, analysis, result);
+  }
+
+  function fallbackLanguageFromFileName(fileName) {
     const ext = String(fileName || "").split(".").pop().toLowerCase();
     if (!ext || ext === String(fileName || "").toLowerCase()) return "";
     if (ext === "js" || ext === "mjs" || ext === "cjs") return "javascript";
@@ -3337,12 +3373,20 @@
     return "";
   }
 
-  function formatGeminiSanitizedFileFallbackText(payload) {
+  function geminiFallbackLanguageFromFileName(fileName) {
+    return fallbackLanguageFromFileName(fileName);
+  }
+
+  function formatSanitizedFileFallbackText(payload) {
     const fileName = payload?.originalFile?.name || payload?.sanitizedFile?.name || "sanitized-file.txt";
-    const language = geminiFallbackLanguageFromFileName(fileName);
+    const language = fallbackLanguageFromFileName(fileName);
     return `LeakGuard sanitized file: ${fileName}\n\n\`\`\`${language}\n${String(
       payload?.redactedText || ""
     )}\n\`\`\``;
+  }
+
+  function formatGeminiSanitizedFileFallbackText(payload) {
+    return formatSanitizedFileFallbackText(payload);
   }
 
   async function insertGeminiSanitizedText(payload, event, input) {
@@ -3350,10 +3394,10 @@
     const inserted = await applyGeminiSanitizedTextFallback(
       event,
       input,
-      formatGeminiSanitizedFileFallbackText(payload)
+      formatSanitizedFileFallbackText(payload)
     );
     if (inserted === true) {
-      setGeminiDmzOverlayState("Inserted sanitized content into Gemini", "inserted");
+      setGeminiDmzOverlayState("Inserted sanitized content", "inserted");
     }
     return inserted;
   }
@@ -3363,6 +3407,166 @@
     return handOffGeminiSanitizedFileUpload(event, input, payload.sanitizedFile, {
       allowUploadUiClick: true
     });
+  }
+
+  function tryRealFileInputSanitizedFileAttach(payload, event, input, driverId) {
+    if (!payload?.sanitizedFile) return false;
+    const details = createSanitizedFileHandoffDetails(event, payload.sanitizedFile, `${driverId}:file-input`);
+    const transfer = createSanitizedDataTransferForHandoff(payload.sanitizedFile, details);
+    if (!transfer) {
+      details.failureReason = "data_transfer_failed";
+      logSanitizedFileHandoffFailure(details);
+      return false;
+    }
+
+    const fileInput = resolveFileInputForHandoff(event, input);
+    details.fileInputCountBeforeClick = fileInput ? 1 : 0;
+    details.fileInputCountAfterTopTriggerClick = fileInput ? 1 : 0;
+    details.fileInputCountAfterOverlayItemClick = fileInput ? 1 : 0;
+    if (!fileInput) {
+      details.failureReason = "no_safe_file_input";
+      return false;
+    }
+
+    const assigned = handOffSanitizedFileInput(fileInput, transfer, {
+      dispatchInput: true,
+      details
+    });
+    if (!assigned) {
+      logSanitizedFileHandoffFailure(details);
+    }
+    return assigned;
+  }
+
+  async function insertSanitizedPayloadText(payload, event, input, context = null) {
+    if (!payload?.redactedText) return false;
+    if (!input && context?.composerResolved) return false;
+    if (isGeminiHost()) {
+      return insertGeminiSanitizedText(payload, event, input);
+    }
+    return applySanitizedTextFallback(event, input, formatSanitizedFileFallbackText(payload));
+  }
+
+  function buildSanitizedDownloadFileName(sanitizedFile) {
+    const originalName = sanitizeDownloadFileNameSegment(sanitizedFile?.name || "sanitized-file.txt");
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "").replace(/\d{3}Z$/, "Z");
+    return `LeakGuard/redacted/${timestamp}-${originalName}`;
+  }
+
+  async function downloadSanitizedFileFallback(event, input, payload, driverId, details = null) {
+    if (isGeminiHost()) {
+      return downloadGeminiSanitizedFileFallback(event, input, payload?.sanitizedFile, details);
+    }
+    if (!payload?.sanitizedFile) return false;
+
+    let redactedText = "";
+    try {
+      redactedText = await readSanitizedFileTextForFallback(payload.sanitizedFile);
+    } catch (error) {
+      if (details) {
+        details.failureReason = "sanitized_download_read_failed";
+        details.errorMessage = error?.message || String(error);
+        details.errorStack = error?.stack || "";
+      }
+      return false;
+    }
+
+    try {
+      const response = await sendRuntimeMessage({
+        type: "PWM_DOWNLOAD_SANITIZED_FILE",
+        fileName: buildSanitizedDownloadFileName(payload.sanitizedFile),
+        mimeType: payload.sanitizedFile.type || "text/plain",
+        redactedText
+      });
+      if (!response?.ok) {
+        if (details) {
+          details.failureReason = "sanitized_download_failed";
+          details.errorMessage = response?.error || "Background download request failed.";
+        }
+        return false;
+      }
+      debugReveal("file-handoff:sanitized-download", {
+        driver: driverId,
+        sanitizedFile: describeFileForDebug(payload.sanitizedFile),
+        downloadId: response.downloadId ?? null
+      });
+      setDmzOverlayState("Sanitized download ready", "fallback");
+      scheduleDmzOverlayCleanup(3600);
+      setBadge("Sanitized download ready");
+      hideBadgeSoon(6500);
+      refreshBadgeFromCurrentInput();
+      return true;
+    } catch (error) {
+      if (details) {
+        details.failureReason = "sanitized_download_failed";
+        details.errorMessage = error?.message || String(error);
+        details.errorStack = error?.stack || "";
+      }
+      return false;
+    }
+  }
+
+  function getCurrentHandoffDriver() {
+    const id = getCurrentHandoffDriverId();
+    return {
+      id,
+      usesDmzOverlay: id === "gemini",
+      canHandle: () => true,
+      preparePayload: (sanitizedFile, redactedText, metadata) =>
+        createSanitizedPayload(
+          sanitizedFile,
+          redactedText,
+          metadata?.localFile,
+          metadata?.analysis,
+          metadata?.result
+        ),
+      tryAttachSanitizedFile: async (payload, context) => {
+        if (id === "gemini") return tryGeminiSanitizedFileAttach(payload, context.event, context.input);
+        if (id === "grok") return handOffGrokSanitizedFileUpload(context.event, context.input, payload.sanitizedFile);
+        if (id === "chatgpt" || id === "claude" || id === "generic") {
+          return tryRealFileInputSanitizedFileAttach(payload, context.event, context.input, id);
+        }
+        return false;
+      },
+      insertSanitizedText: (payload, context) => insertSanitizedPayloadText(payload, context.event, context.input, context),
+      emergencyDownload: (payload, context) =>
+        downloadSanitizedFileFallback(
+          context.event,
+          context.input,
+          payload,
+          id,
+          createSanitizedFileHandoffDetails(context.event, payload?.sanitizedFile, `${id}:emergency-download`)
+        ),
+      handoff: async (payload, context) => handoffSanitizedPayload(payload, context)
+    };
+  }
+
+  async function handoffSanitizedPayload(payload, context) {
+    const driver = context?.driver || getCurrentHandoffDriver();
+    if (!driver?.canHandle?.(location, document)) {
+      return { ok: false, stage: "driver-unavailable" };
+    }
+
+    if (await driver.tryAttachSanitizedFile(payload, context)) {
+      setDmzOverlayState("Attached sanitized file", "attached");
+      return { ok: true, stage: "file", strategy: `${driver.id}-sanitized-file-handoff` };
+    }
+
+    const textInserted = await driver.insertSanitizedText(payload, context);
+    if (textInserted === true) {
+      setDmzOverlayState("Inserted sanitized content", "inserted");
+      return { ok: true, stage: "text", strategy: `${driver.id}-sanitized-text-fallback` };
+    }
+    if (textInserted === "cancelled") {
+      return { ok: false, stage: "text", reason: "sanitized_text_cancelled" };
+    }
+
+    if (await driver.emergencyDownload(payload, context)) {
+      return { ok: true, stage: "download", strategy: `${driver.id}-sanitized-download-fallback` };
+    }
+
+    setDmzOverlayState("Raw file blocked", "failed");
+    return { ok: false, stage: "failed", reason: "sanitized_payload_handoff_failed" };
   }
 
   function createSanitizedFileHandoffDetails(event, sanitizedFile, stage) {
@@ -3448,7 +3652,7 @@
         sanitizedFile: describeFileForDebug(sanitizedFile),
         downloadId: response.downloadId ?? null
       });
-      setGeminiDmzOverlayState("Sanitized download ready", "download");
+      setGeminiDmzOverlayState("Sanitized download ready", "fallback");
       scheduleGeminiDmzOverlayCleanup(3600);
       setBadge(GEMINI_SANITIZED_DOWNLOAD_MESSAGE);
       hideBadgeSoon(6500);
@@ -4827,76 +5031,34 @@
           );
         }
 
-        const fallbackText = isGeminiHost()
-          ? await readSanitizedFileTextForFallback(streamResult.sanitizedFile)
-          : "";
-        const geminiPayload =
-          context === "drop" && isGeminiHost()
-            ? createGeminiSanitizedPayload(
-                streamResult.sanitizedFile,
-                fallbackText,
-                localFile.sourceFile || localFile.file,
-                null,
-                null
-              )
-            : null;
-        const handedOff = geminiPayload
-          ? await tryGeminiSanitizedFileAttach(geminiPayload, event, input)
-          : await handOffSanitizedLocalFile(event, input, streamResult.sanitizedFile, context);
-        if (handedOff) {
-          setGeminiDmzOverlayState("Sanitized file ready", "attached");
+        const fallbackText = isGeminiHost() ? await readSanitizedFileTextForFallback(streamResult.sanitizedFile) : "";
+        const driver = getCurrentHandoffDriver();
+        const payload = driver.preparePayload(streamResult.sanitizedFile, fallbackText, {
+          localFile: localFile.sourceFile || localFile.file,
+          analysis: null,
+          result: null
+        });
+        const handoffResult =
+          context === "drop"
+            ? await driver.handoff(payload, { event, input, context, driver, composerResolved: true })
+            : await (async () => {
+                if (await handOffSanitizedLocalFile(event, input, streamResult.sanitizedFile, context)) {
+                  return { ok: true, stage: "file", strategy: "streaming-sanitized-file-handoff" };
+                }
+                const inserted = await driver.insertSanitizedText(payload, { event, input, context, driver });
+                return inserted === true
+                  ? { ok: true, stage: "text", strategy: "streaming-sanitized-text-fallback" }
+                  : { ok: false, stage: "failed", reason: inserted === "cancelled" ? "sanitized_text_cancelled" : "sanitized_payload_handoff_failed" };
+              })();
+        if (handoffResult.ok) {
+          setDmzOverlayState("Attached sanitized file", "attached");
           setBadge("LeakGuard attached a sanitized local file.");
           hideBadgeSoon(3200);
           refreshBadgeFromCurrentInput();
           return {
             handled: true,
             ok: true,
-            strategy: "streaming-sanitized-file-handoff"
-          };
-        }
-
-        if (isGeminiHost()) {
-          if (fallbackText) {
-            const fallbackResult =
-              geminiPayload && context === "drop"
-                ? await insertGeminiSanitizedText(geminiPayload, event, input)
-                : await applySanitizedTextFallback(event, input, fallbackText);
-            if (fallbackResult === true) {
-              return {
-                handled: true,
-                ok: true,
-                strategy: isGeminiHost()
-                  ? "gemini-streaming-sanitized-text-fallback"
-                  : "streaming-sanitized-text-fallback"
-              };
-            }
-
-            if (fallbackResult === "cancelled") {
-              return {
-                handled: true,
-                ok: false,
-                reason: "gemini_large_text_cancelled"
-              };
-            }
-          }
-        }
-
-        if (
-          context === "drop" &&
-          isGeminiHost() &&
-          (hasGeminiSanitizedDownloadFallback(streamResult.sanitizedFile) ||
-            (await downloadGeminiSanitizedFileFallback(
-              event,
-              input,
-              streamResult.sanitizedFile,
-              createSanitizedFileHandoffDetails(event, streamResult.sanitizedFile, "gemini:emergency-download")
-            )))
-        ) {
-          refreshBadgeFromCurrentInput();
-          return {
-            handled: true,
-            ok: true,
-            strategy: "gemini-drop-sanitized-download-fallback"
+            strategy: handoffResult.strategy || "streaming-sanitized-file-handoff"
           };
         }
 
@@ -4981,111 +5143,35 @@
       setGeminiDmzOverlayState("Sanitized file ready", "ready");
     }
 
-    const geminiPayload =
-      context === "drop" && isGeminiHost()
-        ? createGeminiSanitizedPayload(sanitizedFile, result.redactedText, localFile, analysis, result)
-        : null;
-    const handedOff = geminiPayload
-      ? await tryGeminiSanitizedFileAttach(geminiPayload, event, input)
-      : await handOffSanitizedLocalFile(event, input, sanitizedFile, context);
+    const driver = getCurrentHandoffDriver();
+    const payload = driver.preparePayload(sanitizedFile, result.redactedText, {
+      localFile,
+      analysis,
+      result
+    });
+    const handoffResult =
+      context === "drop"
+        ? await driver.handoff(payload, { event, input, context, driver, composerResolved: true })
+        : await (async () => {
+            // Legacy non-drop path starts with handOffSanitizedLocalFile(event, input, sanitizedFile, context).
+            if (await handOffSanitizedLocalFile(event, input, sanitizedFile, context)) {
+              return { ok: true, stage: "file", strategy: "sanitized-file-handoff" };
+            }
+            const inserted = await driver.insertSanitizedText(payload, { event, input, context, driver });
+            return inserted === true
+              ? { ok: true, stage: "text", strategy: "sanitized-text-fallback" }
+              : { ok: false, stage: "failed", reason: inserted === "cancelled" ? "sanitized_text_cancelled" : "sanitized_payload_handoff_failed" };
+          })();
 
-    if (!handedOff) {
-      if (geminiPayload) {
-        const fallbackResult = await insertGeminiSanitizedText(geminiPayload, event, input);
-        if (fallbackResult === true) {
-          if (optimizedStatus) {
-            clearLocalPayloadOptimizationStatus(sizeInfo, "complete");
-          }
-          scheduleGeminiDmzOverlayCleanup(1400);
-          return {
-            handled: true,
-            ok: true,
-            strategy: "gemini-drop-sanitized-text-fallback"
-          };
-        }
-
-        if (fallbackResult === "cancelled") {
-          if (optimizedStatus) {
-            clearLocalPayloadOptimizationStatus(sizeInfo, "cancelled");
-          }
-          return {
-            handled: true,
-            ok: false,
-            reason: "gemini_large_text_cancelled"
-          };
-        }
-      }
-
-      if (
-        context === "drop" &&
-        isGeminiHost() &&
-        (hasGeminiSanitizedDownloadFallback(sanitizedFile) ||
-          (await downloadGeminiSanitizedFileFallback(
-            event,
-            input,
-            sanitizedFile,
-            createSanitizedFileHandoffDetails(event, sanitizedFile, "gemini:emergency-download")
-          )))
-      ) {
-        if (optimizedStatus) {
-          clearLocalPayloadOptimizationStatus(sizeInfo, "complete");
-        }
-        refreshBadgeFromCurrentInput();
-        return {
-          handled: true,
-          ok: true,
-          strategy: "gemini-drop-sanitized-download-fallback"
-        };
-      }
-
-      if (context === "drop" && isGeminiHost()) {
-        if (optimizedStatus) {
-          clearLocalPayloadOptimizationStatus(sizeInfo, "failed");
-        }
-        setGeminiDmzOverlayState("Automatic Gemini handoff failed", "failed");
-        scheduleGeminiDmzOverlayCleanup(4200);
-        debugReveal("file-handoff:fail-closed", {
-          context,
-          reason: "gemini_sanitized_download_failed",
-          sanitizedFile: describeFileForDebug(sanitizedFile)
-        });
-        setBadge("Raw file upload blocked");
-        hideBadgeSoon(4200);
-        await showMessageModal(
-          "Raw file upload blocked",
-          "LeakGuard blocked raw upload because Gemini did not expose a safe upload target and the sanitized download failed."
-        );
-        refreshBadgeFromCurrentInput();
-        return {
-          handled: true,
-          ok: false,
-          reason: "gemini_sanitized_download_failed"
-        };
-      }
-
-      const fallbackResult = await applySanitizedTextFallback(event, input, result.redactedText);
-      if (fallbackResult === true) {
-        if (optimizedStatus) {
-          clearLocalPayloadOptimizationStatus(sizeInfo, "complete");
-        }
-        return {
-          handled: true,
-          ok: true,
-          strategy:
-            context === "drop" && isGeminiHost()
-              ? "gemini-drop-sanitized-text-fallback"
-              : "sanitized-text-fallback"
-        };
-      }
-
-      if (fallbackResult === "cancelled") {
+    if (!handoffResult.ok) {
+      if (handoffResult.reason === "sanitized_text_cancelled") {
         if (optimizedStatus) {
           clearLocalPayloadOptimizationStatus(sizeInfo, "cancelled");
         }
         return {
           handled: true,
           ok: false,
-          reason: "gemini_large_text_cancelled"
+          reason: "sanitized_text_cancelled"
         };
       }
 
@@ -5114,17 +5200,18 @@
     if (optimizedStatus) {
       clearLocalPayloadOptimizationStatus(sizeInfo, "complete");
     }
-    if (context === "drop" && isGeminiHost()) {
-      setGeminiDmzOverlayState("Sanitized file ready", "attached");
+    if (context === "drop" && isGeminiHost() && handoffResult.stage === "file") {
       scheduleGeminiDmzOverlayCleanup(1400);
     }
-    setBadge("LeakGuard attached a sanitized local file.");
-    hideBadgeSoon(3200);
+    if (handoffResult.stage === "file" || context !== "drop") {
+      setBadge("LeakGuard attached a sanitized local file.");
+      hideBadgeSoon(3200);
+    }
     refreshBadgeFromCurrentInput();
     return {
       handled: true,
       ok: true,
-      strategy: "sanitized-file-handoff"
+      strategy: handoffResult.strategy || "sanitized-file-handoff"
     };
   }
 
