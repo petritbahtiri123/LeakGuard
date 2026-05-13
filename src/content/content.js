@@ -162,6 +162,13 @@
     StreamingFileRedactor.STREAMING_BLOCK_MESSAGE ||
     "This file is over 50 MB. LeakGuard blocked the upload because it cannot safely sanitize it yet.";
   const FILE_DRAG_SESSION_RESET_MS = 5000;
+  const GEMINI_UPLOAD_INPUT_WAIT_MS = 450;
+  const GEMINI_GHOST_INGRESS_TIMEOUT_MS = 2200;
+  const GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MS = 30000;
+  const GEMINI_SANITIZED_DOWNLOAD_MESSAGE =
+    "Sanitized file downloaded. Upload the LeakGuard redacted copy to Gemini.";
+  const GEMINI_SANITIZED_DOWNLOAD_MODAL_MESSAGE =
+    "Gemini does not expose a safe upload target. LeakGuard downloaded a sanitized copy. Upload that redacted file manually.";
   const GEMINI_SANITIZED_TEXT_FALLBACK_MESSAGE =
     "Sanitized content inserted as text because Gemini rejected sanitized file upload.";
   const LOCAL_FILE_SANITIZED_TEXT_FALLBACK_MESSAGE =
@@ -173,6 +180,16 @@
   let fileDragSessionResetTimer = 0;
   let fileDragSessionId = 0;
   let fileDragDetectedLogged = false;
+  let lastGeminiDropSessionHash = "";
+  const geminiSanitizedDownloadFallbacks = new WeakSet();
+  let pendingGeminiSanitizedFileHandoff = null;
+  let pendingGeminiSanitizedFileObserver = null;
+  let pendingGeminiSanitizedFileTimer = 0;
+  let pendingGeminiSanitizedFileClickHandler = null;
+  let pendingGeminiGhostIngressClickCleanup = null;
+  let geminiDmzOverlayEl = null;
+  let geminiDmzOverlayStatusEl = null;
+  let geminiDmzOverlayTimer = 0;
 
   function isExtensionContextInvalidatedError(error) {
     const message = String(error?.message || error || "");
@@ -188,6 +205,8 @@
 
   function markExtensionContextInvalidated() {
     extensionRuntimeAvailable = false;
+    clearPendingGeminiSanitizedFileHandoff("extension-context-invalidated");
+    clearPendingGeminiGhostIngressClickInterceptor("extension-context-invalidated");
     setBadge("LeakGuard reloaded. Refresh this page.");
     hideBadgeSoon(5000);
   }
@@ -336,6 +355,50 @@
       .filter(Boolean);
   }
 
+  function snapshotLocalFileDataTransfer(dataTransfer) {
+    const files = listLocalTransferFiles(dataTransfer);
+    if (!files.length) return dataTransfer;
+
+    return {
+      files,
+      types: Array.from(dataTransfer?.types || ["Files"]),
+      items: files.map((file) => ({
+        kind: "file",
+        type: file?.type || "",
+        getAsFile: () => file
+      })),
+      dropEffect: dataTransfer?.dropEffect || "none",
+      effectAllowed: dataTransfer?.effectAllowed || "all"
+    };
+  }
+
+  function hashLocalString(value) {
+    const input = String(value || "");
+    let hash = 2166136261;
+    for (let index = 0; index < input.length; index += 1) {
+      hash ^= input.charCodeAt(index);
+      hash = Math.imul(hash, 16777619) >>> 0;
+    }
+    return hash.toString(36);
+  }
+
+  function getGeminiDropSessionHash(dataTransfer) {
+    const files = listLocalTransferFiles(dataTransfer);
+    if (!files.length) return "";
+    return hashLocalString(
+      files
+        .map((file) =>
+          [
+            file?.name || "",
+            file?.type || "",
+            Number(file?.size || 0),
+            Number(file?.lastModified || 0)
+          ].join("\u0000")
+        )
+        .join("\u0001")
+    );
+  }
+
   function classifyLocalFile(file) {
     const FileScanner = globalThis.PWM?.FileScanner || {};
     if (typeof FileScanner.classifyFileForTextScan === "function") {
@@ -377,6 +440,12 @@
 
   function resolveFileDragGuardPolicy(dataTransfer) {
     const policy = resolveLocalFileTransferPolicy(dataTransfer);
+    if (isGeminiHost() && dataTransferLooksLikeFiles(dataTransfer)) {
+      return {
+        action: "block",
+        reason: policy.reason || policy.action
+      };
+    }
     return {
       action: policy.action === "allow" ? "allow" : "block",
       reason: policy.reason || policy.action
@@ -387,6 +456,81 @@
     if (!policy?.message) return;
     setBadge("Unsupported file not scanned or redacted; normal upload may continue");
     hideBadgeSoon(5200);
+  }
+
+  function clearGeminiDmzOverlayTimer() {
+    if (geminiDmzOverlayTimer) {
+      clearTimeout(geminiDmzOverlayTimer);
+      geminiDmzOverlayTimer = 0;
+    }
+  }
+
+  function hideGeminiDmzOverlay() {
+    clearGeminiDmzOverlayTimer();
+    if (geminiDmzOverlayEl?.parentNode) {
+      try {
+        geminiDmzOverlayEl.parentNode.removeChild(geminiDmzOverlayEl);
+      } catch {
+        // Best-effort cleanup only.
+      }
+    }
+    geminiDmzOverlayEl = null;
+    geminiDmzOverlayStatusEl = null;
+  }
+
+  function setGeminiDmzOverlayState(message, state = "") {
+    if (!isGeminiHost()) return;
+    if (!geminiDmzOverlayEl) {
+      showGeminiDmzOverlay();
+    }
+    if (geminiDmzOverlayStatusEl) {
+      geminiDmzOverlayStatusEl.textContent = message;
+    }
+    if (geminiDmzOverlayEl) {
+      geminiDmzOverlayEl.dataset.pwmState = state;
+    }
+  }
+
+  function scheduleGeminiDmzOverlayCleanup(delayMs = 1200) {
+    clearGeminiDmzOverlayTimer();
+    geminiDmzOverlayTimer = setTimeout(() => {
+      hideGeminiDmzOverlay();
+    }, delayMs);
+  }
+
+  function showGeminiDmzOverlay() {
+    if (!isGeminiHost() || geminiDmzOverlayEl?.isConnected) {
+      return geminiDmzOverlayEl;
+    }
+    if (typeof document?.createElement !== "function" || !document.documentElement?.appendChild) {
+      return null;
+    }
+
+    const overlay = document.createElement("div");
+    overlay.className = "pwm-gemini-dmz";
+    overlay.setAttribute("role", "presentation");
+
+    const box = document.createElement("div");
+    box.className = "pwm-gemini-dmz-box";
+    box.setAttribute("role", "status");
+    box.setAttribute("aria-live", "polite");
+
+    const eyebrow = document.createElement("p");
+    eyebrow.className = "pwm-gemini-dmz-eyebrow";
+    eyebrow.textContent = "LeakGuard Transparent DMZ";
+
+    const status = document.createElement("p");
+    status.className = "pwm-gemini-dmz-status";
+    status.textContent = "Drop file to sanitize with LeakGuard";
+
+    box.append(eyebrow, status);
+    overlay.appendChild(box);
+    document.documentElement.appendChild(overlay);
+
+    geminiDmzOverlayEl = overlay;
+    geminiDmzOverlayStatusEl = status;
+    scheduleGeminiDmzOverlayCleanup(FILE_DRAG_SESSION_RESET_MS);
+    return overlay;
   }
 
   function getLocalTextPayloadByteLength(text, fallbackBytes = 0) {
@@ -3153,6 +3297,76 @@
     }
   }
 
+  function originalFileMetadataFromLocalFile(localFile) {
+    const file = localFile?.file || localFile || null;
+    return {
+      name: file?.name || "",
+      type: file?.type || "",
+      size: Number(file?.size ?? file?.sizeBytes ?? 0),
+      lastModified: Number(file?.lastModified || 0)
+    };
+  }
+
+  function createGeminiSanitizedPayload(sanitizedFile, redactedText, localFile, analysis, result) {
+    return {
+      sanitizedFile,
+      redactedText: String(redactedText || ""),
+      originalFile: originalFileMetadataFromLocalFile(localFile),
+      placeholders: Array.from(new Set(String(redactedText || "").match(/\[[A-Z_]+_\d+\]/g) || [])),
+      replacements: Array.isArray(result?.replacements)
+        ? result.replacements.map((replacement) => ({
+            id: replacement?.id || "",
+            start: Number(replacement?.start || 0),
+            end: Number(replacement?.end || 0),
+            placeholder: replacement?.placeholder || ""
+          }))
+        : [],
+      findingCount: Number(analysis?.secretFindings?.length || analysis?.findings?.length || 0)
+    };
+  }
+
+  function geminiFallbackLanguageFromFileName(fileName) {
+    const ext = String(fileName || "").split(".").pop().toLowerCase();
+    if (!ext || ext === String(fileName || "").toLowerCase()) return "";
+    if (ext === "js" || ext === "mjs" || ext === "cjs") return "javascript";
+    if (ext === "ts" || ext === "tsx") return "typescript";
+    if (ext === "py") return "python";
+    if (ext === "rb") return "ruby";
+    if (ext === "sh" || ext === "bash" || ext === "zsh") return "bash";
+    if (ext === "yml") return "yaml";
+    if (ext === "md") return "markdown";
+    if (/^(?:csv|css|env|html|java|json|php|sql|toml|txt|xml|yaml)$/.test(ext)) return ext;
+    return "";
+  }
+
+  function formatGeminiSanitizedFileFallbackText(payload) {
+    const fileName = payload?.originalFile?.name || payload?.sanitizedFile?.name || "sanitized-file.txt";
+    const language = geminiFallbackLanguageFromFileName(fileName);
+    return `LeakGuard sanitized file: ${fileName}\n\n\`\`\`${language}\n${String(
+      payload?.redactedText || ""
+    )}\n\`\`\``;
+  }
+
+  async function insertGeminiSanitizedText(payload, event, input) {
+    if (!isGeminiHost() || !payload?.redactedText) return false;
+    const inserted = await applyGeminiSanitizedTextFallback(
+      event,
+      input,
+      formatGeminiSanitizedFileFallbackText(payload)
+    );
+    if (inserted === true) {
+      setGeminiDmzOverlayState("Inserted sanitized content into Gemini", "inserted");
+    }
+    return inserted;
+  }
+
+  async function tryGeminiSanitizedFileAttach(payload, event, input) {
+    if (!isGeminiHost() || !payload?.sanitizedFile) return false;
+    return handOffGeminiSanitizedFileUpload(event, input, payload.sanitizedFile, {
+      allowUploadUiClick: true
+    });
+  }
+
   function createSanitizedFileHandoffDetails(event, sanitizedFile, stage) {
     const target = normalizeTarget(event?.target);
     return {
@@ -3162,6 +3376,7 @@
       targetTag: target?.tagName || "",
       originalFile: originalFileMetadataFromEvent(event),
       sanitizedFile: describeFileForDebug(sanitizedFile),
+      sessionHash: lastGeminiDropSessionHash || "",
       foundTopUploadTrigger: false,
       uploadTrigger: null,
       overlayItemCount: 0,
@@ -3182,6 +3397,80 @@
     };
   }
 
+  function sanitizeDownloadFileNameSegment(value, fallback = "sanitized-file.txt") {
+    const unsafePathChars = new RegExp('[\\\\/:*?"<>|\\u0000-\\u001f]+', "g");
+    const normalized = String(value || fallback)
+      .replace(unsafePathChars, "-")
+      .replace(/\s+/g, " ")
+      .trim()
+      .replace(/^\.+|\.+$/g, "");
+    return normalized || fallback;
+  }
+
+  function buildGeminiSanitizedDownloadFileName(sanitizedFile) {
+    const originalName = sanitizeDownloadFileNameSegment(sanitizedFile?.name || "sanitized-file.txt");
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "").replace(/\d{3}Z$/, "Z");
+    return `LeakGuard/redacted/${timestamp}-${originalName}`;
+  }
+
+  async function downloadGeminiSanitizedFileFallback(event, input, sanitizedFile, details = null) {
+    if (!isGeminiHost() || event?.type !== "drop" || !sanitizedFile) return false;
+
+    let redactedText = "";
+    try {
+      redactedText = await readSanitizedFileTextForFallback(sanitizedFile);
+    } catch (error) {
+      if (details) {
+        details.failureReason = "sanitized_download_read_failed";
+        details.errorMessage = error?.message || String(error);
+        details.errorStack = error?.stack || "";
+      }
+      return false;
+    }
+
+    try {
+      const response = await sendRuntimeMessage({
+        type: "PWM_DOWNLOAD_SANITIZED_FILE",
+        fileName: buildGeminiSanitizedDownloadFileName(sanitizedFile),
+        mimeType: sanitizedFile.type || "text/plain",
+        redactedText
+      });
+
+      if (!response?.ok) {
+        if (details) {
+          details.failureReason = "sanitized_download_failed";
+          details.errorMessage = response?.error || "Background download request failed.";
+        }
+        return false;
+      }
+
+      geminiSanitizedDownloadFallbacks.add(sanitizedFile);
+      clearPendingGeminiSanitizedFileHandoff("download-fallback");
+      debugReveal("file-handoff:gemini-sanitized-download", {
+        sanitizedFile: describeFileForDebug(sanitizedFile),
+        downloadId: response.downloadId ?? null
+      });
+      setGeminiDmzOverlayState("Sanitized download ready", "download");
+      scheduleGeminiDmzOverlayCleanup(3600);
+      setBadge(GEMINI_SANITIZED_DOWNLOAD_MESSAGE);
+      hideBadgeSoon(6500);
+      await showMessageModal("Sanitized file downloaded", GEMINI_SANITIZED_DOWNLOAD_MODAL_MESSAGE);
+      refreshBadgeFromCurrentInput();
+      return true;
+    } catch (error) {
+      if (details) {
+        details.failureReason = "sanitized_download_failed";
+        details.errorMessage = error?.message || String(error);
+        details.errorStack = error?.stack || "";
+      }
+      return false;
+    }
+  }
+
+  function hasGeminiSanitizedDownloadFallback(sanitizedFile) {
+    return Boolean(sanitizedFile && geminiSanitizedDownloadFallbacks.has(sanitizedFile));
+  }
+
   function logSanitizedFileHandoffFailure(details, error) {
     const payload = {
       ...(details || {}),
@@ -3200,12 +3489,261 @@
     }
   }
 
-  function clearFileDragSession() {
+  function clearPendingGeminiSanitizedFileHandoff(reason = "") {
+    if (!pendingGeminiSanitizedFileHandoff) return;
+
+    const pending = pendingGeminiSanitizedFileHandoff;
+    pendingGeminiSanitizedFileHandoff = null;
+
+    if (pendingGeminiSanitizedFileObserver) {
+      try {
+        pendingGeminiSanitizedFileObserver.disconnect();
+      } catch {
+        // Best-effort cleanup only.
+      }
+      pendingGeminiSanitizedFileObserver = null;
+    }
+
+    if (pendingGeminiSanitizedFileTimer) {
+      clearTimeout(pendingGeminiSanitizedFileTimer);
+      pendingGeminiSanitizedFileTimer = 0;
+    }
+
+    if (pendingGeminiSanitizedFileClickHandler) {
+      try {
+        document.removeEventListener("click", pendingGeminiSanitizedFileClickHandler, true);
+      } catch {
+        // Best-effort cleanup only.
+      }
+      pendingGeminiSanitizedFileClickHandler = null;
+    }
+
+    debugReveal("file-handoff:gemini-pending-cleared", {
+      reason,
+      ageMs: Math.max(0, Date.now() - Number(pending.createdAt || 0)),
+      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
+    });
+  }
+
+  function isLikelyGeminiUploadClickTarget(target) {
+    const meta = describeElementForDebug(normalizeTarget(target));
+    const haystack = `${meta?.ariaLabel || ""} ${meta?.title || ""} ${meta?.textSnippet || ""} ${meta?.className || ""}`.toLowerCase();
+    return /\b(upload|file|files|attach)\b/.test(haystack);
+  }
+
+  function schedulePendingGeminiSanitizedFileAttempt(reason = "") {
+    if (!pendingGeminiSanitizedFileHandoff) return;
+    const attempt = () => {
+      try {
+        attemptPendingGeminiSanitizedFileHandoff(reason);
+      } catch (error) {
+        handleContentError(error);
+      }
+    };
+
+    setTimeout(attempt, 0);
+    setTimeout(attempt, 250);
+    setTimeout(attempt, 1000);
+  }
+
+  function describeGeminiHandoffDiscovery(discovery) {
+    const summary = discovery || {};
+    return {
+      fileInputCount: Number(summary.fileInputCount || 0),
+      uploadTriggerCount: Number(summary.uploadTriggerCount || 0),
+      openShadowRootCount: Number(summary.openShadowRootCount || 0),
+      selectedFileInput: describeFileInputForDebug(summary.fileInput, "selected-gemini-file-input"),
+      selectedUploadTrigger: describeUploadTriggerForDebug(
+        summary.uploadTrigger,
+        "selected-gemini-upload-trigger"
+      ),
+      fileInputCandidates: Array.from(summary.fileInputs || [])
+        .slice(0, 20)
+        .map(({ input, source }) => ({
+          ...describeFileInputForDebug(input, source),
+          score: scoreGeminiFileInput(input, source)
+        })),
+      uploadTriggerCandidates: Array.from(summary.uploadTriggers || [])
+        .slice(0, 20)
+        .map(({ trigger, selector, source }) => ({
+          ...describeUploadTriggerForDebug(trigger, source || selector),
+          selector
+        }))
+    };
+  }
+
+  function describeGeminiOverlayExposure() {
+    const details = {
+      openShadowRootCount: 0,
+      overlayItemCount: 0,
+      overlayCandidates: [],
+      selectedOverlayItem: null
+    };
+    discoverGeminiUploadOverlayItem(details);
+    return {
+      openShadowRootCount: details.openShadowRootCount,
+      overlayItemCount: details.overlayItemCount,
+      selectedOverlayItem: details.selectedOverlayItem,
+      overlayCandidates: details.overlayCandidates
+    };
+  }
+
+  function attemptPendingGeminiSanitizedFileHandoff(reason = "") {
+    const pending = pendingGeminiSanitizedFileHandoff;
+    if (!pending || !isGeminiHost()) return false;
+
+    if (Date.now() > pending.expiresAt) {
+      clearPendingGeminiSanitizedFileHandoff("expired");
+      return false;
+    }
+
+    const event = {
+      type: "pending-gemini-sanitized-file",
+      target: null
+    };
+    const discovery = discoverGeminiFileHandoffElements(event, null);
+    const fileInput = discovery.fileInput;
+    if (!fileInput) {
+      debugReveal("file-handoff:gemini-pending-input-not-found", {
+        reason,
+        ...describeGeminiHandoffDiscovery(discovery),
+        overlay: describeGeminiOverlayExposure(),
+        sanitizedFile: describeFileForDebug(pending.sanitizedFile)
+      });
+      return false;
+    }
+
+    const details = createSanitizedFileHandoffDetails(
+      event,
+      pending.sanitizedFile,
+      "gemini:pending-file-input-assignment"
+    );
+    details.fileInputCountBeforeClick = discovery.fileInputCount;
+    details.fileInputCountAfterTopTriggerClick = discovery.fileInputCount;
+    details.fileInputCountAfterOverlayItemClick = discovery.fileInputCount;
+    details.openShadowRootCount = discovery.openShadowRootCount;
+    details.failureReason = reason || "pending_file_input_assignment";
+
+    const transfer = createSanitizedDataTransferForHandoff(pending.sanitizedFile, details);
+    if (!transfer) {
+      details.failureReason = "data_transfer_failed";
+      logSanitizedFileHandoffFailure(details);
+      return false;
+    }
+
+    const assigned = handOffSanitizedFileInput(fileInput, transfer, {
+      dispatchInput: true,
+      details
+    });
+    if (!assigned) {
+      logSanitizedFileHandoffFailure(details);
+      return false;
+    }
+
+    debugReveal("file-handoff:gemini-pending-assigned", {
+      reason,
+      input: describeFileInputForDebug(fileInput, "pending-gemini-file-input"),
+      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
+    });
+    clearPendingGeminiSanitizedFileHandoff("assigned");
+    setBadge("LeakGuard attached the sanitized file.");
+    hideBadgeSoon(3200);
+    refreshBadgeFromCurrentInput();
+    return true;
+  }
+
+  function queuePendingGeminiSanitizedFileHandoff(event, input, sanitizedFile, details = null) {
+    if (!isGeminiHost() || event?.type !== "drop" || !sanitizedFile) return false;
+
+    clearPendingGeminiSanitizedFileHandoff("replaced");
+    pendingGeminiSanitizedFileHandoff = {
+      sanitizedFile,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MS,
+      sessionHash: lastGeminiDropSessionHash || ""
+    };
+
+    if (details) {
+      details.handoffStage = "gemini:pending-user-upload-input";
+      details.failureReason = "pending_until_user_exposes_file_input";
+    }
+
+    if (typeof MutationObserver === "function") {
+      try {
+        pendingGeminiSanitizedFileObserver = new MutationObserver(() => {
+          attemptPendingGeminiSanitizedFileHandoff("mutation");
+        });
+        pendingGeminiSanitizedFileObserver.observe(document.documentElement || document, {
+          childList: true,
+          subtree: true
+        });
+      } catch {
+        pendingGeminiSanitizedFileObserver = null;
+      }
+    }
+
+    pendingGeminiSanitizedFileClickHandler = (clickEvent) => {
+      if (!pendingGeminiSanitizedFileHandoff) return;
+      if (isLikelyGeminiUploadClickTarget(clickEvent?.target)) {
+        debugReveal("file-handoff:gemini-upload-click-observed", {
+          target: describeElementForDebug(normalizeTarget(clickEvent?.target), "pending-upload-click"),
+          pendingAgeMs: Math.max(
+            0,
+            Date.now() - Number(pendingGeminiSanitizedFileHandoff.createdAt || 0)
+          )
+        });
+        schedulePendingGeminiSanitizedFileAttempt("upload-click");
+      }
+    };
+    try {
+      document.addEventListener("click", pendingGeminiSanitizedFileClickHandler, true);
+    } catch {
+      pendingGeminiSanitizedFileClickHandler = null;
+    }
+
+    pendingGeminiSanitizedFileTimer = setTimeout(() => {
+      clearPendingGeminiSanitizedFileHandoff("expired");
+    }, GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MS);
+
+    debugReveal("file-handoff:gemini-pending-queued", {
+      ttlMs: GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MS,
+      sanitizedFile: describeFileForDebug(sanitizedFile),
+      sessionHash: lastGeminiDropSessionHash || ""
+    });
+    setBadge("Sanitized file ready. Open Gemini upload files to attach.");
+    hideBadgeSoon(6500);
+    schedulePendingGeminiSanitizedFileAttempt("queued");
+    return true;
+  }
+
+  function hasPendingGeminiSanitizedFileHandoff(sanitizedFile) {
+    return Boolean(
+      pendingGeminiSanitizedFileHandoff &&
+        (!sanitizedFile || pendingGeminiSanitizedFileHandoff.sanitizedFile === sanitizedFile)
+    );
+  }
+
+  function getPendingGeminiSanitizedFileHandoffDebug() {
+    if (!pendingGeminiSanitizedFileHandoff) return null;
+    return {
+      keys: Object.keys(pendingGeminiSanitizedFileHandoff),
+      sanitizedFile: pendingGeminiSanitizedFileHandoff.sanitizedFile,
+      sanitizedFileDebug: describeFileForDebug(pendingGeminiSanitizedFileHandoff.sanitizedFile),
+      expiresAt: pendingGeminiSanitizedFileHandoff.expiresAt,
+      sessionHash: pendingGeminiSanitizedFileHandoff.sessionHash || ""
+    };
+  }
+
+  function clearFileDragSession(options = {}) {
     fileDragSessionId += 1;
     lastDiscoveredFileInput = null;
     fileDragDiscoveryCompleted = false;
     fileDragDiscoveryScheduled = false;
     fileDragDetectedLogged = false;
+    lastGeminiDropSessionHash = "";
+    if (!options.keepGeminiOverlay) {
+      hideGeminiDmzOverlay();
+    }
 
     if (fileDragDiscoveryTimer) {
       clearTimeout(fileDragDiscoveryTimer);
@@ -3289,11 +3827,14 @@
     }
 
     const uploadSelectors = [
+      'button[aria-label="Add files"]',
       'button[aria-label="Open upload file menu"]',
+      '[role="button"][aria-label*="add files" i]',
       '[role="button"][aria-label*="upload" i]',
       'button[aria-label*="upload" i]',
       'button[aria-label*="file" i]',
-      'button[aria-label*="attach" i]'
+      'button[aria-label*="attach" i]',
+      "button"
     ];
     for (const selector of uploadSelectors) {
       try {
@@ -3320,6 +3861,43 @@
         collectFileHandoffElementsFromRoot(element.shadowRoot, addInput, addUploadTrigger, visitedRoots, stats);
       }
     });
+  }
+
+  function isWithinGeminiImagesFilesUploader(candidate) {
+    let node = candidate;
+    const visited = new WeakSet();
+
+    while (node && !visited.has(node)) {
+      visited.add(node);
+      if (String(node.tagName || "").toLowerCase() === "images-files-uploader") {
+        return true;
+      }
+      try {
+        if (typeof node.closest === "function" && node.closest("images-files-uploader")) {
+          return true;
+        }
+      } catch {
+        // Synthetic DOMs and host-controlled roots can reject custom selectors.
+      }
+      const rootNode = node.getRootNode?.();
+      node = node.parentElement || rootNode?.host || null;
+    }
+
+    return false;
+  }
+
+  function scoreGeminiFileInput(candidate, source = "") {
+    if (!isFileInputElement(candidate) || candidate.disabled) return -1;
+    let score = 0;
+    if (isWithinGeminiImagesFilesUploader(candidate)) score += 100;
+    if (candidate.multiple) score += 30;
+    if (/images-files-uploader/i.test(String(source || ""))) score += 25;
+    if (candidate.hidden) score += 5;
+    const accept = String(candidate.accept || "").toLowerCase();
+    if (accept.includes("text") || accept.includes(".txt") || accept.includes(".md") || accept.includes(".json")) {
+      score += 10;
+    }
+    return score;
   }
 
   function discoverGeminiFileHandoffElements(event, input) {
@@ -3368,8 +3946,17 @@
 
     collectFileHandoffElementsFromRoot(document, addInput, addUploadTrigger, new WeakSet(), stats);
 
-    const fileInput = inputs.find(({ input: candidate }) => !candidate.disabled)?.input || null;
+    const fileInput =
+      inputs
+        .filter(({ input: candidate }) => !candidate.disabled)
+        .sort((a, b) => scoreGeminiFileInput(b.input, b.source) - scoreGeminiFileInput(a.input, a.source))[0]
+        ?.input || null;
     const uploadTrigger =
+      uploadTriggers.find(({ trigger }) => {
+        const meta = describeUploadTriggerForDebug(trigger);
+        const haystack = `${meta?.ariaLabel || ""} ${meta?.title || ""} ${meta?.textSnippet || ""}`.toLowerCase();
+        return !trigger.disabled && /\badd files?\b/.test(haystack);
+      })?.trigger ||
       uploadTriggers.find(({ trigger }) => {
         const label = trigger.getAttribute?.("aria-label") || trigger.ariaLabel || "";
         return label === "Open upload file menu" && !trigger.disabled;
@@ -3421,8 +4008,10 @@
     const text = meta?.textSnippet || "";
     const role = meta?.role || "";
     if (role === "menuitem" && label === "Upload files. Documents, data, code files") return 100;
+    if (role === "menuitem" && /^files$/i.test(label || text)) return 95;
     if (role === "menuitem" && /upload files/i.test(label)) return 80;
     if (role === "menuitem" && /upload files/i.test(text)) return 70;
+    if (/\bfiles\b/i.test(label) || /\bfiles\b/i.test(text)) return 60;
     if (/upload files/i.test(label) || /upload files/i.test(text)) return 50;
     return 0;
   }
@@ -3436,7 +4025,6 @@
     const selectors = [
       ".cdk-overlay-container",
       ".cdk-overlay-pane",
-      ".mat-mdc-menu-panel",
       'mat-action-list[role="menu"]',
       '[role="menuitem"]',
       "button"
@@ -3445,7 +4033,7 @@
     const addCandidate = (candidate, source) => {
       if (!candidate || seen.has(candidate)) return;
       seen.add(candidate);
-      if (candidate.matches?.(".cdk-overlay-container, .cdk-overlay-pane, .mat-mdc-menu-panel, mat-action-list")) {
+      if (candidate.matches?.(".cdk-overlay-container, .cdk-overlay-pane, mat-action-list")) {
         return;
       }
       const score = scoreGeminiUploadMenuItem(candidate);
@@ -3533,28 +4121,56 @@
   async function waitForGeminiUploadMenuInput() {
     await new Promise((resolve) => {
       let done = false;
+      let observer = null;
       const finish = () => {
         if (done) return;
         done = true;
+        if (observer) {
+          try {
+            observer.disconnect();
+          } catch {
+            // Best-effort cleanup only.
+          }
+        }
         resolve();
       };
+      const finishIfInputExists = () => {
+        try {
+          if (document.querySelector?.("input[type='file']")) {
+            finish();
+          }
+        } catch {
+          // Continue waiting; final discovery remains fail-closed.
+        }
+      };
+      if (typeof MutationObserver === "function") {
+        try {
+          observer = new MutationObserver(finishIfInputExists);
+          observer.observe(document.documentElement || document, {
+            childList: true,
+            subtree: true
+          });
+        } catch {
+          observer = null;
+        }
+      }
       const raf = typeof requestAnimationFrame === "function" ? requestAnimationFrame : null;
       if (raf) {
         try {
           raf(() => {
             try {
-              raf(finish);
+              raf(finishIfInputExists);
             } catch {
-              finish();
+              finishIfInputExists();
             }
           });
         } catch {
-          setTimeout(finish, 0);
+          setTimeout(finishIfInputExists, 0);
         }
       } else {
-        setTimeout(finish, 0);
+        setTimeout(finishIfInputExists, 0);
       }
-      setTimeout(finish, 120);
+      setTimeout(finish, GEMINI_UPLOAD_INPUT_WAIT_MS);
     });
   }
 
@@ -3592,6 +4208,9 @@
 
   function handleFileDragDetected(event) {
     scheduleFileDragSessionReset();
+    if (isGeminiHost() && dataTransferLooksLikeFiles(event?.dataTransfer)) {
+      setGeminiDmzOverlayState("Drop file to sanitize with LeakGuard", "ready");
+    }
     if (!fileDragDetectedLogged) {
       fileDragDetectedLogged = true;
       debugReveal("file-drag:detected", {
@@ -3613,11 +4232,17 @@
       sanitizedFileInputHandoffs.add(fileInput);
       fileInput.files = transfer.files;
       if (details) details.inputFilesAssignmentSucceeded = true;
+      if (Number(fileInput.files?.length || 0) <= 0) {
+        if (details) details.failureReason = "input_files_assignment_empty";
+        sanitizedFileInputHandoffs.delete(fileInput);
+        return false;
+      }
       if (dispatchInputEvent) {
         fileInput.dispatchEvent(
           new Event("input", {
             bubbles: true,
-            cancelable: true
+            cancelable: true,
+            composed: true
           })
         );
         events.push("input");
@@ -3626,7 +4251,8 @@
       fileInput.dispatchEvent(
         new Event("change", {
           bubbles: true,
-          cancelable: true
+          cancelable: true,
+          composed: true
         })
       );
       events.push("change");
@@ -3701,7 +4327,207 @@
     return false;
   }
 
-  async function handOffGeminiSanitizedFileUpload(event, input, sanitizedFile) {
+  function isForbiddenGeminiUploadButton(candidate) {
+    const className = String(candidate?.className || candidate?.getAttribute?.("class") || "");
+    return /\bhidden-local-(?:file-image-selector|upload|file-upload)-button\b/.test(className);
+  }
+
+  function isAllowedGeminiUploadMenuOpener(candidate) {
+    if (!candidate || candidate.disabled || isForbiddenGeminiUploadButton(candidate)) return false;
+    const label = candidate.getAttribute?.("aria-label") || candidate.ariaLabel || "";
+    return label === "Open upload file menu";
+  }
+
+  function clickElementSafely(candidate) {
+    if (!candidate || candidate.disabled || isForbiddenGeminiUploadButton(candidate)) return false;
+    try {
+      candidate.click?.();
+      return true;
+    } catch {
+      try {
+        candidate.dispatchEvent?.(
+          new MouseEvent("click", {
+            bubbles: true,
+            cancelable: true
+          })
+        );
+        return true;
+      } catch {
+        return false;
+      }
+    }
+  }
+
+  function isGeminiGhostIngressFileInput(candidate) {
+    if (!isGeminiHost() || !isFileInputElement(candidate)) return false;
+    const name = candidate.getAttribute?.("name") || candidate.name || "";
+    if (name === "Filedata") return true;
+    try {
+      if (candidate.matches?.('input[type="file"][name="Filedata"]')) return true;
+    } catch {
+      // Selector support varies in synthetic and host-controlled DOMs.
+    }
+    return isWithinGeminiImagesFilesUploader(candidate);
+  }
+
+  function clearPendingGeminiGhostIngressClickInterceptor(reason = "") {
+    if (typeof pendingGeminiGhostIngressClickCleanup !== "function") return;
+    const cleanup = pendingGeminiGhostIngressClickCleanup;
+    pendingGeminiGhostIngressClickCleanup = null;
+    try {
+      cleanup(reason);
+    } catch {
+      // Best-effort cleanup only.
+    }
+  }
+
+  function createGeminiGhostIngressClickInterceptor(sanitizedFile, details, onFinished) {
+    if (!isGeminiHost() || !sanitizedFile) return null;
+    const clickRoot =
+      typeof window !== "undefined" && typeof window?.addEventListener === "function" ? window : document;
+    if (!clickRoot || typeof clickRoot.addEventListener !== "function") return null;
+
+    let cleaned = false;
+    let timeoutId = 0;
+    const handler = (clickEvent) => {
+      const target = normalizeTarget(clickEvent?.target);
+      if (!isGeminiHost() || !sanitizedFile || !isGeminiGhostIngressFileInput(target)) {
+        return;
+      }
+
+      consumeInterceptionEvent(clickEvent);
+      details.handoffStage = "gemini:ghost-ingress-file-input-click";
+      const transfer = createSanitizedDataTransferForHandoff(sanitizedFile, details);
+      const assigned = transfer
+        ? handOffSanitizedFileInput(target, transfer, {
+            dispatchInput: true,
+            details
+          })
+        : false;
+      if (!assigned) {
+        details.failureReason = details.failureReason || "ghost_ingress_click_assignment_failed";
+        if (typeof onFinished === "function") {
+          onFinished(null, details.failureReason);
+        }
+        clearPendingGeminiGhostIngressClickInterceptor("assignment-failed");
+        return;
+      }
+      if (typeof onFinished === "function") {
+        onFinished(target, "ghost_ingress_click_assigned");
+      }
+      clearPendingGeminiGhostIngressClickInterceptor("assigned");
+    };
+
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = 0;
+      }
+      try {
+        clickRoot.removeEventListener("click", handler, true);
+      } catch {
+        // Best-effort cleanup only.
+      }
+    };
+
+    clearPendingGeminiGhostIngressClickInterceptor("replaced");
+    clickRoot.addEventListener("click", handler, true);
+    timeoutId = setTimeout(() => {
+      clearPendingGeminiGhostIngressClickInterceptor("timeout");
+    }, GEMINI_GHOST_INGRESS_TIMEOUT_MS);
+    pendingGeminiGhostIngressClickCleanup = cleanup;
+    return { cleanup };
+  }
+
+  async function waitForGeminiGhostIngressFileInput(event, input, details, sanitizedFile) {
+    let discovery = discoverGeminiFileHandoffElements(event, input);
+    if (discovery.fileInput) {
+      return { discovery, fileInput: discovery.fileInput };
+    }
+
+    const uploadTrigger = discovery.uploadTrigger;
+    details.foundTopUploadTrigger = Boolean(uploadTrigger);
+    details.uploadTrigger = describeUploadTriggerForDebug(uploadTrigger, "gemini-upload-trigger");
+
+    if (!isAllowedGeminiUploadMenuOpener(uploadTrigger)) {
+      details.failureReason = uploadTrigger ? "unsafe_upload_trigger" : "no_upload_trigger";
+      return { discovery, fileInput: null };
+    }
+
+    return await new Promise((resolve) => {
+      let settled = false;
+      let observer = null;
+      let timeoutId = 0;
+      let clickAssignedInput = null;
+
+      const finish = (reason = "", assignedInput = null) => {
+        if (settled) return;
+        discovery = discoverGeminiFileHandoffElements(event, input);
+        const fileInput = assignedInput || discovery.fileInput;
+        if (!fileInput && !reason) return;
+        settled = true;
+        clearPendingGeminiGhostIngressClickInterceptor(reason || "finished");
+        if (observer) {
+          try {
+            observer.disconnect();
+          } catch {
+            // Best-effort cleanup only.
+          }
+        }
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+        details.fileInputCountAfterOverlayItemClick = discovery.fileInputCount;
+        details.openShadowRootCount = Math.max(details.openShadowRootCount, discovery.openShadowRootCount);
+        if (!fileInput && reason) {
+          details.failureReason = reason;
+        }
+        resolve({ discovery, fileInput });
+      };
+
+      createGeminiGhostIngressClickInterceptor(sanitizedFile, details, (assignedInput, reason) => {
+        clickAssignedInput = assignedInput;
+        finish(reason || "ghost_ingress_click_assigned", assignedInput);
+      });
+
+      if (typeof MutationObserver === "function") {
+        try {
+          observer = new MutationObserver(() => finish());
+          observer.observe(document.documentElement || document, {
+            childList: true,
+            subtree: true
+          });
+        } catch {
+          observer = null;
+        }
+      }
+
+      timeoutId = setTimeout(() => {
+        finish("ghost_ingress_timeout", clickAssignedInput);
+      }, GEMINI_GHOST_INGRESS_TIMEOUT_MS);
+
+      details.handoffStage = "gemini:ghost-ingress-menu-open";
+      const opened = clickElementSafely(uploadTrigger);
+      if (!opened) {
+        finish("top_upload_trigger_click_failed");
+        return;
+      }
+
+      finish();
+      setTimeout(() => {
+        if (settled) return;
+        details.handoffStage = "gemini:ghost-ingress-overlay-item";
+        const overlayItem = discoverGeminiUploadOverlayItem(details);
+        if (overlayItem && clickElementSafely(overlayItem)) {
+          finish();
+        }
+      }, 0);
+    });
+  }
+
+  async function handOffGeminiSanitizedFileUpload(event, input, sanitizedFile, options) {
     if (!isGeminiHost()) return false;
 
     const details = createSanitizedFileHandoffDetails(event, sanitizedFile, "gemini:start");
@@ -3743,65 +4569,21 @@
     const uploadTrigger = discovery.uploadTrigger;
     details.foundTopUploadTrigger = Boolean(uploadTrigger);
     details.uploadTrigger = describeUploadTriggerForDebug(uploadTrigger, "gemini-upload-trigger");
-    const mayOpenUploadPicker = event?.type !== "drop";
+    const handoffOptions = options || {};
+    const mayClickGeminiUploadUi = event?.type !== "drop" || handoffOptions.allowUploadUiClick === true;
 
-    if (!fileInput && uploadTrigger && mayOpenUploadPicker) {
-      try {
-        uploadTrigger.click?.();
-      } catch (error) {
-        try {
-          uploadTrigger.dispatchEvent?.(
-            new MouseEvent("click", {
-              bubbles: true,
-              cancelable: true
-            })
-          );
-        } catch (fallbackError) {
-          details.handoffStage = "gemini:top-trigger-click";
-          details.failureReason = "top_upload_trigger_click_failed";
-          details.errorMessage = fallbackError?.message || error?.message || String(fallbackError || error);
-          details.errorStack = fallbackError?.stack || error?.stack || "";
-          // The raw file remains blocked if Gemini's upload trigger cannot be activated.
-        }
-      }
-
-      await waitForGeminiUploadMenuInput();
-      discovery = discoverGeminiFileHandoffElements(event, input);
-      fileInput = discovery.fileInput;
+    if (!fileInput && mayClickGeminiUploadUi) {
+      const result = await waitForGeminiGhostIngressFileInput(event, input, details, sanitizedFile);
+      discovery = result.discovery;
+      fileInput = result.fileInput;
       details.fileInputCountAfterTopTriggerClick = discovery.fileInputCount;
       details.fileInputCountAfterOverlayItemClick = discovery.fileInputCount;
       details.openShadowRootCount = Math.max(details.openShadowRootCount, discovery.openShadowRootCount);
-    }
-
-    if (!fileInput && mayOpenUploadPicker) {
-      details.handoffStage = "gemini:overlay-discovery";
-      const overlayItem = discoverGeminiUploadOverlayItem(details);
-      if (overlayItem) {
-        try {
-          overlayItem.click?.();
-        } catch (error) {
-          try {
-            overlayItem.dispatchEvent?.(
-              new MouseEvent("click", {
-                bubbles: true,
-                cancelable: true
-              })
-            );
-          } catch (fallbackError) {
-            details.handoffStage = "gemini:overlay-item-click";
-            details.failureReason = "overlay_upload_item_click_failed";
-            details.errorMessage = fallbackError?.message || error?.message || String(fallbackError || error);
-            details.errorStack = fallbackError?.stack || error?.stack || "";
-          }
-        }
-
-        await waitForGeminiUploadMenuInput();
-        discovery = discoverGeminiFileHandoffElements(event, input);
-        fileInput = discovery.fileInput;
-        details.fileInputCountAfterOverlayItemClick = discovery.fileInputCount;
-        details.openShadowRootCount = Math.max(details.openShadowRootCount, discovery.openShadowRootCount);
-      } else {
-        details.failureReason = "no_overlay_upload_item";
+      if (fileInput && details.handoffStage === "gemini:ghost-ingress-file-input-click") {
+        lastDiscoveredFileInput = fileInput;
+        fileDragDiscoveryCompleted = true;
+        fileDragDiscoveryScheduled = false;
+        return true;
       }
     } else if (!fileInput) {
       details.failureReason = "no_file_input_without_opening_picker";
@@ -4143,11 +4925,24 @@
           );
         }
 
-        const handedOff =
+        const fallbackText = isGeminiHost()
+          ? await readSanitizedFileTextForFallback(streamResult.sanitizedFile)
+          : "";
+        const geminiPayload =
           context === "drop" && isGeminiHost()
-            ? await handOffGeminiSanitizedFileUpload(event, input, streamResult.sanitizedFile)
-            : await handOffSanitizedLocalFile(event, input, streamResult.sanitizedFile, context);
+            ? createGeminiSanitizedPayload(
+                streamResult.sanitizedFile,
+                fallbackText,
+                localFile.sourceFile || localFile.file,
+                null,
+                null
+              )
+            : null;
+        const handedOff = geminiPayload
+          ? await tryGeminiSanitizedFileAttach(geminiPayload, event, input)
+          : await handOffSanitizedLocalFile(event, input, streamResult.sanitizedFile, context);
         if (handedOff) {
+          setGeminiDmzOverlayState("Sanitized file ready", "attached");
           setBadge("LeakGuard attached a sanitized local file.");
           hideBadgeSoon(3200);
           refreshBadgeFromCurrentInput();
@@ -4158,10 +4953,12 @@
           };
         }
 
-        if (isGeminiHost() && context !== "drop") {
-          const fallbackText = await readSanitizedFileTextForFallback(streamResult.sanitizedFile);
+        if (isGeminiHost()) {
           if (fallbackText) {
-            const fallbackResult = await applySanitizedTextFallback(event, input, fallbackText);
+            const fallbackResult =
+              geminiPayload && context === "drop"
+                ? await insertGeminiSanitizedText(geminiPayload, event, input)
+                : await applySanitizedTextFallback(event, input, fallbackText);
             if (fallbackResult === true) {
               return {
                 handled: true,
@@ -4180,6 +4977,25 @@
               };
             }
           }
+        }
+
+        if (
+          context === "drop" &&
+          isGeminiHost() &&
+          (hasGeminiSanitizedDownloadFallback(streamResult.sanitizedFile) ||
+            (await downloadGeminiSanitizedFileFallback(
+              event,
+              input,
+              streamResult.sanitizedFile,
+              createSanitizedFileHandoffDetails(event, streamResult.sanitizedFile, "gemini:emergency-download")
+            )))
+        ) {
+          refreshBadgeFromCurrentInput();
+          return {
+            handled: true,
+            ok: true,
+            strategy: "gemini-drop-sanitized-download-fallback"
+          };
         }
 
         return blockStreamingLocalFile(
@@ -4220,6 +5036,9 @@
     let result;
     let sanitizedFile;
     try {
+      if (context === "drop" && isGeminiHost()) {
+        setGeminiDmzOverlayState("Redacting...", "redacting");
+      }
       analysis = analyzeText(localFile.text);
       result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
       sanitizedFile = createSanitizedTextFile(localFile.file, result.redactedText);
@@ -4231,6 +5050,10 @@
         context,
         error: error?.message || String(error)
       });
+      if (context === "drop" && isGeminiHost()) {
+        setGeminiDmzOverlayState("LeakGuard could not sanitize this file", "failed");
+        scheduleGeminiDmzOverlayCleanup(3600);
+      }
       setBadge("Raw file upload blocked");
       hideBadgeSoon(4200);
       await showMessageModal(
@@ -4252,9 +5075,92 @@
       findingsCount: analysis.secretFindings.length,
       redactedLength: result.redactedText.length
     });
-    const handedOff = await handOffSanitizedLocalFile(event, input, sanitizedFile, context);
+    if (context === "drop" && isGeminiHost()) {
+      setGeminiDmzOverlayState("Sanitized file ready", "ready");
+    }
+
+    const geminiPayload =
+      context === "drop" && isGeminiHost()
+        ? createGeminiSanitizedPayload(sanitizedFile, result.redactedText, localFile, analysis, result)
+        : null;
+    const handedOff = geminiPayload
+      ? await tryGeminiSanitizedFileAttach(geminiPayload, event, input)
+      : await handOffSanitizedLocalFile(event, input, sanitizedFile, context);
 
     if (!handedOff) {
+      if (geminiPayload) {
+        const fallbackResult = await insertGeminiSanitizedText(geminiPayload, event, input);
+        if (fallbackResult === true) {
+          if (optimizedStatus) {
+            clearLocalPayloadOptimizationStatus(sizeInfo, "complete");
+          }
+          scheduleGeminiDmzOverlayCleanup(1400);
+          return {
+            handled: true,
+            ok: true,
+            strategy: "gemini-drop-sanitized-text-fallback"
+          };
+        }
+
+        if (fallbackResult === "cancelled") {
+          if (optimizedStatus) {
+            clearLocalPayloadOptimizationStatus(sizeInfo, "cancelled");
+          }
+          return {
+            handled: true,
+            ok: false,
+            reason: "gemini_large_text_cancelled"
+          };
+        }
+      }
+
+      if (
+        context === "drop" &&
+        isGeminiHost() &&
+        (hasGeminiSanitizedDownloadFallback(sanitizedFile) ||
+          (await downloadGeminiSanitizedFileFallback(
+            event,
+            input,
+            sanitizedFile,
+            createSanitizedFileHandoffDetails(event, sanitizedFile, "gemini:emergency-download")
+          )))
+      ) {
+        if (optimizedStatus) {
+          clearLocalPayloadOptimizationStatus(sizeInfo, "complete");
+        }
+        refreshBadgeFromCurrentInput();
+        return {
+          handled: true,
+          ok: true,
+          strategy: "gemini-drop-sanitized-download-fallback"
+        };
+      }
+
+      if (context === "drop" && isGeminiHost()) {
+        if (optimizedStatus) {
+          clearLocalPayloadOptimizationStatus(sizeInfo, "failed");
+        }
+        setGeminiDmzOverlayState("Automatic Gemini handoff failed", "failed");
+        scheduleGeminiDmzOverlayCleanup(4200);
+        debugReveal("file-handoff:fail-closed", {
+          context,
+          reason: "gemini_sanitized_download_failed",
+          sanitizedFile: describeFileForDebug(sanitizedFile)
+        });
+        setBadge("Raw file upload blocked");
+        hideBadgeSoon(4200);
+        await showMessageModal(
+          "Raw file upload blocked",
+          "LeakGuard blocked raw upload because Gemini did not expose a safe upload target and the sanitized download failed."
+        );
+        refreshBadgeFromCurrentInput();
+        return {
+          handled: true,
+          ok: false,
+          reason: "gemini_sanitized_download_failed"
+        };
+      }
+
       const fallbackResult = await applySanitizedTextFallback(event, input, result.redactedText);
       if (fallbackResult === true) {
         if (optimizedStatus) {
@@ -4306,6 +5212,10 @@
     if (optimizedStatus) {
       clearLocalPayloadOptimizationStatus(sizeInfo, "complete");
     }
+    if (context === "drop" && isGeminiHost()) {
+      setGeminiDmzOverlayState("Sanitized file ready", "attached");
+      scheduleGeminiDmzOverlayCleanup(1400);
+    }
     setBadge("LeakGuard attached a sanitized local file.");
     hideBadgeSoon(3200);
     refreshBadgeFromCurrentInput();
@@ -4327,6 +5237,15 @@
 
     const transferPolicy = resolveLocalFileTransferPolicy(event.dataTransfer);
     if (transferPolicy.action === "allow") {
+      if (isGeminiHost()) {
+        rawFileDropInterceptions.add(event);
+        consumeInterceptionEvent(event);
+        const snapshotDataTransfer = snapshotLocalFileDataTransfer(event.dataTransfer);
+        handOffOriginalLocalFile(event, snapshotDataTransfer, "drop");
+        showUnsupportedFilePassThroughNotice(transferPolicy);
+        clearFileDragSession();
+        return;
+      }
       showUnsupportedFilePassThroughNotice(transferPolicy);
       return;
     }
@@ -4344,6 +5263,10 @@
 
     rawFileDropInterceptions.add(event);
     consumeInterceptionEvent(event);
+    const snapshotDataTransfer = snapshotLocalFileDataTransfer(event.dataTransfer);
+    if (isGeminiHost()) {
+      lastGeminiDropSessionHash = getGeminiDropSessionHash(snapshotDataTransfer);
+    }
 
     if (!extensionRuntimeAvailable || modalOpen) {
       clearFileDragSession();
@@ -4351,15 +5274,11 @@
     }
 
     try {
-      if (await maybeHandleGeminiEditorDrop(event)) {
-        return;
-      }
-
       handleFileDragDetected(event);
       const input = findComposer(event.target) || findComposer(document.activeElement);
-      await maybeHandleLocalFileInsert(event, input, event.dataTransfer, "drop");
+      await maybeHandleLocalFileInsert(event, input, snapshotDataTransfer, "drop");
     } finally {
-      clearFileDragSession();
+      clearFileDragSession({ keepGeminiOverlay: isGeminiHost() });
     }
   }
 
@@ -5364,6 +6283,8 @@
     if (location.href === currentUrl) return;
 
     currentUrl = location.href;
+    clearPendingGeminiSanitizedFileHandoff("navigation");
+    clearPendingGeminiGhostIngressClickInterceptor("navigation");
     clearAllRiskSessionState();
     await initState();
     rehydrateTree(document.body);

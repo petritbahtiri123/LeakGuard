@@ -158,6 +158,49 @@ async function recordAuditEvent({ action, reason, url, findings, policySummary }
   return entry;
 }
 
+function sanitizeDownloadPathSegment(value, fallback = "sanitized-file.txt") {
+  const normalized = String(value || fallback)
+    .replace(/[\\/:*?"<>|\u0000-\u001f]+/g, "-")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^\.+|\.+$/g, "");
+  return normalized || fallback;
+}
+
+function normalizeRedactedDownloadFileName(fileName) {
+  const raw = String(fileName || "");
+  const baseName = sanitizeDownloadPathSegment(raw.split(/[\\/]/).pop(), "sanitized-file.txt");
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "").replace(/\d{3}Z$/, "Z");
+  return `LeakGuard/redacted/${timestamp}-${baseName}`;
+}
+
+function encodeTextAsBase64(text) {
+  const bytes = new TextEncoder().encode(String(text || ""));
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    const chunk = bytes.subarray(index, index + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
+async function downloadSanitizedFile({ fileName, mimeType, redactedText }) {
+  if (!ext?.downloads?.download) {
+    throw new Error("Downloads API is unavailable.");
+  }
+
+  const safeMimeType = String(mimeType || "text/plain").replace(/[\r\n;,]+/g, "") || "text/plain";
+  const url = `data:${safeMimeType};charset=utf-8;base64,${encodeTextAsBase64(redactedText)}`;
+  const downloadId = await ext.downloads.download({
+    url,
+    filename: normalizeRedactedDownloadFileName(fileName),
+    conflictAction: "uniquify",
+    saveAs: false
+  });
+  return downloadId;
+}
+
 function storageKey(tabId) {
   return `${STORAGE_PREFIX}${tabId}`;
 }
@@ -1242,6 +1285,16 @@ ext.runtime?.onMessage?.addListener((message, sender, sendResponse) => {
         policySummary
       });
       sendResponse({ ok: true, entry });
+      return;
+    }
+
+    if (message?.type === "PWM_DOWNLOAD_SANITIZED_FILE") {
+      const downloadId = await downloadSanitizedFile({
+        fileName: message.fileName,
+        mimeType: message.mimeType,
+        redactedText: message.redactedText
+      });
+      sendResponse({ ok: true, downloadId });
       return;
     }
 
