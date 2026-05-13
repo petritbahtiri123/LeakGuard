@@ -480,12 +480,17 @@ function createHarness(overrides = {}) {
       "const GEMINI_AUTO_INSERT_TEXT_LIMIT = 256 * 1024;",
       "const GEMINI_LARGE_TEXT_SUPPRESS_MS = 2500;",
       "const GEMINI_UPLOAD_INPUT_WAIT_MS = 450;",
+      "const GEMINI_GHOST_INGRESS_TIMEOUT_MS = 2200;",
       "const LOCAL_TEXT_FAST_MAX_BYTES = 2 * 1024 * 1024;",
       "const LOCAL_TEXT_OPTIMIZED_MAX_BYTES = 4 * 1024 * 1024;",
       "const LOCAL_TEXT_HARD_BLOCK_BYTES = 4 * 1024 * 1024;",
       'const LOCAL_TEXT_HARD_BLOCK_TITLE = "Large payload blocked for browser stability";',
       'const LOCAL_TEXT_HARD_BLOCK_MESSAGE = "This content is over 4 MB. LeakGuard did not process or send it automatically to avoid browser instability. Split the file into smaller parts, or sanitize it separately before upload.";',
       "let suppressInputScanUntil = 0;",
+      "function setGeminiDmzOverlayState() {}",
+      "function scheduleGeminiDmzOverlayCleanup() {}",
+      "function createSanitizedFileHandoffDetails() { return {}; }",
+      "async function downloadGeminiSanitizedFileFallback() { return false; }",
       extractFunctionSource(contentSource, "consumeInterceptionEvent"),
       extractFunctionSource(contentSource, "dataTransferLooksLikeFiles"),
       extractFunctionSource(contentSource, "listLocalTransferFiles"),
@@ -547,6 +552,12 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "isFileInputElement"),
       extractFunctionSource(contentSource, "handOffOriginalLocalFile"),
       extractFunctionSource(contentSource, "describeFileForDebug"),
+      extractFunctionSource(contentSource, "originalFileMetadataFromLocalFile"),
+      extractFunctionSource(contentSource, "createGeminiSanitizedPayload"),
+      extractFunctionSource(contentSource, "geminiFallbackLanguageFromFileName"),
+      extractFunctionSource(contentSource, "formatGeminiSanitizedFileFallbackText"),
+      extractFunctionSource(contentSource, "insertGeminiSanitizedText"),
+      extractFunctionSource(contentSource, "tryGeminiSanitizedFileAttach"),
       extractFunctionSource(contentSource, "applyGeminiSanitizedTextFallback"),
       extractFunctionSource(contentSource, "applySanitizedTextFallback"),
       extractFunctionSource(contentSource, "readSanitizedFileTextForFallback"),
@@ -839,6 +850,7 @@ function createHandoffHarness({
       "let fileDragDiscoveryScheduled = false;",
       'let lastGeminiDropSessionHash = "";',
       "const GEMINI_UPLOAD_INPUT_WAIT_MS = 450;",
+      "const GEMINI_GHOST_INGRESS_TIMEOUT_MS = 2200;",
       "const GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MS = 30000;",
       "let pendingGeminiSanitizedFileHandoff = null;",
       "let pendingGeminiSanitizedFileObserver = null;",
@@ -896,6 +908,10 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "waitForGeminiUploadMenuInput"),
       extractFunctionSource(contentSource, "handOffSanitizedFileInput"),
       extractFunctionSource(contentSource, "readSanitizedFileTextForFallback"),
+      extractFunctionSource(contentSource, "isForbiddenGeminiUploadButton"),
+      extractFunctionSource(contentSource, "isAllowedGeminiUploadMenuOpener"),
+      extractFunctionSource(contentSource, "clickElementSafely"),
+      extractFunctionSource(contentSource, "waitForGeminiGhostIngressFileInput"),
       extractFunctionSource(contentSource, "handOffSanitizedLocalFile"),
       extractFunctionSource(contentSource, "handOffGeminiSanitizedFileUpload"),
       extractFunctionSource(contentSource, "handOffGrokSanitizedFileUpload"),
@@ -1269,22 +1285,13 @@ async function testGeminiDropNeverClicksUploadFlowWhenInputAppearsAfterClick() {
   assert.strictEqual(overlayItems.length, 0);
   assert.strictEqual(fileInputs.length, 0);
   assert.strictEqual(fallbackDrops.length, 0);
-  assert.strictEqual(consoleErrors.length, 0);
-  assert.strictEqual(runtimeMessages.length, 1);
-  assert.strictEqual(runtimeMessages[0].type, "PWM_DOWNLOAD_SANITIZED_FILE");
-  assert.ok(runtimeMessages[0].fileName.startsWith("LeakGuard/redacted/"));
-  assert.strictEqual(runtimeMessages[0].redactedText.includes(rawSecret), false);
-  assert.ok(runtimeMessages[0].redactedText.includes("[PWM_1]"));
+  assert.strictEqual(consoleErrors.length, 1);
+  assert.strictEqual(runtimeMessages.length, 0);
   assert.strictEqual(sanitizedFile.text.includes(rawSecret), false);
   assert.ok(sanitizedFile.text.includes("[PWM_1]"));
-  assert.ok(badges.some(([message]) => /Sanitized file downloaded/.test(message)));
   assert.ok(
     debugEvents.some((entry) => entry.label === "file-handoff:gemini-input-not-found"),
-    "expected Gemini drop to fail closed without opening the upload picker"
-  );
-  assert.ok(
-    debugEvents.some((entry) => entry.label === "file-handoff:gemini-sanitized-download"),
-    "expected Gemini drop to request sanitized download fallback"
+    "expected legacy Gemini drop handoff to fail closed without opening the upload picker"
   );
 }
 
@@ -1321,9 +1328,68 @@ async function testGeminiDropNeverClicksExistingOverlayMenuItem() {
   assert.strictEqual(handedOff, false);
   assert.deepStrictEqual(overlayItem.events, []);
   assert.strictEqual(fallbackDrops.length, 0);
+  assert.strictEqual(consoleErrors.length, 1);
+  assert.strictEqual(runtimeMessages.length, 0);
+}
+
+async function testGeminiDropGhostIngressAttachesSanitizedFileAfterVisibleUploadFlow() {
+  const rawSecret = "LeakGuardDropApiKey1234567890";
+  const sanitizedFile = {
+    name: "ghost-gemini.env",
+    type: "text/plain",
+    size: 24,
+    text: "API_KEY=[PWM_1]"
+  };
+  const fileInputs = [];
+  const overlayItems = [];
+  const uploadTrigger = createUploadTrigger({
+    ariaLabel: "Open upload file menu",
+    className: "upload-card mat-mdc-button",
+    onClick: () => {
+      overlayItems.push(
+        createOverlayItem({
+          ariaLabel: "Upload files. Documents, data, code files",
+          text: "Upload files",
+          onClick: () => {
+            fileInputs.push(createFileInput({ source: "light-dom", multiple: true, inGeminiUploader: true }));
+          }
+        })
+      );
+    }
+  });
+  const { handOffGeminiSanitizedFileUpload, fallbackDrops, runtimeMessages, consoleErrors } =
+    createHandoffHarness({
+      fileInputs,
+      uploadTriggers: [uploadTrigger],
+      overlayItems
+    });
+  const event = {
+    type: "drop",
+    target: { nodeType: 1, tagName: "DIV", dispatchEvent: () => true },
+    dataTransfer: createDataTransfer({
+      files: [
+        {
+          name: "ghost-gemini.env",
+          type: "text/plain",
+          size: 64
+        }
+      ]
+    })
+  };
+
+  const handedOff = await handOffGeminiSanitizedFileUpload(event, null, sanitizedFile, {
+    allowUploadUiClick: true
+  });
+
+  assert.strictEqual(handedOff, true);
+  assert.deepStrictEqual(uploadTrigger.events, ["click"]);
+  assert.deepStrictEqual(overlayItems[0].events, ["click"]);
+  assert.strictEqual(fileInputs[0].files[0], sanitizedFile);
+  assert.strictEqual(JSON.stringify(fileInputs[0].files).includes(rawSecret), false);
+  assert.deepStrictEqual(fileInputs[0].events, ["input", "change"]);
+  assert.strictEqual(fallbackDrops.length, 0);
+  assert.strictEqual(runtimeMessages.length, 0);
   assert.strictEqual(consoleErrors.length, 0);
-  assert.strictEqual(runtimeMessages.length, 1);
-  assert.strictEqual(runtimeMessages[0].type, "PWM_DOWNLOAD_SANITIZED_FILE");
 }
 
 async function testGeminiPendingDropAssignsSanitizedFileWhenInputLaterAppears() {
@@ -1735,7 +1801,7 @@ async function testGeminiSanitizedDownloadFailureFailsClosed() {
   assert.strictEqual(handedOff, false);
   assert.strictEqual(fallbackDrops.length, 0);
   assert.strictEqual(consoleErrors.length, 1);
-  assert.strictEqual(consoleErrors[0][1].failureReason, "sanitized_download_failed");
+  assert.strictEqual(consoleErrors[0][1].failureReason, "no_file_input_without_opening_picker");
   assert.strictEqual(JSON.stringify(debugEvents).includes("API_KEY=[PWM_1]"), false);
 }
 
@@ -1913,16 +1979,16 @@ async function testGeminiUploadOverlayFailureLogsMetadataOnly() {
   assert.deepStrictEqual(uploadTrigger.events, []);
   assert.strictEqual(overlayItems.length, 0);
   assert.strictEqual(fallbackDrops.length, 0);
-  assert.strictEqual(consoleErrors.length, 0);
-  assert.strictEqual(hasPendingGeminiSanitizedFileHandoff(sanitizedFile), true);
-  const queued = debugEvents.find((entry) => entry.label === "file-handoff:gemini-pending-queued");
-  assert.ok(queued, "expected metadata-only pending queue breadcrumb");
-  assert.strictEqual(queued.payload.sanitizedFile.size, 26213285);
-  const serialized = JSON.stringify(queued.payload);
+  assert.strictEqual(consoleErrors.length, 1);
+  assert.strictEqual(hasPendingGeminiSanitizedFileHandoff(sanitizedFile), false);
+  const failed = debugEvents.find((entry) => entry.label === "sanitized-file-handoff:failed");
+  assert.ok(failed, "expected metadata-only failure breadcrumb");
+  assert.strictEqual(failed.payload.sanitizedFile.size, 26213285);
+  const serialized = JSON.stringify(failed.payload);
   assert.strictEqual(serialized.includes(rawSecret), false);
   assert.ok(
-    debugEvents.some((entry) => entry.label === "file-handoff:gemini-pending-after-input-not-found"),
-    "expected Gemini drop to leave sanitized file pending instead of opening the picker"
+    debugEvents.some((entry) => entry.label === "file-handoff:gemini-input-not-found"),
+    "expected Gemini drop to fail closed without raw file replay"
   );
 }
 
@@ -2433,7 +2499,7 @@ async function testGeminiQlEditorDropTextFileIsSanitizedAndHandedOff() {
   assert.strictEqual(editor.text, "");
   assert.strictEqual(editor.text.includes(rawSecret), false);
   assert.strictEqual(calls.handoffs.length, 1);
-  assert.strictEqual(calls.handoffs[0].context, "drop");
+  assert.strictEqual(calls.handoffs[0].context, "gemini-file-input");
   assert.strictEqual(calls.handoffs[0].sanitizedFile.text, "API_KEY=[PWM_1]");
   assert.strictEqual(calls.redactions.length, 1);
   assert.strictEqual(calls.textFallbacks.length, 0);
@@ -3114,10 +3180,10 @@ async function testGeminiStreamingDropBlocksWhenNativeUploadRejected() {
 
   assert.strictEqual(event.defaultPrevented, true);
   assert.strictEqual(calls.handoffs.length, 1);
-  assert.strictEqual(calls.textFallbacks.length, 0);
+  assert.strictEqual(calls.textFallbacks.length, 1);
   assert.strictEqual(editor.text.includes(rawSecret), false);
-  assert.strictEqual(editor.text, "");
-  assert.ok(calls.modals.some(([title]) => title === "Raw file upload blocked"));
+  assert.ok(editor.text.includes("API_KEY=[PWM_1]"));
+  assert.strictEqual(calls.modals.some(([title]) => title === "Raw file upload blocked"), false);
   assert.strictEqual(calls.modals.flat().join("\n").includes(rawSecret), false);
 }
 
@@ -4089,8 +4155,8 @@ async function testGeminiDropFallsBackToSanitizedComposerTextWhenNativeUploadUna
   const { maybeHandleDrop, calls } = createHarness({
     location: { hostname: "gemini.google.com" },
     findComposer: () => composer,
-    handOffSanitizedLocalFile: (event, input, sanitizedFile, context) => {
-      calls.handoffs.push({ event, input, sanitizedFile, context });
+    handOffGeminiSanitizedFileUpload: (event, input, sanitizedFile) => {
+      calls.handoffs.push({ event, input, sanitizedFile, context: "gemini-file-input" });
       return false;
     }
   });
@@ -4119,8 +4185,8 @@ async function testGeminiHiddenFileDropUsesSnapshotThenSanitizedTextFallback() {
   const { maybeHandleDrop, calls } = createHarness({
     location: { hostname: "gemini.google.com" },
     findComposer: () => editor,
-    handOffSanitizedLocalFile: (event, input, sanitizedFile, context) => {
-      calls.handoffs.push({ event, input, sanitizedFile, context });
+    handOffGeminiSanitizedFileUpload: (event, input, sanitizedFile) => {
+      calls.handoffs.push({ event, input, sanitizedFile, context: "gemini-file-input" });
       return false;
     },
     document: {
@@ -4139,10 +4205,11 @@ async function testGeminiHiddenFileDropUsesSnapshotThenSanitizedTextFallback() {
 
   assert.strictEqual(event.defaultPrevented, true);
   assert.strictEqual(calls.handoffs.length, 1);
-  assert.strictEqual(calls.handoffs[0].context, "drop");
+  assert.strictEqual(calls.handoffs[0].context, "gemini-file-input");
   assert.strictEqual(calls.textFallbacks.length, 1);
   assert.ok(editor.focusCalls >= 1);
-  assert.strictEqual(editor.text, "API_KEY=[PWM_1]");
+  assert.ok(editor.text.includes("LeakGuard sanitized file: secrets.env"));
+  assert.ok(editor.text.includes("API_KEY=[PWM_1]"));
   assert.strictEqual(editor.text.includes(rawSecret), false);
   assert.strictEqual(calls.modals.some(([title]) => title === "Raw file upload blocked"), false);
 }
@@ -4157,8 +4224,8 @@ async function testGeminiTextFallbackFailureNeverLeaksRawContent() {
   const { maybeHandleDrop, calls } = createHarness({
     location: { hostname: "gemini.google.com" },
     findComposer: () => composer,
-    handOffSanitizedLocalFile: (event, input, sanitizedFile, context) => {
-      calls.handoffs.push({ event, input, sanitizedFile, context });
+    handOffGeminiSanitizedFileUpload: (event, input, sanitizedFile) => {
+      calls.handoffs.push({ event, input, sanitizedFile, context: "gemini-file-input" });
       return false;
     },
     applyPasteDecision: async (input, originalText, selection, insertedText, context) => {
@@ -4354,6 +4421,7 @@ async function testGenericTextFallbackFailureStillBlocksRawUpload() {
   await testGeminiStreamingHandoffUsesDiscoveredFileInput();
   await testGeminiDropNeverClicksUploadFlowWhenInputAppearsAfterClick();
   await testGeminiDropNeverClicksExistingOverlayMenuItem();
+  await testGeminiDropGhostIngressAttachesSanitizedFileAfterVisibleUploadFlow();
   await testGeminiSanitizedDownloadFailureFailsClosed();
   testGeminiUploadHandoffDoesNotRedispatchSyntheticDrop();
   testSanitizedDownloadBackgroundHookExists();

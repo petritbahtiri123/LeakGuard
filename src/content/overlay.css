@@ -171,6 +171,66 @@
   color: #cbd5e1;
 }
 
+.pwm-gemini-dmz {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483646;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.42);
+  color: #f8fafc;
+  font: 14px/1.4 system-ui, sans-serif;
+  pointer-events: auto;
+  backdrop-filter: blur(4px);
+}
+
+.pwm-gemini-dmz-box {
+  width: min(520px, calc(100vw - 48px));
+  min-height: 180px;
+  border: 2px dashed rgba(34, 211, 238, 0.74);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 28px;
+  background: rgba(15, 23, 42, 0.9);
+  box-shadow: 0 24px 70px rgba(2, 6, 23, 0.38);
+  text-align: center;
+}
+
+.pwm-gemini-dmz-eyebrow {
+  margin: 0;
+  color: #67e8f9;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.pwm-gemini-dmz-status {
+  margin: 0;
+  color: #f8fafc;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.pwm-gemini-dmz[data-pwm-state="redacting"] .pwm-gemini-dmz-box {
+  border-color: rgba(250, 204, 21, 0.82);
+}
+
+.pwm-gemini-dmz[data-pwm-state="attached"] .pwm-gemini-dmz-box,
+.pwm-gemini-dmz[data-pwm-state="inserted"] .pwm-gemini-dmz-box {
+  border-color: rgba(52, 211, 153, 0.86);
+}
+
+.pwm-gemini-dmz[data-pwm-state="failed"] .pwm-gemini-dmz-box {
+  border-color: rgba(251, 113, 133, 0.9);
+}
+
 .pwm-findings {
   display: grid;
   gap: 8px;
