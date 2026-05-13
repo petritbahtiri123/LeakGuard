@@ -155,6 +155,40 @@ function createEvent({
   return { event, calls };
 }
 
+function createClickEvent(target) {
+  const calls = {
+    preventDefault: 0,
+    stopPropagation: 0,
+    stopImmediatePropagation: 0
+  };
+  const event = {
+    type: "click",
+    target,
+    defaultPrevented: false,
+    propagationStopped: false,
+    immediatePropagationStopped: false,
+    preventDefault() {
+      calls.preventDefault += 1;
+      event.defaultPrevented = true;
+    },
+    stopPropagation() {
+      calls.stopPropagation += 1;
+      event.propagationStopped = true;
+    },
+    stopImmediatePropagation() {
+      calls.stopImmediatePropagation += 1;
+      event.immediatePropagationStopped = true;
+    }
+  };
+  return { event, calls };
+}
+
+function triggerGhostIngressTimeout(harness) {
+  harness.timeoutCallbacks
+    .filter((entry) => entry.delay === 2200)
+    .forEach((entry) => entry.callback());
+}
+
 function createClipboardEvent({
   text = "API_KEY=LeakGuardPasteApiKey1234567890",
   target = { tagName: "SPAN" },
