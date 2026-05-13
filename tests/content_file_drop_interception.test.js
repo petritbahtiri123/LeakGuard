@@ -155,6 +155,40 @@ function createEvent({
   return { event, calls };
 }
 
+function createClickEvent(target) {
+  const calls = {
+    preventDefault: 0,
+    stopPropagation: 0,
+    stopImmediatePropagation: 0
+  };
+  const event = {
+    type: "click",
+    target,
+    defaultPrevented: false,
+    propagationStopped: false,
+    immediatePropagationStopped: false,
+    preventDefault() {
+      calls.preventDefault += 1;
+      event.defaultPrevented = true;
+    },
+    stopPropagation() {
+      calls.stopPropagation += 1;
+      event.propagationStopped = true;
+    },
+    stopImmediatePropagation() {
+      calls.stopImmediatePropagation += 1;
+      event.immediatePropagationStopped = true;
+    }
+  };
+  return { event, calls };
+}
+
+function triggerGhostIngressTimeout(harness) {
+  harness.timeoutCallbacks
+    .filter((entry) => entry.delay === 2200)
+    .forEach((entry) => entry.callback());
+}
+
 function createClipboardEvent({
   text = "API_KEY=LeakGuardPasteApiKey1234567890",
   target = { tagName: "SPAN" },
@@ -581,12 +615,20 @@ function createHarness(overrides = {}) {
   };
 }
 
-function createFileInput({ source = "light-dom", disabled = false, multiple = false, inGeminiUploader = false } = {}) {
+function createFileInput({
+  source = "light-dom",
+  disabled = false,
+  multiple = false,
+  inGeminiUploader = false,
+  name = ""
+} = {}) {
   const events = [];
   const eventObjects = [];
   return {
+    nodeType: 1,
     tagName: "INPUT",
     type: "file",
+    name,
     disabled,
     hidden: source !== "light-dom",
     accept: ".env,text/plain",
@@ -598,6 +640,21 @@ function createFileInput({ source = "light-dom", disabled = false, multiple = fa
       return selector === "images-files-uploader" && inGeminiUploader
         ? { tagName: "IMAGES-FILES-UPLOADER" }
         : null;
+    },
+    getAttribute(attributeName) {
+      if (attributeName === "name") return this.name;
+      if (attributeName === "type") return this.type;
+      if (attributeName === "class") return "";
+      return "";
+    },
+    matches(selector) {
+      if (selector === 'input[type="file"][name="Filedata"]') {
+        return this.type === "file" && this.name === "Filedata";
+      }
+      if (selector === "input[type='file']" || selector === 'input[type="file"]') {
+        return this.type === "file";
+      }
+      return false;
     },
     dispatchEvent(event) {
       events.push(event.type);
@@ -693,6 +750,8 @@ function createHandoffHarness({
   const fallbackDrops = [];
   const badges = [];
   const clickHandlers = [];
+  const windowClickHandlers = [];
+  const listenerEvents = [];
   const timeoutCallbacks = [];
   const observers = [];
   const clearedTimeouts = [];
@@ -813,6 +872,18 @@ function createHandoffHarness({
     DataTransfer: TestDataTransfer,
     MutationObserver: TestMutationObserver,
     location: { hostname },
+    window: {
+      addEventListener(type, handler, options) {
+        listenerEvents.push({ target: "window", action: "add", type, capture: options === true || Boolean(options?.capture) });
+        if (type === "click") windowClickHandlers.push(handler);
+      },
+      removeEventListener(type, handler, options) {
+        listenerEvents.push({ target: "window", action: "remove", type, capture: options === true || Boolean(options?.capture) });
+        if (type !== "click") return;
+        const index = windowClickHandlers.indexOf(handler);
+        if (index !== -1) windowClickHandlers.splice(index, 1);
+      }
+    },
     document: documentRoot,
     setBadge: (...args) => badges.push(args),
     hideBadgeSoon: () => {},
@@ -856,9 +927,11 @@ function createHandoffHarness({
       "let pendingGeminiSanitizedFileObserver = null;",
       "let pendingGeminiSanitizedFileTimer = 0;",
       "let pendingGeminiSanitizedFileClickHandler = null;",
+      "let pendingGeminiGhostIngressClickCleanup = null;",
       "const geminiSanitizedDownloadFallbacks = new WeakSet();",
       'const GEMINI_SANITIZED_DOWNLOAD_MESSAGE = "Sanitized file downloaded. Upload the LeakGuard redacted copy to Gemini.";',
       'const GEMINI_SANITIZED_DOWNLOAD_MODAL_MESSAGE = "Gemini does not expose a safe upload target. LeakGuard downloaded a sanitized copy. Upload that redacted file manually.";',
+      extractFunctionSource(contentSource, "consumeInterceptionEvent"),
       extractFunctionSource(contentSource, "normalizeTarget"),
       extractFunctionSource(contentSource, "isSanitizedFileHandoffEvent"),
       extractFunctionSource(contentSource, "markSanitizedFileHandoffEvent"),
@@ -911,11 +984,14 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "isForbiddenGeminiUploadButton"),
       extractFunctionSource(contentSource, "isAllowedGeminiUploadMenuOpener"),
       extractFunctionSource(contentSource, "clickElementSafely"),
+      extractFunctionSource(contentSource, "isGeminiGhostIngressFileInput"),
+      extractFunctionSource(contentSource, "clearPendingGeminiGhostIngressClickInterceptor"),
+      extractFunctionSource(contentSource, "createGeminiGhostIngressClickInterceptor"),
       extractFunctionSource(contentSource, "waitForGeminiGhostIngressFileInput"),
       extractFunctionSource(contentSource, "handOffSanitizedLocalFile"),
       extractFunctionSource(contentSource, "handOffGeminiSanitizedFileUpload"),
       extractFunctionSource(contentSource, "handOffGrokSanitizedFileUpload"),
-      "return { handOffSanitizedLocalFile, handOffGeminiSanitizedFileUpload, handOffGrokSanitizedFileUpload, resolveFileInputForHandoff, attemptPendingGeminiSanitizedFileHandoff, hasPendingGeminiSanitizedFileHandoff, getPendingGeminiSanitizedFileHandoffDebug, hasGeminiSanitizedDownloadFallback };"
+      "return { handOffSanitizedLocalFile, handOffGeminiSanitizedFileUpload, handOffGrokSanitizedFileUpload, resolveFileInputForHandoff, attemptPendingGeminiSanitizedFileHandoff, hasPendingGeminiSanitizedFileHandoff, getPendingGeminiSanitizedFileHandoffDebug, hasGeminiSanitizedDownloadFallback, clearPendingGeminiGhostIngressClickInterceptor };"
     ].join("\n\n")
   );
 
@@ -928,6 +1004,8 @@ function createHandoffHarness({
     runtimeMessages,
     badges,
     clickHandlers,
+    windowClickHandlers,
+    listenerEvents,
     timeoutCallbacks,
     clearedTimeouts,
     observers,
@@ -1390,6 +1468,199 @@ async function testGeminiDropGhostIngressAttachesSanitizedFileAfterVisibleUpload
   assert.strictEqual(fallbackDrops.length, 0);
   assert.strictEqual(runtimeMessages.length, 0);
   assert.strictEqual(consoleErrors.length, 0);
+}
+
+async function testGeminiGhostIngressInterceptsEphemeralFileInputClick() {
+  const rawSecret = "LeakGuardDropApiKey1234567890";
+  const sanitizedFile = {
+    name: "ghost-click.env",
+    type: "text/plain",
+    size: 24,
+    text: "API_KEY=[PWM_1]"
+  };
+  let input = null;
+  let clickEvent = null;
+  let interceptorWasInstalledBeforeUploadClick = false;
+  let harness = null;
+  const uploadTrigger = createUploadTrigger({
+    ariaLabel: "Open upload file menu",
+    onClick: () => {
+      interceptorWasInstalledBeforeUploadClick = harness.windowClickHandlers.length === 1;
+    }
+  });
+  const overlayItem = createOverlayItem({
+    onClick: () => {
+      input = createFileInput({ name: "Filedata", multiple: true });
+      clickEvent = createClickEvent(input);
+      assert.strictEqual(harness.windowClickHandlers.length, 1);
+      harness.windowClickHandlers[0](clickEvent.event);
+    }
+  });
+  harness = createHandoffHarness({
+    uploadTriggers: [uploadTrigger],
+    overlayItems: [overlayItem]
+  });
+  const event = {
+    type: "drop",
+    target: { nodeType: 1, tagName: "DIV", dispatchEvent: () => true },
+    dataTransfer: createDataTransfer()
+  };
+
+  const handedOff = await harness.handOffGeminiSanitizedFileUpload(event, null, sanitizedFile, {
+    allowUploadUiClick: true
+  });
+
+  assert.strictEqual(interceptorWasInstalledBeforeUploadClick, true);
+  assert.strictEqual(handedOff, true);
+  assert.strictEqual(clickEvent.calls.preventDefault, 1);
+  assert.strictEqual(clickEvent.calls.stopPropagation, 1);
+  assert.strictEqual(clickEvent.calls.stopImmediatePropagation, 1);
+  assert.strictEqual(input.files[0], sanitizedFile);
+  assert.strictEqual(JSON.stringify(input.files).includes(rawSecret), false);
+  assert.deepStrictEqual(input.events, ["input", "change"]);
+  assert.deepStrictEqual(
+    input.eventObjects.map((dispatched) => ({
+      type: dispatched.type,
+      bubbles: dispatched.bubbles,
+      cancelable: dispatched.cancelable,
+      composed: dispatched.composed
+    })),
+    [
+      { type: "input", bubbles: true, cancelable: true, composed: true },
+      { type: "change", bubbles: true, cancelable: true, composed: true }
+    ]
+  );
+  assert.strictEqual(harness.windowClickHandlers.length, 0);
+  assert.ok(
+    harness.listenerEvents.find(
+      (entry) => entry.target === "window" && entry.action === "add" && entry.type === "click" && entry.capture
+    )
+  );
+  assert.ok(
+    harness.listenerEvents.find(
+      (entry) => entry.target === "window" && entry.action === "remove" && entry.type === "click" && entry.capture
+    )
+  );
+}
+
+async function testGeminiGhostIngressClickInterceptorIgnoresNonGeminiHost() {
+  const sanitizedFile = {
+    name: "not-gemini.env",
+    type: "text/plain",
+    size: 18,
+    text: "API_KEY=[PWM_1]"
+  };
+  const harness = createHandoffHarness({
+    hostname: "chatgpt.com",
+    uploadTriggers: [createUploadTrigger({ ariaLabel: "Open upload file menu" })]
+  });
+  const handedOff = await harness.handOffGeminiSanitizedFileUpload(
+    { type: "drop", target: { nodeType: 1, tagName: "DIV" }, dataTransfer: createDataTransfer() },
+    null,
+    sanitizedFile,
+    { allowUploadUiClick: true }
+  );
+
+  assert.strictEqual(handedOff, false);
+  assert.strictEqual(harness.windowClickHandlers.length, 0);
+}
+
+async function testGeminiGhostIngressClickInterceptorIgnoresUnrelatedFileInput() {
+  const sanitizedFile = {
+    name: "ignore.env",
+    type: "text/plain",
+    size: 18,
+    text: "API_KEY=[PWM_1]"
+  };
+  let unrelatedClick = null;
+  let harness = null;
+  const uploadTrigger = createUploadTrigger({
+    ariaLabel: "Open upload file menu",
+    onClick: () => {
+      const unrelatedInput = createFileInput({ name: "avatar" });
+      unrelatedClick = createClickEvent(unrelatedInput);
+      harness.windowClickHandlers[0](unrelatedClick.event);
+    }
+  });
+  harness = createHandoffHarness({
+    uploadTriggers: [uploadTrigger]
+  });
+  const handoffPromise = harness.handOffGeminiSanitizedFileUpload(
+    { type: "drop", target: { nodeType: 1, tagName: "DIV" }, dataTransfer: createDataTransfer() },
+    null,
+    sanitizedFile,
+    { allowUploadUiClick: true }
+  );
+  triggerGhostIngressTimeout(harness);
+  const handedOff = await handoffPromise;
+
+  assert.strictEqual(handedOff, false);
+  assert.strictEqual(unrelatedClick.calls.preventDefault, 0);
+  assert.strictEqual(unrelatedClick.event.defaultPrevented, false);
+  assert.strictEqual(harness.windowClickHandlers.length, 0);
+}
+
+async function testGeminiGhostIngressClickInterceptorRemovedAfterTimeout() {
+  const sanitizedFile = {
+    name: "timeout.env",
+    type: "text/plain",
+    size: 18,
+    text: "API_KEY=[PWM_1]"
+  };
+  const harness = createHandoffHarness({
+    uploadTriggers: [createUploadTrigger({ ariaLabel: "Open upload file menu" })]
+  });
+  const handoffPromise = harness.handOffGeminiSanitizedFileUpload(
+    { type: "drop", target: { nodeType: 1, tagName: "DIV" }, dataTransfer: createDataTransfer() },
+    null,
+    sanitizedFile,
+    { allowUploadUiClick: true }
+  );
+
+  assert.strictEqual(harness.windowClickHandlers.length, 1);
+  triggerGhostIngressTimeout(harness);
+  const handedOff = await handoffPromise;
+
+  assert.strictEqual(handedOff, false);
+  assert.strictEqual(harness.windowClickHandlers.length, 0);
+}
+
+async function testGeminiGhostIngressClickInterceptorRemovedAfterAssignmentFailure() {
+  const sanitizedFile = {
+    name: "assignment-fails.env",
+    type: "text/plain",
+    size: 18,
+    text: "API_KEY=[PWM_1]"
+  };
+  let failingClick = null;
+  let harness = null;
+  const uploadTrigger = createUploadTrigger({
+    ariaLabel: "Open upload file menu"
+  });
+  const overlayItem = createOverlayItem({
+    onClick: () => {
+      const input = createFileInput({ name: "Filedata" });
+      input.dispatchEvent = () => {
+        throw new Error("change dispatch failed");
+      };
+      failingClick = createClickEvent(input);
+      harness.windowClickHandlers[0](failingClick.event);
+    }
+  });
+  harness = createHandoffHarness({
+    uploadTriggers: [uploadTrigger],
+    overlayItems: [overlayItem]
+  });
+  const handedOff = await harness.handOffGeminiSanitizedFileUpload(
+    { type: "drop", target: { nodeType: 1, tagName: "DIV" }, dataTransfer: createDataTransfer() },
+    null,
+    sanitizedFile,
+    { allowUploadUiClick: true }
+  );
+
+  assert.strictEqual(handedOff, false);
+  assert.strictEqual(failingClick.calls.preventDefault, 1);
+  assert.strictEqual(harness.windowClickHandlers.length, 0);
 }
 
 async function testGeminiPendingDropAssignsSanitizedFileWhenInputLaterAppears() {
@@ -4422,6 +4693,11 @@ async function testGenericTextFallbackFailureStillBlocksRawUpload() {
   await testGeminiDropNeverClicksUploadFlowWhenInputAppearsAfterClick();
   await testGeminiDropNeverClicksExistingOverlayMenuItem();
   await testGeminiDropGhostIngressAttachesSanitizedFileAfterVisibleUploadFlow();
+  await testGeminiGhostIngressInterceptsEphemeralFileInputClick();
+  await testGeminiGhostIngressClickInterceptorIgnoresNonGeminiHost();
+  await testGeminiGhostIngressClickInterceptorIgnoresUnrelatedFileInput();
+  await testGeminiGhostIngressClickInterceptorRemovedAfterTimeout();
+  await testGeminiGhostIngressClickInterceptorRemovedAfterAssignmentFailure();
   await testGeminiSanitizedDownloadFailureFailsClosed();
   testGeminiUploadHandoffDoesNotRedispatchSyntheticDrop();
   testSanitizedDownloadBackgroundHookExists();
