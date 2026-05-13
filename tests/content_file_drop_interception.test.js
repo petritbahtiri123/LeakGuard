@@ -317,7 +317,9 @@ function createHarness(overrides = {}) {
     debugEvents: [],
     runtimeMessages: [],
     dragDetections: 0,
-    clearedDragSessions: 0
+    clearedDragSessions: 0,
+    dmzStates: [],
+    dmzCleanups: []
   };
   const activeElement = { tagName: "TEXTAREA" };
   class HarnessDataTransfer {
@@ -333,6 +335,12 @@ function createHarness(overrides = {}) {
   }
   const dependencies = {
     extensionRuntimeAvailable: true,
+    calls,
+    currentPublicState: {
+      currentSite: {
+        protected: true
+      }
+    },
     modalOpen: false,
     Node: { ELEMENT_NODE: 1 },
     Event,
@@ -508,10 +516,10 @@ function createHarness(overrides = {}) {
       'const LOCAL_TEXT_HARD_BLOCK_TITLE = "Large payload blocked for browser stability";',
       'const LOCAL_TEXT_HARD_BLOCK_MESSAGE = "This content is over 4 MB. LeakGuard did not process or send it automatically to avoid browser instability. Split the file into smaller parts, or sanitize it separately before upload.";',
       "let suppressInputScanUntil = 0;",
-      "function setDmzOverlayState() {}",
-      "function scheduleDmzOverlayCleanup() {}",
-      "function setGeminiDmzOverlayState() {}",
-      "function scheduleGeminiDmzOverlayCleanup() {}",
+      "function setDmzOverlayState(message, state = \"\") { calls.dmzStates.push({ message, state }); }",
+      "function scheduleDmzOverlayCleanup(delayMs = 1200) { calls.dmzCleanups.push(delayMs); }",
+      "function setGeminiDmzOverlayState(message, state = \"\") { setDmzOverlayState(message, state); }",
+      "function scheduleGeminiDmzOverlayCleanup(delayMs = 1200) { scheduleDmzOverlayCleanup(delayMs); }",
       "function createSanitizedFileHandoffDetails() { return {}; }",
       "async function downloadGeminiSanitizedFileFallback() { return false; }",
       extractFunctionSource(contentSource, "consumeInterceptionEvent"),
@@ -542,6 +550,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "isClaudeHost"),
       extractFunctionSource(contentSource, "isGrokHost"),
       extractFunctionSource(contentSource, "getCurrentHandoffDriverId"),
+      extractFunctionSource(contentSource, "isProtectedFileDropDriver"),
       extractFunctionSource(contentSource, "shouldHandleChatGptLargeTextPaste"),
       extractFunctionSource(contentSource, "createSanitizedChatGptPasteFile"),
       extractFunctionSource(contentSource, "applyChatGptLargePasteTextFallback"),
@@ -1046,6 +1055,126 @@ function createHandoffHarness({
     clearedTimeouts,
     observers,
     stats
+  };
+}
+
+function createDmzOverlayHarness({
+  hostname = "gemini.google.com",
+  currentSiteProtected = true
+} = {}) {
+  const appended = [];
+  const removed = [];
+  const timeoutCallbacks = [];
+  const clearedTimeouts = [];
+  const debugEvents = [];
+  const childrenFor = new WeakMap();
+
+  function createElement(tagName) {
+    const element = {
+      tagName: String(tagName || "").toUpperCase(),
+      className: "",
+      textContent: "",
+      dataset: {},
+      attributes: {},
+      parentNode: null,
+      isConnected: false,
+      setAttribute(name, value) {
+        this.attributes[name] = String(value);
+      },
+      append(...children) {
+        for (const child of children) {
+          child.parentNode = this;
+          child.isConnected = true;
+          childrenFor.get(this).push(child);
+        }
+      },
+      appendChild(child) {
+        child.parentNode = this;
+        child.isConnected = true;
+        childrenFor.get(this).push(child);
+        return child;
+      },
+      removeChild(child) {
+        const children = childrenFor.get(this);
+        const index = children.indexOf(child);
+        if (index !== -1) children.splice(index, 1);
+        child.parentNode = null;
+        child.isConnected = false;
+        removed.push(child);
+        return child;
+      }
+    };
+    childrenFor.set(element, []);
+    return element;
+  }
+
+  const documentElement = createElement("html");
+  const originalAppendChild = documentElement.appendChild.bind(documentElement);
+  documentElement.appendChild = (child) => {
+    appended.push(child);
+    return originalAppendChild(child);
+  };
+
+  const dependencies = {
+    location: { hostname },
+    document: {
+      documentElement,
+      createElement
+    },
+    currentPublicState: {
+      currentSite: {
+        protected: currentSiteProtected
+      }
+    },
+    setTimeout: (callback, delay = 0) => {
+      const id = timeoutCallbacks.length + 1;
+      timeoutCallbacks.push({ id, callback, delay });
+      return id;
+    },
+    clearTimeout: (id) => {
+      clearedTimeouts.push(id);
+    },
+    debugReveal: (label, details) => debugEvents.push({ label, details })
+  };
+
+  const factory = new Function(
+    ...Object.keys(dependencies),
+    [
+      "const FILE_DRAG_SESSION_RESET_MS = 5000;",
+      "let dmzOverlayEl = null;",
+      "let dmzOverlayStatusEl = null;",
+      "let dmzOverlayTimer = 0;",
+      "let fileDragDetectedLogged = false;",
+      "function scheduleFileDragSessionReset() {}",
+      "function scheduleFileInputDiscovery() {}",
+      extractFunctionSource(contentSource, "normalizeTarget"),
+      extractFunctionSource(contentSource, "dataTransferLooksLikeFiles"),
+      extractFunctionSource(contentSource, "isChatGptHost"),
+      extractFunctionSource(contentSource, "isGeminiHost"),
+      extractFunctionSource(contentSource, "isClaudeHost"),
+      extractFunctionSource(contentSource, "isGrokHost"),
+      extractFunctionSource(contentSource, "getCurrentHandoffDriverId"),
+      extractFunctionSource(contentSource, "isProtectedFileDropDriver"),
+      extractFunctionSource(contentSource, "getCurrentHandoffDriver"),
+      extractFunctionSource(contentSource, "clearDmzOverlayTimer"),
+      extractFunctionSource(contentSource, "hideDmzOverlay"),
+      extractFunctionSource(contentSource, "setDmzOverlayState"),
+      extractFunctionSource(contentSource, "scheduleDmzOverlayCleanup"),
+      extractFunctionSource(contentSource, "showDmzOverlay"),
+      extractFunctionSource(contentSource, "handleFileDragDetected"),
+      extractFunctionSource(contentSource, "maybeHandleFileDrag"),
+      "return { maybeHandleFileDrag, hideDmzOverlay, getOverlay: () => dmzOverlayEl, getStatus: () => dmzOverlayStatusEl };"
+    ].join("\n\n")
+  );
+
+  return {
+    ...factory(...Object.values(dependencies)),
+    appended,
+    removed,
+    timeoutCallbacks,
+    clearedTimeouts,
+    debugEvents,
+    childrenFor
   };
 }
 
@@ -3841,6 +3970,157 @@ async function testSupportedTextFileHandoffFailureFallsBackToSanitizedText() {
   assert.strictEqual(calls.modals.flat().join("\n").includes(rawSecret), false);
 }
 
+function testProtectedDriversShowDmzOverlayOnFileDrag() {
+  for (const [hostname, protectedSite] of [
+    ["chatgpt.com", true],
+    ["claude.ai", true],
+    ["grok.com", true],
+    ["example.internal", true]
+  ]) {
+    const harness = createDmzOverlayHarness({ hostname, currentSiteProtected: protectedSite });
+    const dataTransfer = createDataTransfer({ exposeFiles: false });
+    const { event } = createEvent({ dataTransfer });
+
+    harness.maybeHandleFileDrag(event);
+
+    assert.strictEqual(harness.appended.length, 1, `expected ${hostname} DMZ overlay`);
+    assert.strictEqual(harness.getOverlay().className.includes("pwm-dmz"), true);
+    assert.strictEqual(harness.getStatus().textContent, "Drop file to sanitize with LeakGuard");
+    assert.strictEqual(harness.getOverlay().dataset.pwmState, "ready");
+  }
+}
+
+function testNonProtectedGenericSiteDoesNotShowDmzOverlayOnFileDrag() {
+  const harness = createDmzOverlayHarness({
+    hostname: "random.example",
+    currentSiteProtected: false
+  });
+  const dataTransfer = createDataTransfer({ exposeFiles: false });
+  const { event } = createEvent({ dataTransfer });
+
+  harness.maybeHandleFileDrag(event);
+
+  assert.strictEqual(harness.appended.length, 0);
+  assert.strictEqual(harness.getOverlay(), null);
+}
+
+async function testDmzOverlayStatesDuringSanitizedTextFallback() {
+  const rawSecret = "LeakGuardDropApiKey1234567890";
+  const composer = {
+    tagName: "TEXTAREA",
+    text: "",
+    selection: { start: 0, end: 0 }
+  };
+  const { maybeHandleDrop, calls } = createHarness({
+    location: { hostname: "claude.ai" },
+    findComposer: () => composer
+  });
+  const { event } = createEvent({
+    dataTransfer: {
+      types: ["Files"],
+      files: [
+        createTextFile({
+          name: "claude.env",
+          text: `API_KEY=${rawSecret}`
+        })
+      ],
+      items: [],
+      dropEffect: "none"
+    },
+    target: composer
+  });
+
+  await maybeHandleDrop(event);
+
+  assert.deepStrictEqual(
+    calls.dmzStates.map((entry) => [entry.message, entry.state]),
+    [
+      ["Drop file to sanitize with LeakGuard", "ready"],
+      ["Redacting...", "redacting"],
+      ["Sanitized file ready", "ready"],
+      ["Inserted sanitized content", "inserted"]
+    ]
+  );
+  assert.ok(calls.dmzCleanups.includes(1800));
+}
+
+async function testDmzOverlayStatesDuringSanitizedFileAttach() {
+  const rawSecret = "LeakGuardDropApiKey1234567890";
+  const composer = {
+    tagName: "TEXTAREA",
+    text: "",
+    selection: { start: 0, end: 0 }
+  };
+  const fileInput = createFileInput();
+  const { maybeHandleDrop, calls } = createHarness({
+    location: { hostname: "chatgpt.com" },
+    findComposer: () => composer,
+    resolveFileInputForHandoff: () => fileInput
+  });
+  const { event } = createEvent({
+    dataTransfer: {
+      types: ["Files"],
+      files: [
+        createTextFile({
+          name: "chatgpt.env",
+          text: `API_KEY=${rawSecret}`
+        })
+      ],
+      items: [],
+      dropEffect: "none"
+    },
+    target: composer
+  });
+
+  await maybeHandleDrop(event);
+
+  assert.deepStrictEqual(
+    calls.dmzStates.map((entry) => [entry.message, entry.state]),
+    [
+      ["Drop file to sanitize with LeakGuard", "ready"],
+      ["Redacting...", "redacting"],
+      ["Sanitized file ready", "ready"],
+      ["Attached sanitized file", "attached"]
+    ]
+  );
+  assert.ok(calls.dmzCleanups.includes(1400));
+}
+
+async function testDmzOverlayFailedStateWhenLocalRedactionFails() {
+  const composer = {
+    tagName: "TEXTAREA",
+    text: "",
+    selection: { start: 0, end: 0 }
+  };
+  const { maybeHandleDrop, calls } = createHarness({
+    location: { hostname: "grok.com" },
+    findComposer: () => composer,
+    requestRedaction: async () => {
+      throw new Error("redaction unavailable");
+    }
+  });
+  const { event } = createEvent({
+    dataTransfer: {
+      types: ["Files"],
+      files: [
+        createTextFile({
+          name: "grok.env",
+          text: "API_KEY=LeakGuardDropApiKey1234567890"
+        })
+      ],
+      items: [],
+      dropEffect: "none"
+    },
+    target: composer
+  });
+
+  await maybeHandleDrop(event);
+
+  assert.ok(calls.dmzStates.some((entry) => entry.message === "Redacting..." && entry.state === "redacting"));
+  assert.ok(calls.dmzStates.some((entry) => entry.message === "Raw file blocked" && entry.state === "failed"));
+  assert.ok(calls.dmzCleanups.includes(3600));
+}
+
 async function testUnsupportedDocumentAndImageFilesPassThroughByDefault() {
   for (const name of [
     "brief.pdf",
@@ -4754,6 +5034,11 @@ async function testGenericTextFallbackFailureUsesSanitizedDownload() {
   await testGeminiTextLikeFileExtensionsAreSanitized();
   await testGeminiTextLikeSanitizerFailureBlocksRawFile();
   await testSupportedTextFileHandoffFailureFallsBackToSanitizedText();
+  testProtectedDriversShowDmzOverlayOnFileDrag();
+  testNonProtectedGenericSiteDoesNotShowDmzOverlayOnFileDrag();
+  await testDmzOverlayStatesDuringSanitizedTextFallback();
+  await testDmzOverlayStatesDuringSanitizedFileAttach();
+  await testDmzOverlayFailedStateWhenLocalRedactionFails();
   await testUnsupportedDocumentAndImageFilesPassThroughByDefault();
   await testUnsupportedFileInputWarnsAndKeepsComposerUsable();
   await testUnsupportedBinaryIsBlockedBeforeGeminiPolicyPassThrough();

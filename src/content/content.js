@@ -2623,6 +2623,16 @@
     return "generic";
   }
 
+  function isProtectedFileDropDriver(id) {
+    if (id === "gemini" || id === "chatgpt" || id === "claude" || id === "grok") {
+      return true;
+    }
+    if (id !== "generic") {
+      return false;
+    }
+    return currentPublicState.currentSite?.protected === true;
+  }
+
   function shouldHandleChatGptLargeTextPaste(pasted, quickAnalysis) {
     return Boolean(
       isChatGptHost() &&
@@ -3512,7 +3522,7 @@
     const id = getCurrentHandoffDriverId();
     return {
       id,
-      usesDmzOverlay: id === "gemini",
+      usesDmzOverlay: isProtectedFileDropDriver(id),
       canHandle: () => true,
       preparePayload: (sanitizedFile, redactedText, metadata) =>
         createSanitizedPayload(
@@ -3947,8 +3957,8 @@
     fileDragDiscoveryScheduled = false;
     fileDragDetectedLogged = false;
     lastGeminiDropSessionHash = "";
-    if (!options.keepGeminiOverlay) {
-      hideGeminiDmzOverlay();
+    if (!options.keepDmzOverlay && !options.keepGeminiOverlay) {
+      hideDmzOverlay();
     }
 
     if (fileDragDiscoveryTimer) {
@@ -4414,8 +4424,8 @@
 
   function handleFileDragDetected(event) {
     scheduleFileDragSessionReset();
-    if (isGeminiHost() && dataTransferLooksLikeFiles(event?.dataTransfer)) {
-      setGeminiDmzOverlayState("Drop file to sanitize with LeakGuard", "ready");
+    if (getCurrentHandoffDriver()?.usesDmzOverlay && dataTransferLooksLikeFiles(event?.dataTransfer)) {
+      setDmzOverlayState("Drop file to sanitize with LeakGuard", "ready");
     }
     if (!fileDragDetectedLogged) {
       fileDragDetectedLogged = true;
@@ -5200,8 +5210,8 @@
     let result;
     let sanitizedFile;
     try {
-      if (context === "drop" && isGeminiHost()) {
-        setGeminiDmzOverlayState("Redacting...", "redacting");
+      if (context === "drop" && getCurrentHandoffDriver()?.usesDmzOverlay) {
+        setDmzOverlayState("Redacting...", "redacting");
       }
       analysis = analyzeText(localFile.text);
       result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
@@ -5214,9 +5224,9 @@
         context,
         error: error?.message || String(error)
       });
-      if (context === "drop" && isGeminiHost()) {
-        setGeminiDmzOverlayState("LeakGuard could not sanitize this file", "failed");
-        scheduleGeminiDmzOverlayCleanup(3600);
+      if (context === "drop" && getCurrentHandoffDriver()?.usesDmzOverlay) {
+        setDmzOverlayState("Raw file blocked", "failed");
+        scheduleDmzOverlayCleanup(3600);
       }
       setBadge("Raw file upload blocked");
       hideBadgeSoon(4200);
@@ -5239,11 +5249,11 @@
       findingsCount: analysis.secretFindings.length,
       redactedLength: result.redactedText.length
     });
-    if (context === "drop" && isGeminiHost()) {
-      setGeminiDmzOverlayState("Sanitized file ready", "ready");
+    const driver = getCurrentHandoffDriver();
+    if (context === "drop" && driver.usesDmzOverlay) {
+      setDmzOverlayState("Sanitized file ready", "ready");
     }
 
-    const driver = getCurrentHandoffDriver();
     const payload = driver.preparePayload(sanitizedFile, result.redactedText, {
       localFile,
       analysis,
@@ -5300,8 +5310,10 @@
     if (optimizedStatus) {
       clearLocalPayloadOptimizationStatus(sizeInfo, "complete");
     }
-    if (context === "drop" && isGeminiHost() && handoffResult.stage === "file") {
-      scheduleGeminiDmzOverlayCleanup(1400);
+    if (context === "drop" && driver.usesDmzOverlay && handoffResult.stage === "file") {
+      scheduleDmzOverlayCleanup(1400);
+    } else if (context === "drop" && driver.usesDmzOverlay && handoffResult.stage === "text") {
+      scheduleDmzOverlayCleanup(1800);
     }
     if (handoffResult.stage === "file" || context !== "drop") {
       setBadge("LeakGuard attached a sanitized local file.");
@@ -5367,7 +5379,7 @@
       const input = findComposer(event.target) || findComposer(document.activeElement);
       await maybeHandleLocalFileInsert(event, input, snapshotDataTransfer, "drop");
     } finally {
-      clearFileDragSession({ keepGeminiOverlay: isGeminiHost() });
+      clearFileDragSession({ keepDmzOverlay: getCurrentHandoffDriver()?.usesDmzOverlay });
     }
   }
 
