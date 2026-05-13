@@ -186,6 +186,7 @@
   let pendingGeminiSanitizedFileObserver = null;
   let pendingGeminiSanitizedFileTimer = 0;
   let pendingGeminiSanitizedFileClickHandler = null;
+  let pendingGeminiGhostIngressClickCleanup = null;
   let dmzOverlayEl = null;
   let dmzOverlayStatusEl = null;
   let dmzOverlayTimer = 0;
@@ -204,6 +205,7 @@
 
   function markExtensionContextInvalidated() {
     extensionRuntimeAvailable = false;
+    clearPendingGeminiGhostIngressClickInterceptor("extension-context-invalidated");
     clearPendingGeminiSanitizedFileHandoff("extension-context-invalidated");
     setBadge("LeakGuard reloaded. Refresh this page.");
     hideBadgeSoon(5000);
@@ -3692,6 +3694,7 @@
   }
 
   function clearPendingGeminiSanitizedFileHandoff(reason = "") {
+    clearPendingGeminiGhostIngressClickInterceptor(reason || "pending-cleared");
     if (!pendingGeminiSanitizedFileHandoff) return;
 
     const pending = pendingGeminiSanitizedFileHandoff;
@@ -3937,6 +3940,7 @@
   }
 
   function clearFileDragSession(options = {}) {
+    clearPendingGeminiGhostIngressClickInterceptor("drag-session-cleared");
     fileDragSessionId += 1;
     lastDiscoveredFileInput = null;
     fileDragDiscoveryCompleted = false;
@@ -4560,7 +4564,90 @@
     }
   }
 
-  async function waitForGeminiGhostIngressFileInput(event, input, details) {
+  function isGeminiGhostIngressFileInput(candidate) {
+    if (!isGeminiHost() || !isFileInputElement(candidate)) return false;
+    const name = candidate.getAttribute?.("name") || candidate.name || "";
+    if (name === "Filedata") return true;
+    try {
+      if (candidate.matches?.('input[type="file"][name="Filedata"]')) return true;
+    } catch {
+      // Selector support varies in synthetic and host-controlled DOMs.
+    }
+    return isWithinGeminiImagesFilesUploader(candidate);
+  }
+
+  function clearPendingGeminiGhostIngressClickInterceptor(reason = "") {
+    if (typeof pendingGeminiGhostIngressClickCleanup !== "function") return;
+    const cleanup = pendingGeminiGhostIngressClickCleanup;
+    pendingGeminiGhostIngressClickCleanup = null;
+    try {
+      cleanup(reason);
+    } catch {
+      // Best-effort cleanup only.
+    }
+  }
+
+  function createGeminiGhostIngressClickInterceptor(sanitizedFile, details, onFinished) {
+    if (!isGeminiHost() || !sanitizedFile) return null;
+    const clickRoot =
+      typeof window !== "undefined" && typeof window?.addEventListener === "function" ? window : document;
+    if (!clickRoot || typeof clickRoot.addEventListener !== "function") return null;
+
+    let cleaned = false;
+    let timeoutId = 0;
+    const handler = (clickEvent) => {
+      const target = normalizeTarget(clickEvent?.target);
+      if (!isGeminiHost() || !sanitizedFile || !isGeminiGhostIngressFileInput(target)) {
+        return;
+      }
+
+      consumeInterceptionEvent(clickEvent);
+      details.handoffStage = "gemini:ghost-ingress-file-input-click";
+      const transfer = createSanitizedDataTransferForHandoff(sanitizedFile, details);
+      const assigned = transfer
+        ? handOffSanitizedFileInput(target, transfer, {
+            dispatchInput: true,
+            details
+          })
+        : false;
+      if (!assigned) {
+        details.failureReason = details.failureReason || "ghost_ingress_click_assignment_failed";
+        if (typeof onFinished === "function") {
+          onFinished(null, details.failureReason);
+        }
+        clearPendingGeminiGhostIngressClickInterceptor("assignment-failed");
+        return;
+      }
+      if (typeof onFinished === "function") {
+        onFinished(target, "ghost_ingress_click_assigned");
+      }
+      clearPendingGeminiGhostIngressClickInterceptor("assigned");
+    };
+
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = 0;
+      }
+      try {
+        clickRoot.removeEventListener("click", handler, true);
+      } catch {
+        // Best-effort cleanup only.
+      }
+    };
+
+    clearPendingGeminiGhostIngressClickInterceptor("replaced");
+    clickRoot.addEventListener("click", handler, true);
+    timeoutId = setTimeout(() => {
+      clearPendingGeminiGhostIngressClickInterceptor("timeout");
+    }, GEMINI_GHOST_INGRESS_TIMEOUT_MS);
+    pendingGeminiGhostIngressClickCleanup = cleanup;
+    return { cleanup };
+  }
+
+  async function waitForGeminiGhostIngressFileInput(event, input, details, sanitizedFile) {
     let discovery = discoverGeminiFileHandoffElements(event, input);
     if (discovery.fileInput) {
       return { discovery, fileInput: discovery.fileInput };
@@ -4579,13 +4666,15 @@
       let settled = false;
       let observer = null;
       let timeoutId = 0;
+      let clickAssignedInput = null;
 
-      const finish = (reason = "") => {
+      const finish = (reason = "", assignedInput = null) => {
         if (settled) return;
         discovery = discoverGeminiFileHandoffElements(event, input);
-        const fileInput = discovery.fileInput;
+        const fileInput = assignedInput || discovery.fileInput;
         if (!fileInput && !reason) return;
         settled = true;
+        clearPendingGeminiGhostIngressClickInterceptor(reason || "finished");
         if (observer) {
           try {
             observer.disconnect();
@@ -4604,6 +4693,11 @@
         resolve({ discovery, fileInput });
       };
 
+      createGeminiGhostIngressClickInterceptor(sanitizedFile, details, (assignedInput, reason) => {
+        clickAssignedInput = assignedInput;
+        finish(reason || "ghost_ingress_click_assigned", assignedInput);
+      });
+
       if (typeof MutationObserver === "function") {
         try {
           observer = new MutationObserver(() => finish());
@@ -4617,7 +4711,7 @@
       }
 
       timeoutId = setTimeout(() => {
-        finish("ghost_ingress_timeout");
+        finish("ghost_ingress_timeout", clickAssignedInput);
       }, GEMINI_GHOST_INGRESS_TIMEOUT_MS);
 
       details.handoffStage = "gemini:ghost-ingress-menu-open";
@@ -4685,12 +4779,18 @@
     const mayClickGeminiUploadUi = event?.type !== "drop" || handoffOptions.allowUploadUiClick === true;
 
     if (!fileInput && mayClickGeminiUploadUi) {
-      const result = await waitForGeminiGhostIngressFileInput(event, input, details);
+      const result = await waitForGeminiGhostIngressFileInput(event, input, details, sanitizedFile);
       discovery = result.discovery;
       fileInput = result.fileInput;
       details.fileInputCountAfterTopTriggerClick = discovery.fileInputCount;
       details.fileInputCountAfterOverlayItemClick = discovery.fileInputCount;
       details.openShadowRootCount = Math.max(details.openShadowRootCount, discovery.openShadowRootCount);
+      if (fileInput && details.handoffStage === "gemini:ghost-ingress-file-input-click") {
+        lastDiscoveredFileInput = fileInput;
+        fileDragDiscoveryCompleted = true;
+        fileDragDiscoveryScheduled = false;
+        return true;
+      }
     } else if (!fileInput) {
       details.failureReason = "no_file_input_without_opening_picker";
     }
@@ -6272,6 +6372,7 @@
     if (location.href === currentUrl) return;
 
     currentUrl = location.href;
+    clearPendingGeminiGhostIngressClickInterceptor("navigation");
     clearPendingGeminiSanitizedFileHandoff("navigation");
     clearAllRiskSessionState();
     await initState();
