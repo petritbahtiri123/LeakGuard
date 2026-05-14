@@ -320,6 +320,32 @@
     }
   }
 
+  function logFileInterception(label, details) {
+    details = details || {};
+    try {
+      console.log(`[LeakGuard] ${label}`, details);
+    } catch {
+      // Console diagnostics are best-effort and must not affect protection.
+    }
+  }
+
+  function isFirefoxRuntime() {
+    return /Firefox/i.test(navigator.userAgent || "");
+  }
+
+  function isPasteBeforeInput(event) {
+    return String(event?.inputType || "") === "insertFromPaste";
+  }
+
+  function getPasteTransfer(event) {
+    return event?.clipboardData || event?.dataTransfer || null;
+  }
+
+  function getPastedPlainText(event) {
+    const transfer = getPasteTransfer(event);
+    return transfer?.getData?.("text/plain") || transfer?.getData?.("text") || event?.data || "";
+  }
+
   function dataTransferLooksLikeFiles(dataTransfer) {
     if (typeof fileDragGuard?.dataTransferLooksLikeFiles === "function") {
       return fileDragGuard.dataTransferLooksLikeFiles(dataTransfer);
@@ -1961,10 +1987,15 @@
     );
   }
 
-  async function applyComposerText(input, expectedText, options = {}) {
+  async function applyComposerText(input, expectedText, options) {
+    options = options || {};
     const plan = buildComposerWritePlan(input, expectedText);
     const expected = plan.canonical;
     const writeText = plan.writeText;
+    const rawInsertedText =
+      typeof options.rawInsertedText === "string"
+        ? normalizeComposerText(options.rawInsertedText)
+        : "";
 
     suppressFollowupInputScan();
     setInputText(input, writeText, {
@@ -1988,6 +2019,18 @@
       return { ok: true, actual, strategy: "html-fallback" };
     }
 
+    if (rawInsertedText && actual.includes(rawInsertedText)) {
+      suppressFollowupInputScan();
+      if (setInputTextDirect(input, writeText, { caretOffset: options.caretOffset })) {
+        actual = await readStableComposerText(input);
+        debugLogSnapshot("rewrite:direct-transactional-fallback", input, expected, writeText);
+
+        if (matchesComposerPlan(plan, actual) && !actual.includes(rawInsertedText)) {
+          return { ok: true, actual, strategy: "direct-transactional-fallback" };
+        }
+      }
+    }
+
     if (typeof options.restoreText === "string") {
       forceRewriteInputText(input, options.restoreText, {
         caretOffset: options.restoreCaretOffset
@@ -1999,6 +2042,34 @@
       ok: false,
       actual
     };
+  }
+
+  async function rewriteComposerTransactionally(input, originalText, redactedText, context, options) {
+    options = options || {};
+    const normalizedOriginal = normalizeComposerText(originalText);
+    const normalizedRedacted = normalizeComposerText(redactedText);
+    const applied = await applyComposerText(input, normalizedRedacted, {
+      ...options,
+      rawInsertedText: normalizedOriginal
+    });
+
+    if (applied.ok && (!normalizedOriginal || !applied.actual.includes(normalizedOriginal))) {
+      return applied;
+    }
+
+    suppressFollowupInputScan();
+    if (setInputTextDirect(input, normalizedRedacted, { caretOffset: options.caretOffset })) {
+      const actual = await readStableComposerText(input);
+      if (
+        matchesComposerPlan(buildComposerWritePlan(input, normalizedRedacted), actual) &&
+        (!normalizedOriginal || !actual.includes(normalizedOriginal))
+      ) {
+        return { ok: true, actual, strategy: "direct-transactional-rewrite" };
+      }
+      return { ok: false, actual };
+    }
+
+    return applied;
   }
 
   async function ensureExactComposerState(input, expectedText) {
@@ -2035,13 +2106,36 @@
     }
   }
 
-  async function applyPasteDecision(input, originalText, selection, insertedText, context) {
-    const next = spliceSelectionText(originalText, selection, insertedText);
-    const applied = await applyComposerText(input, next.text, {
-      caretOffset: next.caretOffset,
-      restoreText: originalText,
-      restoreCaretOffset: selection?.end
-    });
+  async function applyPasteDecision(input, originalText, selection, insertedText, context, options) {
+    options = options || {};
+    const rawInsertedText =
+      typeof options.rawInsertedText === "string"
+        ? normalizeComposerText(options.rawInsertedText)
+        : "";
+    const normalizedOriginalText = normalizeComposerText(originalText);
+    const normalizedInsertedText = normalizeComposerText(insertedText);
+    const rawIndex = rawInsertedText ? normalizedOriginalText.indexOf(rawInsertedText) : -1;
+    const next =
+      rawIndex >= 0
+        ? {
+            text:
+              normalizedOriginalText.slice(0, rawIndex) +
+              normalizedInsertedText +
+              normalizedOriginalText.slice(rawIndex + rawInsertedText.length),
+            caretOffset: rawIndex + normalizedInsertedText.length
+          }
+        : spliceSelectionText(originalText, selection, insertedText);
+    const applied = await rewriteComposerTransactionally(
+      input,
+      rawInsertedText,
+      next.text,
+      context,
+      {
+        caretOffset: next.caretOffset,
+        restoreText: originalText,
+        restoreCaretOffset: selection?.end
+      }
+    );
 
     if (!applied.ok) {
       await showRewriteFailure(
@@ -2095,6 +2189,11 @@
   }
 
   async function maybeHandleBeforeInput(event) {
+    if (isPasteBeforeInput(event)) {
+      await maybeHandlePaste(event);
+      return;
+    }
+
     if (!extensionRuntimeAvailable || modalOpen || !shouldInterceptBeforeInput(event)) return;
 
     const input = findComposer(event.target);
@@ -2289,13 +2388,13 @@
     if (!input) return;
     noteActiveRiskEditor(input);
 
-    if (typeof dataTransferHasFiles === "function" && dataTransferHasFiles(event.clipboardData)) {
-      await maybeHandleLocalFileInsert(event, input, event.clipboardData, "paste");
+    const pasteTransfer = getPasteTransfer(event);
+    if (typeof dataTransferHasFiles === "function" && dataTransferHasFiles(pasteTransfer)) {
+      await maybeHandleLocalFileInsert(event, input, pasteTransfer, "paste");
       return;
     }
 
-    const pasted =
-      event.clipboardData?.getData("text/plain") || event.clipboardData?.getData("text") || "";
+    const pasted = getPastedPlainText(event);
 
     if (!pasted) return;
 
@@ -2318,7 +2417,8 @@
         originalText,
         selection,
         analysis.normalizedText,
-        "paste"
+        "paste",
+        { rawInsertedText: pasted }
       );
 
       if (!ok) return;
@@ -2348,7 +2448,8 @@
         baseText,
         selection,
         result.redactedText,
-        "paste"
+        "paste",
+        { rawInsertedText: pasted }
       );
 
       if (!ok) {
@@ -2379,7 +2480,8 @@
         baseText,
         selection,
         result.redactedText,
-        "paste"
+        "paste",
+        { rawInsertedText: pasted }
       );
 
       if (!ok) return;
@@ -2401,7 +2503,8 @@
         baseText,
         selection,
         analysis.normalizedText,
-        "paste"
+        "paste",
+        { rawInsertedText: pasted }
       );
       if (!ok) return;
 
@@ -2433,7 +2536,8 @@
       baseText,
       selection,
       result.redactedText,
-      "paste"
+      "paste",
+      { rawInsertedText: pasted }
     );
 
     if (!ok) return;
@@ -2976,6 +3080,10 @@
 
   async function applyGeminiEditorText(editor, sanitizedText, context, options) {
     const applyOptions = options || {};
+    const rawInsertedText =
+      typeof applyOptions.rawInsertedText === "string"
+        ? normalizeComposerText(applyOptions.rawInsertedText)
+        : "";
     if (
       !applyOptions.skipLargeConfirmation &&
       !(await confirmGeminiLargeSanitizedTextInsertion(sanitizedText, context))
@@ -2986,7 +3094,42 @@
       return "cancelled";
     }
 
+    if (rawInsertedText && getInputText(editor).includes(rawInsertedText)) {
+      const currentText = getInputText(editor);
+      const rawIndex = currentText.indexOf(rawInsertedText);
+      const desiredText =
+        rawIndex >= 0
+          ? `${currentText.slice(0, rawIndex)}${normalizeComposerText(sanitizedText)}${currentText.slice(rawIndex + rawInsertedText.length)}`
+          : normalizeComposerText(sanitizedText);
+      const applied = await rewriteComposerTransactionally(
+        editor,
+        rawInsertedText,
+        desiredText,
+        context,
+        { caretOffset: rawIndex >= 0 ? rawIndex + normalizeComposerText(sanitizedText).length : undefined }
+      );
+
+      if (applied.ok) {
+        setBadge("Content redacted");
+        hideBadgeSoon();
+        refreshBadgeFromCurrentInput();
+        return true;
+      }
+    }
+
     if (insertGeminiEditorText(editor, sanitizedText)) {
+      if (rawInsertedText && getInputText(editor).includes(rawInsertedText)) {
+        const applied = await rewriteComposerTransactionally(
+          editor,
+          rawInsertedText,
+          normalizeComposerText(sanitizedText),
+          context,
+          { caretOffset: normalizeComposerText(sanitizedText).length }
+        );
+        if (!applied.ok) {
+          return false;
+        }
+      }
       setBadge("Content redacted");
       hideBadgeSoon();
       refreshBadgeFromCurrentInput();
@@ -3000,7 +3143,8 @@
       originalText,
       selection,
       String(sanitizedText || ""),
-      context
+      context,
+      { rawInsertedText }
     );
 
     if (inserted) {
@@ -3124,7 +3268,9 @@
           }
       }
 
-      const applied = await applyGeminiEditorText(editor, textToInsert, "gemini-paste");
+      const applied = await applyGeminiEditorText(editor, textToInsert, "gemini-paste", {
+        rawInsertedText: pasted
+      });
       if (applied === true || applied === "cancelled") {
         if (optimizedStatus) {
           clearLocalPayloadOptimizationStatus(sizeInfo, applied === true ? "complete" : "cancelled");
@@ -3353,6 +3499,7 @@
     return {
       sanitizedFile,
       redactedText: String(redactedText || ""),
+      rawText: typeof localFile?.text === "string" ? localFile.text : "",
       originalFile: originalFileMetadataFromLocalFile(localFile),
       placeholders: Array.from(new Set(String(redactedText || "").match(/\[[A-Z_]+_\d+\]/g) || [])),
       replacements: Array.isArray(result?.replacements)
@@ -3406,7 +3553,8 @@
     const inserted = await applyGeminiSanitizedTextFallback(
       event,
       input,
-      formatSanitizedFileFallbackText(payload)
+      formatSanitizedFileFallbackText(payload),
+      { rawInsertedText: payload.rawText || "" }
     );
     if (inserted === true) {
       setGeminiDmzOverlayState("Inserted sanitized content", "inserted");
@@ -3456,7 +3604,9 @@
     if (isGeminiHost()) {
       return insertGeminiSanitizedText(payload, event, input);
     }
-    return applySanitizedTextFallback(event, input, formatSanitizedFileFallbackText(payload));
+    return applySanitizedTextFallback(event, input, formatSanitizedFileFallbackText(payload), {
+      rawInsertedText: payload.rawText || ""
+    });
   }
 
   function buildSanitizedDownloadFileName(sanitizedFile) {
@@ -4478,6 +4628,11 @@
         files: Array.from(fileInput.files || []).map(describeFileForDebug),
         events
       });
+      logFileInterception("file replacement success", {
+        input: describeFileInputForDebug(fileInput, "resolved"),
+        files: Array.from(fileInput.files || []).map(describeFileForDebug),
+        events
+      });
       return true;
     } catch (error) {
       if (details) {
@@ -4895,7 +5050,8 @@
     return false;
   }
 
-  async function applyGeminiSanitizedTextFallback(event, input, redactedText) {
+  async function applyGeminiSanitizedTextFallback(event, input, redactedText, options) {
+    options = options || {};
     if (!isGeminiHost()) {
       return false;
     }
@@ -4913,7 +5069,10 @@
         editor,
         String(redactedText || ""),
         "file-text-fallback",
-        { skipLargeConfirmation: true }
+        {
+          skipLargeConfirmation: true,
+          rawInsertedText: options.rawInsertedText || ""
+        }
       );
       if (inserted) {
         setBadge(GEMINI_SANITIZED_TEXT_FALLBACK_MESSAGE);
@@ -4940,7 +5099,8 @@
       originalText,
       selection,
       String(redactedText || ""),
-      "file-text-fallback"
+      "file-text-fallback",
+      { rawInsertedText: options.rawInsertedText || "" }
     );
 
     if (!inserted) {
@@ -4962,14 +5122,15 @@
     return true;
   }
 
-  async function applySanitizedTextFallback(event, input, redactedText) {
+  async function applySanitizedTextFallback(event, input, redactedText, options) {
+    options = options || {};
     const text = String(redactedText || "");
     if (!text) {
       return false;
     }
 
     if (isGeminiHost()) {
-      return applyGeminiSanitizedTextFallback(event, input, text);
+      return applyGeminiSanitizedTextFallback(event, input, text, options);
     }
 
     if (text.length > GEMINI_AUTO_INSERT_TEXT_LIMIT) {
@@ -4997,7 +5158,8 @@
       originalText,
       selection,
       text,
-      "file-text-fallback"
+      "file-text-fallback",
+      { rawInsertedText: options.rawInsertedText || "" }
     );
 
     if (!inserted) {
@@ -5029,7 +5191,8 @@
     return "";
   }
 
-  async function insertGeminiLocalFileText(event, input, redactedText) {
+  async function insertGeminiLocalFileText(event, input, redactedText, options) {
+    options = options || {};
     if (!isGeminiHost()) {
       return false;
     }
@@ -5044,7 +5207,8 @@
     const editor = resolveGeminiFallbackEditor(event, input);
     if (editor) {
       return applyGeminiEditorText(editor, String(redactedText || ""), "gemini-file-text", {
-        skipLargeConfirmation: true
+        skipLargeConfirmation: true,
+        rawInsertedText: options.rawInsertedText || ""
       });
     }
 
@@ -5064,7 +5228,8 @@
       originalText,
       selection,
       String(redactedText || ""),
-      "gemini-file-text"
+      "gemini-file-text",
+      { rawInsertedText: options.rawInsertedText || "" }
     );
   }
 
@@ -5105,7 +5270,23 @@
       consumeInterceptionEvent(event);
     }
 
+    if (context === "file-input") {
+      logFileInterception("file input intercepted", {
+        files: listLocalTransferFiles(dataTransfer).map(describeFileForDebug),
+        browser: isFirefoxRuntime() ? "firefox" : "other"
+      });
+    }
+
     const localFile = await readLocalTextFileFromDataTransfer(dataTransfer);
+    if (context === "file-input") {
+      logFileInterception("file scan result", {
+        handled: Boolean(localFile.handled),
+        ok: Boolean(localFile.ok),
+        code: localFile.code || "",
+        file: describeFileForDebug(localFile.file || localFile.sourceFile),
+        textLength: typeof localFile.text === "string" ? localFile.text.length : 0
+      });
+    }
     if (!localFile.handled) {
       if (localFile.code || localFile.message) {
         handOffOriginalLocalFile(event, dataTransfer, context);

@@ -391,6 +391,9 @@ function createHarness(overrides = {}) {
         return 0;
       }
     },
+    navigator: {
+      userAgent: "Chrome"
+    },
     fileDragGuard: null,
     rawFileDropInterceptions: new WeakSet(),
     FilePasteHelpers: globalThis.PWM.FilePasteHelpers,
@@ -480,12 +483,23 @@ function createHarness(overrides = {}) {
       input.text = `${originalText.slice(0, selection.start)}${insertedText}${originalText.slice(selection.end)}`;
       return true;
     },
+    setInputText: (input, text, options = {}) => {
+      calls.primaryTextWrites = calls.primaryTextWrites || [];
+      calls.primaryTextWrites.push({ input, text, options });
+      input.text = String(text || "");
+    },
+    forceRewriteInputText: (input, text, options = {}) => {
+      calls.forceTextWrites = calls.forceTextWrites || [];
+      calls.forceTextWrites.push({ input, text, options });
+      input.text = String(text || "");
+    },
     setInputTextDirect: (input, text, options = {}) => {
       calls.directTextWrites = calls.directTextWrites || [];
       calls.directTextWrites.push({ input, text, options });
       input.text = String(text || "");
       return true;
     },
+    debugLogSnapshot: () => {},
     setBadge: (...args) => calls.badges.push(args),
     hideBadgeSoon: () => {
       calls.hideBadgeSoon += 1;
@@ -557,6 +571,11 @@ function createHarness(overrides = {}) {
       "function createSanitizedFileHandoffDetails() { return {}; }",
       "async function downloadGeminiSanitizedFileFallback() { return false; }",
       extractFunctionSource(contentSource, "consumeInterceptionEvent"),
+      extractFunctionSource(contentSource, "logFileInterception"),
+      extractFunctionSource(contentSource, "isFirefoxRuntime"),
+      extractFunctionSource(contentSource, "isPasteBeforeInput"),
+      extractFunctionSource(contentSource, "getPasteTransfer"),
+      extractFunctionSource(contentSource, "getPastedPlainText"),
       extractFunctionSource(contentSource, "dataTransferLooksLikeFiles"),
       extractFunctionSource(contentSource, "listLocalTransferFiles"),
       extractFunctionSource(contentSource, "snapshotLocalFileDataTransfer"),
@@ -606,6 +625,8 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "insertGeminiEditorText"),
       extractFunctionSource(contentSource, "dispatchGeminiEditorInput"),
       extractFunctionSource(contentSource, "confirmGeminiLargeSanitizedTextInsertion"),
+      extractFunctionSource(contentSource, "applyComposerText"),
+      extractFunctionSource(contentSource, "rewriteComposerTransactionally"),
       extractFunctionSource(contentSource, "applyGeminiEditorText"),
       extractFunctionSource(contentSource, "blockGeminiEditorRawContent"),
       extractFunctionSource(contentSource, "maybeHandleGeminiEditorPaste"),
@@ -1026,6 +1047,7 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "isFileInputElement"),
       extractFunctionSource(contentSource, "describeFileForDebug"),
       extractFunctionSource(contentSource, "describeFileInputForDebug"),
+      extractFunctionSource(contentSource, "logFileInterception"),
       extractFunctionSource(contentSource, "getSafeTextSnippet"),
       extractFunctionSource(contentSource, "describeElementForDebug"),
       extractFunctionSource(contentSource, "originalFileMetadataFromEvent"),
@@ -2878,6 +2900,76 @@ async function testGeminiQlEditorPasteIsSanitizedBeforePageHandlers() {
   assert.strictEqual(editor.text, "API_KEY=[PWM_1]");
   assert.strictEqual(editor.text.includes(rawSecret), false);
   assert.strictEqual(calls.redactions.length, 1);
+}
+
+async function testFirefoxGeminiPasteRawAlreadyLandedIsReplaced() {
+  const rawSecret = "LeakGuardPasteApiKey1234567890";
+  const rawText = `API_KEY=${rawSecret}`;
+  const { editor, child } = createGeminiEditor(rawText);
+  const { maybeHandlePaste, calls } = createHarness({
+    location: { hostname: "gemini.google.com" },
+    setInputText: (input, text) => {
+      calls.primaryTextWrites = calls.primaryTextWrites || [];
+      calls.primaryTextWrites.push({ input, text });
+      input.text = `${input.text}\n${text}`;
+    },
+    forceRewriteInputText: (input, text) => {
+      calls.forceTextWrites = calls.forceTextWrites || [];
+      calls.forceTextWrites.push({ input, text });
+      input.text = `${input.text}\n${text}`;
+    },
+    document: {
+      activeElement: editor,
+      execCommand(command, _showUi, value) {
+        assert.strictEqual(command, "insertText");
+        editor.text += `\n${value}`;
+        return true;
+      },
+      createRange: () => null
+    }
+  });
+  const { event, calls: eventCalls } = createClipboardEvent({
+    text: rawText,
+    target: child
+  });
+
+  await maybeHandlePaste(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(eventCalls.stopImmediatePropagation, 1);
+  assert.strictEqual(editor.text, "API_KEY=[PWM_1]");
+  assert.strictEqual(editor.text.includes(rawSecret), false);
+  assert.ok(calls.directTextWrites?.length >= 1, "Firefox fallback should force a direct redacted rewrite");
+  assert.strictEqual(calls.redactions.length, 1);
+}
+
+async function testFirefoxGeminiPasteDuplicateRegressionIsCollapsed() {
+  const rawSecret = "LeakGuardPasteApiKey1234567890";
+  const rawText = `API_KEY=${rawSecret}`;
+  const { editor, child } = createGeminiEditor("");
+  const { maybeHandlePaste, calls } = createHarness({
+    location: { hostname: "gemini.google.com" },
+    document: {
+      activeElement: editor,
+      execCommand(command, _showUi, value) {
+        assert.strictEqual(command, "insertText");
+        editor.text = `${rawText}\n${value}`;
+        return true;
+      },
+      createRange: () => null
+    }
+  });
+  const { event } = createClipboardEvent({
+    text: rawText,
+    target: child
+  });
+
+  await maybeHandlePaste(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(editor.text, "API_KEY=[PWM_1]");
+  assert.strictEqual(editor.text.includes(rawSecret), false);
+  assert.ok(calls.directTextWrites?.length >= 1, "duplicate raw+redacted state should be force-rewritten");
 }
 
 async function testGeminiQlEditorPastePauseInsertsRawText() {
@@ -4959,6 +5051,126 @@ async function testUserManagedProtectedSiteDropFallsBackToSanitizedTextWhenHando
   assert.strictEqual(calls.modals.some(([title]) => title === "Raw file upload blocked"), false);
 }
 
+async function testFirefoxChatGptFileInputReplacesSelectedFile() {
+  const rawSecret = "LeakGuardFileApiKey1234567890";
+  const fileInput = createFileInput();
+  fileInput.files = [
+    createTextFile({
+      name: "chatgpt.env",
+      text: `API_KEY=${rawSecret}`
+    })
+  ];
+  const { maybeHandleFileInputChange, calls } = createHarness({
+    location: { hostname: "chatgpt.com" },
+    navigator: { userAgent: "Firefox" },
+    findComposer: () => null,
+    handOffSanitizedLocalFile: (event, input, sanitizedFile, context) => {
+      calls.handoffs.push({ event, input, sanitizedFile, context });
+      assert.strictEqual(event.target, fileInput);
+      assert.strictEqual(context, "file-input");
+      fileInput.files = [sanitizedFile];
+      fileInput.dispatchEvent({ type: "input", bubbles: true, composed: true });
+      fileInput.dispatchEvent({ type: "change", bubbles: true, composed: true });
+      return true;
+    }
+  });
+  const { event } = createEvent({
+    type: "change",
+    target: fileInput
+  });
+
+  await maybeHandleFileInputChange(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(calls.handoffs.length, 1);
+  assert.strictEqual(calls.handoffs[0].context, "file-input");
+  assert.strictEqual(calls.textFallbacks.length, 0);
+  assert.strictEqual(fileInput.files.length, 1);
+  assert.strictEqual(fileInput.files[0].text, "API_KEY=[PWM_1]");
+  assert.strictEqual(fileInput.files[0].text.includes(rawSecret), false);
+  assert.deepStrictEqual(fileInput.events, ["input", "change"]);
+}
+
+async function testFirefoxChatGptFileInputReplacesBasicSecretsFixture() {
+  const rawContent = fs.readFileSync(
+    path.join(repoRoot, "tests/fixtures/01-basic-secrets.env"),
+    "utf8"
+  ).trim();
+  const sanitizedContent = [
+    "OPENAI_API_KEY=[PWM_1]",
+    "ANTHROPIC_API_KEY=[PWM_2]",
+    "GITHUB_TOKEN=[PWM_3]",
+    "STRIPE_SECRET=[PWM_4]",
+    "DB_PASSWORD=[PWM_5]"
+  ].join("\n");
+  const fileInput = createFileInput();
+  fileInput.files = [
+    createTextFile({
+      name: "01-basic-secrets.env",
+      text: rawContent
+    })
+  ];
+  const { maybeHandleFileInputChange, calls } = createHarness({
+    location: { hostname: "chatgpt.com" },
+    navigator: { userAgent: "Firefox" },
+    findComposer: () => null,
+    analyzeText: (text) => ({
+      normalizedText: text,
+      secretFindings: [
+        { raw: "sk-proj-" },
+        { raw: "sk-ant-" },
+        { raw: "ghp_" },
+        { raw: "sk_live_" },
+        { raw: "raw DB password" }
+      ],
+      findings: [
+        { raw: "sk-proj-" },
+        { raw: "sk-ant-" },
+        { raw: "ghp_" },
+        { raw: "sk_live_" },
+        { raw: "raw DB password" }
+      ],
+      placeholderNormalized: false
+    }),
+    requestRedaction: async (text, findings, options) => {
+      calls.redactions.push({ text, findings, options });
+      return { redactedText: sanitizedContent };
+    },
+    handOffSanitizedLocalFile: (event, input, sanitizedFile, context) => {
+      calls.handoffs.push({ event, input, sanitizedFile, context });
+      assert.strictEqual(event.target, fileInput);
+      assert.strictEqual(input, null);
+      assert.strictEqual(context, "file-input");
+      fileInput.files = [sanitizedFile];
+      fileInput.dispatchEvent({ type: "input", bubbles: true, composed: true });
+      fileInput.dispatchEvent({ type: "change", bubbles: true, composed: true });
+      return true;
+    }
+  });
+  const { event } = createEvent({
+    type: "change",
+    target: fileInput
+  });
+
+  await maybeHandleFileInputChange(event);
+
+  const finalContent = fileInput.files[0]?.text || "";
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(calls.handoffs.length, 1);
+  assert.strictEqual(calls.handoffs[0].context, "file-input");
+  assert.strictEqual(calls.textFallbacks.length, 0);
+  assert.strictEqual(finalContent.includes("sk-proj-"), false);
+  assert.strictEqual(finalContent.includes("sk-ant-"), false);
+  assert.strictEqual(finalContent.includes("ghp_"), false);
+  assert.strictEqual(finalContent.includes("sk_live_"), false);
+  assert.strictEqual(finalContent.includes("raw DB password"), false);
+  ["[PWM_1]", "[PWM_2]", "[PWM_3]", "[PWM_4]", "[PWM_5]"].forEach((placeholder) => {
+    assert.ok(finalContent.includes(placeholder), `expected ${placeholder} in final content`);
+  });
+  assert.strictEqual(finalContent.indexOf("[PWM_1]"), finalContent.lastIndexOf("[PWM_1]"));
+  assert.deepStrictEqual(fileInput.events, ["input", "change"]);
+}
+
 async function testGenericTextFallbackFailureUsesSanitizedDownload() {
   const rawSecret = "LeakGuardDropApiKey1234567890";
   const composer = {
@@ -5046,6 +5258,8 @@ async function testGenericTextFallbackFailureUsesSanitizedDownload() {
   await testGrokDropUsesDiscoveredFileInputHandoff();
   await testGrokDropCreatesSanitizedFileWithoutComposerTextFallback();
   await testGeminiQlEditorPasteIsSanitizedBeforePageHandlers();
+  await testFirefoxGeminiPasteRawAlreadyLandedIsReplaced();
+  await testFirefoxGeminiPasteDuplicateRegressionIsCollapsed();
   await testGeminiQlEditorPastePauseInsertsRawText();
   await testChatGptLargePasteCreatesSanitizedPlainTextFileHandoff();
   await testChatGptLargePasteFallsBackToSanitizedTextOnlyWhenFileHandoffFails();
@@ -5087,6 +5301,8 @@ async function testGenericTextFallbackFailureUsesSanitizedDownload() {
   await testChatGptAndClaudeUseStructuredSanitizedTextWhenFileAttachUnavailable();
   await testUserManagedProtectedSiteDropUsesGenericSanitizedHandoff();
   await testUserManagedProtectedSiteDropFallsBackToSanitizedTextWhenHandoffRejected();
+  await testFirefoxChatGptFileInputReplacesSelectedFile();
+  await testFirefoxChatGptFileInputReplacesBasicSecretsFixture();
   await testGenericTextFallbackFailureUsesSanitizedDownload();
   console.log("PASS content file drop interception regressions");
 })().catch((error) => {

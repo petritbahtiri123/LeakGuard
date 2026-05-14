@@ -456,8 +456,8 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
     "file input changes should be captured, cleared, and routed through local redaction"
   );
   assert.ok(
-    pasteSource.indexOf("dataTransferHasFiles(event.clipboardData)") <
-      pasteSource.indexOf('event.clipboardData?.getData("text/plain")'),
+    pasteSource.indexOf("dataTransferHasFiles(pasteTransfer)") <
+      pasteSource.indexOf("const pasted = getPastedPlainText(event)"),
     "file paste handling should run before ordinary text paste extraction"
   );
   assert.ok(
@@ -529,9 +529,11 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   );
   assert.ok(
     beforeInputSource.includes("consumeInterceptionEvent(event);") &&
+      beforeInputSource.includes("isPasteBeforeInput(event)") &&
+      beforeInputSource.includes("await maybeHandlePaste(event);") &&
       submitSource.includes("consumeInterceptionEvent(event);") &&
       fallbackSendSource.includes("consumeInterceptionEvent(event);"),
-    "beforeinput, submit, and Enter-send interception should all stop immediate propagation to block host races"
+    "beforeinput paste/typing, submit, and Enter-send interception should all stop immediate propagation to block host races"
   );
   assert.ok(
     contentSource.includes("shouldAutoRedactTypedSecrets"),
@@ -566,10 +568,18 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
     "composer rewrite verification should allow safe normalized-equivalent editor states"
   );
   assert.ok(
+    contentSource.includes("async function rewriteComposerTransactionally") &&
+      contentSource.includes("rawInsertedText") &&
+      contentSource.includes("setInputTextDirect(input, normalizedRedacted") &&
+      contentSource.includes("direct-transactional-rewrite"),
+    "paste rewrites should have a transactional direct fallback that removes raw landed Firefox input"
+  );
+  assert.ok(
     applyComposerTextSource.includes("const actualAfterPrimary = await readStableComposerText(input);") &&
       applyComposerTextSource.includes("forceRewriteInputText(input, writeText") &&
+      applyComposerTextSource.includes("setInputTextDirect(input, writeText") &&
       applyComposerTextSource.includes("matchesComposerPlan(plan, actual)"),
-    "contenteditable rewrites should verify stable final text against the expected redacted text"
+    "contenteditable rewrites should verify stable final text and force direct redacted text when raw input remains"
   );
   assert.ok(
     typedRewriteSource.includes("ensureExactComposerState(input, expectedText)") &&
@@ -591,6 +601,10 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
     pasteSource.indexOf("consumeInterceptionEvent(event);") <
       pasteSource.indexOf("await analyzeTextWithAiAssist(pasted)"),
     "paste handler should consume sensitive paste events before async AI analysis can let the host insert raw text"
+  );
+  assert.ok(
+    pasteSource.includes("{ rawInsertedText: pasted }"),
+    "paste rewrites should verify that the original pasted text is not left beside redacted content"
   );
   assert.ok(
     contentSource.includes("buildRiskFingerprint") &&
@@ -651,6 +665,39 @@ function testPerplexityStyleRewriteVerificationToleratesWhitespaceNormalization(
   );
 }
 
+async function testTransactionalRewriteFallbackRemovesRawDuplicate() {
+  const factory = new Function(
+    "normalizeComposerText",
+    [
+      "const calls = { directWrites: 0 };",
+      "function buildComposerWritePlan(_input, text) { const canonical = normalizeComposerText(text); return { canonical, writeText: canonical }; }",
+      "function matchesComposerPlan(plan, actual) { return normalizeComposerText(actual) === plan.canonical; }",
+      "function suppressFollowupInputScan() {}",
+      "function setInputText(input, text) { input.text = `${input.text}\\n${text}`; }",
+      "function forceRewriteInputText(input, text) { input.text = `${input.text}\\n${text}`; }",
+      "function setInputTextDirect(input, text) { calls.directWrites += 1; input.text = normalizeComposerText(text); return true; }",
+      "async function readStableComposerText(input) { return normalizeComposerText(input.text); }",
+      "function debugLogSnapshot() {}",
+      extractFunctionSource(contentSource, "applyComposerText"),
+      extractFunctionSource(contentSource, "rewriteComposerTransactionally"),
+      "return { rewriteComposerTransactionally, calls };"
+    ].join("\n\n")
+  );
+  const { rewriteComposerTransactionally, calls } = factory(ComposerHelpers.normalizeComposerText);
+  const rawText = "api_key=bbbbbbbbbb";
+  const redactedText = "api_key=[PWM_1]";
+  const input = {
+    text: `${rawText}\n${redactedText}`
+  };
+
+  const result = await rewriteComposerTransactionally(input, rawText, redactedText, "paste");
+
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(input.text, redactedText);
+  assert.strictEqual(input.text.includes(rawText), false);
+  assert.strictEqual(calls.directWrites, 1, "raw+redacted duplicate should force one direct rewrite");
+}
+
 function run() {
   testBeforeInputGuardStaysConservative();
   testTypedAssignmentSecretIsCaughtBeforeCommit();
@@ -673,7 +720,12 @@ function run() {
   testPauseBypassGatesPasteAndSendAfterPolicy();
   testContentScriptBindsBeforeInputAndKeepsFallbackGuard();
   testPerplexityStyleRewriteVerificationToleratesWhitespaceNormalization();
-  console.log("PASS typed beforeinput interception regressions");
+  return testTransactionalRewriteFallbackRemovesRawDuplicate().then(() => {
+    console.log("PASS typed beforeinput interception regressions");
+  });
 }
 
-run();
+run().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
