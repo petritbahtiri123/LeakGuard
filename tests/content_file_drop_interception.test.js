@@ -539,7 +539,12 @@ function createHarness(overrides = {}) {
     document: {
       activeElement,
       execCommand: () => false,
-      createRange: () => null
+      createRange: () => null,
+      createElement: (tagName) => ({
+        tagName: String(tagName || "").toUpperCase(),
+        type: "",
+        files: []
+      })
     },
     location: { hostname: "chatgpt.com" }
   };
@@ -564,6 +569,8 @@ function createHarness(overrides = {}) {
       'const LOCAL_TEXT_HARD_BLOCK_TITLE = "Large payload blocked for browser stability";',
       'const LOCAL_TEXT_HARD_BLOCK_MESSAGE = "This content is over 4 MB. LeakGuard did not process or send it automatically to avoid browser instability. Split the file into smaller parts, or sanitize it separately before upload.";',
       "let suppressInputScanUntil = 0;",
+      "let syntheticFileListCapabilityCache = null;",
+      "let inputFileAssignmentCapabilityCache = null;",
       "function setDmzOverlayState(message, state = \"\") { calls.dmzStates.push({ message, state }); }",
       "function scheduleDmzOverlayCleanup(delayMs = 1200) { calls.dmzCleanups.push(delayMs); }",
       "function setGeminiDmzOverlayState(message, state = \"\") { setDmzOverlayState(message, state); }",
@@ -573,6 +580,10 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "consumeInterceptionEvent"),
       extractFunctionSource(contentSource, "logFileInterception"),
       extractFunctionSource(contentSource, "isFirefoxRuntime"),
+      extractFunctionSource(contentSource, "createSafeCapabilityProbeFile"),
+      extractFunctionSource(contentSource, "canUseSyntheticDataTransferFileList"),
+      extractFunctionSource(contentSource, "canAssignFilesToInput"),
+      extractFunctionSource(contentSource, "shouldUseFirefoxTextFallbackForFileHandoff"),
       extractFunctionSource(contentSource, "isPasteBeforeInput"),
       extractFunctionSource(contentSource, "getPasteTransfer"),
       extractFunctionSource(contentSource, "getPastedPlainText"),
@@ -585,6 +596,8 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "resolveLocalFileTransferPolicy"),
       extractFunctionSource(contentSource, "resolveFileDragGuardPolicy"),
       extractFunctionSource(contentSource, "showUnsupportedFilePassThroughNotice"),
+      extractFunctionSource(contentSource, "shouldBlockUnsupportedFileTransfer"),
+      extractFunctionSource(contentSource, "getUnsupportedFileBlockedMessage"),
       extractFunctionSource(contentSource, "getLocalTextPayloadByteLength"),
       extractFunctionSource(contentSource, "classifyLocalTextPayloadSize"),
       extractFunctionSource(contentSource, "showLocalPayloadOptimizationStatus"),
@@ -646,6 +659,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "logSanitizedFileHandoffFailure"),
       extractFunctionSource(contentSource, "originalFileMetadataFromLocalFile"),
       extractFunctionSource(contentSource, "createSanitizedPayload"),
+      extractFunctionSource(contentSource, "isSafeSanitizedPayload"),
       extractFunctionSource(contentSource, "createGeminiSanitizedPayload"),
       extractFunctionSource(contentSource, "fallbackLanguageFromFileName"),
       extractFunctionSource(contentSource, "geminiFallbackLanguageFromFileName"),
@@ -840,6 +854,7 @@ function triggerGhostIngressTimeout(harness) {
 
 function createHandoffHarness({
   hostname = "gemini.google.com",
+  userAgent = "Chrome",
   fileInputs = [],
   shadowInputs = [],
   uploadTriggers = [],
@@ -927,6 +942,13 @@ function createHandoffHarness({
   }));
   const documentRoot = {
     documentElement: null,
+    createElement(tagName) {
+      return {
+        tagName: String(tagName || "").toUpperCase(),
+        type: "",
+        files: []
+      };
+    },
     addEventListener(type, handler) {
       if (type === "click") clickHandlers.push(handler);
     },
@@ -972,6 +994,7 @@ function createHandoffHarness({
     ClipboardEvent: undefined,
     DataTransfer: TestDataTransfer,
     MutationObserver: TestMutationObserver,
+    navigator: { userAgent },
     location: { hostname },
     window: {
       addEventListener(type, handler, options) {
@@ -1029,10 +1052,17 @@ function createHandoffHarness({
       "let pendingGeminiSanitizedFileTimer = 0;",
       "let pendingGeminiSanitizedFileClickHandler = null;",
       "let pendingGeminiGhostIngressClickCleanup = null;",
+      "let syntheticFileListCapabilityCache = null;",
+      "let inputFileAssignmentCapabilityCache = null;",
       "const geminiSanitizedDownloadFallbacks = new WeakSet();",
       'const GEMINI_SANITIZED_DOWNLOAD_MESSAGE = "Sanitized file downloaded. Upload the LeakGuard redacted copy to Gemini.";',
       'const GEMINI_SANITIZED_DOWNLOAD_MODAL_MESSAGE = "Gemini does not expose a safe upload target. LeakGuard downloaded a sanitized copy. Upload that redacted file manually.";',
       extractFunctionSource(contentSource, "normalizeTarget"),
+      extractFunctionSource(contentSource, "isFirefoxRuntime"),
+      extractFunctionSource(contentSource, "createSafeCapabilityProbeFile"),
+      extractFunctionSource(contentSource, "canUseSyntheticDataTransferFileList"),
+      extractFunctionSource(contentSource, "canAssignFilesToInput"),
+      extractFunctionSource(contentSource, "shouldUseFirefoxTextFallbackForFileHandoff"),
       extractFunctionSource(contentSource, "isSanitizedFileHandoffEvent"),
       extractFunctionSource(contentSource, "markSanitizedFileHandoffEvent"),
       extractFunctionSource(contentSource, "createSanitizedDataTransfer"),
@@ -4380,7 +4410,7 @@ async function testUnsupportedBinaryIsBlockedBeforeGeminiPolicyPassThrough() {
   assert.strictEqual(calls.modals.length, 0);
 }
 
-async function testInvalidUtf8DropWarnsAndHandsBackOriginalFile() {
+async function testInvalidUtf8DropBlocksWithoutOriginalHandoff() {
   const rawFile = createTextFile({
     name: "bad.txt",
     text: "not actually decoded"
@@ -4398,11 +4428,10 @@ async function testInvalidUtf8DropWarnsAndHandsBackOriginalFile() {
     readLocalTextFileFromDataTransfer: async (transfer) => {
       calls.reads.push(transfer);
       return {
-        handled: false,
+        handled: true,
         ok: false,
         code: "invalid_utf8",
-        message:
-          "LeakGuard did not scan or redact this file. Unsupported file types such as PDF, DOCX, images, archives, executables, and binary files are not protected in this release. Normal upload may continue through the site."
+        message: "This file is not valid UTF-8 text, so LeakGuard did not scan it."
       };
     }
   });
@@ -4424,19 +4453,13 @@ async function testInvalidUtf8DropWarnsAndHandsBackOriginalFile() {
   assert.strictEqual(calls.redactions.length, 0);
   assert.strictEqual(calls.createdFiles.length, 0);
   assert.strictEqual(calls.handoffs.length, 0);
-  assert.strictEqual(handedBackEvents.length, 1, "consumed invalid UTF-8 drops should be replayed for native upload");
-  assert.strictEqual(handedBackEvents[0].__PWM_SANITIZED_FILE_HANDOFF__, true);
-  assert.deepStrictEqual(Array.from(handedBackEvents[0].dataTransfer.files || []), [rawFile]);
-  assert.ok(
-    calls.badges.some(([message]) => String(message || "").includes("normal upload may continue"))
-  );
-  assert.strictEqual(calls.modals.length, 0);
-  assert.strictEqual(calls.modals.flat().join("\n").includes("Local file not attached"), false);
-  assert.strictEqual(calls.modals.flat().join("\n").includes("not valid UTF-8"), false);
-  assert.strictEqual(calls.modals.flat().join("\n").includes("did not attach"), false);
+  assert.strictEqual(handedBackEvents.length, 0, "invalid UTF-8 drops must not be replayed to the site");
+  assert.ok(calls.badges.some(([message]) => String(message || "").includes("Raw file blocked")));
+  assert.ok(calls.modals.some(([title]) => title === "Raw file blocked"));
+  assert.strictEqual(calls.modals.flat().join("\n").includes("not valid UTF-8"), true);
 }
 
-async function testInvalidUtf8DropPrefersOriginalFileInputHandoff() {
+async function testFailedScanCannotReachOriginalOrSanitizedHandoff() {
   const rawFile = createTextFile({
     name: "bad.txt",
     text: "not actually decoded"
@@ -4451,9 +4474,14 @@ async function testInvalidUtf8DropPrefersOriginalFileInputHandoff() {
         handled: false,
         ok: false,
         code: "invalid_utf8",
-        message:
-          "LeakGuard did not scan or redact this file. Unsupported file types such as PDF, DOCX, images, archives, executables, and binary files are not protected in this release. Normal upload may continue through the site."
+        message: "This file is not valid UTF-8 text, so LeakGuard did not scan it."
       };
+    },
+    handOffSanitizedLocalFile() {
+      throw new Error("failed scan must not reach sanitized handoff");
+    },
+    handOffSanitizedFileInput() {
+      throw new Error("failed scan must not assign input.files");
     }
   });
   const { event } = createEvent({
@@ -4475,16 +4503,13 @@ async function testInvalidUtf8DropPrefersOriginalFileInputHandoff() {
 
   assert.strictEqual(event.defaultPrevented, true);
   assert.strictEqual(calls.reads.length, 1);
-  assert.strictEqual(calls.originalFileInputHandoffs.length, 1);
-  assert.strictEqual(calls.originalFileInputHandoffs[0].fileInput, fileInput);
-  assert.deepStrictEqual(Array.from(calls.originalFileInputHandoffs[0].transfer.files || []), [rawFile]);
+  assert.strictEqual(calls.originalFileInputHandoffs?.length || 0, 0);
+  assert.strictEqual(fileInput.files.length, 0);
+  assert.deepStrictEqual(fileInput.events, []);
   assert.strictEqual(calls.redactions.length, 0);
   assert.strictEqual(calls.createdFiles.length, 0);
   assert.strictEqual(calls.handoffs.length, 0);
-  assert.strictEqual(calls.modals.length, 0);
-  assert.ok(
-    calls.badges.some(([message]) => String(message || "").includes("normal upload may continue"))
-  );
+  assert.ok(calls.modals.some(([title]) => title === "Raw file blocked"));
 }
 
 async function testGeminiEditorResolvesContenteditableFallback() {
@@ -5107,6 +5132,7 @@ async function testFirefoxChatGptFileInputReplacesBasicSecretsFixture() {
   fileInput.files = [
     createTextFile({
       name: "01-basic-secrets.env",
+      type: "",
       text: rawContent
     })
   ];
@@ -5171,6 +5197,53 @@ async function testFirefoxChatGptFileInputReplacesBasicSecretsFixture() {
   assert.deepStrictEqual(fileInput.events, ["input", "change"]);
 }
 
+async function testFirefoxEmptyMimeEnvDropUsesTextDecodeAndSanitizedHandoff() {
+  const rawSecret = "LeakGuardDropApiKey1234567890";
+  const rawText = `API_KEY=${rawSecret}\r\nSAFE=value`;
+  const fileInput = createFileInput();
+  const { maybeHandleDrop, calls } = createHarness({
+    location: { hostname: "chatgpt.com" },
+    navigator: { userAgent: "Firefox" },
+    resolveFileInputForHandoff: () => fileInput,
+    readLocalTextFileFromDataTransfer: globalThis.PWM.FilePasteHelpers.readLocalTextFileFromDataTransfer,
+    findComposer: () => ({ tagName: "TEXTAREA", text: "", selection: { start: 0, end: 0 } }),
+    handOffSanitizedFileInput: (targetInput, transfer) => {
+      calls.sanitizedInputAssignments = calls.sanitizedInputAssignments || [];
+      calls.sanitizedInputAssignments.push({ targetInput, transfer });
+      targetInput.files = transfer.files;
+      targetInput.dispatchEvent({ type: "input" });
+      targetInput.dispatchEvent({ type: "change" });
+      return true;
+    }
+  });
+  const rawFile = createTextFile({
+    name: "01-basic-secrets.env",
+    type: "",
+    text: rawText
+  });
+  const { event } = createEvent({
+    dataTransfer: {
+      types: ["Files"],
+      files: [rawFile],
+      items: [],
+      dropEffect: "none"
+    },
+    target: { tagName: "DIV" }
+  });
+
+  await maybeHandleDrop(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(calls.redactions.length, 1);
+  assert.strictEqual(calls.createdFiles.length, 1);
+  assert.strictEqual(calls.createdFiles[0].text.includes(rawSecret), false);
+  assert.ok(calls.createdFiles[0].text.includes("API_KEY=[PWM_1]\nSAFE=value"));
+  assert.strictEqual(calls.sanitizedInputAssignments.length, 1);
+  assert.notStrictEqual(calls.sanitizedInputAssignments[0].transfer.files[0], rawFile);
+  assert.strictEqual(fileInput.files[0].text.includes(rawSecret), false);
+  assert.deepStrictEqual(fileInput.events, ["input", "change"]);
+}
+
 async function testGenericTextFallbackFailureUsesSanitizedDownload() {
   const rawSecret = "LeakGuardDropApiKey1234567890";
   const composer = {
@@ -5217,6 +5290,190 @@ async function testGenericTextFallbackFailureUsesSanitizedDownload() {
   assert.strictEqual(calls.runtimeMessages[0].redactedText.includes(rawSecret), false);
   assert.strictEqual(calls.modals.some(([title]) => title === "Raw file upload blocked"), false);
   assert.strictEqual(calls.modals.flat().join("\n").includes(rawSecret), false);
+}
+
+function createUnsupportedFileTransfer() {
+  const file = {
+    name: "secrets.png",
+    type: "image/png",
+    size: 128
+  };
+  return {
+    types: ["Files"],
+    files: [file],
+    items: [
+      {
+        kind: "file",
+        getAsFile: () => file
+      }
+    ],
+    dropEffect: "none"
+  };
+}
+
+async function testFirefoxProtectedDropBlocksUnsupportedFiles() {
+  for (const hostname of ["gemini.google.com", "chatgpt.com", "protected.example"]) {
+    const { maybeHandleDrop, calls } = createHarness({
+      navigator: { userAgent: "Firefox" },
+      location: { hostname },
+      findComposer: () => null
+    });
+    const { event, calls: eventCalls } = createEvent({
+      dataTransfer: createUnsupportedFileTransfer(),
+      target: { tagName: "DIV" }
+    });
+
+    await maybeHandleDrop(event);
+
+    assert.strictEqual(event.defaultPrevented, true, `${hostname} should block unsupported Firefox file drops`);
+    assert.strictEqual(eventCalls.stopImmediatePropagation, 1);
+    assert.strictEqual(calls.reads.length, 0);
+    assert.strictEqual(calls.handoffs.length, 0);
+    assert.strictEqual(calls.runtimeMessages.length, 0);
+    assert.ok(calls.modals.some(([title]) => title === "Raw file upload blocked"));
+  }
+}
+
+async function testFirefoxFileHandoffFallsBackToTextWhenAssignmentCapabilityFails() {
+  class NoSyntheticFilesDataTransfer {
+    constructor() {
+      this.files = [];
+      this.items = {
+        add: () => {}
+      };
+      this.dropEffect = "none";
+    }
+  }
+  const composer = {
+    tagName: "TEXTAREA",
+    text: "",
+    selection: { start: 0, end: 0 }
+  };
+  const { maybeHandleDrop, calls } = createHarness({
+    navigator: { userAgent: "Firefox" },
+    location: { hostname: "chatgpt.com" },
+    DataTransfer: NoSyntheticFilesDataTransfer,
+    findComposer: () => composer
+  });
+  const { event } = createEvent({
+    dataTransfer: createDataTransfer(),
+    target: composer
+  });
+
+  await maybeHandleDrop(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(calls.handoffs.length, 0);
+  assert.strictEqual(calls.textFallbacks.length, 1);
+  assert.strictEqual(calls.textFallbacks[0].insertedText.includes("LeakGuardDropApiKey1234567890"), false);
+}
+
+async function testFirefoxGeminiFileHandoffUsesSanitizedAttachWhenCapabilityPasses() {
+  const sanitizedFile = {
+    name: "firefox-gemini.env",
+    type: "text/plain",
+    size: 18,
+    text: "API_KEY=[PWM_1]"
+  };
+  const fileInput = createFileInput({ source: "light-dom", name: "Filedata" });
+  const { handOffGeminiSanitizedFileUpload, fallbackDrops } = createHandoffHarness({
+    userAgent: "Firefox",
+    fileInputs: [fileInput]
+  });
+  const event = {
+    type: "drop",
+    target: { nodeType: 1, tagName: "DIV", dispatchEvent: () => true },
+    dataTransfer: createDataTransfer()
+  };
+
+  const handedOff = await handOffGeminiSanitizedFileUpload(event, null, sanitizedFile);
+
+  assert.strictEqual(handedOff, true);
+  assert.strictEqual(fileInput.files[0], sanitizedFile);
+  assert.deepStrictEqual(fileInput.events, ["input", "change"]);
+  assert.strictEqual(fallbackDrops.length, 0);
+}
+
+async function testFirefoxTextareaPasteBlocksBeforeAsyncAndWritesOnlyPlaceholder() {
+  const rawSecret = "LeakGuardPasteApiKey1234567890";
+  const rawText = `api_key=${rawSecret}`;
+  const textarea = {
+    tagName: "TEXTAREA",
+    text: "",
+    selection: { start: 0, end: 0 }
+  };
+  let clipboardEvent = null;
+  const { maybeHandlePaste, calls } = createHarness({
+    navigator: { userAgent: "Firefox" },
+    location: { hostname: "chatgpt.com" },
+    findComposer: () => textarea,
+    analyzeTextWithAiAssist: async (text) => {
+      assert.strictEqual(clipboardEvent.defaultPrevented, true, "Firefox paste must be blocked before async analysis");
+      return {
+        normalizedText: text,
+        secretFindings: text.includes(rawSecret) ? [{ raw: rawSecret }] : [],
+        findings: text.includes(rawSecret) ? [{ raw: rawSecret }] : [],
+        placeholderNormalized: false
+      };
+    }
+  });
+  const { event, calls: eventCalls } = createClipboardEvent({
+    text: rawText,
+    target: textarea
+  });
+  clipboardEvent = event;
+
+  await maybeHandlePaste(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(eventCalls.preventDefault, 1);
+  assert.strictEqual(eventCalls.stopImmediatePropagation, 1);
+  assert.strictEqual(textarea.text, "api_key=[PWM_1]");
+  assert.strictEqual(textarea.text.includes(rawSecret), false);
+  assert.strictEqual(calls.textFallbacks.length, 1);
+}
+
+async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlaceholder() {
+  const rawSecret = "LeakGuardPasteApiKey1234567890";
+  const rawText = `api_key=${rawSecret}`;
+  const editor = {
+    tagName: "DIV",
+    text: "",
+    selection: { start: 0, end: 0 },
+    isContentEditable: true,
+    closest(selector) {
+      return selector === "[contenteditable]:not([contenteditable='false'])" ? this : null;
+    }
+  };
+  let clipboardEvent = null;
+  const { maybeHandlePaste, calls } = createHarness({
+    navigator: { userAgent: "Firefox" },
+    location: { hostname: "grok.com" },
+    findComposer: () => editor,
+    analyzeTextWithAiAssist: async (text) => {
+      assert.strictEqual(clipboardEvent.defaultPrevented, true, "Firefox contenteditable paste must be blocked before async analysis");
+      return {
+        normalizedText: text,
+        secretFindings: text.includes(rawSecret) ? [{ raw: rawSecret }] : [],
+        findings: text.includes(rawSecret) ? [{ raw: rawSecret }] : [],
+        placeholderNormalized: false
+      };
+    }
+  });
+  const { event, calls: eventCalls } = createClipboardEvent({
+    text: rawText,
+    target: editor
+  });
+  clipboardEvent = event;
+
+  await maybeHandlePaste(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(eventCalls.preventDefault, 1);
+  assert.strictEqual(eventCalls.stopImmediatePropagation, 1);
+  assert.strictEqual(editor.text, "api_key=[PWM_1]");
+  assert.strictEqual(editor.text.includes(rawSecret), false);
+  assert.strictEqual(calls.textFallbacks.length, 1);
 }
 
 (async () => {
@@ -5290,8 +5547,8 @@ async function testGenericTextFallbackFailureUsesSanitizedDownload() {
   await testUnsupportedDocumentAndImageFilesPassThroughByDefault();
   await testUnsupportedFileInputWarnsAndKeepsComposerUsable();
   await testUnsupportedBinaryIsBlockedBeforeGeminiPolicyPassThrough();
-  await testInvalidUtf8DropWarnsAndHandsBackOriginalFile();
-  await testInvalidUtf8DropPrefersOriginalFileInputHandoff();
+  await testInvalidUtf8DropBlocksWithoutOriginalHandoff();
+  await testFailedScanCannotReachOriginalOrSanitizedHandoff();
   await testGeminiEditorResolvesContenteditableFallback();
   await testGeminiNonEditorPasteAndDropAreIgnoredByEditorHandler();
   await testGeminiSanitizerFailureBlocksRawPasteAndDrop();
@@ -5303,7 +5560,13 @@ async function testGenericTextFallbackFailureUsesSanitizedDownload() {
   await testUserManagedProtectedSiteDropFallsBackToSanitizedTextWhenHandoffRejected();
   await testFirefoxChatGptFileInputReplacesSelectedFile();
   await testFirefoxChatGptFileInputReplacesBasicSecretsFixture();
+  await testFirefoxEmptyMimeEnvDropUsesTextDecodeAndSanitizedHandoff();
   await testGenericTextFallbackFailureUsesSanitizedDownload();
+  await testFirefoxProtectedDropBlocksUnsupportedFiles();
+  await testFirefoxFileHandoffFallsBackToTextWhenAssignmentCapabilityFails();
+  await testFirefoxGeminiFileHandoffUsesSanitizedAttachWhenCapabilityPasses();
+  await testFirefoxTextareaPasteBlocksBeforeAsyncAndWritesOnlyPlaceholder();
+  await testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlaceholder();
   console.log("PASS content file drop interception regressions");
 })().catch((error) => {
   console.error(error);

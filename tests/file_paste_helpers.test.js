@@ -71,6 +71,21 @@ async function testSupportedEnvFileDecodesLocally() {
   assert.strictEqual(result.file.extension, ".env");
 }
 
+async function testFirefoxStyleEnvFileWithEmptyMimeDecodesLocally() {
+  const text = [
+    "OPENAI_API_KEY=LeakGuardFileApiKey1234567890",
+    "DB_PASSWORD=LeakGuardDbPassword123!"
+  ].join("\r\n");
+  const file = createFile({ name: "01-basic-secrets.env", type: "", text });
+  const result = await readLocalTextFileFromDataTransfer(createDataTransfer([file]));
+
+  assert.strictEqual(result.handled, true);
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.file.extension, ".env");
+  assert.strictEqual(result.file.type, "");
+  assert.strictEqual(result.text, text.replace(/\r\n/g, "\n"));
+}
+
 async function readFileLikeText(fileLike) {
   const buffer = await fileLike.arrayBuffer();
   return new TextDecoder().decode(buffer);
@@ -159,12 +174,9 @@ async function testUnsupportedFilesPassThroughAndTextBinaryFilesRejected() {
   assert.strictEqual(binary.ok, false);
   assert.strictEqual(binary.code, "binary_content");
   assertExplicitUnsupportedWarning(binary.message);
-  assert.strictEqual(invalidUtf8.handled, false);
-  assert.strictEqual(invalidUtf8.ok, false);
-  assert.strictEqual(invalidUtf8.code, "invalid_utf8");
-  assertExplicitUnsupportedWarning(invalidUtf8.message);
-  assert.strictEqual(invalidUtf8.message.includes("not valid UTF-8"), false);
-  assert.strictEqual(invalidUtf8.message.includes("did not attach"), false);
+  assert.strictEqual(invalidUtf8.handled, true);
+  assert.strictEqual(invalidUtf8.ok, true);
+  assert.strictEqual(invalidUtf8.text, "\ufffd\ufffd\ufffd");
 }
 
 async function testNoFileTransferIgnored() {
@@ -200,6 +212,7 @@ async function testOptimizedZoneFileStillDecodesAndOversizedFileBlocks() {
 
 (async () => {
   await testSupportedEnvFileDecodesLocally();
+  await testFirefoxStyleEnvFileWithEmptyMimeDecodesLocally();
   await testSanitizedFileProducedForHandoff();
   await testClipboardFilesArrayPathDecodesLocally();
   await testClipboardItemsFilePathDecodesLocally();

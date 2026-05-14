@@ -190,6 +190,9 @@
   let dmzOverlayEl = null;
   let dmzOverlayStatusEl = null;
   let dmzOverlayTimer = 0;
+  let dmzFallbackStyleEl = null;
+  let syntheticFileListCapabilityCache = null;
+  let inputFileAssignmentCapabilityCache = null;
 
   function isExtensionContextInvalidatedError(error) {
     const message = String(error?.message || error || "");
@@ -330,7 +333,89 @@
   }
 
   function isFirefoxRuntime() {
-    return /Firefox/i.test(navigator.userAgent || "");
+    return Boolean(globalThis.PWM?.isFirefox) || /Firefox/i.test(navigator.userAgent || "");
+  }
+
+  function createSafeCapabilityProbeFile() {
+    if (typeof File === "function") {
+      return new File(["leakguard capability probe"], "leakguard-probe.txt", {
+        type: "text/plain",
+        lastModified: 0
+      });
+    }
+
+    if (typeof Blob === "function") {
+      const blob = new Blob(["leakguard capability probe"], { type: "text/plain" });
+      try {
+        Object.defineProperty(blob, "name", {
+          value: "leakguard-probe.txt",
+          configurable: true
+        });
+        Object.defineProperty(blob, "lastModified", {
+          value: 0,
+          configurable: true
+        });
+      } catch {
+        // Metadata is not required for the capability check.
+      }
+      return blob;
+    }
+
+    return null;
+  }
+
+  function canUseSyntheticDataTransferFileList() {
+    if (syntheticFileListCapabilityCache != null) {
+      return syntheticFileListCapabilityCache;
+    }
+
+    syntheticFileListCapabilityCache = false;
+    if (typeof DataTransfer !== "function") {
+      return syntheticFileListCapabilityCache;
+    }
+
+    try {
+      const safeFile = createSafeCapabilityProbeFile();
+      if (!safeFile) return syntheticFileListCapabilityCache;
+
+      const transfer = new DataTransfer();
+      if (typeof transfer.items?.add !== "function") return syntheticFileListCapabilityCache;
+      transfer.items.add(safeFile);
+      syntheticFileListCapabilityCache = Number(transfer.files?.length || 0) > 0;
+      return syntheticFileListCapabilityCache;
+    } catch {
+      syntheticFileListCapabilityCache = false;
+      return syntheticFileListCapabilityCache;
+    }
+  }
+
+  function canAssignFilesToInput() {
+    if (inputFileAssignmentCapabilityCache != null) {
+      return inputFileAssignmentCapabilityCache;
+    }
+
+    inputFileAssignmentCapabilityCache = false;
+    if (!canUseSyntheticDataTransferFileList() || typeof document?.createElement !== "function") {
+      return inputFileAssignmentCapabilityCache;
+    }
+
+    try {
+      const safeFile = createSafeCapabilityProbeFile();
+      const transfer = new DataTransfer();
+      const input = document.createElement("input");
+      input.type = "file";
+      transfer.items.add(safeFile);
+      input.files = transfer.files;
+      inputFileAssignmentCapabilityCache = Number(input.files?.length || 0) > 0;
+      return inputFileAssignmentCapabilityCache;
+    } catch {
+      inputFileAssignmentCapabilityCache = false;
+      return inputFileAssignmentCapabilityCache;
+    }
+  }
+
+  function shouldUseFirefoxTextFallbackForFileHandoff() {
+    return isFirefoxRuntime() && !canAssignFilesToInput();
   }
 
   function isPasteBeforeInput(event) {
@@ -484,6 +569,22 @@
     hideBadgeSoon(5200);
   }
 
+  function shouldBlockUnsupportedFileTransfer(policy) {
+    return (
+      isFirefoxRuntime() &&
+      policy?.action === "allow" &&
+      dataTransferLooksLikeFiles({ files: policy.files || [], types: ["Files"], items: [] }) &&
+      isProtectedFileDropDriver(getCurrentHandoffDriverId())
+    );
+  }
+
+  function getUnsupportedFileBlockedMessage(policy) {
+    return (
+      policy?.message ||
+      "LeakGuard blocked this file because Firefox cannot safely pass unsupported files through on protected AI sites. Use the LeakGuard drag/drop box with a supported text file."
+    );
+  }
+
   function clearDmzOverlayTimer() {
     if (dmzOverlayTimer) {
       clearTimeout(dmzOverlayTimer);
@@ -571,8 +672,38 @@
 
     dmzOverlayEl = overlay;
     dmzOverlayStatusEl = status;
+    ensureDmzOverlayFallbackStyle();
     scheduleDmzOverlayCleanup(FILE_DRAG_SESSION_RESET_MS);
     return overlay;
+  }
+
+  function ensureDmzOverlayFallbackStyle() {
+    if (!dmzOverlayEl || dmzFallbackStyleEl?.isConnected) return;
+
+    let needsFallback = false;
+    try {
+      const style = window.getComputedStyle?.(dmzOverlayEl);
+      needsFallback =
+        !style ||
+        style.position !== "fixed" ||
+        style.display === "none" ||
+        Number.parseInt(style.zIndex || "0", 10) < 2147483000;
+    } catch {
+      needsFallback = true;
+    }
+
+    if (!needsFallback || typeof document?.createElement !== "function") return;
+
+    const styleEl = document.createElement("style");
+    styleEl.className = "pwm-dmz-fallback-style";
+    styleEl.textContent =
+      ".pwm-dmz,.pwm-gemini-dmz{position:fixed;inset:0;z-index:2147483646;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(15,23,42,.42);color:#f8fafc;font:14px/1.4 system-ui,sans-serif;pointer-events:auto}.pwm-dmz-box,.pwm-gemini-dmz-box{width:min(520px,calc(100vw - 48px));min-height:180px;border:2px dashed rgba(34,211,238,.74);border-radius:8px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:28px;background:rgba(15,23,42,.9);box-shadow:0 24px 70px rgba(2,6,23,.38);text-align:center}.pwm-dmz-eyebrow,.pwm-gemini-dmz-eyebrow{margin:0;color:#67e8f9;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}.pwm-dmz-status,.pwm-gemini-dmz-status{margin:0;color:#f8fafc;font-size:20px;font-weight:700}.pwm-dmz[data-pwm-state='failed'] .pwm-dmz-box,.pwm-gemini-dmz[data-pwm-state='failed'] .pwm-gemini-dmz-box{border-color:rgba(251,113,133,.9)}";
+    try {
+      (document.head || document.documentElement).appendChild(styleEl);
+      dmzFallbackStyleEl = styleEl;
+    } catch {
+      // CSS fallback is best-effort; interception still fails closed.
+    }
   }
 
   function showGeminiDmzOverlay() {
@@ -2048,12 +2179,20 @@
     options = options || {};
     const normalizedOriginal = normalizeComposerText(originalText);
     const normalizedRedacted = normalizeComposerText(redactedText);
+    const plan = buildComposerWritePlan(input, normalizedRedacted);
+    const acceptableTexts = Array.isArray(plan.acceptableTexts) ? plan.acceptableTexts : [plan.canonical];
+    const hasRawLeak = (actual) =>
+      Boolean(
+        normalizedOriginal &&
+          normalizeComposerText(actual).includes(normalizedOriginal) &&
+          !acceptableTexts.includes(normalizeComposerText(actual))
+      );
     const applied = await applyComposerText(input, normalizedRedacted, {
       ...options,
       rawInsertedText: normalizedOriginal
     });
 
-    if (applied.ok && (!normalizedOriginal || !applied.actual.includes(normalizedOriginal))) {
+    if (applied.ok && !hasRawLeak(applied.actual)) {
       return applied;
     }
 
@@ -2061,10 +2200,18 @@
     if (setInputTextDirect(input, normalizedRedacted, { caretOffset: options.caretOffset })) {
       const actual = await readStableComposerText(input);
       if (
-        matchesComposerPlan(buildComposerWritePlan(input, normalizedRedacted), actual) &&
-        (!normalizedOriginal || !actual.includes(normalizedOriginal))
+        matchesComposerPlan(plan, actual) &&
+        !hasRawLeak(actual)
       ) {
         return { ok: true, actual, strategy: "direct-transactional-rewrite" };
+      }
+      if (hasRawLeak(actual)) {
+        forceRewriteInputText(input, plan.writeText, { caretOffset: options.caretOffset });
+        const forcedActual = await readStableComposerText(input);
+        if (matchesComposerPlan(plan, forcedActual) && !hasRawLeak(forcedActual)) {
+          return { ok: true, actual: forcedActual, strategy: "forced-transactional-rewrite" };
+        }
+        return { ok: false, actual: forcedActual };
       }
       return { ok: false, actual };
     }
@@ -2206,6 +2353,31 @@
     const originalText = getInputText(input);
     const selection = getSelectionOffsets(input);
     const next = spliceSelectionText(originalText, selection, insertedText);
+    let firefoxEarlyAnalysis = null;
+    let firefoxEarlyRelevantFindings = [];
+    let firefoxEarlyRelevantSecretFindings = [];
+    let firefoxEarlyPlaceholderNormalizationChanged = false;
+    if (isFirefoxRuntime()) {
+      firefoxEarlyAnalysis = analyzeText(next.text);
+      firefoxEarlyRelevantFindings = selectFindingsOverlappingInsertion(
+        firefoxEarlyAnalysis.findings,
+        selection,
+        insertedText
+      );
+      firefoxEarlyRelevantSecretFindings = selectFindingsOverlappingInsertion(
+        firefoxEarlyAnalysis.secretFindings,
+        selection,
+        insertedText
+      );
+      firefoxEarlyPlaceholderNormalizationChanged =
+        firefoxEarlyAnalysis.placeholderNormalized &&
+        firefoxEarlyAnalysis.normalizedText !== next.text &&
+        normalizeVisiblePlaceholders(insertedText) !== insertedText;
+
+      if (firefoxEarlyRelevantFindings.length || firefoxEarlyPlaceholderNormalizationChanged) {
+        consumeInterceptionEvent(event);
+      }
+    }
     const currentAnalysis = await analyzeTextWithAiAssist(originalText);
     const nextAnalysis = await analyzeTextWithAiAssist(next.text);
     const relevantFindings = selectFindingsOverlappingInsertion(
@@ -2233,7 +2405,9 @@
       relevantFindings
     );
 
-    consumeInterceptionEvent(event);
+    if (!event.defaultPrevented) {
+      consumeInterceptionEvent(event);
+    }
 
     const policy = await getPolicyForAction();
     const destinationPolicy = await handleDestinationPolicy(relevantFindings, policy);
@@ -2563,7 +2737,7 @@
   }
 
   function createSanitizedDataTransfer(sanitizedFile) {
-    if (!sanitizedFile || typeof DataTransfer !== "function") {
+    if (!sanitizedFile || typeof DataTransfer !== "function" || !canUseSyntheticDataTransferFileList()) {
       return null;
     }
 
@@ -2582,7 +2756,7 @@
       details.dataTransferConstructorSucceeded = false;
       details.dataTransferItemsAddSucceeded = false;
     }
-    if (!sanitizedFile || typeof DataTransfer !== "function") {
+    if (!sanitizedFile || typeof DataTransfer !== "function" || !canUseSyntheticDataTransferFileList()) {
       return null;
     }
 
@@ -3368,14 +3542,13 @@
     noteActiveRiskEditor(editor);
     const localFile = await readLocalTextFileFromDataTransfer(event.dataTransfer);
     if (!localFile.handled) {
-      if (localFile.code || localFile.message) {
-        handOffOriginalLocalFile(event, event.dataTransfer, "drop");
-        showUnsupportedFilePassThroughNotice({
-          message:
-            localFile.message ||
-            "LeakGuard did not scan or redact this file. Unsupported file types such as PDF, DOCX, images, archives, executables, and binary files are not protected in this release. Normal upload may continue through the site."
-        });
-      }
+      setBadge("Raw file blocked");
+      hideBadgeSoon(4200);
+      await showMessageModal(
+        "Raw file blocked",
+        localFile.message || "LeakGuard blocked raw file upload because local scanning failed."
+      );
+      refreshBadgeFromCurrentInput();
       return true;
     }
 
@@ -3564,13 +3737,24 @@
 
   async function tryGeminiSanitizedFileAttach(payload, event, input) {
     if (!isGeminiHost() || !payload?.sanitizedFile) return false;
+    if (shouldUseFirefoxTextFallbackForFileHandoff()) return false;
     return handOffGeminiSanitizedFileUpload(event, input, payload.sanitizedFile, {
-      allowUploadUiClick: true
+      allowUploadUiClick: !isFirefoxRuntime()
     });
+  }
+
+  function isSafeSanitizedPayload(payload) {
+    return Boolean(
+      payload &&
+        payload.sanitizedFile &&
+        typeof payload.redactedText === "string" &&
+        payload.redactedText.length > 0
+    );
   }
 
   function tryRealFileInputSanitizedFileAttach(payload, event, input, driverId) {
     if (!payload?.sanitizedFile) return false;
+    if (shouldUseFirefoxTextFallbackForFileHandoff()) return false;
     const details = createSanitizedFileHandoffDetails(event, payload.sanitizedFile, `${driverId}:file-input`);
     const transfer = createSanitizedDataTransferForHandoff(payload.sanitizedFile, details);
     if (!transfer) {
@@ -3600,7 +3784,7 @@
 
   async function insertSanitizedPayloadText(payload, event, input, context = null) {
     if (!payload?.redactedText) return false;
-    if (!input && context?.composerResolved) return false;
+    if (!input && context?.composerResolved && !isFirefoxRuntime()) return false;
     if (isGeminiHost()) {
       return insertGeminiSanitizedText(payload, event, input);
     }
@@ -3707,6 +3891,10 @@
     const driver = context?.driver || getCurrentHandoffDriver();
     if (!driver?.canHandle?.(location, document)) {
       return { ok: false, stage: "driver-unavailable" };
+    }
+    if (!isSafeSanitizedPayload(payload)) {
+      setDmzOverlayState("Raw file blocked", "failed");
+      return { ok: false, stage: "failed", reason: "unsafe_sanitized_payload" };
     }
 
     if (await driver.tryAttachSanitizedFile(payload, context)) {
@@ -4589,6 +4777,7 @@
 
   function handOffSanitizedFileInput(fileInput, transfer, options) {
     if (!isFileInputElement(fileInput) || !transfer?.files) return false;
+    if (isFirefoxRuntime() && !canAssignFilesToInput()) return false;
 
     const handoffOptions = options || {};
     const details = handoffOptions.details || null;
@@ -4655,6 +4844,14 @@
   }
 
   async function handOffSanitizedLocalFile(event, input, sanitizedFile, context) {
+    if (shouldUseFirefoxTextFallbackForFileHandoff()) {
+      debugReveal("file-handoff:firefox-text-fallback-required", {
+        context,
+        sanitizedFile: describeFileForDebug(sanitizedFile)
+      });
+      return false;
+    }
+
     const target = event?.target || input;
     if (context === "drop") {
       if (isGeminiHost()) {
@@ -4900,6 +5097,7 @@
 
   async function handOffGeminiSanitizedFileUpload(event, input, sanitizedFile, options) {
     if (!isGeminiHost()) return false;
+    if (shouldUseFirefoxTextFallbackForFileHandoff()) return false;
 
     const details = createSanitizedFileHandoffDetails(event, sanitizedFile, "gemini:start");
     const transfer = createSanitizedDataTransferForHandoff(sanitizedFile, details);
@@ -4941,7 +5139,8 @@
     details.foundTopUploadTrigger = Boolean(uploadTrigger);
     details.uploadTrigger = describeUploadTriggerForDebug(uploadTrigger, "gemini-upload-trigger");
     const handoffOptions = options || {};
-    const mayClickGeminiUploadUi = event?.type !== "drop" || handoffOptions.allowUploadUiClick === true;
+    const mayClickGeminiUploadUi =
+      !isFirefoxRuntime() && (event?.type !== "drop" || handoffOptions.allowUploadUiClick === true);
 
     if (!fileInput && mayClickGeminiUploadUi) {
       const result = await waitForGeminiGhostIngressFileInput(event, input, details, sanitizedFile);
@@ -5000,6 +5199,7 @@
 
   function handOffGrokSanitizedFileUpload(event, input, sanitizedFile) {
     if (!isGrokHost()) return false;
+    if (shouldUseFirefoxTextFallbackForFileHandoff()) return false;
 
     const details = createSanitizedFileHandoffDetails(event, sanitizedFile, "grok:start");
     const transfer = createSanitizedDataTransferForHandoff(sanitizedFile, details);
@@ -5247,6 +5447,20 @@
 
     const transferPolicy = resolveLocalFileTransferPolicy(dataTransfer);
     if (transferPolicy.action === "allow") {
+      if (shouldBlockUnsupportedFileTransfer(transferPolicy)) {
+        if (!event.defaultPrevented) {
+          consumeInterceptionEvent(event);
+        }
+        setBadge("Raw file upload blocked");
+        hideBadgeSoon(4200);
+        await showMessageModal("Raw file upload blocked", getUnsupportedFileBlockedMessage(transferPolicy));
+        refreshBadgeFromCurrentInput();
+        return {
+          handled: true,
+          ok: false,
+          reason: "firefox_unsupported_file_blocked"
+        };
+      }
       showUnsupportedFilePassThroughNotice(transferPolicy);
       return false;
     }
@@ -5288,15 +5502,18 @@
       });
     }
     if (!localFile.handled) {
-      if (localFile.code || localFile.message) {
-        handOffOriginalLocalFile(event, dataTransfer, context);
-        showUnsupportedFilePassThroughNotice({
-          message:
-            localFile.message ||
-            "LeakGuard did not scan or redact this file. Unsupported file types such as PDF, DOCX, images, archives, executables, and binary files are not protected in this release. Normal upload may continue through the site."
-        });
-      }
-      return false;
+      setBadge("Raw file blocked");
+      hideBadgeSoon(4200);
+      await showMessageModal(
+        "Raw file blocked",
+        localFile.message || "LeakGuard blocked raw file upload because local scanning failed."
+      );
+      refreshBadgeFromCurrentInput();
+      return {
+        handled: true,
+        ok: false,
+        reason: localFile.code || "file_scan_failed"
+      };
     }
 
     if (event?.target?.tagName === "INPUT" && String(event.target.type || "").toLowerCase() === "file") {
@@ -5365,12 +5582,19 @@
         hideBadgeSoon(4200);
         await showMessageModal(STREAMING_BLOCK_TITLE, localFile.message || STREAMING_BLOCK_MESSAGE);
       } else {
-        setBadge("Local file not attached");
-        hideBadgeSoon(3200);
-        await showMessageModal("Local file not attached", localFile.message);
+        setBadge("Raw file blocked");
+        hideBadgeSoon(4200);
+        await showMessageModal(
+          "Raw file blocked",
+          localFile.message || "LeakGuard blocked raw file upload because local scanning failed."
+        );
       }
       refreshBadgeFromCurrentInput();
-      return true;
+      return {
+        handled: true,
+        ok: false,
+        reason: localFile.code || "file_scan_failed"
+      };
     }
 
     const sizeInfo = classifyLocalTextPayloadSize({
@@ -5519,6 +5743,16 @@
 
     const transferPolicy = resolveLocalFileTransferPolicy(event.dataTransfer);
     if (transferPolicy.action === "allow") {
+      if (shouldBlockUnsupportedFileTransfer(transferPolicy)) {
+        rawFileDropInterceptions.add(event);
+        consumeInterceptionEvent(event);
+        setBadge("Raw file upload blocked");
+        hideBadgeSoon(4200);
+        await showMessageModal("Raw file upload blocked", getUnsupportedFileBlockedMessage(transferPolicy));
+        refreshBadgeFromCurrentInput();
+        clearFileDragSession();
+        return;
+      }
       if (isGeminiHost()) {
         rawFileDropInterceptions.add(event);
         consumeInterceptionEvent(event);
@@ -5612,7 +5846,23 @@
     const selectedFiles = Array.from(event.target.files || []);
 
     const input = findComposer(event.target);
-    if (!input && !isGeminiHost()) return;
+    if (!input && !isGeminiHost()) {
+      if (isFirefoxRuntime() && isProtectedFileDropDriver(getCurrentHandoffDriverId())) {
+        consumeInterceptionEvent(event);
+        try {
+          event.target.value = "";
+        } catch {
+          // Best-effort; selected raw files must not be forwarded.
+        }
+        setBadge("Raw file upload blocked");
+        hideBadgeSoon(4200);
+        await showMessageModal(
+          "Raw file upload blocked",
+          "Use LeakGuard drag/drop to sanitize this file first."
+        );
+      }
+      return;
+    }
 
     await maybeHandleLocalFileInsert(
       event,

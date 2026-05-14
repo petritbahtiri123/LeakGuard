@@ -48,10 +48,13 @@
       validation?.code === "invalid_utf8"
     ) {
       return {
-        handled: false,
+        handled: validation?.code === "invalid_utf8",
         ok: false,
         code: validation.code,
-        message: LOCAL_FILE_UNSUPPORTED_WARNING
+        message:
+          validation?.code === "invalid_utf8"
+            ? validation?.message || LOCAL_FILE_READ_MESSAGE
+            : LOCAL_FILE_UNSUPPORTED_WARNING
       };
     }
 
@@ -109,8 +112,25 @@
     }
 
     let buffer;
+    let textFromBlob = "";
     try {
+      if (typeof file.text === "function") {
+        textFromBlob = String(await file.text());
+      }
       if (typeof file.arrayBuffer !== "function") {
+        if (textFromBlob) {
+          return {
+            handled: true,
+            ok: true,
+            text: normalizeDecodedText(textFromBlob),
+            file: {
+              name: fileName.split(/[\\/]/).pop() || "",
+              extension: FileScanner.getFileExtension?.(fileName) || "",
+              type: FileScanner.normalizeMimeType?.(mimeType) || mimeType.split(";")[0].trim().toLowerCase(),
+              sizeBytes
+            }
+          };
+        }
         return {
           handled: true,
           ok: false,
@@ -134,24 +154,32 @@
       sizeBytes,
       buffer
     });
-    if (!contentValidation?.ok) return resultFromValidation(contentValidation);
+    if (!contentValidation?.ok && contentValidation?.code !== "invalid_utf8") {
+      return resultFromValidation(contentValidation);
+    }
 
     let text;
     try {
-      text = FileScanner.decodeUtf8Text(buffer);
+      text =
+        textFromBlob ||
+        FileScanner.decodeUtf8Text(buffer);
     } catch {
-      return {
-        handled: false,
-        ok: false,
-        code: "invalid_utf8",
-        message: LOCAL_FILE_UNSUPPORTED_WARNING
-      };
+      try {
+        text = tolerantDecodeUtf8Text(buffer);
+      } catch {
+        return {
+          handled: true,
+          ok: false,
+          code: "invalid_utf8",
+          message: contentValidation?.message || LOCAL_FILE_READ_MESSAGE
+        };
+      }
     }
 
     return {
       handled: true,
       ok: true,
-      text,
+      text: normalizeDecodedText(text),
       file: {
         name: fileName.split(/[\\/]/).pop() || "",
         extension: FileScanner.getFileExtension?.(fileName) || "",
@@ -159,6 +187,19 @@
         sizeBytes
       }
     };
+  }
+
+  function tolerantDecodeUtf8Text(buffer) {
+    if (typeof TextDecoder !== "function") {
+      throw new Error("TextDecoder unavailable");
+    }
+    return new TextDecoder("utf-8", { fatal: false }).decode(buffer);
+  }
+
+  function normalizeDecodedText(text) {
+    return String(text || "")
+      .replace(/^\uFEFF/, "")
+      .replace(/\r\n?/g, "\n");
   }
 
   function createSanitizedTextFile(fileInfo, redactedText) {

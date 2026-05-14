@@ -536,6 +536,14 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
     "beforeinput paste/typing, submit, and Enter-send interception should all stop immediate propagation to block host races"
   );
   assert.ok(
+    beforeInputSource.includes("if (isFirefoxRuntime())") &&
+      beforeInputSource.indexOf("consumeInterceptionEvent(event);") <
+        beforeInputSource.indexOf("await analyzeTextWithAiAssist(originalText)") &&
+      beforeInputSource.indexOf("consumeInterceptionEvent(event);") <
+        beforeInputSource.indexOf("await analyzeTextWithAiAssist(next.text)"),
+    "Firefox beforeinput should synchronously consume risky raw text before any async analysis can yield to the page"
+  );
+  assert.ok(
     contentSource.includes("shouldAutoRedactTypedSecrets"),
     "content script should distinguish high-confidence typed secrets from warning-only detections"
   );
