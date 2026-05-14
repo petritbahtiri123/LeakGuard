@@ -138,6 +138,7 @@
   let statusPanelPauseBtn = null;
   let extensionRuntimeAvailable = true;
   const sanitizedFileInputHandoffs = new WeakSet();
+  const firefoxFileInputTransactions = new WeakMap();
   const rawFileDropInterceptions = new WeakSet();
   const fileDragEventRoots = new WeakSet();
   const editorRiskState = new WeakMap();
@@ -416,6 +417,113 @@
 
   function shouldUseFirefoxTextFallbackForFileHandoff() {
     return isFirefoxRuntime() && !canAssignFilesToInput();
+  }
+
+  function isExpectedFirefoxGeminiNoPickerMiss(details) {
+    return Boolean(
+      isFirefoxRuntime() &&
+        isGeminiHost() &&
+        details?.handoffStage === "gemini:no-file-input-without-picker" &&
+        details?.failureReason === "no_file_input_without_opening_picker"
+    );
+  }
+
+  function getFirefoxRawFileUploadBlockedMessage(context) {
+    if (context !== "file-input" || !isFirefoxRuntime()) return "";
+    return "LeakGuard blocked raw file upload in Firefox. Use LeakGuard drag/drop with a supported text file.";
+  }
+
+  function getFileMetadataSignature(file) {
+    if (!file) return "";
+    return [
+      String(file.name || ""),
+      String(Number(file.size ?? file.sizeBytes ?? 0)),
+      String(file.type || ""),
+      String(Number(file.lastModified || 0))
+    ].join("|");
+  }
+
+  function getFileListMetadataSignature(files) {
+    return Array.from(files || []).map(getFileMetadataSignature).join("||");
+  }
+
+  function isFirefoxProtectedFileInputEvent(event) {
+    return Boolean(
+      isFirefoxRuntime() &&
+        isProtectedFileDropDriver(getCurrentHandoffDriverId()) &&
+        event?.target &&
+        event.target.tagName === "INPUT" &&
+        String(event.target.type || "").toLowerCase() === "file"
+    );
+  }
+
+  function getFirefoxFileInputTransaction(input) {
+    return isFileInputElement(input) ? firefoxFileInputTransactions.get(input) || null : null;
+  }
+
+  function setFirefoxFileInputTransaction(input, updates) {
+    if (!isFileInputElement(input)) return null;
+    const existing = firefoxFileInputTransactions.get(input) || {};
+    const transaction = {
+      id: existing.id || `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      state: existing.state || "processing",
+      startedAt: existing.startedAt || Date.now(),
+      rawSignature: existing.rawSignature || "",
+      sanitizedSignature: existing.sanitizedSignature || "",
+      suppressUntil: existing.suppressUntil || 0,
+      replacementDispatched: Boolean(existing.replacementDispatched),
+      ...(updates || {})
+    };
+    firefoxFileInputTransactions.set(input, transaction);
+    return transaction;
+  }
+
+  function markFirefoxFileInputTransactionReplaced(input, files) {
+    const transaction = getFirefoxFileInputTransaction(input);
+    if (!transaction) return null;
+    return setFirefoxFileInputTransaction(input, {
+      state: "replaced",
+      sanitizedSignature: getFileListMetadataSignature(files),
+      suppressUntil: Date.now() + PROGRAMMATIC_INPUT_SUPPRESS_MS,
+      replacementDispatched: true
+    });
+  }
+
+  function shouldSuppressFirefoxFileInputEvent(event, transaction) {
+    if (!transaction) return false;
+    if (transaction.state === "processing") return true;
+    if (transaction.suppressUntil && Date.now() < transaction.suppressUntil) return true;
+    if (transaction.state === "replaced") {
+      const currentSignature = getFileListMetadataSignature(event?.target?.files);
+      return Boolean(
+        transaction.sanitizedSignature &&
+          currentSignature &&
+          currentSignature === transaction.sanitizedSignature
+      );
+    }
+    return false;
+  }
+
+  function clearLocalFileInputSelection(fileInput) {
+    if (!isFileInputElement(fileInput)) return false;
+    let cleared = false;
+    try {
+      fileInput.value = "";
+      cleared = true;
+    } catch {
+      // Some host-controlled inputs reject value clearing; try an empty FileList below.
+    }
+
+    if (typeof DataTransfer === "function") {
+      try {
+        const emptyTransfer = new DataTransfer();
+        fileInput.files = emptyTransfer.files;
+        cleared = true;
+      } catch {
+        // Assignment is best-effort. The original event is still stopped fail-closed.
+      }
+    }
+    return cleared;
   }
 
   function isPasteBeforeInput(event) {
@@ -3743,6 +3851,123 @@
     });
   }
 
+  function createFirefoxSanitizedDragEvent(type, transfer) {
+    let handoffEvent = null;
+    try {
+      if (typeof DragEvent === "function") {
+        handoffEvent = new DragEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          dataTransfer: transfer
+        });
+      }
+    } catch {
+      handoffEvent = null;
+    }
+
+    if (!handoffEvent) {
+      handoffEvent = new Event(type, {
+        bubbles: true,
+        cancelable: true,
+        composed: true
+      });
+    }
+
+    markSanitizedFileHandoffEvent(handoffEvent);
+    attachEventDataTransfer(handoffEvent, "dataTransfer", transfer);
+    return handoffEvent;
+  }
+
+  function getGeminiAttachmentVerificationText() {
+    const roots = [];
+    collectRootsWithOpenShadow(document, roots, new WeakSet(), { openShadowRootCount: 0 });
+    return roots
+      .map((root) => {
+        try {
+          return String(root.body?.innerText || root.body?.textContent || root.innerText || root.textContent || "");
+        } catch {
+          return "";
+        }
+      })
+      .join("\n");
+  }
+
+  async function waitForGeminiSanitizedDropReplayAttachment(sanitizedFile) {
+    const expectedName = String(sanitizedFile?.name || "").trim();
+    if (!expectedName) return false;
+    const check = () => {
+      const text = getGeminiAttachmentVerificationText();
+      return Boolean(text && text.includes(expectedName));
+    };
+    if (check()) return true;
+
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    return check();
+  }
+
+  async function tryFirefoxGeminiSanitizedDropReplay(payload, context) {
+    if (!isFirefoxRuntime() || !isGeminiHost() || !payload?.sanitizedFile) return false;
+
+    const details = createSanitizedFileHandoffDetails(
+      context?.event,
+      payload.sanitizedFile,
+      "gemini:firefox-sanitized-drop-replay"
+    );
+    const transfer = createSanitizedDataTransferForHandoff(payload.sanitizedFile, details);
+    if (!transfer) {
+      details.failureReason = "data_transfer_failed";
+      logSanitizedFileHandoffFailure(details);
+      return false;
+    }
+
+    const target =
+      context?.event?.target ||
+      findComposer(document.activeElement) ||
+      findComposer(document.body) ||
+      document.querySelector?.(".ql-editor[contenteditable]") ||
+      document.body;
+    if (!target || typeof target.dispatchEvent !== "function") {
+      details.failureReason = "drop_replay_target_unavailable";
+      logSanitizedFileHandoffFailure(details);
+      return false;
+    }
+
+    try {
+      transfer.dropEffect = "copy";
+    } catch {
+      // Some synthetic DataTransfer objects expose dropEffect as read-only.
+    }
+
+    const dispatched = [];
+    for (const type of ["dragenter", "dragover", "drop"]) {
+      const replayEvent = createFirefoxSanitizedDragEvent(type, transfer);
+      try {
+        target.dispatchEvent(replayEvent);
+        dispatched.push(type);
+      } catch (error) {
+        details.failureReason = "drop_replay_dispatch_failed";
+        details.errorMessage = error?.message || String(error);
+        details.errorStack = error?.stack || "";
+        logSanitizedFileHandoffFailure(details, error);
+        return false;
+      }
+    }
+
+    const attached = await waitForGeminiSanitizedDropReplayAttachment(payload.sanitizedFile);
+    debugReveal("file-handoff:gemini-firefox-drop-replay", {
+      attached,
+      dispatched,
+      sanitizedFile: describeFileForDebug(payload.sanitizedFile)
+    });
+    if (!attached) {
+      details.failureReason = "drop_replay_not_verified";
+      logSanitizedFileHandoffFailure(details);
+      return false;
+    }
+    return true;
+  }
+
   function isSafeSanitizedPayload(payload) {
     return Boolean(
       payload &&
@@ -3900,6 +4125,11 @@
     if (await driver.tryAttachSanitizedFile(payload, context)) {
       setDmzOverlayState("Attached sanitized file", "attached");
       return { ok: true, stage: "file", strategy: `${driver.id}-sanitized-file-handoff` };
+    }
+
+    if (driver.id === "gemini" && (await tryFirefoxGeminiSanitizedDropReplay(payload, context))) {
+      setDmzOverlayState("Attached sanitized file", "attached");
+      return { ok: true, stage: "file", strategy: "gemini-firefox-sanitized-drop-replay" };
     }
 
     const textInserted = await driver.insertSanitizedText(payload, context);
@@ -4792,6 +5022,9 @@
         sanitizedFileInputHandoffs.delete(fileInput);
         return false;
       }
+      if (isFirefoxRuntime() && isProtectedFileDropDriver(getCurrentHandoffDriverId())) {
+        markFirefoxFileInputTransactionReplaced(fileInput, fileInput.files);
+      }
       if (dispatchInputEvent) {
         fileInput.dispatchEvent(
           new Event("input", {
@@ -5182,6 +5415,15 @@
         openShadowRootCount: details.openShadowRootCount,
         sanitizedFile: describeFileForDebug(sanitizedFile)
       });
+      if (isExpectedFirefoxGeminiNoPickerMiss(details)) {
+        debugReveal("file-handoff:gemini-firefox-native-input-unavailable", {
+          handoffStage: details.handoffStage,
+          failureReason: details.failureReason,
+          foundUploadTrigger: Boolean(uploadTrigger),
+          sanitizedFile: describeFileForDebug(sanitizedFile)
+        });
+        return false;
+      }
       logSanitizedFileHandoffFailure(details);
       return false;
     }
@@ -5437,7 +5679,9 @@
     if (
       !extensionRuntimeAvailable ||
       modalOpen ||
-      (event.defaultPrevented && context !== "drop" && !(context === "file-input" && isGeminiHost())) ||
+      (event.defaultPrevented &&
+        context !== "drop" &&
+        !(context === "file-input" && (isGeminiHost() || (isFirefoxRuntime() && isProtectedFileDropDriver(getCurrentHandoffDriverId()))))) ||
       typeof readLocalTextFileFromDataTransfer !== "function" ||
       typeof createSanitizedTextFile !== "function" ||
       !dataTransferHasFiles(dataTransfer)
@@ -5517,7 +5761,7 @@
     }
 
     if (event?.target?.tagName === "INPUT" && String(event.target.type || "").toLowerCase() === "file") {
-      event.target.value = "";
+      clearLocalFileInputSelection(event.target);
     }
 
     if (!localFile.ok) {
@@ -5582,11 +5826,12 @@
         hideBadgeSoon(4200);
         await showMessageModal(STREAMING_BLOCK_TITLE, localFile.message || STREAMING_BLOCK_MESSAGE);
       } else {
+        const firefoxBlockedMessage = getFirefoxRawFileUploadBlockedMessage(context);
         setBadge("Raw file blocked");
         hideBadgeSoon(4200);
         await showMessageModal(
           "Raw file blocked",
-          localFile.message || "LeakGuard blocked raw file upload because local scanning failed."
+          firefoxBlockedMessage || localFile.message || "LeakGuard blocked raw file upload because local scanning failed."
         );
       }
       refreshBadgeFromCurrentInput();
@@ -5637,7 +5882,8 @@
       hideBadgeSoon(4200);
       await showMessageModal(
         "Raw file upload blocked",
-        "LeakGuard blocked raw file upload because local sanitization failed."
+        getFirefoxRawFileUploadBlockedMessage(context) ||
+          "LeakGuard blocked raw file upload because local sanitization failed."
       );
       refreshBadgeFromCurrentInput();
       return {
@@ -5832,39 +6078,68 @@
       !event.target ||
       event.target.tagName !== "INPUT" ||
       String(event.target.type || "").toLowerCase() !== "file" ||
-      typeof dataTransferHasFiles !== "function" ||
-      !dataTransferHasFiles({ files: event.target.files, types: ["Files"], items: [] })
+      typeof dataTransferHasFiles !== "function"
     ) {
       return;
     }
 
+    const isFirefoxProtectedInput = isFirefoxProtectedFileInputEvent(event);
+    const existingTransaction = isFirefoxProtectedInput ? getFirefoxFileInputTransaction(event.target) : null;
+
     if (sanitizedFileInputHandoffs.has(event.target)) {
+      if (!isFirefoxProtectedInput) {
+        sanitizedFileInputHandoffs.delete(event.target);
+        return;
+      }
+      const currentSignature = getFileListMetadataSignature(event.target.files);
+      const isOwnSanitizedRedispatch =
+        existingTransaction?.state === "replaced" &&
+        (!existingTransaction.sanitizedSignature || currentSignature === existingTransaction.sanitizedSignature) &&
+        (!existingTransaction.suppressUntil || Date.now() <= existingTransaction.suppressUntil);
+      if (isOwnSanitizedRedispatch) {
+        markFirefoxFileInputTransactionReplaced(event.target, event.target.files);
+        return;
+      }
       sanitizedFileInputHandoffs.delete(event.target);
+    }
+
+    if (isFirefoxProtectedInput && shouldSuppressFirefoxFileInputEvent(event, existingTransaction)) {
+      if (existingTransaction.state === "processing") {
+        consumeInterceptionEvent(event);
+      }
+      debugReveal("file-input:firefox-transaction-suppressed", {
+        eventType: event.type || "",
+        state: existingTransaction.state,
+        rawSignature: existingTransaction.rawSignature || "",
+        sanitizedSignature: existingTransaction.sanitizedSignature || ""
+      });
+      return;
+    }
+
+    if (!dataTransferHasFiles({ files: event.target.files, types: ["Files"], items: [] })) {
       return;
     }
 
     const selectedFiles = Array.from(event.target.files || []);
+    let transaction = null;
+    if (isFirefoxProtectedInput) {
+      transaction = setFirefoxFileInputTransaction(event.target, {
+        state: "processing",
+        rawSignature: getFileListMetadataSignature(selectedFiles),
+        startedAt: Date.now(),
+        suppressUntil: Date.now() + PROGRAMMATIC_INPUT_SUPPRESS_MS,
+        replacementDispatched: false
+      });
+      consumeInterceptionEvent(event);
+      clearLocalFileInputSelection(event.target);
+    }
 
     const input = findComposer(event.target);
     if (!input && !isGeminiHost()) {
-      if (isFirefoxRuntime() && isProtectedFileDropDriver(getCurrentHandoffDriverId())) {
-        consumeInterceptionEvent(event);
-        try {
-          event.target.value = "";
-        } catch {
-          // Best-effort; selected raw files must not be forwarded.
-        }
-        setBadge("Raw file upload blocked");
-        hideBadgeSoon(4200);
-        await showMessageModal(
-          "Raw file upload blocked",
-          "Use LeakGuard drag/drop to sanitize this file first."
-        );
-      }
-      return;
+      if (!(isFirefoxRuntime() && isProtectedFileDropDriver(getCurrentHandoffDriverId()))) return;
     }
 
-    await maybeHandleLocalFileInsert(
+    const result = await maybeHandleLocalFileInsert(
       event,
       input,
       {
@@ -5874,6 +6149,26 @@
       },
       "file-input"
     );
+    if (isFirefoxProtectedInput && transaction) {
+      const latest = getFirefoxFileInputTransaction(event.target);
+      if (result?.ok) {
+        setFirefoxFileInputTransaction(event.target, {
+          state: "replaced",
+          rawSignature: transaction.rawSignature,
+          sanitizedSignature: latest?.sanitizedSignature || getFileListMetadataSignature(event.target.files),
+          suppressUntil: Date.now() + PROGRAMMATIC_INPUT_SUPPRESS_MS,
+          replacementDispatched: true
+        });
+        setBadge("LeakGuard replaced the selected file with a sanitized copy.");
+        hideBadgeSoon(3200);
+      } else if (latest?.state !== "replaced") {
+        setFirefoxFileInputTransaction(event.target, {
+          state: "failed",
+          rawSignature: transaction.rawSignature,
+          suppressUntil: Date.now() + PROGRAMMATIC_INPUT_SUPPRESS_MS
+        });
+      }
+    }
   }
 
   async function maybeHandleSubmit(event) {
@@ -6918,6 +7213,14 @@
 
     document.addEventListener(
       "change",
+      (event) => {
+        maybeHandleFileInputChange(event).catch(handleContentError);
+      },
+      true
+    );
+
+    document.addEventListener(
+      "input",
       (event) => {
         maybeHandleFileInputChange(event).catch(handleContentError);
       },

@@ -451,7 +451,7 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   );
   assert.ok(
     contentSource.includes("async function maybeHandleFileInputChange") &&
-      contentSource.includes("event.target.value = \"\"") &&
+      contentSource.includes("clearLocalFileInputSelection(event.target)") &&
       contentSource.includes('"file-input"'),
     "file input changes should be captured, cleared, and routed through local redaction"
   );
@@ -510,6 +510,12 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   assert.ok(
     contentSource.includes('document.addEventListener("input", scheduleInputScan, true);'),
     "content script should keep the delayed input scan as a fallback safety net"
+  );
+  assert.ok(
+    /document\.addEventListener\(\s*"input"[\s\S]*maybeHandleFileInputChange\(event\)[\s\S]*true\s*\)/.test(
+      contentSource
+    ),
+    "Firefox file input events should be captured before page handlers and before delayed scanning"
   );
   assert.ok(
     contentSource.includes('event.key === "Enter" || event.key === " "'),
