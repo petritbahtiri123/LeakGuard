@@ -11,6 +11,7 @@ const {
   LOCAL_FILE_TEXT_INSERTION_FALLBACK_ENABLED,
   dataTransferHasFiles,
   listDataTransferFiles,
+  dataTransferHasUnavailableFileItems,
   readLocalTextFileFromDataTransfer,
   createSanitizedTextFile
 } = globalThis.PWM.FilePasteHelpers;
@@ -48,7 +49,7 @@ function createDataTransfer(files, options = {}) {
     files: options.omitFiles ? [] : files,
     items: files.map((file) => ({
       kind: options.uppercaseKind ? "FILE" : "file",
-      getAsFile: () => file
+      getAsFile: () => (options.getAsFileReturnsNull ? null : file)
     }))
   };
 }
@@ -144,6 +145,38 @@ async function testClipboardItemsFilePathDecodesLocally() {
   assert.strictEqual(result.text, text);
 }
 
+async function testFirefoxItemsOnlyFilePathDecodesLocally() {
+  const text = "OPENAI_API_KEY=LeakGuardFirefoxItemApiKey1234567890";
+  const file = createFile({ name: "items-only.env", type: "text/plain", text });
+  const dataTransfer = createDataTransfer([file], {
+    omitFiles: true
+  });
+  const result = await readLocalTextFileFromDataTransfer(dataTransfer);
+
+  assert.strictEqual(dataTransferHasFiles(dataTransfer), true);
+  assert.deepStrictEqual(listDataTransferFiles(dataTransfer), [file]);
+  assert.strictEqual(dataTransferHasUnavailableFileItems(dataTransfer), false);
+  assert.strictEqual(result.handled, true);
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.text, text);
+}
+
+async function testFirefoxItemsOnlyNullFileFailsClosed() {
+  const file = createFile({ name: "unavailable.env", type: "text/plain", text: "API_KEY=secret" });
+  const dataTransfer = createDataTransfer([file], {
+    omitFiles: true,
+    getAsFileReturnsNull: true
+  });
+  const result = await readLocalTextFileFromDataTransfer(dataTransfer);
+
+  assert.strictEqual(dataTransferHasFiles(dataTransfer), true);
+  assert.deepStrictEqual(listDataTransferFiles(dataTransfer), []);
+  assert.strictEqual(dataTransferHasUnavailableFileItems(dataTransfer), true);
+  assert.strictEqual(result.handled, true);
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.code, "firefox_data_transfer_file_unavailable");
+}
+
 async function testMultipleFilesRejectedWithoutReading() {
   const first = createFile({ name: "one.env", text: "API_KEY=LeakGuardOne1234567890" });
   const second = createFile({ name: "two.env", text: "API_KEY=LeakGuardTwo1234567890" });
@@ -216,6 +249,8 @@ async function testOptimizedZoneFileStillDecodesAndOversizedFileBlocks() {
   await testSanitizedFileProducedForHandoff();
   await testClipboardFilesArrayPathDecodesLocally();
   await testClipboardItemsFilePathDecodesLocally();
+  await testFirefoxItemsOnlyFilePathDecodesLocally();
+  await testFirefoxItemsOnlyNullFileFailsClosed();
   await testMultipleFilesRejectedWithoutReading();
   await testUnsupportedFilesPassThroughAndTextBinaryFilesRejected();
   await testNoFileTransferIgnored();

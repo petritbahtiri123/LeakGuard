@@ -40,6 +40,24 @@
       .filter(Boolean);
   }
 
+  function countFileItems(dataTransfer) {
+    return Array.from(dataTransfer?.items || []).filter(
+      (item) => String(item?.kind || "").toLowerCase() === "file"
+    ).length;
+  }
+
+  function dataTransferHasUnavailableFileItems(dataTransfer) {
+    return (
+      Boolean(dataTransfer?.firefoxDataTransferFileUnavailable) ||
+      (
+        dataTransferHasFiles(dataTransfer) &&
+        Number(dataTransfer?.files?.length || 0) === 0 &&
+        countFileItems(dataTransfer) > 0 &&
+        listDataTransferFiles(dataTransfer).length === 0
+      )
+    );
+  }
+
   function resultFromValidation(validation) {
     if (
       validation?.code === "unsupported_binary_or_document" ||
@@ -78,7 +96,12 @@
       return {
         handled: true,
         ok: false,
-        code: files.length > 1 ? "multiple_files" : "file_unavailable",
+        code:
+          files.length > 1
+            ? "multiple_files"
+            : dataTransferHasUnavailableFileItems(dataTransfer)
+              ? "firefox_data_transfer_file_unavailable"
+              : "file_unavailable",
         message: files.length > 1 ? LOCAL_FILE_MULTI_MESSAGE : LOCAL_FILE_READ_MESSAGE
       };
     }
@@ -247,6 +270,7 @@
     LOCAL_FILE_TEXT_INSERTION_FALLBACK_ENABLED,
     dataTransferHasFiles,
     listDataTransferFiles,
+    dataTransferHasUnavailableFileItems,
     readLocalTextFileFromDataTransfer,
     createSanitizedTextFile
   };

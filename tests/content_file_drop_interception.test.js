@@ -85,7 +85,7 @@ function extractFunctionSource(source, name) {
   throw new Error(`Could not extract function ${name}`);
 }
 
-function createDataTransfer({ files = true, exposeFiles = true } = {}) {
+function createDataTransfer({ files = true, exposeFiles = true, getAsFileReturnsNull = false } = {}) {
   const file = {
     name: "secrets.env",
     type: "text/plain",
@@ -107,7 +107,8 @@ function createDataTransfer({ files = true, exposeFiles = true } = {}) {
     items: [
       {
         kind: "file",
-        getAsFile: () => file
+        type: file.type,
+        getAsFile: () => (getAsFileReturnsNull ? null : file)
       }
     ],
     dropEffect: "none"
@@ -305,6 +306,22 @@ function createTextFile({ name = "secrets.env", type = "text/plain", text }) {
     size: new TextEncoder().encode(input).byteLength,
     async text() {
       return input;
+    }
+  };
+}
+
+function createReadableTextFile({ name = "secrets.env", type = "text/plain", text }) {
+  const input = String(text || "");
+  const bytes = new TextEncoder().encode(input);
+  return {
+    name,
+    type,
+    size: bytes.byteLength,
+    async text() {
+      return input;
+    },
+    async arrayBuffer() {
+      return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
     }
   };
 }
@@ -555,6 +572,7 @@ function createHarness(overrides = {}) {
     [
       'const GEMINI_SANITIZED_TEXT_FALLBACK_MESSAGE = "Sanitized content inserted as text because Gemini rejected sanitized file upload.";',
       'const LOCAL_FILE_SANITIZED_TEXT_FALLBACK_MESSAGE = "Sanitized content inserted as text because the site did not accept a sanitized file upload.";',
+      'const FIREFOX_GEMINI_DROP_FILE_UNAVAILABLE_MESSAGE = "Firefox did not expose the dropped file to LeakGuard. Use Gemini\\\'s upload button so LeakGuard can sanitize and replace the selected file before upload.";',
       "const PROGRAMMATIC_INPUT_SUPPRESS_MS = 500;",
       "const CHATGPT_LARGE_PASTE_FILE_THRESHOLD = 16 * 1024;",
       'const CHATGPT_SANITIZED_PASTE_FILE_NAME = "leakguard-redacted-paste.txt";',
@@ -600,7 +618,12 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "getPastedPlainText"),
       extractFunctionSource(contentSource, "dataTransferLooksLikeFiles"),
       extractFunctionSource(contentSource, "listLocalTransferFiles"),
+      extractFunctionSource(contentSource, "snapshotFilesFromDataTransfer"),
+      extractFunctionSource(contentSource, "countDataTransferFileItems"),
+      extractFunctionSource(contentSource, "describeDataTransferFileSnapshot"),
       extractFunctionSource(contentSource, "snapshotLocalFileDataTransfer"),
+      extractFunctionSource(contentSource, "isFirefoxDataTransferFileUnavailableSnapshot"),
+      extractFunctionSource(contentSource, "blockFirefoxGeminiUnavailableDrop"),
       extractFunctionSource(contentSource, "hashLocalString"),
       extractFunctionSource(contentSource, "getGeminiDropSessionHash"),
       extractFunctionSource(contentSource, "classifyLocalFile"),
@@ -645,6 +668,8 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "disableGeminiEditorInputAssist"),
       extractFunctionSource(contentSource, "restoreGeminiEditorInputAssist"),
       extractFunctionSource(contentSource, "setGeminiEditorTextDirect"),
+      extractFunctionSource(contentSource, "verifyGeminiFirefoxInsertedText"),
+      extractFunctionSource(contentSource, "insertGeminiFirefoxEditorText"),
       extractFunctionSource(contentSource, "insertLargeGeminiEditorText"),
       extractFunctionSource(contentSource, "insertGeminiEditorText"),
       extractFunctionSource(contentSource, "dispatchGeminiEditorInput"),
@@ -3077,6 +3102,56 @@ async function testFirefoxGeminiPasteDuplicateRegressionIsCollapsed() {
   assert.ok(calls.directTextWrites?.length >= 1, "duplicate raw+redacted state should be force-rewritten");
 }
 
+async function testFirefoxGeminiMultilinePasteUsesVerifiedTextInsertion() {
+  const rawSecret = "LeakGuardPasteApiKey1234567890";
+  const rawText = [
+    `OPENAI_API_KEY=${rawSecret}`,
+    `ANTHROPIC_API_KEY=${rawSecret}`,
+    `GITHUB_TOKEN=${rawSecret}`
+  ].join("\n");
+  const sanitizedText = [
+    "OPENAI_API_KEY=[PWM_1]",
+    "ANTHROPIC_API_KEY=[PWM_2]",
+    "GITHUB_TOKEN=[PWM_3]"
+  ].join("\n");
+  const { editor, child } = createGeminiEditor("");
+  const { maybeHandlePaste, calls } = createHarness({
+    navigator: { userAgent: "Firefox" },
+    location: { hostname: "gemini.google.com" },
+    document: {
+      activeElement: editor,
+      execCommand(command, _showUi, value) {
+        assert.strictEqual(command, "insertText");
+        editor.text = String(value || "");
+        return true;
+      }
+    },
+    requestRedaction: async () => ({
+      redactedText: sanitizedText
+    })
+  });
+  const { event, calls: eventCalls } = createClipboardEvent({
+    text: rawText,
+    target: child
+  });
+
+  await maybeHandlePaste(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(eventCalls.stopImmediatePropagation, 1);
+  assert.strictEqual(editor.text, sanitizedText);
+  assert.strictEqual(editor.text.includes(rawSecret), false);
+  assert.strictEqual(calls.textFallbacks.length, 0);
+  assert.ok(
+    calls.debugEvents.some(
+      (entry) =>
+        entry.label === "gemini-text:firefox-insert-text" &&
+        entry.details?.verified === true
+    ),
+    "expected Firefox Gemini multiline paste to use verified text insertion"
+  );
+}
+
 async function testGeminiQlEditorPastePauseInsertsRawText() {
   const rawSecret = "LeakGuardPasteApiKey1234567890";
   const rawText = `API_KEY=${rawSecret}`;
@@ -5103,6 +5178,397 @@ async function testFirefoxGeminiSanitizedDropReplayFailureFallsBackToText() {
   assert.strictEqual(calls.textFallbacks[0].insertedText.includes(rawSecret), false);
   assert.ok(composer.text.includes("API_KEY=[PWM_1]"));
   assert.strictEqual(composer.text.includes(rawSecret), false);
+  assert.ok(
+    calls.debugEvents.some(
+      (entry) =>
+        entry.label === "file-handoff:gemini-firefox-drop-replay-unverified" &&
+        entry.details?.target?.source === "gemini-firefox-drop-replay-target" &&
+        entry.details?.sanitizedFile?.name === "firefox-gemini-fallback.env"
+    ),
+    "expected Firefox Gemini drop replay failure diagnostics without raw file content"
+  );
+  assert.strictEqual(JSON.stringify(calls.debugEvents).includes(rawSecret), false);
+}
+
+async function testFirefoxGeminiTextFallbackPreservesMultilineBlocks() {
+  const rawSecret = "LeakGuardDropApiKey1234567890";
+  const sanitizedText = [
+    "OPENAI_API_KEY=[PWM_1]",
+    "ANTHROPIC_API_KEY=[PWM_2]",
+    "GITHUB_TOKEN=[PWM_3]",
+    "STRIPE_SECRET_KEY=[PWM_4]",
+    "DATABASE_URL=postgres://admin:[PWM_5]@db.example.com:5432/customerdb"
+  ].join("\n");
+  const rawText = sanitizedText.replace(/\[PWM_\d+\]/g, rawSecret);
+  const { editor } = createGeminiEditor("");
+  const rawFile = createTextFile({
+    name: "01-basic-secrets.env",
+    type: "",
+    text: rawText
+  });
+  const { maybeHandleDrop, calls } = createHarness({
+    navigator: { userAgent: "Firefox" },
+    location: { hostname: "gemini.google.com" },
+    document: {
+      activeElement: editor,
+      body: {
+        textContent: "",
+        querySelectorAll: () => []
+      },
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      execCommand(command, _showUi, value) {
+        if (command === "insertText") {
+          editor.text = String(value || "");
+          return true;
+        }
+        return false;
+      }
+    },
+    findComposer: () => editor,
+    readLocalTextFileFromDataTransfer: async () => ({
+      handled: true,
+      ok: true,
+      text: rawText,
+      file: {
+        name: "01-basic-secrets.env",
+        type: "",
+        sizeBytes: rawFile.size
+      }
+    }),
+    requestRedaction: async () => ({
+      redactedText: sanitizedText
+    }),
+    handOffGeminiSanitizedFileUpload: (event, input, sanitizedFile) => {
+      calls.handoffs.push({ event, input, sanitizedFile, context: "gemini-file-input" });
+      return false;
+    }
+  });
+  const { event } = createEvent({
+    dataTransfer: {
+      types: ["Files"],
+      files: [rawFile],
+      items: [],
+      dropEffect: "none"
+    },
+    target: editor
+  });
+
+  await maybeHandleDrop(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(calls.handoffs.length, 1);
+  assert.strictEqual(calls.textFallbacks.length, 0);
+  assert.ok(editor.text.includes(`LeakGuard sanitized file: 01-basic-secrets.env\n\n\`\`\`env\n${sanitizedText}\n\`\`\``));
+  assert.strictEqual(editor.text.includes(rawSecret), false);
+  assert.ok(
+    calls.debugEvents.some(
+      (entry) =>
+        entry.label === "gemini-text:firefox-insert-text" &&
+        entry.details?.verified === true
+    ),
+    "expected Firefox Gemini fallback to use verified text insertion for multiline text"
+  );
+}
+
+async function testFirefoxGeminiBlankTextInsertFallsBackToVerifiedRewrite() {
+  const rawSecret = "LeakGuardDropApiKey1234567890";
+  const sanitizedText = [
+    "OPENAI_API_KEY=[PWM_1]",
+    "ANTHROPIC_API_KEY=[PWM_2]",
+    "GITHUB_TOKEN=[PWM_3]"
+  ].join("\n");
+  const rawText = sanitizedText.replace(/\[PWM_\d+\]/g, rawSecret);
+  const { editor } = createGeminiEditor("");
+  const rawFile = createTextFile({
+    name: "blank-firefox-gemini.env",
+    type: "",
+    text: rawText
+  });
+  const { maybeHandleDrop, calls } = createHarness({
+    navigator: { userAgent: "Firefox" },
+    location: { hostname: "gemini.google.com" },
+    document: {
+      activeElement: editor,
+      body: {
+        textContent: "",
+        querySelectorAll: () => []
+      },
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      execCommand(command) {
+        if (command === "insertText") {
+          editor.text = "\n\n\n";
+          return true;
+        }
+        return false;
+      }
+    },
+    findComposer: () => editor,
+    readLocalTextFileFromDataTransfer: async () => ({
+      handled: true,
+      ok: true,
+      text: rawText,
+      file: {
+        name: "blank-firefox-gemini.env",
+        type: "",
+        sizeBytes: rawFile.size
+      }
+    }),
+    requestRedaction: async () => ({
+      redactedText: sanitizedText
+    }),
+    handOffGeminiSanitizedFileUpload: (event, input, sanitizedFile) => {
+      calls.handoffs.push({ event, input, sanitizedFile, context: "gemini-file-input" });
+      return false;
+    }
+  });
+  const { event } = createEvent({
+    dataTransfer: {
+      types: ["Files"],
+      files: [rawFile],
+      items: [],
+      dropEffect: "none"
+    },
+    target: editor
+  });
+
+  await maybeHandleDrop(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(calls.handoffs.length, 1);
+  assert.strictEqual(calls.textFallbacks.length, 1);
+  assert.ok(editor.text.includes("LeakGuard sanitized file: blank-firefox-gemini.env"));
+  assert.ok(editor.text.includes("OPENAI_API_KEY=[PWM_1]"));
+  assert.strictEqual(editor.text.includes(rawSecret), false);
+  assert.ok(
+    calls.debugEvents.some(
+      (entry) =>
+        entry.label === "gemini-text:firefox-insert-text" &&
+        entry.details?.verified === false
+    ),
+    "expected blank Firefox Gemini text insertion to be rejected before text fallback"
+  );
+}
+
+async function testFirefoxGeminiEmptySanitizedTextDoesNotInsertBlankFallback() {
+  const rawSecret = "LeakGuardDropApiKey1234567890";
+  const { editor } = createGeminiEditor("");
+  const rawFile = createTextFile({
+    name: "empty-fallback.env",
+    type: "text/plain",
+    text: `API_KEY=${rawSecret}`
+  });
+  const { maybeHandleDrop, calls } = createHarness({
+    navigator: { userAgent: "Firefox" },
+    location: { hostname: "gemini.google.com" },
+    document: {
+      activeElement: editor,
+      body: {
+        textContent: "",
+        querySelectorAll: () => []
+      },
+      querySelector: () => editor,
+      querySelectorAll: () => []
+    },
+    findComposer: () => editor,
+    requestRedaction: async () => ({
+      redactedText: ""
+    }),
+    handOffGeminiSanitizedFileUpload: (event, input, sanitizedFile) => {
+      calls.handoffs.push({ event, input, sanitizedFile, context: "gemini-file-input" });
+      return false;
+    }
+  });
+  const { event } = createEvent({
+    dataTransfer: {
+      types: ["Files"],
+      files: [rawFile],
+      items: [],
+      dropEffect: "copy"
+    },
+    target: editor
+  });
+
+  await maybeHandleDrop(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(editor.text, "");
+  assert.strictEqual(calls.textFallbacks.length, 0);
+  assert.ok(calls.modals.some(([title]) => title === "Raw file upload blocked"));
+  assert.strictEqual(JSON.stringify(calls.modals).includes(rawSecret), false);
+}
+
+async function testFirefoxGeminiItemsOnlyDropExtractsFileAndShowsSanitizedFallback() {
+  const rawSecret = "LeakGuardDropApiKey1234567890";
+  const rawText = `OPENAI_API_KEY=${rawSecret}\nSAFE=value`;
+  const rawFile = createReadableTextFile({
+    name: "items-only-gemini.env",
+    type: "text/plain",
+    text: rawText
+  });
+  const { editor } = createGeminiEditor("");
+  const dmzTarget = {
+    nodeType: 1,
+    tagName: "DIV",
+    className: "pwm-dmz-box pwm-gemini-dmz-box",
+    closest: () => null,
+    dispatchEvent() {
+      throw new Error("Firefox Gemini replay should not target the DMZ overlay");
+    }
+  };
+  const documentRoot = {
+    activeElement: dmzTarget,
+    body: {
+      textContent: "",
+      querySelectorAll: () => []
+    },
+    querySelector(selector) {
+      return selector === ".ql-editor[contenteditable]" ? editor : null;
+    },
+    querySelectorAll: () => [],
+    execCommand(command, _showUi, value) {
+      assert.strictEqual(command, "insertText");
+      editor.text = String(value || "");
+      return true;
+    }
+  };
+  const { maybeHandleDrop, calls } = createHarness({
+    navigator: { userAgent: "Firefox" },
+    location: { hostname: "gemini.google.com" },
+    document: documentRoot,
+    findComposer: () => null,
+    readLocalTextFileFromDataTransfer: globalThis.PWM.FilePasteHelpers.readLocalTextFileFromDataTransfer,
+    handOffGeminiSanitizedFileUpload: (event, input, sanitizedFile) => {
+      calls.handoffs.push({ event, input, sanitizedFile, context: "gemini-file-input" });
+      return false;
+    }
+  });
+  const { event } = createEvent({
+    dataTransfer: {
+      types: ["Files"],
+      files: [],
+      items: [
+        {
+          kind: "file",
+          type: "text/plain",
+          getAsFile: () => rawFile
+        }
+      ],
+      dropEffect: "copy",
+      effectAllowed: "none"
+    },
+    target: dmzTarget
+  });
+  event.clientX = 0;
+  event.clientY = 0;
+
+  await maybeHandleDrop(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(calls.handoffs.length, 1);
+  assert.ok(editor.text.includes("LeakGuard sanitized file: items-only-gemini.env"));
+  assert.ok(editor.text.includes("OPENAI_API_KEY=[PWM_1]"));
+  assert.strictEqual(editor.text.includes(rawSecret), false);
+  assert.ok(
+    calls.debugEvents.some(
+      (entry) =>
+        entry.label === "file-drop:firefox-items-snapshot" &&
+        entry.details?.firefoxDataTransferFilesEmpty === true &&
+        entry.details?.itemsFileCount === 1 &&
+        entry.details?.itemsGetAsFileSucceeded === true &&
+        entry.details?.snapshottedFileCount === 1
+    ),
+    "expected metadata-only Firefox DataTransfer.items snapshot diagnostics"
+  );
+  assert.ok(
+    calls.debugEvents.some(
+      (entry) =>
+        entry.label === "file-handoff:gemini-firefox-drop-replay-unverified" &&
+        entry.details?.target?.source === "gemini-firefox-drop-replay-target"
+    ),
+    "expected failed Firefox Gemini replay diagnostics before text fallback"
+  );
+  assert.strictEqual(JSON.stringify(calls.debugEvents).includes(rawSecret), false);
+}
+
+async function testFirefoxGeminiItemsOnlyNullFileFailsClosed() {
+  const dmzTarget = {
+    nodeType: 1,
+    tagName: "DIV",
+    className: "pwm-dmz-box pwm-gemini-dmz-box",
+    closest: () => null
+  };
+  const { maybeHandleDrop, calls } = createHarness({
+    navigator: { userAgent: "Firefox" },
+    location: { hostname: "gemini.google.com" },
+    document: {
+      activeElement: dmzTarget,
+      body: {
+        textContent: "",
+        querySelectorAll: () => []
+      },
+      querySelector: () => null,
+      querySelectorAll: () => []
+    },
+    findComposer: () => null,
+    readLocalTextFileFromDataTransfer: () => {
+      throw new Error("unavailable Firefox Gemini drop must not try to read a file");
+    },
+    handOffGeminiSanitizedFileUpload: () => {
+      throw new Error("unavailable Firefox DataTransfer item must not reach sanitized file handoff");
+    }
+  });
+  const { event } = createEvent({
+    dataTransfer: {
+      types: ["Files"],
+      files: [],
+      items: [
+        {
+          kind: "file",
+          type: "text/plain",
+          getAsFile: () => null
+        }
+      ],
+      dropEffect: "copy",
+      effectAllowed: "none"
+    },
+    target: dmzTarget
+  });
+
+  await maybeHandleDrop(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(calls.handoffs.length, 0);
+  assert.strictEqual(calls.textFallbacks.length, 0);
+  assert.strictEqual(calls.redactions.length, 0);
+  assert.strictEqual(calls.createdFiles.length, 0);
+  assert.ok(calls.badges.some(([message]) => message === "Firefox drag/drop file unavailable"));
+  assert.ok(calls.modals.some(([title]) => title === "Raw file blocked"));
+  assert.ok(
+    calls.modals.some(([, message]) =>
+      String(message || "").includes("Use Gemini's upload button")
+    )
+  );
+  assert.ok(
+    calls.debugEvents.some(
+      (entry) =>
+        entry.label === "file-drop:firefox-items-snapshot" &&
+        entry.details?.firefoxDataTransferFilesEmpty === true &&
+        entry.details?.itemsFileCount === 1 &&
+        entry.details?.itemsGetAsFileSucceeded === false &&
+        entry.details?.snapshottedFileCount === 0
+    ),
+    "expected failed Firefox DataTransfer.items snapshot diagnostics"
+  );
+  assert.ok(
+    calls.debugEvents.some(
+      (entry) =>
+        entry.label === "file-drop:firefox-gemini-file-unavailable" &&
+        entry.details?.reason === "firefox_gemini_drop_file_unavailable"
+    ),
+    "expected fail-closed Firefox DataTransfer unavailable reason"
+  );
 }
 
 async function testGeminiHiddenFileDropUsesSnapshotThenSanitizedTextFallback() {
@@ -5463,6 +5929,129 @@ async function testFirefoxFileInputDuplicateEventsShareOneTransaction() {
   assert.deepStrictEqual(fileInput.events, ["input", "change"]);
   assert.strictEqual(calls.modals.some(([title]) => title === "Raw file blocked"), false);
   assert.ok(calls.badges.some(([message]) => message === "LeakGuard replaced the selected file with a sanitized copy."));
+}
+
+async function testFirefoxGeminiUploadInputReplacesSelectedFile() {
+  const rawSecret = "LeakGuardFileApiKey1234567890";
+  const rawFile = createTextFile({
+    name: "gemini-upload.env",
+    type: "text/plain",
+    text: `API_KEY=${rawSecret}`
+  });
+  const fileInput = createFileInput();
+  fileInput.files = [rawFile];
+  const { maybeHandleFileInputChange, calls } = createHarness({
+    location: { hostname: "gemini.google.com" },
+    navigator: { userAgent: "Firefox" },
+    findComposer: () => null,
+    handOffSanitizedLocalFile: (event, input, sanitizedFile, context) => {
+      calls.handoffs.push({ event, input, sanitizedFile, context });
+      assert.strictEqual(event.target, fileInput);
+      assert.strictEqual(context, "file-input");
+      fileInput.files = [sanitizedFile];
+      fileInput.dispatchEvent({ type: "input", bubbles: true, cancelable: true, composed: true });
+      fileInput.dispatchEvent({ type: "change", bubbles: true, cancelable: true, composed: true });
+      return true;
+    }
+  });
+  const { event, calls: eventCalls } = createEvent({
+    type: "input",
+    target: fileInput
+  });
+
+  await maybeHandleFileInputChange(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(eventCalls.stopImmediatePropagation, 1);
+  assert.strictEqual(calls.handoffs.length, 1);
+  assert.strictEqual(calls.handoffs[0].context, "file-input");
+  assert.strictEqual(calls.redactions.length, 1);
+  assert.strictEqual(fileInput.files.length, 1);
+  assert.notStrictEqual(fileInput.files[0], rawFile);
+  assert.strictEqual(fileInput.files[0].text, "API_KEY=[PWM_1]");
+  assert.strictEqual(fileInput.files[0].text.includes(rawSecret), false);
+  assert.deepStrictEqual(fileInput.events, ["input", "change"]);
+  assert.strictEqual(calls.textFallbacks.length, 0);
+  assert.strictEqual(calls.modals.some(([title]) => title === "Raw file blocked"), false);
+  assert.ok(calls.badges.some(([message]) => message === "LeakGuard replaced the selected file with a sanitized copy."));
+}
+
+async function testFirefoxGeminiUploadReplacementFailureDoesNotTextFallback() {
+  const rawSecret = "LeakGuardFileApiKey1234567890";
+  const rawFile = createTextFile({
+    name: "gemini-upload-fails.env",
+    type: "text/plain",
+    text: `API_KEY=${rawSecret}`
+  });
+  const fileInput = createFileInput();
+  fileInput.files = [rawFile];
+  const { maybeHandleFileInputChange, calls } = createHarness({
+    location: { hostname: "gemini.google.com" },
+    navigator: { userAgent: "Firefox" },
+    findComposer: () => null,
+    handOffSanitizedLocalFile: (event, input, sanitizedFile, context) => {
+      calls.handoffs.push({ event, input, sanitizedFile, context });
+      return false;
+    }
+  });
+  const { event } = createEvent({
+    type: "change",
+    target: fileInput
+  });
+
+  await maybeHandleFileInputChange(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(calls.handoffs.length, 1);
+  assert.strictEqual(calls.textFallbacks.length, 0);
+  assert.ok(calls.modals.some(([title]) => title === "Raw file upload blocked"));
+  assert.strictEqual(JSON.stringify(calls.modals).includes(rawSecret), false);
+}
+
+async function testFirefoxGeminiUploadScanFailureBlocksRawFile() {
+  const rawFile = createTextFile({
+    name: "gemini-bad.env",
+    type: "text/plain",
+    text: "not decoded"
+  });
+  const fileInput = createFileInput();
+  fileInput.files = [rawFile];
+  fileInput.value = "C:\\fakepath\\gemini-bad.env";
+  const { maybeHandleFileInputChange, calls } = createHarness({
+    location: { hostname: "gemini.google.com" },
+    navigator: { userAgent: "Firefox" },
+    findComposer: () => null,
+    readLocalTextFileFromDataTransfer: async (transfer) => {
+      calls.reads.push(transfer);
+      return {
+        handled: false,
+        ok: false,
+        code: "invalid_utf8",
+        message: "raw scan failure details must not be shown"
+      };
+    },
+    handOffSanitizedLocalFile() {
+      throw new Error("failed Firefox Gemini input scan must not hand off a file");
+    }
+  });
+  const { event, calls: eventCalls } = createEvent({
+    type: "input",
+    target: fileInput
+  });
+
+  await maybeHandleFileInputChange(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(eventCalls.stopImmediatePropagation, 1);
+  assert.strictEqual(fileInput.value, "");
+  assert.strictEqual(calls.reads.length, 1);
+  assert.strictEqual(calls.redactions.length, 0);
+  assert.strictEqual(calls.createdFiles.length, 0);
+  assert.strictEqual(calls.handoffs.length, 0);
+  assert.strictEqual(fileInput.events.length, 0);
+  assert.ok(calls.modals.some(([title]) => title === "Raw file blocked"));
+  assert.ok(calls.modals.some(([, message]) => String(message || "").includes("Use Gemini's upload button again")));
+  assert.strictEqual(calls.modals.flat().join("\n").includes("raw scan failure details"), false);
 }
 
 async function testFirefoxFileUnavailableDuplicateAfterReplacementIsIgnored() {
@@ -5890,6 +6479,7 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testGeminiQlEditorPasteIsSanitizedBeforePageHandlers();
   await testFirefoxGeminiPasteRawAlreadyLandedIsReplaced();
   await testFirefoxGeminiPasteDuplicateRegressionIsCollapsed();
+  await testFirefoxGeminiMultilinePasteUsesVerifiedTextInsertion();
   await testGeminiQlEditorPastePauseInsertsRawText();
   await testChatGptLargePasteCreatesSanitizedPlainTextFileHandoff();
   await testChatGptLargePasteFallsBackToSanitizedTextOnlyWhenFileHandoffFails();
@@ -5928,6 +6518,11 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testGeminiDropFallsBackToSanitizedComposerTextWhenNativeUploadUnavailable();
   await testFirefoxGeminiSanitizedDropReplayUsesSanitizedFileOnly();
   await testFirefoxGeminiSanitizedDropReplayFailureFallsBackToText();
+  await testFirefoxGeminiTextFallbackPreservesMultilineBlocks();
+  await testFirefoxGeminiBlankTextInsertFallsBackToVerifiedRewrite();
+  await testFirefoxGeminiEmptySanitizedTextDoesNotInsertBlankFallback();
+  await testFirefoxGeminiItemsOnlyDropExtractsFileAndShowsSanitizedFallback();
+  await testFirefoxGeminiItemsOnlyNullFileFailsClosed();
   await testGeminiHiddenFileDropUsesSnapshotThenSanitizedTextFallback();
   await testGeminiTextFallbackFailureNeverLeaksRawContent();
   await testChatGptAndClaudeUseStructuredSanitizedTextWhenFileAttachUnavailable();
@@ -5936,6 +6531,9 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testFirefoxChatGptFileInputReplacesSelectedFile();
   await testFirefoxChatGptFileInputReplacesBasicSecretsFixture();
   await testFirefoxFileInputDuplicateEventsShareOneTransaction();
+  await testFirefoxGeminiUploadInputReplacesSelectedFile();
+  await testFirefoxGeminiUploadReplacementFailureDoesNotTextFallback();
+  await testFirefoxGeminiUploadScanFailureBlocksRawFile();
   await testFirefoxFileUnavailableDuplicateAfterReplacementIsIgnored();
   await testFirefoxFileInputScanFailureBlocksRawUpload();
   await testFirefoxEmptyMimeEnvDropUsesTextDecodeAndSanitizedHandoff();

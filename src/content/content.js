@@ -430,8 +430,14 @@
 
   function getFirefoxRawFileUploadBlockedMessage(context) {
     if (context !== "file-input" || !isFirefoxRuntime()) return "";
+    if (isGeminiHost()) {
+      return "LeakGuard blocked raw file upload in Firefox. Use Gemini's upload button again so LeakGuard can sanitize and replace the selected file before upload.";
+    }
     return "LeakGuard blocked raw file upload in Firefox. Use LeakGuard drag/drop with a supported text file.";
   }
+
+  const FIREFOX_GEMINI_DROP_FILE_UNAVAILABLE_MESSAGE =
+    "Firefox did not expose the dropped file to LeakGuard. Use Gemini's upload button so LeakGuard can sanitize and replace the selected file before upload.";
 
   function getFileMetadataSignature(file) {
     if (!file) return "";
@@ -561,6 +567,10 @@
       return FilePasteHelpers.listDataTransferFiles(dataTransfer);
     }
 
+    return snapshotFilesFromDataTransfer(dataTransfer);
+  }
+
+  function snapshotFilesFromDataTransfer(dataTransfer) {
     const files = Array.from(dataTransfer?.files || []).filter(Boolean);
     if (files.length) return files;
 
@@ -574,13 +584,38 @@
       .filter(Boolean);
   }
 
+  function countDataTransferFileItems(dataTransfer) {
+    return Array.from(dataTransfer?.items || []).filter(
+      (item) => String(item?.kind || "").toLowerCase() === "file"
+    ).length;
+  }
+
+  function describeDataTransferFileSnapshot(dataTransfer, files) {
+    const filesLength = Number(dataTransfer?.files?.length || 0);
+    const itemsFileCount = countDataTransferFileItems(dataTransfer);
+    return {
+      firefoxDataTransferFilesEmpty: isFirefoxRuntime() && filesLength === 0 && itemsFileCount > 0,
+      itemsFileCount,
+      itemsGetAsFileSucceeded: filesLength === 0 && itemsFileCount > 0 ? files.length > 0 : undefined,
+      snapshottedFileCount: files.length
+    };
+  }
+
   function snapshotLocalFileDataTransfer(dataTransfer) {
-    const files = listLocalTransferFiles(dataTransfer);
-    if (!files.length) return dataTransfer;
+    const files = snapshotFilesFromDataTransfer(dataTransfer);
+    const fileItemCount = countDataTransferFileItems(dataTransfer);
+    if (isFirefoxRuntime() && Number(dataTransfer?.files?.length || 0) === 0 && fileItemCount > 0) {
+      debugReveal("file-drop:firefox-items-snapshot", describeDataTransferFileSnapshot(dataTransfer, files));
+    }
+    if (!files.length && !fileItemCount) return dataTransfer;
+
+    const types = Array.from(dataTransfer?.types || []);
+    if (!types.includes("Files")) types.push("Files");
 
     return {
       files,
-      types: Array.from(dataTransfer?.types || ["Files"]),
+      types,
+      firefoxDataTransferFileUnavailable: !files.length && fileItemCount > 0,
       items: files.map((file) => ({
         kind: "file",
         type: file?.type || "",
@@ -3157,8 +3192,34 @@
       resolveGeminiEditorTarget(input) ||
       resolveGeminiEditorTarget(document.activeElement) ||
       resolveGeminiEditorTarget(findComposer(event?.target)) ||
-      resolveGeminiEditorTarget(findComposer(document.activeElement))
+      resolveGeminiEditorTarget(findComposer(document.activeElement)) ||
+      document.querySelector?.(".ql-editor[contenteditable]") ||
+      document.querySelector?.('[role="textbox"][contenteditable]') ||
+      document.querySelector?.('[contenteditable="true"]')
     );
+  }
+
+  function isFirefoxDataTransferFileUnavailableSnapshot(dataTransfer) {
+    return Boolean(dataTransfer?.firefoxDataTransferFileUnavailable);
+  }
+
+  async function blockFirefoxGeminiUnavailableDrop(event) {
+    rawFileDropInterceptions.add(event);
+    consumeInterceptionEvent(event);
+    debugReveal("file-drop:firefox-gemini-file-unavailable", {
+      reason: "firefox_gemini_drop_file_unavailable",
+      snapshot: describeDataTransferFileSnapshot(event?.dataTransfer, [])
+    });
+    setBadge("Firefox drag/drop file unavailable");
+    hideBadgeSoon(5200);
+    await showMessageModal("Raw file blocked", FIREFOX_GEMINI_DROP_FILE_UNAVAILABLE_MESSAGE);
+    refreshBadgeFromCurrentInput();
+    clearFileDragSession({ keepDmzOverlay: getCurrentHandoffDriver()?.usesDmzOverlay });
+    return {
+      handled: true,
+      ok: false,
+      reason: "firefox_gemini_drop_file_unavailable"
+    };
   }
 
   async function redactGeminiEditorText(text) {
@@ -3285,7 +3346,69 @@
     }
   }
 
-  function insertLargeGeminiEditorText(editor, sanitizedText) {
+  function verifyGeminiFirefoxInsertedText(editor, sanitizedText, rawInsertedText = "") {
+    const actual = normalizeComposerText(getInputText(editor));
+    if (!actual.trim()) return false;
+
+    const placeholders = listExpectedPlaceholders(sanitizedText);
+    if (placeholders.length && !placeholders.every((placeholder) => actual.includes(placeholder))) {
+      return false;
+    }
+
+    const rawText = normalizeComposerText(rawInsertedText);
+    if (rawText && actual.includes(rawText)) {
+      return false;
+    }
+
+    return true;
+  }
+
+  function insertGeminiFirefoxEditorText(editor, sanitizedText, options) {
+    options = options || {};
+    const normalized = normalizeComposerText(sanitizedText);
+    if (!editor || !isFirefoxRuntime() || !isGeminiHost() || !isContentEditable(editor) || !normalized.includes("\n")) {
+      return false;
+    }
+
+    const assistSnapshot = disableGeminiEditorInputAssist(editor);
+    try {
+      suppressFollowupInputScan();
+      editor.focus();
+      const inserted = Boolean(document.execCommand?.("insertText", false, normalized));
+      if (!inserted) {
+        debugReveal("gemini-text:firefox-insert-text-unavailable", {
+          insertedLength: normalized.length,
+          lineCount: normalized.split("\n").length
+        });
+        return false;
+      }
+
+      dispatchGeminiEditorInput(editor, normalized, {
+        inputType: "insertFromPaste"
+      });
+
+      const verified = verifyGeminiFirefoxInsertedText(editor, normalized, options.rawInsertedText || "");
+      debugReveal("gemini-text:firefox-insert-text", {
+        insertedLength: normalized.length,
+        lineCount: normalized.split("\n").length,
+        verified
+      });
+
+      return verified;
+    } catch (error) {
+      debugReveal("gemini-text:firefox-insert-text-failed", {
+        message: error?.message || String(error || ""),
+        insertedLength: normalized.length,
+        lineCount: normalized.split("\n").length
+      });
+      return false;
+    } finally {
+      restoreGeminiEditorInputAssist(editor, assistSnapshot);
+    }
+  }
+
+  function insertLargeGeminiEditorText(editor, sanitizedText, options) {
+    options = options || {};
     const text = String(sanitizedText || "");
     if (!editor || typeof editor.focus !== "function") return false;
 
@@ -3295,6 +3418,7 @@
 
     suppressFollowupInputScan(GEMINI_LARGE_TEXT_SUPPRESS_MS);
     editor.focus();
+    if (insertGeminiFirefoxEditorText(editor, text, options)) return true;
     if (!setGeminiEditorTextDirect(editor, next.text)) return false;
     // Gemini/Quill observes the DOM mutation; this event only announces that sanitized content changed.
     dispatchGeminiEditorInput(editor, "", {
@@ -3309,12 +3433,17 @@
     return true;
   }
 
-  function insertGeminiEditorText(editor, sanitizedText) {
+  function insertGeminiEditorText(editor, sanitizedText, options) {
+    options = options || {};
     const text = String(sanitizedText || "");
     if (!editor || typeof editor.focus !== "function") return false;
 
+    if (insertGeminiFirefoxEditorText(editor, text, options)) {
+      return true;
+    }
+
     if (text.length >= GEMINI_DIRECT_TEXT_INSERT_THRESHOLD) {
-      return insertLargeGeminiEditorText(editor, text);
+      return insertLargeGeminiEditorText(editor, text, options);
     }
 
     try {
@@ -3399,7 +3528,7 @@
       }
     }
 
-    if (insertGeminiEditorText(editor, sanitizedText)) {
+    if (insertGeminiEditorText(editor, sanitizedText, { rawInsertedText })) {
       if (rawInsertedText && getInputText(editor).includes(rawInsertedText)) {
         const applied = await rewriteComposerTransactionally(
           editor,
@@ -3830,7 +3959,13 @@
   }
 
   async function insertGeminiSanitizedText(payload, event, input) {
-    if (!isGeminiHost() || !payload?.redactedText) return false;
+    if (!isGeminiHost()) return false;
+    if (!String(payload?.redactedText || "").trim()) {
+      debugReveal("file-handoff:gemini-empty-text-fallback-blocked", {
+        reason: "empty_sanitized_text"
+      });
+      return false;
+    }
     const inserted = await applyGeminiSanitizedTextFallback(
       event,
       input,
@@ -3922,10 +4057,13 @@
     }
 
     const target =
-      context?.event?.target ||
+      resolveGeminiEditorTarget(document.activeElement) ||
+      resolveGeminiFallbackEditor(context?.event, context?.input) ||
+      document.querySelector?.(".ql-editor[contenteditable]") ||
+      document.querySelector?.('[role="textbox"][contenteditable]') ||
+      document.querySelector?.('[contenteditable="true"]') ||
       findComposer(document.activeElement) ||
       findComposer(document.body) ||
-      document.querySelector?.(".ql-editor[contenteditable]") ||
       document.body;
     if (!target || typeof target.dispatchEvent !== "function") {
       details.failureReason = "drop_replay_target_unavailable";
@@ -3958,10 +4096,17 @@
     debugReveal("file-handoff:gemini-firefox-drop-replay", {
       attached,
       dispatched,
+      target: describeElementForDebug(target, "gemini-firefox-drop-replay-target"),
       sanitizedFile: describeFileForDebug(payload.sanitizedFile)
     });
     if (!attached) {
       details.failureReason = "drop_replay_not_verified";
+      debugReveal("file-handoff:gemini-firefox-drop-replay-unverified", {
+        dispatched,
+        target: describeElementForDebug(target, "gemini-firefox-drop-replay-target"),
+        attachmentTextLength: getGeminiAttachmentVerificationText().length,
+        sanitizedFile: describeFileForDebug(payload.sanitizedFile)
+      });
       logSanitizedFileHandoffFailure(details);
       return false;
     }
@@ -4008,7 +4153,7 @@
   }
 
   async function insertSanitizedPayloadText(payload, event, input, context = null) {
-    if (!payload?.redactedText) return false;
+    if (!String(payload?.redactedText || "").trim()) return false;
     if (!input && context?.composerResolved && !isFirefoxRuntime()) return false;
     if (isGeminiHost()) {
       return insertGeminiSanitizedText(payload, event, input);
@@ -5765,6 +5910,11 @@
     }
 
     if (!localFile.ok) {
+      if (localFile.code === "firefox_data_transfer_file_unavailable") {
+        debugReveal("file-drop:firefox-data-transfer-file-unavailable", {
+          reason: "firefox_data_transfer_file_unavailable"
+        });
+      }
       if (localFile.code === "streaming_required" && localFile.sourceFile) {
         const streamResult = await streamRedactLocalTextFile(localFile.sourceFile, localFile.file);
         if (streamResult.action === "blocked") {
@@ -5797,10 +5947,13 @@
                 if (await handOffSanitizedLocalFile(event, input, streamResult.sanitizedFile, context)) {
                   return { ok: true, stage: "file", strategy: "streaming-sanitized-file-handoff" };
                 }
-                const inserted = await driver.insertSanitizedText(payload, { event, input, context, driver });
-                return inserted === true
-                  ? { ok: true, stage: "text", strategy: "streaming-sanitized-text-fallback" }
-                  : { ok: false, stage: "failed", reason: inserted === "cancelled" ? "sanitized_text_cancelled" : "sanitized_payload_handoff_failed" };
+      if (context === "file-input" && isFirefoxRuntime() && isGeminiHost()) {
+        return { ok: false, stage: "failed", reason: "firefox_gemini_file_input_replacement_failed" };
+      }
+      const inserted = await driver.insertSanitizedText(payload, { event, input, context, driver });
+      return inserted === true
+        ? { ok: true, stage: "text", strategy: "streaming-sanitized-text-fallback" }
+        : { ok: false, stage: "failed", reason: inserted === "cancelled" ? "sanitized_text_cancelled" : "sanitized_payload_handoff_failed" };
               })();
         if (handoffResult.ok) {
           setDmzOverlayState("Attached sanitized file", "attached");
@@ -5918,6 +6071,9 @@
             if (await handOffSanitizedLocalFile(event, input, sanitizedFile, context)) {
               return { ok: true, stage: "file", strategy: "sanitized-file-handoff" };
             }
+            if (context === "file-input" && isFirefoxRuntime() && isGeminiHost()) {
+              return { ok: false, stage: "failed", reason: "firefox_gemini_file_input_replacement_failed" };
+            }
             const inserted = await driver.insertSanitizedText(payload, { event, input, context, driver });
             return inserted === true
               ? { ok: true, stage: "text", strategy: "sanitized-text-fallback" }
@@ -5987,7 +6143,17 @@
       return;
     }
 
-    const transferPolicy = resolveLocalFileTransferPolicy(event.dataTransfer);
+    const snapshotDataTransfer = snapshotLocalFileDataTransfer(event.dataTransfer);
+    if (
+      isFirefoxRuntime() &&
+      isGeminiHost() &&
+      isFirefoxDataTransferFileUnavailableSnapshot(snapshotDataTransfer)
+    ) {
+      await blockFirefoxGeminiUnavailableDrop(event);
+      return;
+    }
+
+    const transferPolicy = resolveLocalFileTransferPolicy(snapshotDataTransfer);
     if (transferPolicy.action === "allow") {
       if (shouldBlockUnsupportedFileTransfer(transferPolicy)) {
         rawFileDropInterceptions.add(event);
@@ -6002,7 +6168,6 @@
       if (isGeminiHost()) {
         rawFileDropInterceptions.add(event);
         consumeInterceptionEvent(event);
-        const snapshotDataTransfer = snapshotLocalFileDataTransfer(event.dataTransfer);
         handOffOriginalLocalFile(event, snapshotDataTransfer, "drop");
         showUnsupportedFilePassThroughNotice(transferPolicy);
         clearFileDragSession();
@@ -6025,7 +6190,6 @@
 
     rawFileDropInterceptions.add(event);
     consumeInterceptionEvent(event);
-    const snapshotDataTransfer = snapshotLocalFileDataTransfer(event.dataTransfer);
     if (isGeminiHost()) {
       lastGeminiDropSessionHash = getGeminiDropSessionHash(snapshotDataTransfer);
     }
