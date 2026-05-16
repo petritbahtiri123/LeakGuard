@@ -6099,6 +6099,49 @@ async function testFirefoxGeminiPrimeActivatesHiddenSelectorFallbackAndCapturesF
   );
 }
 
+async function testFirefoxGeminiPrimeClicksHiddenSelectorBeforeSanitizedFileExists() {
+  let harness;
+  const uploadFilesMenuItem = createOverlayItem({
+    dataTestId: "local-images-files-uploader-button"
+  });
+  const hiddenTrigger = createHiddenFileSelectorTrigger();
+  harness = createHandoffHarness({
+    userAgent: "Firefox",
+    uploadTriggers: [
+      createUploadTrigger({
+        ariaLabel: "Close upload file menu",
+        className: "upload-card-button close",
+        onClick: () => {
+          throw new Error("priming must not click close while menu is already open");
+        }
+      })
+    ],
+    hiddenTriggers: [hiddenTrigger],
+    overlayItems: [uploadFilesMenuItem]
+  });
+  const event = {
+    type: "drop",
+    target: { nodeType: 1, tagName: "DIV", dispatchEvent: () => true },
+    dataTransfer: createDataTransfer()
+  };
+
+  const prime = harness.primeGeminiFirefoxUploadTarget(event, null);
+  harness.debugEvents.push({ label: "file-handoff:sanitized-file-created", payload: {} });
+  await prime.inputPromise;
+
+  const labels = harness.debugEvents.map((entry) => entry.label);
+  const menuItemIndex = labels.indexOf("file-handoff:gemini-firefox-prime-menu-item-opened");
+  const hiddenClickIndex = labels.indexOf("file-handoff:gemini-firefox-prime-hidden-trigger-clicked");
+  const sanitizedIndex = labels.indexOf("file-handoff:sanitized-file-created");
+
+  assert.ok(menuItemIndex !== -1, "expected Upload files menu item to open during prime");
+  assert.ok(hiddenClickIndex !== -1, "expected hidden selector fallback to run during prime");
+  assert.ok(sanitizedIndex !== -1, "expected synthetic sanitized-file-created marker");
+  assert.ok(menuItemIndex < hiddenClickIndex, "hidden trigger must run after Upload files menu item click");
+  assert.ok(hiddenClickIndex < sanitizedIndex, "hidden trigger must run before sanitized file creation");
+  assert.deepStrictEqual(Array.from(hiddenTrigger.events), ["pointerdown", "mousedown", "mouseup", "click"]);
+}
+
 async function testFirefoxGeminiPrimeHiddenSelectorFallbackAcceptsObservedFiledataInput() {
   const sanitizedFile = {
     name: "prime-hidden-observed.env",
@@ -7986,6 +8029,7 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testFirefoxGeminiPrimeCapturesDelayedFiledataBeforeSanitizedAssignment();
   await testFirefoxGeminiPrimeCapturesTransientMutationFiledataInput();
   await testFirefoxGeminiPrimeActivatesHiddenSelectorFallbackAndCapturesFiledataClick();
+  await testFirefoxGeminiPrimeClicksHiddenSelectorBeforeSanitizedFileExists();
   await testFirefoxGeminiPrimeHiddenSelectorFallbackAcceptsObservedFiledataInput();
   await testFirefoxGeminiFileInputBridgeUsesUploadFilesTextOverlayItem();
   await testFirefoxGeminiFileInputBridgeRejectsNonUploadOverlayItems();

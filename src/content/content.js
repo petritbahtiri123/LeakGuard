@@ -4725,7 +4725,8 @@
               })
             ]));
 
-          let guardedInput = await waitForPrimedInput(450);
+          waitResult = findGeminiFileInput(event, input);
+          let guardedInput = pickerGuard.getInput() || waitResult.fileInput || null;
           if (!guardedInput && !waitResult.fileInput) {
             const hiddenTrigger = findGeminiHiddenFileSelectorTrigger();
             if (hiddenTrigger) {
@@ -4736,9 +4737,12 @@
                 debugReveal("file-handoff:gemini-firefox-prime-hidden-trigger-clicked", {
                   trigger: describeElementForDebug(hiddenTrigger, "gemini-hidden-file-selector-trigger")
                 });
-                guardedInput = await waitForPrimedInput(3000);
+                guardedInput = pickerGuard.getInput() || null;
               }
             }
+          }
+          if (!guardedInput && !waitResult.fileInput) {
+            guardedInput = await waitForPrimedInput(3000);
           }
 
           const primedInput = guardedInput || waitResult.fileInput || null;
