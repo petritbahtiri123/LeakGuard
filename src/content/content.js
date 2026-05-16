@@ -4441,6 +4441,77 @@
     }
   }
 
+  function isGeminiHiddenFileSelectorTrigger(candidate) {
+    if (!candidate || String(candidate.tagName || "").toUpperCase() !== "BUTTON") return false;
+    if (candidate.disabled || isFileInputElement(candidate)) return false;
+    const className = String(candidate.className || candidate.getAttribute?.("class") || "");
+    return /\bhidden-local-file-image-selector-button\b/.test(className);
+  }
+
+  function collectGeminiHiddenFileSelectorTriggersFromRoot(root, candidates, seen, visitedRoots) {
+    if (!root || visitedRoots.has(root)) return;
+    visitedRoots.add(root);
+
+    const selectors = [
+      "button.hidden-local-file-image-selector-button[xapfileselectortrigger]",
+      ".hidden-local-file-image-selector-button[xapfileselectortrigger]",
+      "button.hidden-local-file-image-selector-button",
+      ".hidden-local-file-image-selector-button"
+    ];
+    for (const selector of selectors) {
+      try {
+        root.querySelectorAll?.(selector).forEach((candidate) => {
+          if (!candidate || seen.has(candidate) || !isGeminiHiddenFileSelectorTrigger(candidate)) return;
+          seen.add(candidate);
+          candidates.push(candidate);
+        });
+      } catch {
+        // Selector support varies across synthetic and host-controlled roots.
+      }
+    }
+
+    let elements = [];
+    try {
+      elements = Array.from(root.querySelectorAll?.("*") || []);
+    } catch {
+      elements = [];
+    }
+    elements.forEach((element) => {
+      if (element?.shadowRoot) {
+        collectGeminiHiddenFileSelectorTriggersFromRoot(element.shadowRoot, candidates, seen, visitedRoots);
+      }
+    });
+  }
+
+  function findGeminiHiddenFileSelectorTrigger() {
+    if (!isGeminiHost()) return null;
+    const candidates = [];
+    collectGeminiHiddenFileSelectorTriggersFromRoot(document, candidates, new WeakSet(), new WeakSet());
+    return candidates.find(isGeminiHiddenFileSelectorTrigger) || null;
+  }
+
+  function activateGeminiHiddenFileSelectorTriggerSafely(trigger) {
+    if (!isGeminiHiddenFileSelectorTrigger(trigger)) return false;
+    try {
+      for (const type of ["pointerdown", "mousedown", "mouseup"]) {
+        trigger.dispatchEvent?.(createGeminiUploadMenuEvent(type));
+      }
+      if (typeof trigger.click === "function") {
+        trigger.click();
+      } else {
+        trigger.dispatchEvent?.(createGeminiUploadMenuEvent("click"));
+      }
+      return true;
+    } catch {
+      try {
+        trigger.dispatchEvent?.(createGeminiUploadMenuEvent("click"));
+        return true;
+      } catch {
+        return false;
+      }
+    }
+  }
+
   async function waitForGeminiUploadFilesMenuItem(timeoutMs = 3000) {
     let menuItem = findGeminiUploadFilesMenuItem();
     if (menuItem) return menuItem;
@@ -4540,6 +4611,14 @@
             details.failureReason = reason;
           }
         }
+        if (directInput) {
+          debugReveal("file-handoff:gemini-firefox-prime-filedata-input-observed", {
+            mode: "file-input-prime",
+            browser: "firefox",
+            host: location.hostname || "",
+            input: describeFileInputForDebug(directInput, "gemini-firefox-filedata-observed")
+          });
+        }
         resolve(result);
       };
 
@@ -4636,8 +4715,7 @@
           debugReveal("file-handoff:gemini-firefox-prime-menu-item-opened", {
             menuItem: details.selectedOverlayItem
           });
-          const waitMs = 3000;
-          const guardedInput =
+          const waitForPrimedInput = async (waitMs) =>
             pickerGuard.getInput() ||
             (await Promise.race([
               pickerGuard.waitForInput(waitMs),
@@ -4646,7 +4724,33 @@
                 return result.fileInput || pickerGuard.getInput();
               })
             ]));
-          finish(guardedInput || waitResult.fileInput || null);
+
+          let guardedInput = await waitForPrimedInput(450);
+          if (!guardedInput && !waitResult.fileInput) {
+            const hiddenTrigger = findGeminiHiddenFileSelectorTrigger();
+            if (hiddenTrigger) {
+              debugReveal("file-handoff:gemini-firefox-prime-hidden-trigger-found", {
+                trigger: describeElementForDebug(hiddenTrigger, "gemini-hidden-file-selector-trigger")
+              });
+              if (activateGeminiHiddenFileSelectorTriggerSafely(hiddenTrigger)) {
+                debugReveal("file-handoff:gemini-firefox-prime-hidden-trigger-clicked", {
+                  trigger: describeElementForDebug(hiddenTrigger, "gemini-hidden-file-selector-trigger")
+                });
+                guardedInput = await waitForPrimedInput(3000);
+              }
+            }
+          }
+
+          const primedInput = guardedInput || waitResult.fileInput || null;
+          if (primedInput && pickerGuard.getInput() === primedInput) {
+            debugReveal("file-handoff:gemini-firefox-prime-filedata-input-captured", {
+              mode: "file-input-prime",
+              browser: "firefox",
+              host: location.hostname || "",
+              input: describeFileInputForDebug(primedInput, "gemini-firefox-filedata-captured")
+            });
+          }
+          finish(primedInput);
           return;
         }
 
@@ -4695,6 +4799,12 @@
     }
 
     debugReveal("file-handoff:gemini-firefox-prime-assigned", {
+      mode: "file-input-prime",
+      inputFound: true,
+      input: describeFileInputForDebug(fileInput, "gemini-firefox-primed-filedata-input"),
+      sanitizedFile: describeFileForDebug(sanitizedFile)
+    });
+    debugReveal("file-handoff:gemini-firefox-prime-sanitized-file-assigned", {
       mode: "file-input-prime",
       inputFound: true,
       input: describeFileInputForDebug(fileInput, "gemini-firefox-primed-filedata-input"),

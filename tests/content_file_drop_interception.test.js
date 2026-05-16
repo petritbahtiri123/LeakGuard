@@ -750,6 +750,10 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "collectGeminiUploadFilesMenuItemsFromRoot"),
       extractFunctionSource(contentSource, "findGeminiUploadFilesMenuItem"),
       extractFunctionSource(contentSource, "openGeminiUploadFilesMenuItemSafely"),
+      extractFunctionSource(contentSource, "isGeminiHiddenFileSelectorTrigger"),
+      extractFunctionSource(contentSource, "collectGeminiHiddenFileSelectorTriggersFromRoot"),
+      extractFunctionSource(contentSource, "findGeminiHiddenFileSelectorTrigger"),
+      extractFunctionSource(contentSource, "activateGeminiHiddenFileSelectorTriggerSafely"),
       extractFunctionSource(contentSource, "waitForGeminiUploadFilesMenuItem"),
       extractFunctionSource(contentSource, "discoverGeminiUploadOverlayItem"),
       extractFunctionSource(contentSource, "describeGeminiOverlayExposure"),
@@ -905,6 +909,13 @@ function createGeminiSourceUploadIcon({
         onClick();
       }
       return true;
+    },
+    click() {
+      events.push("click");
+      if (typeof onClick === "function") {
+        onClick();
+      }
+      return true;
     }
   };
 }
@@ -1030,6 +1041,7 @@ function createHandoffHarness({
   fileInputs = [],
   shadowInputs = [],
   uploadTriggers = [],
+  hiddenTriggers = [],
   overlayItems = [],
   sendRuntimeMessage = async (message) => ({ ok: true, downloadId: 77 })
 } = {}) {
@@ -1160,8 +1172,16 @@ function createHandoffHarness({
         selector === 'button[role="menuitem"][aria-label*="Upload files"]' ||
         selector === "button"
       ) {
-        if (selector === "button") return [...uploadTriggers, ...overlayItems];
+        if (selector === "button") return [...uploadTriggers, ...overlayItems, ...hiddenTriggers];
         return overlayItems.filter((item) => item.matches?.(selector) || selector !== "button");
+      }
+      if (
+        selector === "button.hidden-local-file-image-selector-button[xapfileselectortrigger]" ||
+        selector === ".hidden-local-file-image-selector-button[xapfileselectortrigger]" ||
+        selector === "button.hidden-local-file-image-selector-button" ||
+        selector === ".hidden-local-file-image-selector-button"
+      ) {
+        return hiddenTriggers;
       }
       if (selector === "mat-icon.upload-icon" || selector === ".upload-icon") {
         return uploadTriggers.filter(
@@ -1238,7 +1258,7 @@ function createHandoffHarness({
       const id = timeoutCallbacks.length + 1;
       timeoutCallbacks.push({ id, callback, delay });
       if (delay === 0) callback();
-      if (delay === 2500 || delay === 3000) Promise.resolve().then(callback);
+      if (delay === 450 || delay === 2500 || delay === 3000) Promise.resolve().then(callback);
       return id;
     },
     clearTimeout: (id) => {
@@ -1371,6 +1391,10 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "collectGeminiUploadFilesMenuItemsFromRoot"),
       extractFunctionSource(contentSource, "findGeminiUploadFilesMenuItem"),
       extractFunctionSource(contentSource, "openGeminiUploadFilesMenuItemSafely"),
+      extractFunctionSource(contentSource, "isGeminiHiddenFileSelectorTrigger"),
+      extractFunctionSource(contentSource, "collectGeminiHiddenFileSelectorTriggersFromRoot"),
+      extractFunctionSource(contentSource, "findGeminiHiddenFileSelectorTrigger"),
+      extractFunctionSource(contentSource, "activateGeminiHiddenFileSelectorTriggerSafely"),
       extractFunctionSource(contentSource, "waitForGeminiUploadFilesMenuItem"),
       extractFunctionSource(contentSource, "waitForGeminiFileInput"),
       extractFunctionSource(contentSource, "verifyGeminiFirefoxFileInputBridgeAssignment"),
@@ -5998,6 +6022,136 @@ async function testFirefoxGeminiPrimeCapturesTransientMutationFiledataInput() {
   assert.deepStrictEqual(transientInput.events, ["input", "change"]);
 }
 
+async function testFirefoxGeminiPrimeActivatesHiddenSelectorFallbackAndCapturesFiledataClick() {
+  const rawFile = { name: "prime-hidden.env", type: "text/plain", size: 20 };
+  const sanitizedFile = {
+    name: "prime-hidden.env",
+    type: "text/plain",
+    size: 15,
+    text: "API_KEY=[PWM_1]"
+  };
+  let harness;
+  let fileInput = null;
+  const uploadFilesMenuItem = createOverlayItem({
+    dataTestId: "local-images-files-uploader-button",
+    onClick: () => {
+      // Gemini's visible menu item does not expose Filedata by itself in Firefox.
+    }
+  });
+  const hiddenTrigger = createHiddenFileSelectorTrigger({
+    onClick: () => {
+      assert.ok(
+        harness.windowClickHandlers.length > 0 || harness.clickHandlers.length > 0,
+        "file-input guard must still be active while hidden selector trigger is clicked"
+      );
+      fileInput = createFileInput({ source: "light-dom", name: "Filedata", multiple: true });
+      fileInput.click = () => {
+        throw new Error("LeakGuard must not call input.click()");
+      };
+      fileInput.showPicker = () => {
+        throw new Error("LeakGuard must not call input.showPicker()");
+      };
+      const inputClick = createClickEvent(fileInput);
+      for (const handler of [...harness.windowClickHandlers, ...harness.clickHandlers]) {
+        handler(inputClick.event);
+      }
+      assert.strictEqual(inputClick.calls.preventDefault, 2);
+      assert.strictEqual(inputClick.calls.stopImmediatePropagation, 2);
+    }
+  });
+  harness = createHandoffHarness({
+    userAgent: "Firefox",
+    uploadTriggers: [
+      createUploadTrigger({
+        ariaLabel: "Close upload file menu",
+        className: "upload-card-button close",
+        onClick: () => {
+          throw new Error("priming must not click close while menu is already open");
+        }
+      })
+    ],
+    hiddenTriggers: [hiddenTrigger],
+    overlayItems: [uploadFilesMenuItem]
+  });
+  const event = {
+    type: "drop",
+    target: { nodeType: 1, tagName: "DIV", dispatchEvent: () => true },
+    dataTransfer: createDataTransfer([rawFile])
+  };
+
+  const prime = harness.primeGeminiFirefoxUploadTarget(event, null);
+  const capturedInput = await prime.inputPromise;
+
+  assert.strictEqual(capturedInput, fileInput);
+  assert.ok(hiddenTrigger.events.includes("click"), "expected hidden selector trigger click");
+  assert.ok(harness.debugEvents.some((entry) => entry.label === "file-handoff:gemini-firefox-prime-hidden-trigger-found"));
+  assert.ok(harness.debugEvents.some((entry) => entry.label === "file-handoff:gemini-firefox-prime-hidden-trigger-clicked"));
+  assert.ok(harness.debugEvents.some((entry) => entry.label === "file-handoff:gemini-firefox-prime-filedata-input-captured"));
+
+  const result = await harness.handOffPrimedGeminiFirefoxUploadTarget(prime, sanitizedFile);
+
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(fileInput.files[0], sanitizedFile);
+  assert.notStrictEqual(fileInput.files[0], rawFile);
+  assert.deepStrictEqual(fileInput.events, ["input", "change"]);
+  assert.ok(
+    harness.debugEvents.some((entry) => entry.label === "file-handoff:gemini-firefox-prime-sanitized-file-assigned")
+  );
+}
+
+async function testFirefoxGeminiPrimeHiddenSelectorFallbackAcceptsObservedFiledataInput() {
+  const sanitizedFile = {
+    name: "prime-hidden-observed.env",
+    type: "text/plain",
+    size: 15,
+    text: "API_KEY=[PWM_1]"
+  };
+  let harness;
+  let observedInput = null;
+  const uploadFilesMenuItem = createOverlayItem({
+    dataTestId: "local-images-files-uploader-button"
+  });
+  const hiddenTrigger = createHiddenFileSelectorTrigger({
+    onClick: () => {
+      observedInput = createFileInput({ source: "light-dom", name: "Filedata", multiple: true });
+      Promise.resolve().then(() => {
+        const observer = harness.observers.find((candidate) => !candidate.disconnected);
+        assert.ok(observer, "expected MutationObserver to remain active after hidden selector trigger click");
+        observer.trigger([{ addedNodes: [observedInput], target: { nodeType: 1, tagName: "DIV" } }]);
+      });
+    }
+  });
+  harness = createHandoffHarness({
+    userAgent: "Firefox",
+    uploadTriggers: [
+      createUploadTrigger({
+        ariaLabel: "Open upload file menu",
+        className: "upload-card-button open",
+        onClick: () => {}
+      })
+    ],
+    hiddenTriggers: [hiddenTrigger],
+    overlayItems: [uploadFilesMenuItem]
+  });
+  const event = {
+    type: "drop",
+    target: { nodeType: 1, tagName: "DIV", dispatchEvent: () => true },
+    dataTransfer: createDataTransfer()
+  };
+
+  const prime = harness.primeGeminiFirefoxUploadTarget(event, null);
+  const capturedInput = await prime.inputPromise;
+
+  assert.strictEqual(capturedInput, observedInput);
+  assert.ok(harness.debugEvents.some((entry) => entry.label === "file-handoff:gemini-firefox-prime-filedata-input-observed"));
+
+  const result = await harness.handOffPrimedGeminiFirefoxUploadTarget(prime, sanitizedFile);
+
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(observedInput.files[0], sanitizedFile);
+  assert.deepStrictEqual(observedInput.events, ["input", "change"]);
+}
+
 async function testFirefoxGeminiFileInputBridgeUsesUploadFilesTextOverlayItem() {
   const sanitizedFile = {
     name: "text-overlay.env",
@@ -7831,6 +7985,8 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testFirefoxGeminiFileInputBridgeCapturesDelayedFiledataFromAlreadyOpenMenu();
   await testFirefoxGeminiPrimeCapturesDelayedFiledataBeforeSanitizedAssignment();
   await testFirefoxGeminiPrimeCapturesTransientMutationFiledataInput();
+  await testFirefoxGeminiPrimeActivatesHiddenSelectorFallbackAndCapturesFiledataClick();
+  await testFirefoxGeminiPrimeHiddenSelectorFallbackAcceptsObservedFiledataInput();
   await testFirefoxGeminiFileInputBridgeUsesUploadFilesTextOverlayItem();
   await testFirefoxGeminiFileInputBridgeRejectsNonUploadOverlayItems();
   await testFirefoxGeminiFileInputBridgeAllowsHiddenSelectorAndCapturesFiledataInput();
