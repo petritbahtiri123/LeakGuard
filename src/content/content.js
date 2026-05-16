@@ -174,6 +174,8 @@
     "Sanitized content inserted as text because Gemini rejected sanitized file upload.";
   const LOCAL_FILE_SANITIZED_TEXT_FALLBACK_MESSAGE =
     "Sanitized content inserted as text because the site did not accept a sanitized file upload.";
+  const FIREFOX_GEMINI_FILE_INPUT_BRIDGE_FAILURE_MESSAGE =
+    "LeakGuard blocked the raw file drop. Could not locate Gemini upload input. Please use the upload button or retry.";
   let lastDiscoveredFileInput = null;
   let fileDragDiscoveryCompleted = false;
   let fileDragDiscoveryScheduled = false;
@@ -3986,131 +3988,255 @@
     });
   }
 
-  function createFirefoxSanitizedDragEvent(type, transfer) {
-    let handoffEvent = null;
-    try {
-      if (typeof DragEvent === "function") {
-        handoffEvent = new DragEvent(type, {
-          bubbles: true,
-          cancelable: true,
-          composed: true,
-          dataTransfer: transfer
-        });
-      }
-    } catch {
-      handoffEvent = null;
-    }
-
-    if (!handoffEvent) {
-      handoffEvent = new Event(type, {
-        bubbles: true,
-        cancelable: true,
-        composed: true
-      });
-    }
-
-    markSanitizedFileHandoffEvent(handoffEvent);
-    attachEventDataTransfer(handoffEvent, "dataTransfer", transfer);
-    return handoffEvent;
-  }
-
-  function getGeminiAttachmentVerificationText() {
-    const roots = [];
-    collectRootsWithOpenShadow(document, roots, new WeakSet(), { openShadowRootCount: 0 });
-    return roots
-      .map((root) => {
-        try {
-          return String(root.body?.innerText || root.body?.textContent || root.innerText || root.textContent || "");
-        } catch {
-          return "";
-        }
-      })
-      .join("\n");
-  }
-
-  async function waitForGeminiSanitizedDropReplayAttachment(sanitizedFile) {
-    const expectedName = String(sanitizedFile?.name || "").trim();
-    if (!expectedName) return false;
-    const check = () => {
-      const text = getGeminiAttachmentVerificationText();
-      return Boolean(text && text.includes(expectedName));
+  function createFirefoxGeminiFileInputBridgeDebug(context, payload, fileInput = null) {
+    const sanitizedFiles = listFirefoxGeminiBridgeSanitizedFiles(payload);
+    return {
+      mode: "file-input-bridge",
+      browser: "firefox",
+      host: location.hostname || "",
+      eventType: context?.event?.type || "",
+      rawFileCount: listLocalTransferFiles(context?.event?.dataTransfer).length,
+      sanitizedFileCount: sanitizedFiles.length,
+      inputFound: Boolean(fileInput),
+      input: describeFileInputForDebug(fileInput, "gemini-firefox-file-input-bridge"),
+      sanitizedFiles: sanitizedFiles.map(describeFileForDebug)
     };
-    if (check()) return true;
-
-    await new Promise((resolve) => setTimeout(resolve, 120));
-    return check();
   }
 
-  async function tryFirefoxGeminiSanitizedDropReplay(payload, context) {
-    if (!isFirefoxRuntime() || !isGeminiHost() || !payload?.sanitizedFile) return false;
+  function listFirefoxGeminiBridgeSanitizedFiles(payload) {
+    const files = Array.isArray(payload?.sanitizedFiles)
+      ? payload.sanitizedFiles
+      : payload?.sanitizedFile
+        ? [payload.sanitizedFile]
+        : [];
+    return files.filter(Boolean);
+  }
 
-    const details = createSanitizedFileHandoffDetails(
-      context?.event,
-      payload.sanitizedFile,
-      "gemini:firefox-sanitized-drop-replay"
-    );
-    const transfer = createSanitizedDataTransferForHandoff(payload.sanitizedFile, details);
-    if (!transfer) {
-      details.failureReason = "data_transfer_failed";
-      logSanitizedFileHandoffFailure(details);
-      return false;
+  function createFirefoxGeminiBridgeDataTransfer(sanitizedFiles, details) {
+    if (details) {
+      details.dataTransferConstructorSucceeded = false;
+      details.dataTransferItemsAddSucceeded = false;
     }
-
-    const target =
-      resolveGeminiEditorTarget(document.activeElement) ||
-      resolveGeminiFallbackEditor(context?.event, context?.input) ||
-      document.querySelector?.(".ql-editor[contenteditable]") ||
-      document.querySelector?.('[role="textbox"][contenteditable]') ||
-      document.querySelector?.('[contenteditable="true"]') ||
-      findComposer(document.activeElement) ||
-      findComposer(document.body) ||
-      document.body;
-    if (!target || typeof target.dispatchEvent !== "function") {
-      details.failureReason = "drop_replay_target_unavailable";
-      logSanitizedFileHandoffFailure(details);
-      return false;
+    if (!sanitizedFiles.length || typeof DataTransfer !== "function" || !canUseSyntheticDataTransferFileList()) {
+      return null;
     }
 
     try {
-      transfer.dropEffect = "copy";
-    } catch {
-      // Some synthetic DataTransfer objects expose dropEffect as read-only.
-    }
-
-    const dispatched = [];
-    for (const type of ["dragenter", "dragover", "drop"]) {
-      const replayEvent = createFirefoxSanitizedDragEvent(type, transfer);
-      try {
-        target.dispatchEvent(replayEvent);
-        dispatched.push(type);
-      } catch (error) {
-        details.failureReason = "drop_replay_dispatch_failed";
+      const transfer = new DataTransfer();
+      if (details) details.dataTransferConstructorSucceeded = true;
+      if (typeof transfer.items?.add !== "function") return null;
+      for (const sanitizedFile of sanitizedFiles) {
+        transfer.items.add(sanitizedFile);
+      }
+      if (details) details.dataTransferItemsAddSucceeded = true;
+      return Number(transfer.files?.length || 0) === sanitizedFiles.length ? transfer : null;
+    } catch (error) {
+      if (details) {
         details.errorMessage = error?.message || String(error);
         details.errorStack = error?.stack || "";
-        logSanitizedFileHandoffFailure(details, error);
-        return false;
       }
+      return null;
+    }
+  }
+
+  async function waitForGeminiFirefoxFileInputBridgeInput(event, input, details) {
+    let discovery = discoverGeminiFileHandoffElements(event, input);
+    if (discovery.fileInput) {
+      return { discovery, fileInput: discovery.fileInput };
     }
 
-    const attached = await waitForGeminiSanitizedDropReplayAttachment(payload.sanitizedFile);
-    debugReveal("file-handoff:gemini-firefox-drop-replay", {
-      attached,
-      dispatched,
-      target: describeElementForDebug(target, "gemini-firefox-drop-replay-target"),
-      sanitizedFile: describeFileForDebug(payload.sanitizedFile)
+    if (typeof MutationObserver !== "function") {
+      return { discovery, fileInput: null };
+    }
+
+    return await new Promise((resolve) => {
+      let settled = false;
+      let observer = null;
+      let timeoutId = 0;
+      const finish = (reason = "") => {
+        if (settled) return;
+        discovery = discoverGeminiFileHandoffElements(event, input);
+        if (!discovery.fileInput && !reason) return;
+        settled = true;
+        if (observer) {
+          try {
+            observer.disconnect();
+          } catch {
+            // Best-effort cleanup only.
+          }
+        }
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+        if (details) {
+          details.fileInputCountBeforeClick = Math.max(
+            Number(details.fileInputCountBeforeClick || 0),
+            discovery.fileInputCount
+          );
+          details.fileInputCountAfterTopTriggerClick = discovery.fileInputCount;
+          details.fileInputCountAfterOverlayItemClick = discovery.fileInputCount;
+          details.openShadowRootCount = Math.max(
+            Number(details.openShadowRootCount || 0),
+            discovery.openShadowRootCount
+          );
+          if (reason && !discovery.fileInput) {
+            details.failureReason = reason;
+          }
+        }
+        resolve({ discovery, fileInput: discovery.fileInput || null });
+      };
+
+      try {
+        observer = new MutationObserver(() => finish());
+        observer.observe(document.documentElement || document, {
+          childList: true,
+          subtree: true
+        });
+      } catch {
+        observer = null;
+      }
+
+      const raf =
+        typeof window !== "undefined" && typeof window.requestAnimationFrame === "function"
+          ? window.requestAnimationFrame
+          : null;
+      if (raf) {
+        try {
+          raf(() => finish());
+        } catch {
+          finish();
+        }
+      }
+
+      timeoutId = setTimeout(() => finish("file_input_bridge_input_not_found"), GEMINI_UPLOAD_INPUT_WAIT_MS);
     });
-    if (!attached) {
-      details.failureReason = "drop_replay_not_verified";
-      debugReveal("file-handoff:gemini-firefox-drop-replay-unverified", {
-        dispatched,
-        target: describeElementForDebug(target, "gemini-firefox-drop-replay-target"),
-        attachmentTextLength: getGeminiAttachmentVerificationText().length,
-        sanitizedFile: describeFileForDebug(payload.sanitizedFile)
-      });
-      logSanitizedFileHandoffFailure(details);
+  }
+
+  function verifyGeminiFirefoxFileInputBridgeAssignment(fileInput, sanitizedFiles, rawFiles) {
+    const assignedFiles = Array.from(fileInput?.files || []);
+    if (
+      assignedFiles.length !== sanitizedFiles.length ||
+      sanitizedFiles.some((sanitizedFile, index) => assignedFiles[index] !== sanitizedFile)
+    ) {
       return false;
     }
-    return true;
+    return !Array.from(rawFiles || []).some((rawFile) => rawFile && assignedFiles.includes(rawFile));
+  }
+
+  async function tryFirefoxGeminiFileInputBridge(payload, context) {
+    if (
+      !isFirefoxRuntime() ||
+      !isGeminiHost() ||
+      context?.event?.type !== "drop" ||
+      !payload?.sanitizedFile
+    ) {
+      return { handled: false, ok: false };
+    }
+
+    const details = createSanitizedFileHandoffDetails(
+      context.event,
+      payload.sanitizedFile,
+      "gemini:firefox-file-input-bridge"
+    );
+    const rawFiles = listLocalTransferFiles(context.event?.dataTransfer);
+    const sanitizedFiles = listFirefoxGeminiBridgeSanitizedFiles(payload);
+    debugReveal(
+      "file-handoff:gemini-firefox-file-input-bridge-start",
+      createFirefoxGeminiFileInputBridgeDebug(context, payload)
+    );
+
+    if (shouldUseFirefoxTextFallbackForFileHandoff()) {
+      details.failureReason = "input_file_assignment_unavailable";
+      debugReveal("file-handoff:gemini-firefox-file-input-bridge-unavailable", {
+        ...createFirefoxGeminiFileInputBridgeDebug(context, payload),
+        reason: details.failureReason
+      });
+      return {
+        handled: true,
+        ok: false,
+        stage: "failed",
+        reason: "gemini_firefox_file_input_bridge_unavailable",
+        message: FIREFOX_GEMINI_FILE_INPUT_BRIDGE_FAILURE_MESSAGE
+      };
+    }
+
+    const waitResult = await waitForGeminiFirefoxFileInputBridgeInput(
+      context.event,
+      context.input,
+      details
+    );
+    const discovery = waitResult.discovery || {};
+    const fileInput = waitResult.fileInput || null;
+    details.fileInputCountBeforeClick = Number(discovery.fileInputCount || 0);
+    details.fileInputCountAfterTopTriggerClick = Number(discovery.fileInputCount || 0);
+    details.fileInputCountAfterOverlayItemClick = Number(discovery.fileInputCount || 0);
+    details.openShadowRootCount = Math.max(
+      Number(details.openShadowRootCount || 0),
+      Number(discovery.openShadowRootCount || 0)
+    );
+
+    if (!fileInput) {
+      details.failureReason = "file_input_bridge_input_not_found";
+      debugReveal(
+        "file-handoff:gemini-firefox-file-input-bridge-input-not-found",
+        createFirefoxGeminiFileInputBridgeDebug(context, payload)
+      );
+      return {
+        handled: true,
+        ok: false,
+        stage: "failed",
+        reason: "gemini_firefox_file_input_not_found",
+        message: FIREFOX_GEMINI_FILE_INPUT_BRIDGE_FAILURE_MESSAGE
+      };
+    }
+
+    const transfer = createFirefoxGeminiBridgeDataTransfer(sanitizedFiles, details);
+    if (!transfer) {
+      details.failureReason = "data_transfer_failed";
+      debugReveal("file-handoff:gemini-firefox-file-input-bridge-transfer-failed", {
+        ...createFirefoxGeminiFileInputBridgeDebug(context, payload, fileInput),
+        reason: details.failureReason
+      });
+      return {
+        handled: true,
+        ok: false,
+        stage: "failed",
+        reason: "gemini_firefox_file_input_bridge_data_transfer_failed",
+        message: FIREFOX_GEMINI_FILE_INPUT_BRIDGE_FAILURE_MESSAGE
+      };
+    }
+
+    const assigned = handOffSanitizedFileInput(fileInput, transfer, {
+      dispatchInput: true,
+      details
+    });
+    if (!assigned || !verifyGeminiFirefoxFileInputBridgeAssignment(fileInput, sanitizedFiles, rawFiles)) {
+      details.failureReason = assigned
+        ? "file_input_bridge_verification_failed"
+        : details.failureReason || "file_input_bridge_assignment_failed";
+      debugReveal("file-handoff:gemini-firefox-file-input-bridge-assignment-failed", {
+        ...createFirefoxGeminiFileInputBridgeDebug(context, payload, fileInput),
+        reason: details.failureReason
+      });
+      return {
+        handled: true,
+        ok: false,
+        stage: "failed",
+        reason: "gemini_firefox_file_input_bridge_assignment_failed",
+        message: FIREFOX_GEMINI_FILE_INPUT_BRIDGE_FAILURE_MESSAGE
+      };
+    }
+
+    debugReveal(
+      "file-handoff:gemini-firefox-file-input-bridge-assigned",
+      createFirefoxGeminiFileInputBridgeDebug(context, payload, fileInput)
+    );
+    return {
+      handled: true,
+      ok: true,
+      stage: "file",
+      strategy: "gemini-firefox-file-input-bridge"
+    };
   }
 
   function isSafeSanitizedPayload(payload) {
@@ -4272,9 +4398,17 @@
       return { ok: true, stage: "file", strategy: `${driver.id}-sanitized-file-handoff` };
     }
 
-    if (driver.id === "gemini" && (await tryFirefoxGeminiSanitizedDropReplay(payload, context))) {
+    const firefoxGeminiBridgeResult =
+      driver.id === "gemini"
+        ? await tryFirefoxGeminiFileInputBridge(payload, context)
+        : { handled: false, ok: false };
+    if (firefoxGeminiBridgeResult.ok) {
       setDmzOverlayState("Attached sanitized file", "attached");
-      return { ok: true, stage: "file", strategy: "gemini-firefox-sanitized-drop-replay" };
+      return { ok: true, stage: "file", strategy: firefoxGeminiBridgeResult.strategy };
+    }
+    if (firefoxGeminiBridgeResult.handled) {
+      setDmzOverlayState("Raw file blocked", "failed");
+      return firefoxGeminiBridgeResult;
     }
 
     const textInserted = await driver.insertSanitizedText(payload, context);
@@ -5970,7 +6104,8 @@
         return blockStreamingLocalFile(
           event,
           "Raw file upload blocked",
-          "LeakGuard blocked raw file upload. Sanitized streaming file handoff failed."
+          handoffResult.message ||
+            "LeakGuard blocked raw file upload. Sanitized streaming file handoff failed."
         );
       }
 
@@ -6104,7 +6239,8 @@
       hideBadgeSoon(4200);
       await showMessageModal(
         "Raw file upload blocked",
-        "LeakGuard blocked raw file upload. Sanitized file handoff failed; use File Scanner or paste redacted text manually."
+        handoffResult.message ||
+          "LeakGuard blocked raw file upload. Sanitized file handoff failed; use File Scanner or paste redacted text manually."
       );
       refreshBadgeFromCurrentInput();
       return {
