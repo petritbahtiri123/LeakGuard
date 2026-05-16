@@ -146,6 +146,28 @@ function testHydratedPlaceholdersStayVisibleAcrossThemes() {
   );
 }
 
+function testPendingAttachPromptDoesNotBlockPageClicks() {
+  assert.ok(
+    contentSource.includes("showPendingSanitizedAttachPrompt"),
+    "content script should use the compact pending attach prompt"
+  );
+  assert.ok(
+    /\.pwm-pending-attach-prompt\s*\{[\s\S]*?position:\s*fixed;[\s\S]*?right:\s*18px;[\s\S]*?bottom:\s*72px;[\s\S]*?pointer-events:\s*none;/.test(
+      overlaySource
+    ),
+    "pending attach prompt container should be compact and let page clicks pass through"
+  );
+  assert.ok(
+    /\.pwm-pending-attach-card\s*\{[\s\S]*?pointer-events:\s*auto;/.test(overlaySource) &&
+      /\.pwm-pending-attach-btn\s*\{[\s\S]*?pointer-events:\s*auto;/.test(overlaySource),
+    "pending attach card and buttons should remain clickable"
+  );
+  assert.ok(
+    !/\.pwm-pending-attach-prompt\s*\{[\s\S]*?inset:\s*0;/.test(overlaySource),
+    "pending attach prompt must not reuse the full-screen DMZ overlay shape"
+  );
+}
+
 function testDynamicSiteSupportIsDeclaredMinimally(manifest) {
   assert.ok(
     manifest.permissions.includes("scripting") && manifest.permissions.includes("activeTab"),
@@ -200,6 +222,7 @@ async function run() {
   testBuiltInProtectedSitesRemainStaticAndAligned(manifest);
   testPanelAndManagementUiAreWired();
   testHydratedPlaceholdersStayVisibleAcrossThemes();
+  testPendingAttachPromptDoesNotBlockPageClicks();
   testDynamicSiteSupportIsDeclaredMinimally(manifest);
   testPublishReadinessDocsCoverStorePrivacyAndQa();
   console.log("PASS productization static regressions");

@@ -187,6 +187,16 @@ function createClickEvent(target, path = null) {
   return { event, calls };
 }
 
+function findButtonByText(root, text) {
+  if (!root) return null;
+  if (root.tagName === "BUTTON" && root.textContent === text) return root;
+  for (const child of root.children || []) {
+    const match = findButtonByText(child, text);
+    if (match) return match;
+  }
+  return null;
+}
+
 function triggerGhostIngressTimeout(harness) {
   harness.timeoutCallbacks
     .filter((entry) => entry.delay === 2200)
@@ -601,6 +611,7 @@ function createHarness(overrides = {}) {
       'const FIREFOX_GEMINI_DROP_FILE_UNAVAILABLE_MESSAGE = "Firefox did not expose the dropped file to LeakGuard. Use Gemini\\\'s upload button so LeakGuard can sanitize and replace the selected file before upload.";',
       'const FIREFOX_GEMINI_FILE_INPUT_BRIDGE_FAILURE_MESSAGE = "LeakGuard blocked the raw file drop. Could not locate Gemini upload input. Please use the upload button or retry.";',
       'const GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MESSAGE = "LeakGuard sanitized the file. Click Gemini Upload files to attach the sanitized version.";',
+      'const GROK_PENDING_SANITIZED_FILE_HANDOFF_MESSAGE = "LeakGuard sanitized the large file. Click Grok Upload/Attach to attach the sanitized version.";',
       "const PROGRAMMATIC_INPUT_SUPPRESS_MS = 500;",
       "const CHATGPT_LARGE_PASTE_FILE_THRESHOLD = 16 * 1024;",
       'const CHATGPT_SANITIZED_PASTE_FILE_NAME = "leakguard-redacted-paste.txt";',
@@ -609,7 +620,8 @@ function createHarness(overrides = {}) {
       "const GEMINI_LARGE_TEXT_SUPPRESS_MS = 2500;",
       "const GEMINI_UPLOAD_INPUT_WAIT_MS = 450;",
       "const GEMINI_GHOST_INGRESS_TIMEOUT_MS = 2200;",
-      "const GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MS = 30000;",
+      "const GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MS = 60000;",
+      "const GROK_PENDING_SANITIZED_FILE_HANDOFF_MS = 60000;",
       "const LOCAL_TEXT_FAST_MAX_BYTES = 2 * 1024 * 1024;",
       "const LOCAL_TEXT_OPTIMIZED_MAX_BYTES = 4 * 1024 * 1024;",
       "const LOCAL_TEXT_HARD_BLOCK_BYTES = 4 * 1024 * 1024;",
@@ -624,12 +636,20 @@ function createHarness(overrides = {}) {
       "let pendingGeminiSanitizedFileTimer = 0;",
       "let pendingGeminiSanitizedFileClickHandler = null;",
       "let pendingGeminiGhostIngressClickCleanup = null;",
+      "let pendingGrokSanitizedFileHandoff = null;",
+      "let pendingGrokSanitizedFileObserver = null;",
+      "let pendingGrokSanitizedFileTimer = 0;",
+      "let pendingGrokSanitizedFileClickHandler = null;",
+      "let pendingAttachPromptEl = null;",
       "function setDmzOverlayState(message, state = \"\") { calls.dmzStates.push({ message, state }); }",
       "function scheduleDmzOverlayCleanup(delayMs = 1200) { calls.dmzCleanups.push(delayMs); }",
       "function setGeminiDmzOverlayState(message, state = \"\") { setDmzOverlayState(message, state); }",
       "function scheduleGeminiDmzOverlayCleanup(delayMs = 1200) { scheduleDmzOverlayCleanup(delayMs); }",
+      "function hideDmzOverlay() { calls.dmzCleanups.push(\"hide\"); }",
       "function createSanitizedFileHandoffDetails() { return {}; }",
       "async function downloadGeminiSanitizedFileFallback() { return false; }",
+      extractFunctionSource(contentSource, "clearPendingSanitizedAttachPrompt"),
+      extractFunctionSource(contentSource, "showPendingSanitizedAttachPrompt"),
       extractFunctionSource(contentSource, "consumeInterceptionEvent"),
       extractFunctionSource(contentSource, "logFileInterception"),
       extractFunctionSource(contentSource, "isFirefoxRuntime"),
@@ -733,6 +753,15 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "describeUploadTriggerForDebug"),
       extractFunctionSource(contentSource, "sanitizeDownloadFileNameSegment"),
       extractFunctionSource(contentSource, "logSanitizedFileHandoffFailure"),
+      extractFunctionSource(contentSource, "createPendingAttachEvent"),
+      extractFunctionSource(contentSource, "insertPendingSanitizedFileText"),
+      extractFunctionSource(contentSource, "downloadPendingSanitizedFile"),
+      extractFunctionSource(contentSource, "cancelPendingSanitizedFileAttach"),
+      extractFunctionSource(contentSource, "performPendingGeminiUserAttach"),
+      extractFunctionSource(contentSource, "findGrokUploadButton"),
+      extractFunctionSource(contentSource, "openGrokUploadButtonSafely"),
+      extractFunctionSource(contentSource, "waitForGrokPendingFileInput"),
+      extractFunctionSource(contentSource, "performPendingGrokUserAttach"),
       extractFunctionSource(contentSource, "clearPendingGeminiGhostIngressClickInterceptor"),
       extractFunctionSource(contentSource, "clearPendingGeminiSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "isLikelyGeminiUploadClickTarget"),
@@ -740,6 +769,17 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "describeGeminiHandoffDiscovery"),
       extractFunctionSource(contentSource, "attemptPendingGeminiSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "queuePendingGeminiSanitizedFileHandoff"),
+      extractFunctionSource(contentSource, "clearPendingGrokSanitizedFileHandoff"),
+      extractFunctionSource(contentSource, "getGrokUploadClickCandidates"),
+      extractFunctionSource(contentSource, "isLikelyGrokUploadClickTarget"),
+      extractFunctionSource(contentSource, "scoreGrokFileInput"),
+      extractFunctionSource(contentSource, "discoverGrokPendingFileInput"),
+      extractFunctionSource(contentSource, "describeGrokPendingInputDiscovery"),
+      extractFunctionSource(contentSource, "schedulePendingGrokSanitizedFileAttempt"),
+      extractFunctionSource(contentSource, "attemptPendingGrokSanitizedFileHandoff"),
+      extractFunctionSource(contentSource, "queuePendingGrokSanitizedFileHandoff"),
+      extractFunctionSource(contentSource, "hasPendingGrokSanitizedFileHandoff"),
+      extractFunctionSource(contentSource, "getPendingGrokSanitizedFileHandoffDebug"),
       extractFunctionSource(contentSource, "originalFileMetadataFromLocalFile"),
       extractFunctionSource(contentSource, "createSanitizedPayload"),
       extractFunctionSource(contentSource, "isSafeSanitizedPayload"),
@@ -809,7 +849,7 @@ function createHarness(overrides = {}) {
       "const sanitizedFileInputHandoffs = new WeakSet();",
       'let lastGeminiDropSessionHash = "";',
       extractFunctionSource(contentSource, "maybeHandleFileInputChange"),
-      "return { maybeHandleChatGptLargeTextPaste, maybeHandlePaste, maybeHandleDrop, maybeHandleFileDrag, maybeHandleFileInputChange, getSuppressInputScanUntil: () => suppressInputScanUntil, isProgrammaticInputScanSuppressed };"
+      "return { maybeHandleChatGptLargeTextPaste, maybeHandlePaste, maybeHandleDrop, maybeHandleFileDrag, maybeHandleFileInputChange, handOffSanitizedFileInput, hasPendingGrokSanitizedFileHandoff, getPendingGrokSanitizedFileHandoffDebug, getSuppressInputScanUntil: () => suppressInputScanUntil, isProgrammaticInputScanSuppressed };"
     ].join("\n\n")
   );
   const handlers = factory(...Object.values(dependencies));
@@ -1090,6 +1130,7 @@ function createHandoffHarness({
   const observers = [];
   const clearedTimeouts = [];
   const runtimeMessages = [];
+  const promptNodes = [];
   const stats = {
     documentQueries: 0
   };
@@ -1163,14 +1204,71 @@ function createHandoffHarness({
       }
     }
   }));
+  function createDomElement(tagName) {
+    const listeners = new Map();
+    const element = {
+      nodeType: 1,
+      tagName: String(tagName || "").toUpperCase(),
+      className: "",
+      textContent: "",
+      type: "",
+      files: [],
+      dataset: {},
+      attributes: {},
+      children: [],
+      parentNode: null,
+      isConnected: false,
+      setAttribute(name, value) {
+        this.attributes[name] = String(value);
+      },
+      getAttribute(name) {
+        return this.attributes[name] || "";
+      },
+      append(...children) {
+        children.forEach((child) => this.appendChild(child));
+      },
+      appendChild(child) {
+        child.parentNode = this;
+        child.isConnected = true;
+        this.children.push(child);
+        return child;
+      },
+      removeChild(child) {
+        const index = this.children.indexOf(child);
+        if (index !== -1) this.children.splice(index, 1);
+        child.parentNode = null;
+        child.isConnected = false;
+        return child;
+      },
+      addEventListener(type, handler) {
+        if (!listeners.has(type)) listeners.set(type, []);
+        listeners.get(type).push(handler);
+      },
+      removeEventListener(type, handler) {
+        const handlers = listeners.get(type) || [];
+        const index = handlers.indexOf(handler);
+        if (index !== -1) handlers.splice(index, 1);
+      },
+      dispatchEvent(event) {
+        (listeners.get(event.type) || []).forEach((handler) => handler(event));
+        return true;
+      },
+      querySelectorAll() {
+        return [];
+      }
+    };
+    return element;
+  }
+  const documentElement = createDomElement("html");
+  const originalDocumentElementAppendChild = documentElement.appendChild.bind(documentElement);
+  documentElement.appendChild = (child) => {
+    promptNodes.push(child);
+    return originalDocumentElementAppendChild(child);
+  };
   const documentRoot = {
-    documentElement: null,
+    documentElement,
     createElement(tagName) {
-      return {
-        tagName: String(tagName || "").toUpperCase(),
-        type: "",
-        files: []
-      };
+      return createDomElement(tagName);
     },
     addEventListener(type, handler) {
       if (type === "click") clickHandlers.push(handler);
@@ -1311,13 +1409,20 @@ function createHandoffHarness({
       'let lastGeminiDropSessionHash = "";',
       "const GEMINI_UPLOAD_INPUT_WAIT_MS = 450;",
       "const GEMINI_GHOST_INGRESS_TIMEOUT_MS = 2200;",
-      "const GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MS = 30000;",
+      "const GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MS = 60000;",
+      "const GROK_PENDING_SANITIZED_FILE_HANDOFF_MS = 60000;",
       'const GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MESSAGE = "LeakGuard sanitized the file. Click Gemini Upload files to attach the sanitized version.";',
+      'const GROK_PENDING_SANITIZED_FILE_HANDOFF_MESSAGE = "LeakGuard sanitized the large file. Click Grok Upload/Attach to attach the sanitized version.";',
       "let pendingGeminiSanitizedFileHandoff = null;",
       "let pendingGeminiSanitizedFileObserver = null;",
       "let pendingGeminiSanitizedFileTimer = 0;",
       "let pendingGeminiSanitizedFileClickHandler = null;",
       "let pendingGeminiGhostIngressClickCleanup = null;",
+      "let pendingGrokSanitizedFileHandoff = null;",
+      "let pendingGrokSanitizedFileObserver = null;",
+      "let pendingGrokSanitizedFileTimer = 0;",
+      "let pendingGrokSanitizedFileClickHandler = null;",
+      "let pendingAttachPromptEl = null;",
       "let syntheticFileListCapabilityCache = null;",
       "let inputFileAssignmentCapabilityCache = null;",
       "const firefoxFileInputTransactions = new WeakMap();",
@@ -1325,7 +1430,11 @@ function createHandoffHarness({
       'const GEMINI_SANITIZED_DOWNLOAD_MESSAGE = "Sanitized file downloaded. Upload the LeakGuard redacted copy to Gemini.";',
       'const GEMINI_SANITIZED_DOWNLOAD_MODAL_MESSAGE = "Gemini does not expose a safe upload target. LeakGuard downloaded a sanitized copy. Upload that redacted file manually.";',
       'const FIREFOX_GEMINI_FILE_INPUT_BRIDGE_FAILURE_MESSAGE = "LeakGuard blocked the raw file drop. Could not locate Gemini upload input. Please use the upload button or retry.";',
+      "function setDmzOverlayState() {}",
       "function setGeminiDmzOverlayState() {}",
+      "function hideDmzOverlay() {}",
+      extractFunctionSource(contentSource, "clearPendingSanitizedAttachPrompt"),
+      extractFunctionSource(contentSource, "showPendingSanitizedAttachPrompt"),
       extractFunctionSource(contentSource, "normalizeTarget"),
       extractFunctionSource(contentSource, "isFirefoxRuntime"),
       extractFunctionSource(contentSource, "createSafeCapabilityProbeFile"),
@@ -1368,6 +1477,15 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "downloadGeminiSanitizedFileFallback"),
       extractFunctionSource(contentSource, "hasGeminiSanitizedDownloadFallback"),
       extractFunctionSource(contentSource, "logSanitizedFileHandoffFailure"),
+      extractFunctionSource(contentSource, "createPendingAttachEvent"),
+      extractFunctionSource(contentSource, "insertPendingSanitizedFileText"),
+      extractFunctionSource(contentSource, "downloadPendingSanitizedFile"),
+      extractFunctionSource(contentSource, "cancelPendingSanitizedFileAttach"),
+      extractFunctionSource(contentSource, "performPendingGeminiUserAttach"),
+      extractFunctionSource(contentSource, "findGrokUploadButton"),
+      extractFunctionSource(contentSource, "openGrokUploadButtonSafely"),
+      extractFunctionSource(contentSource, "waitForGrokPendingFileInput"),
+      extractFunctionSource(contentSource, "performPendingGrokUserAttach"),
       extractFunctionSource(contentSource, "clearPendingGeminiSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "isLikelyGeminiUploadClickTarget"),
       extractFunctionSource(contentSource, "schedulePendingGeminiSanitizedFileAttempt"),
@@ -1377,6 +1495,17 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "queuePendingGeminiSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "hasPendingGeminiSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "getPendingGeminiSanitizedFileHandoffDebug"),
+      extractFunctionSource(contentSource, "clearPendingGrokSanitizedFileHandoff"),
+      extractFunctionSource(contentSource, "getGrokUploadClickCandidates"),
+      extractFunctionSource(contentSource, "isLikelyGrokUploadClickTarget"),
+      extractFunctionSource(contentSource, "scoreGrokFileInput"),
+      extractFunctionSource(contentSource, "discoverGrokPendingFileInput"),
+      extractFunctionSource(contentSource, "describeGrokPendingInputDiscovery"),
+      extractFunctionSource(contentSource, "schedulePendingGrokSanitizedFileAttempt"),
+      extractFunctionSource(contentSource, "attemptPendingGrokSanitizedFileHandoff"),
+      extractFunctionSource(contentSource, "queuePendingGrokSanitizedFileHandoff"),
+      extractFunctionSource(contentSource, "hasPendingGrokSanitizedFileHandoff"),
+      extractFunctionSource(contentSource, "getPendingGrokSanitizedFileHandoffDebug"),
       extractFunctionSource(contentSource, "describeUploadTriggerForDebug"),
       extractFunctionSource(contentSource, "collectFileInputsFromAncestry"),
       extractFunctionSource(contentSource, "collectFileInputsFromRoot"),
@@ -1437,7 +1566,7 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "handOffPrimedGeminiFirefoxUploadTarget"),
       extractFunctionSource(contentSource, "tryFirefoxGeminiFileInputBridge"),
       extractFunctionSource(contentSource, "handOffGrokSanitizedFileUpload"),
-      "return { handOffSanitizedLocalFile, handOffGeminiSanitizedFileUpload, primeGeminiFirefoxUploadTarget, handOffPrimedGeminiFirefoxUploadTarget, tryFirefoxGeminiFileInputBridge, findGeminiUploadMenuButton, openGeminiUploadMenuSafely, findGeminiUploadFilesMenuItem, openGeminiUploadFilesMenuItemSafely, waitForGeminiUploadFilesMenuItem, waitForGeminiFileInput, handOffGrokSanitizedFileUpload, resolveFileInputForHandoff, attemptPendingGeminiSanitizedFileHandoff, hasPendingGeminiSanitizedFileHandoff, getPendingGeminiSanitizedFileHandoffDebug, hasGeminiSanitizedDownloadFallback, clearPendingGeminiGhostIngressClickInterceptor };"
+      "return { handOffSanitizedLocalFile, handOffGeminiSanitizedFileUpload, primeGeminiFirefoxUploadTarget, handOffPrimedGeminiFirefoxUploadTarget, tryFirefoxGeminiFileInputBridge, findGeminiUploadMenuButton, openGeminiUploadMenuSafely, findGeminiUploadFilesMenuItem, openGeminiUploadFilesMenuItemSafely, waitForGeminiUploadFilesMenuItem, waitForGeminiFileInput, handOffGrokSanitizedFileUpload, resolveFileInputForHandoff, attemptPendingGeminiSanitizedFileHandoff, hasPendingGeminiSanitizedFileHandoff, getPendingGeminiSanitizedFileHandoffDebug, queuePendingGrokSanitizedFileHandoff, attemptPendingGrokSanitizedFileHandoff, hasPendingGrokSanitizedFileHandoff, getPendingGrokSanitizedFileHandoffDebug, hasGeminiSanitizedDownloadFallback, clearPendingGeminiGhostIngressClickInterceptor };"
     ].join("\n\n")
   );
 
@@ -1456,6 +1585,7 @@ function createHandoffHarness({
     documentPointerHandlers,
     documentMouseDownHandlers,
     listenerEvents,
+    promptNodes,
     timeoutCallbacks,
     clearedTimeouts,
     observers,
@@ -2670,7 +2800,7 @@ async function testGeminiPendingHandoffExpiresAndCleansUp() {
   };
 
   await queuePendingGeminiHandoffThroughGhostTimeout(harness, event, sanitizedFile);
-  const expiryTimer = harness.timeoutCallbacks.find((entry) => entry.delay === 30000);
+  const expiryTimer = harness.timeoutCallbacks.find((entry) => entry.delay === 60000);
   assert.ok(expiryTimer, "expected pending handoff expiry timer");
   assert.strictEqual(harness.hasPendingGeminiSanitizedFileHandoff(sanitizedFile), true);
   assert.strictEqual(harness.clickHandlers.length, 1);
@@ -2841,6 +2971,221 @@ async function testGeminiPendingUploadClickThenFiledataInputAssignsSanitizedFile
   assert.strictEqual(
     harness.debugEvents.filter((entry) => entry.label === "file-handoff:gemini-upload-click-observed").length,
     4
+  );
+}
+
+async function testGeminiPendingAttachPromptButtonCompletesTrustedAttach() {
+  const sanitizedFile = {
+    name: "prompt-gemini.env",
+    type: "text/plain",
+    size: 18,
+    text: "API_KEY=[PWM_1]"
+  };
+  const fileInputs = [];
+  const overlayItems = [];
+  const uploadFilesMenuItem = createOverlayItem({
+    dataTestId: "local-images-files-uploader-button",
+    onClick: () => {
+      if (!fileInputs.length) {
+        fileInputs.push(createFileInput({ source: "light-dom", name: "Filedata", multiple: true }));
+      }
+    }
+  });
+  const uploadTrigger = createUploadTrigger({
+    ariaLabel: "Open upload file menu",
+    className: "upload-card-button",
+    onClick: () => {
+      if (!overlayItems.length) overlayItems.push(uploadFilesMenuItem);
+    }
+  });
+  const harness = createHandoffHarness({
+    userAgent: "Firefox",
+    fileInputs,
+    uploadTriggers: [uploadTrigger],
+    overlayItems
+  });
+  const event = {
+    type: "drop",
+    target: { nodeType: 1, tagName: "DIV", dispatchEvent: () => true },
+    dataTransfer: createDataTransfer()
+  };
+
+  const queued = harness.queuePendingGeminiSanitizedFileHandoff(event, null, sanitizedFile, {
+    handoffStage: "gemini:streaming-pending-user-upload-input"
+  });
+
+  assert.strictEqual(queued, true);
+  assert.strictEqual(harness.promptNodes.length, 1);
+  assert.ok(
+    harness.debugEvents.some((entry) => entry.label === "pending-attach-prompt-shown"),
+    "expected pending attach prompt"
+  );
+
+  const attachButton = findButtonByText(harness.promptNodes[0], "Attach sanitized file");
+  assert.ok(attachButton, "expected attach sanitized file button");
+  attachButton.dispatchEvent(createClickEvent(attachButton).event);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepStrictEqual(uploadTrigger.events, ["pointerdown", "mousedown", "mouseup", "click"]);
+  assert.deepStrictEqual(uploadFilesMenuItem.events, ["pointerdown", "mousedown", "mouseup", "click"]);
+  assert.strictEqual(fileInputs.length, 1);
+  assert.strictEqual(fileInputs[0].files[0], sanitizedFile);
+  assert.deepStrictEqual(fileInputs[0].events, ["input", "change"]);
+  assert.strictEqual(harness.promptNodes[0].isConnected, false);
+  for (const label of [
+    "pending-attach-prompt-attach-clicked",
+    "gemini-pending-user-attach-start",
+    "gemini-pending-user-attach-menu-opened",
+    "gemini-pending-user-attach-menu-item-clicked",
+    "gemini-pending-user-attach-input-captured",
+    "gemini-pending-user-attach-assigned"
+  ]) {
+    assert.ok(harness.debugEvents.some((entry) => entry.label === label), `expected ${label}`);
+  }
+  assert.ok(
+    !harness.debugEvents.some((entry) => /hidden-trigger-clicked/.test(entry.label)),
+    "pending attach prompt should not start hidden-trigger loops before user attach"
+  );
+}
+
+async function testGrokPendingUploadClickThenFileInputAssignsSanitizedFile() {
+  const sanitizedFile = {
+    name: "click-grok.env",
+    type: "text/plain",
+    size: 18,
+    text: "API_KEY=[PWM_1]"
+  };
+  const fileInputs = [];
+  const uploadTrigger = createUploadTrigger({
+    ariaLabel: "Upload files",
+    className: "attach-file-button"
+  });
+  const harness = createHandoffHarness({
+    hostname: "grok.com",
+    fileInputs,
+    uploadTriggers: [uploadTrigger]
+  });
+  const event = {
+    type: "drop",
+    target: { nodeType: 1, tagName: "DIV", dispatchEvent: () => true },
+    dataTransfer: createDataTransfer()
+  };
+
+  const queued = harness.queuePendingGrokSanitizedFileHandoff(event, null, sanitizedFile, {});
+
+  assert.strictEqual(queued, true);
+  assert.strictEqual(harness.hasPendingGrokSanitizedFileHandoff(sanitizedFile), true);
+  assert.strictEqual(harness.clickHandlers.length, 1);
+  harness.clickHandlers[0](createClickEvent(uploadTrigger).event);
+  assert.ok(
+    harness.debugEvents.some((entry) => entry.label === "file-handoff:grok-upload-click-observed"),
+    "expected Grok upload click observation"
+  );
+
+  fileInputs.push(createFileInput({ source: "light-dom", multiple: true }));
+  const pendingObserver = harness.observers.find((observer) => !observer.disconnected);
+  assert.ok(pendingObserver, "expected Grok pending observer to watch for file inputs");
+  pendingObserver.trigger();
+
+  assert.strictEqual(fileInputs[0].files.length, 1);
+  assert.strictEqual(fileInputs[0].files[0], sanitizedFile);
+  assert.deepStrictEqual(fileInputs[0].events, ["input", "change"]);
+  assert.strictEqual(harness.hasPendingGrokSanitizedFileHandoff(sanitizedFile), false);
+  assert.ok(
+    harness.debugEvents.some((entry) => entry.label === "file-handoff:grok-pending-assigned"),
+    "expected Grok pending sanitized file assignment"
+  );
+  assert.ok(
+    harness.debugEvents.some(
+      (entry) => entry.label === "file-handoff:grok-pending-cleared" && entry.payload.reason === "assigned"
+    ),
+    "expected Grok pending cleanup after assignment"
+  );
+}
+
+async function testGrokPendingAttachPromptButtonAssignsSanitizedFile() {
+  const sanitizedFile = {
+    name: "prompt-grok.env",
+    type: "text/plain",
+    size: 18,
+    text: "API_KEY=[PWM_1]"
+  };
+  const fileInputs = [];
+  const uploadTrigger = createUploadTrigger({
+    ariaLabel: "Upload files",
+    className: "attach-file-button",
+    onClick: () => {
+      if (!fileInputs.length) fileInputs.push(createFileInput({ source: "light-dom", multiple: true }));
+    }
+  });
+  const harness = createHandoffHarness({
+    hostname: "grok.com",
+    fileInputs,
+    uploadTriggers: [uploadTrigger]
+  });
+  const event = {
+    type: "drop",
+    target: { nodeType: 1, tagName: "DIV", dispatchEvent: () => true },
+    dataTransfer: createDataTransfer()
+  };
+
+  const queued = harness.queuePendingGrokSanitizedFileHandoff(event, null, sanitizedFile, {});
+
+  assert.strictEqual(queued, true);
+  assert.strictEqual(harness.promptNodes.length, 1);
+  const attachButton = findButtonByText(harness.promptNodes[0], "Attach sanitized file");
+  assert.ok(attachButton, "expected attach sanitized file button");
+  attachButton.dispatchEvent(createClickEvent(attachButton).event);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepStrictEqual(uploadTrigger.events, ["pointerdown", "mousedown", "mouseup", "click"]);
+  assert.strictEqual(fileInputs.length, 1);
+  assert.strictEqual(fileInputs[0].files[0], sanitizedFile);
+  assert.deepStrictEqual(fileInputs[0].events, ["input", "change"]);
+  assert.strictEqual(harness.promptNodes[0].isConnected, false);
+  for (const label of [
+    "pending-attach-prompt-attach-clicked",
+    "grok-pending-user-attach-start",
+    "grok-pending-user-attach-input-captured",
+    "grok-pending-user-attach-assigned"
+  ]) {
+    assert.ok(harness.debugEvents.some((entry) => entry.label === label), `expected ${label}`);
+  }
+}
+
+async function testSanitizedFileInputRedispatchDoesNotRescanSanitizedFile() {
+  const sanitizedFile = {
+    name: "already-sanitized.env",
+    type: "text/plain",
+    size: 18,
+    text: "API_KEY=[PWM_1]"
+  };
+  const fileInput = createFileInput();
+  const { maybeHandleFileInputChange, handOffSanitizedFileInput, calls } = createHarness({
+    findComposer: () => {
+      throw new Error("sanitized redispatch must not reach composer discovery");
+    },
+    readLocalTextFileFromDataTransfer: () => {
+      throw new Error("sanitized redispatch must not be scanned again");
+    }
+  });
+
+  const assigned = handOffSanitizedFileInput(fileInput, { files: [sanitizedFile] }, { dispatchInput: true });
+  const { event } = createEvent({
+    type: "change",
+    target: fileInput,
+    dataTransfer: null
+  });
+
+  await maybeHandleFileInputChange(event);
+
+  assert.strictEqual(assigned, true);
+  assert.strictEqual(calls.reads.length, 0);
+  assert.strictEqual(calls.redactions.length, 0);
+  assert.strictEqual(calls.handoffs.length, 0);
+  assert.ok(
+    calls.debugEvents.some((entry) => entry.label === "file-handoff:pending-duplicate-suppressed"),
+    "expected sanitized file-input redispatch to be suppressed"
   );
 }
 
@@ -4360,7 +4705,7 @@ async function testDropOverHardLimitUsesStreamingSanitizedFileHandoff() {
   assert.ok(calls.badges.some(([message]) => message === "Sanitized download ready"));
 }
 
-async function testGeminiStreamingDropBlocksWhenNativeUploadRejected() {
+async function testGeminiStreamingDropQueuesPendingAfterStreamingWithoutTextFallback() {
   const rawSecret = "LeakGuardDropApiKey1234567890";
   const sanitizedText = "API_KEY=[PWM_1]\ntoken_limit=4096";
   const sourceFile = {
@@ -4376,7 +4721,7 @@ async function testGeminiStreamingDropBlocksWhenNativeUploadRejected() {
     type: "text/plain",
     size: sanitizedText.length,
     async text() {
-      return sanitizedText;
+      throw new Error("streaming Gemini pending handoff must not read sanitized fallback text");
     }
   };
   const { editor, child } = createGeminiEditor("");
@@ -4409,10 +4754,6 @@ async function testGeminiStreamingDropBlocksWhenNativeUploadRejected() {
           bytesProcessed: sourceFile.size
         };
       }
-    },
-    handOffGeminiSanitizedFileUpload: (event, input, file) => {
-      calls.handoffs.push({ event, input, sanitizedFile: file, context: "gemini-file-input" });
-      return false;
     }
   });
   const { event } = createEvent({
@@ -4428,15 +4769,29 @@ async function testGeminiStreamingDropBlocksWhenNativeUploadRejected() {
   await maybeHandleDrop(event);
 
   assert.strictEqual(event.defaultPrevented, true);
-  assert.strictEqual(calls.handoffs.length, 1);
-  assert.strictEqual(calls.textFallbacks.length, 1);
-  assert.strictEqual(editor.text.includes(rawSecret), false);
-  assert.ok(editor.text.includes("API_KEY=[PWM_1]"));
+  assert.strictEqual(calls.handoffs.length, 0);
+  assert.strictEqual(calls.textFallbacks.length, 0);
+  assert.strictEqual(calls.runtimeMessages.length, 0);
+  assert.strictEqual(editor.text, "");
   assert.strictEqual(calls.modals.some(([title]) => title === "Raw file upload blocked"), false);
   assert.strictEqual(calls.modals.flat().join("\n").includes(rawSecret), false);
+  assert.ok(
+    calls.badges.some(([message]) =>
+      String(message || "").includes("Click Gemini Upload files to attach")
+    ),
+    "expected user-click pending attach prompt"
+  );
+  const labels = calls.debugEvents.map((entry) => entry.label);
+  const finishedIndex = labels.indexOf("streaming-redaction:finished");
+  const queuedIndex = labels.indexOf("file-handoff:gemini-streaming-pending-queued");
+  assert.ok(finishedIndex !== -1, "expected streaming finish log");
+  assert.ok(queuedIndex > finishedIndex, "expected Gemini pending queue after streaming finishes");
+  assert.ok(labels.includes("pending-attach-prompt-shown"), "expected pending attach prompt");
+  assert.ok(labels.includes("pending-attach-synthetic-loop-suppressed"), "expected synthetic loop suppression");
+  assert.ok(!labels.some((label) => /hidden-trigger-clicked/.test(label)), "expected no hidden trigger loop after queue");
 }
 
-async function testGeminiStreamingDropAtFiftyMiBUsesSanitizedFileHandoff() {
+async function testGeminiStreamingDropAtFiftyMiBQueuesPendingHandoff() {
   const rawSecret = "LeakGuardDropApiKey1234567890";
   const sourceFile = {
     name: "fifty-mib-gemini.env",
@@ -4507,13 +4862,108 @@ async function testGeminiStreamingDropAtFiftyMiBUsesSanitizedFileHandoff() {
   assert.strictEqual(calls.reads.length, 1);
   assert.strictEqual(calls.redactions.length, 1);
   assert.strictEqual(calls.redactions[0].options?.skipBackgroundScan, true);
-  assert.strictEqual(calls.handoffs.length, 1);
-  assert.strictEqual(calls.handoffs[0].context, "gemini-file-input");
-  assert.strictEqual(calls.handoffs[0].sanitizedFile, sanitizedFile);
-  assert.strictEqual(calls.handoffs[0].sanitizedFile.text.includes(rawSecret), false);
+  assert.strictEqual(calls.handoffs.length, 0);
   assert.strictEqual(calls.textFallbacks.length, 0);
   assert.strictEqual(editor.text, "");
   assert.strictEqual(calls.modals.some(([title]) => title === "Raw file upload blocked"), false);
+  assert.ok(
+    calls.debugEvents.some((entry) => entry.label === "file-handoff:gemini-streaming-pending-queued"),
+    "expected Gemini streaming pending handoff"
+  );
+  assert.ok(
+    calls.debugEvents.some((entry) => entry.label === "pending-attach-prompt-shown"),
+    "expected pending attach prompt"
+  );
+  assert.strictEqual(JSON.stringify(calls.debugEvents).includes(rawSecret), false);
+}
+
+async function testGrokStreamingDropQueuesPendingAfterStreamingWithoutTextFallback() {
+  const rawSecret = "LeakGuardDropApiKey1234567890";
+  const sanitizedText = "API_KEY=[PWM_1]\ntoken_limit=4096";
+  const sourceFile = {
+    name: "large-grok.env",
+    type: "text/plain",
+    size: 5 * 1024 * 1024,
+    async text() {
+      throw new Error("streaming Grok drop must not read raw file text");
+    }
+  };
+  const sanitizedFile = {
+    name: "large-grok.env",
+    type: "text/plain",
+    size: sanitizedText.length,
+    async text() {
+      throw new Error("streaming Grok pending handoff must not read sanitized fallback text");
+    }
+  };
+  const composer = {
+    tagName: "TEXTAREA",
+    text: "",
+    selection: { start: 0, end: 0 }
+  };
+  const { maybeHandleDrop, calls } = createHarness({
+    location: { hostname: "grok.com" },
+    findComposer: () => composer,
+    readLocalTextFileFromDataTransfer: async (transfer) => {
+      calls.reads.push(transfer);
+      return {
+        handled: true,
+        ok: false,
+        code: "streaming_required",
+        sourceFile,
+        file: {
+          name: sourceFile.name,
+          type: sourceFile.type,
+          sizeBytes: sourceFile.size
+        }
+      };
+    },
+    StreamingFileRedactor: {
+      LARGE_TEXT_STREAMING_MAX_BYTES: 50 * 1024 * 1024,
+      redactTextFileStream: async (file, options) => {
+        assert.strictEqual(file, sourceFile);
+        await options.redactText(`API_KEY=${rawSecret}\ntoken_limit=4096`);
+        return {
+          action: "redacted",
+          sanitizedFile,
+          findingsCount: 1,
+          bytesProcessed: sourceFile.size
+        };
+      }
+    }
+  });
+  const { event } = createEvent({
+    dataTransfer: {
+      types: ["Files"],
+      files: [sourceFile],
+      items: [],
+      dropEffect: "none"
+    },
+    target: composer
+  });
+
+  await maybeHandleDrop(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(calls.reads.length, 1);
+  assert.strictEqual(calls.redactions.length, 1);
+  assert.strictEqual(calls.handoffs.length, 0);
+  assert.strictEqual(calls.textFallbacks.length, 0);
+  assert.strictEqual(calls.runtimeMessages.length, 0);
+  assert.strictEqual(composer.text, "");
+  assert.ok(
+    calls.badges.some(([message]) =>
+      String(message || "").includes("Click Grok Upload/Attach to attach")
+    ),
+    "expected Grok pending attach prompt"
+  );
+  const labels = calls.debugEvents.map((entry) => entry.label);
+  const finishedIndex = labels.indexOf("streaming-redaction:finished");
+  const queuedIndex = labels.indexOf("file-handoff:grok-streaming-pending-queued");
+  assert.ok(finishedIndex !== -1, "expected streaming finish log");
+  assert.ok(queuedIndex > finishedIndex, "expected Grok pending queue after streaming finishes");
+  assert.ok(labels.includes("pending-attach-prompt-shown"), "expected pending attach prompt");
+  assert.strictEqual(JSON.stringify(calls.debugEvents).includes(rawSecret), false);
 }
 
 async function testGeminiStreamingFileInputFallsBackToSanitizedTextWhenUploadRejected() {
@@ -6676,7 +7126,7 @@ async function testFirefoxGeminiFileInputBridgeFailsClosedWhenMenuOpensWithoutIn
   assert.deepStrictEqual(uploadTrigger.events, ["pointerdown", "mousedown", "mouseup", "click"]);
   assert.deepStrictEqual(uploadFilesMenuItem.events, ["pointerdown", "mousedown", "mouseup", "click"]);
   assert.deepStrictEqual(harness.badges.at(-1), [
-    "LeakGuard sanitized the file. Click Gemini Upload files to attach the sanitized version."
+    "Large file sanitized. Click Attach sanitized file, or click Gemini Upload files to attach the sanitized version."
   ]);
 }
 
@@ -6817,7 +7267,7 @@ async function testFirefoxGeminiFileInputBridgeMissingInputQueuesPendingHandoff(
     "expected Firefox Gemini bridge to queue pending sanitized file handoff"
   );
   assert.deepStrictEqual(calls.badges.at(-1), [
-    "LeakGuard sanitized the file. Click Gemini Upload files to attach the sanitized version."
+    "Large file sanitized. Click Attach sanitized file, or click Gemini Upload files to attach the sanitized version."
   ]);
   assert.strictEqual(JSON.stringify(calls.debugEvents).includes(rawSecret), false);
 }
@@ -8280,6 +8730,10 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testGeminiPendingHandoffReplacementClearsOldState();
   await testGeminiPendingClickObserverDoesNotClickUploadUi();
   await testGeminiPendingUploadClickThenFiledataInputAssignsSanitizedFile();
+  await testGeminiPendingAttachPromptButtonCompletesTrustedAttach();
+  await testGrokPendingUploadClickThenFileInputAssignsSanitizedFile();
+  await testGrokPendingAttachPromptButtonAssignsSanitizedFile();
+  await testSanitizedFileInputRedispatchDoesNotRescanSanitizedFile();
   testGeminiUploadHandoffDoesNotRedispatchSyntheticDrop();
   testSanitizedDownloadBackgroundHookExists();
   testGeminiUploadDiscoveryDoesNotRequireMaterialClassSelectors();
@@ -8315,8 +8769,9 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testChatGptOverHardLimitPasteIsBlockedBeforeHandoff();
   await testGeminiOverHardLimitDropIsBlockedBeforeInsertion();
   await testDropOverHardLimitUsesStreamingSanitizedFileHandoff();
-  await testGeminiStreamingDropBlocksWhenNativeUploadRejected();
-  await testGeminiStreamingDropAtFiftyMiBUsesSanitizedFileHandoff();
+  await testGeminiStreamingDropQueuesPendingAfterStreamingWithoutTextFallback();
+  await testGeminiStreamingDropAtFiftyMiBQueuesPendingHandoff();
+  await testGrokStreamingDropQueuesPendingAfterStreamingWithoutTextFallback();
   await testGeminiStreamingFileInputFallsBackToSanitizedTextWhenUploadRejected();
   await testDropOverFiftyMiBBlocksBeforeStreaming();
   testBackgroundSkipsDuplicateDetectorScanForStreamingChunks();

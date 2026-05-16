@@ -12,6 +12,12 @@ Use this file as a short handoff log for AI-made changes. Add newest entries fir
 ```
 
 ## Entries
+### 2026-05-16 - v1.7.0 streaming pending handoff
+- Goal: LeakGuard 1.7.0 adds trusted pending attach for Gemini/Grok large streamed files: files are stream-redacted locally first, then attached only after the user triggers the site's real upload flow.
+- Files: `src/content/content.js`, `src/content/overlay.css`, `tests/content_file_drop_interception.test.js`, `tests/productization.test.js`, `package.json`, `package-lock.json`, `manifests/base.json`, `docs/CODEX_CHANGELOG.md`
+- Tests: `node tests/content_file_drop_interception.test.js` -> pass; `node tests/productization.test.js` -> pass; `node tests/streaming_file_redactor.test.js` -> pass; `node tests/file_paste_helpers.test.js` -> pass; `node tests/security.test.js` -> pass; `node tests/build_targets.test.js` -> pass; `npm test` -> pass; `npm run build:all` -> pass
+- Notes: Streaming drops no longer eagerly read sanitized fallback text before queuing Gemini/Grok pending attach; a compact non-blocking prompt exposes attach, insert-text, download, and cancel controls while pending file-input redispatches are suppressed from duplicate scans.
+
 ### 2026-05-05 - High-contrast placeholder chips
 - Goal: Make hydrated LeakGuard placeholders visible on light and dark AI chat themes, with rotating accent colors instead of a single blue treatment.
 - Files: `src/content/content.js`, `src/content/overlay.css`, `tests/productization.test.js`, `docs/CODEX_CHANGELOG.md`

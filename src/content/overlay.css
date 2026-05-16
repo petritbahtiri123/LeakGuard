@@ -244,6 +244,68 @@
   border-color: rgba(251, 113, 133, 0.9);
 }
 
+.pwm-pending-attach-prompt {
+  position: fixed;
+  right: 18px;
+  bottom: 72px;
+  z-index: 2147483646;
+  width: min(420px, calc(100vw - 24px));
+  color: #f8fafc;
+  font: 14px/1.4 system-ui, sans-serif;
+  pointer-events: none;
+}
+
+.pwm-pending-attach-card {
+  pointer-events: auto;
+  display: grid;
+  gap: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.42);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.96);
+  box-shadow: 0 18px 48px rgba(2, 6, 23, 0.34);
+  padding: 14px;
+}
+
+.pwm-pending-attach-title {
+  margin: 0;
+  color: #67e8f9;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.pwm-pending-attach-message {
+  margin: 0;
+  color: #e5e7eb;
+  font-size: 13px;
+}
+
+.pwm-pending-attach-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pwm-pending-attach-btn {
+  pointer-events: auto;
+  border: 1px solid #475569;
+  border-radius: 8px;
+  background: #1e293b;
+  color: #f8fafc;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  padding: 8px 10px;
+}
+
+.pwm-pending-attach-primary {
+  border-color: #22d3ee;
+  background: #0e7490;
+}
+
+.pwm-pending-attach-secondary {
+  color: #cbd5e1;
+}
+
 .pwm-findings {
   display: grid;
   gap: 8px;
