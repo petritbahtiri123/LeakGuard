@@ -670,6 +670,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "applyChatGptLargePasteTextFallback"),
       extractFunctionSource(contentSource, "maybeHandleChatGptLargeTextPaste"),
       extractFunctionSource(contentSource, "resolveGeminiEditorTarget"),
+      extractFunctionSource(contentSource, "findGeminiEditorCandidateInRoot"),
       extractFunctionSource(contentSource, "resolveGeminiFallbackEditor"),
       extractFunctionSource(contentSource, "redactGeminiEditorText"),
       extractFunctionSource(contentSource, "settleComposer"),
@@ -752,6 +753,8 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "describeGeminiOverlayExposure"),
       extractFunctionSource(contentSource, "waitForGeminiFileInput"),
       extractFunctionSource(contentSource, "verifyGeminiFirefoxFileInputBridgeAssignment"),
+      extractFunctionSource(contentSource, "primeGeminiFirefoxUploadTarget"),
+      extractFunctionSource(contentSource, "handOffPrimedGeminiFirefoxUploadTarget"),
       extractFunctionSource(contentSource, "tryFirefoxGeminiFileInputBridge"),
       extractFunctionSource(contentSource, "tryRealFileInputSanitizedFileAttach"),
       extractFunctionSource(contentSource, "insertSanitizedPayloadText"),
@@ -1367,9 +1370,11 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "waitForGeminiUploadFilesMenuItem"),
       extractFunctionSource(contentSource, "waitForGeminiFileInput"),
       extractFunctionSource(contentSource, "verifyGeminiFirefoxFileInputBridgeAssignment"),
+      extractFunctionSource(contentSource, "primeGeminiFirefoxUploadTarget"),
+      extractFunctionSource(contentSource, "handOffPrimedGeminiFirefoxUploadTarget"),
       extractFunctionSource(contentSource, "tryFirefoxGeminiFileInputBridge"),
       extractFunctionSource(contentSource, "handOffGrokSanitizedFileUpload"),
-      "return { handOffSanitizedLocalFile, handOffGeminiSanitizedFileUpload, tryFirefoxGeminiFileInputBridge, findGeminiUploadMenuButton, openGeminiUploadMenuSafely, findGeminiUploadFilesMenuItem, openGeminiUploadFilesMenuItemSafely, waitForGeminiUploadFilesMenuItem, waitForGeminiFileInput, handOffGrokSanitizedFileUpload, resolveFileInputForHandoff, attemptPendingGeminiSanitizedFileHandoff, hasPendingGeminiSanitizedFileHandoff, getPendingGeminiSanitizedFileHandoffDebug, hasGeminiSanitizedDownloadFallback, clearPendingGeminiGhostIngressClickInterceptor };"
+      "return { handOffSanitizedLocalFile, handOffGeminiSanitizedFileUpload, primeGeminiFirefoxUploadTarget, handOffPrimedGeminiFirefoxUploadTarget, tryFirefoxGeminiFileInputBridge, findGeminiUploadMenuButton, openGeminiUploadMenuSafely, findGeminiUploadFilesMenuItem, openGeminiUploadFilesMenuItemSafely, waitForGeminiUploadFilesMenuItem, waitForGeminiFileInput, handOffGrokSanitizedFileUpload, resolveFileInputForHandoff, attemptPendingGeminiSanitizedFileHandoff, hasPendingGeminiSanitizedFileHandoff, getPendingGeminiSanitizedFileHandoffDebug, hasGeminiSanitizedDownloadFallback, clearPendingGeminiGhostIngressClickInterceptor };"
     ].join("\n\n")
   );
 
@@ -5340,6 +5345,79 @@ async function testGeminiDropFallsBackToSanitizedComposerTextWhenNativeUploadUna
   assert.strictEqual(calls.modals.flat().join("\n").includes(rawSecret), false);
 }
 
+async function testFirefoxGeminiDropPrimesUploadTargetBeforeRedaction() {
+  const rawSecret = "LeakGuardDropApiKey1234567890";
+  const rawFile = createTextFile({
+    name: "prime-before-redaction.env",
+    type: "text/plain",
+    text: `API_KEY=${rawSecret}`
+  });
+  const fileInput = createFileInput({ source: "light-dom", name: "Filedata", multiple: true });
+  const documentRoot = {
+    activeElement: { tagName: "DIV", closest: () => null },
+    body: {
+      textContent: "",
+      querySelectorAll(selector) {
+        return selector === "input[type='file']" ? [fileInput] : [];
+      }
+    },
+    querySelectorAll(selector) {
+      if (selector === "input[type='file']") return [fileInput];
+      if (selector === "*") return [];
+      return [];
+    },
+    querySelector: () => null,
+    createElement: (tagName) => ({
+      tagName: String(tagName || "").toUpperCase(),
+      type: "",
+      files: []
+    })
+  };
+  let redactionSawPrime = false;
+  let redactionSawUnassignedInput = false;
+  const { maybeHandleDrop, calls } = createHarness({
+    navigator: { userAgent: "Firefox" },
+    location: { hostname: "gemini.google.com" },
+    document: documentRoot,
+    readLocalTextFileFromDataTransfer: async () => ({
+      handled: true,
+      ok: true,
+      text: `API_KEY=${rawSecret}`,
+      file: rawFile
+    }),
+    requestRedaction: async (text, findings, options) => {
+      redactionSawPrime = calls.debugEvents.some(
+        (entry) => entry.label === "file-handoff:gemini-firefox-prime-start"
+      );
+      redactionSawUnassignedInput = Number(fileInput.files?.length || 0) === 0;
+      calls.redactions.push({ text, findings, options });
+      return { redactedText: "API_KEY=[PWM_1]" };
+    },
+    handOffGeminiSanitizedFileUpload: () => {
+      throw new Error("Firefox Gemini drop must use the primed input before late upload handoff");
+    }
+  });
+  const { event } = createEvent({
+    dataTransfer: {
+      types: ["Files"],
+      files: [rawFile],
+      items: [],
+      dropEffect: "none"
+    },
+    target: { tagName: "P", closest: () => null }
+  });
+
+  await maybeHandleDrop(event);
+
+  assert.strictEqual(redactionSawPrime, true);
+  assert.strictEqual(redactionSawUnassignedInput, true);
+  assert.strictEqual(fileInput.files.length, 1);
+  assert.notStrictEqual(fileInput.files[0], rawFile);
+  assert.strictEqual(fileInput.files[0].text.includes(rawSecret), false);
+  assert.ok(fileInput.files[0].text.includes("[PWM_1]"));
+  assert.deepStrictEqual(fileInput.events, ["input", "change"]);
+}
+
 async function testFirefoxGeminiFileInputBridgeAssignsSanitizedFileOnly() {
   const rawSecret = "LeakGuardDropApiKey1234567890";
   const composer = createGeminiEditor("").editor;
@@ -5391,7 +5469,7 @@ async function testFirefoxGeminiFileInputBridgeAssignsSanitizedFileOnly() {
   await maybeHandleDrop(event);
 
   assert.strictEqual(event.defaultPrevented, true);
-  assert.strictEqual(calls.handoffs.length, 1);
+  assert.strictEqual(calls.handoffs.length, 0);
   assert.strictEqual(calls.redactions.length, 1);
   assert.strictEqual(fileInput.files.length, 1);
   assert.notStrictEqual(fileInput.files[0], rawFile);
@@ -5405,15 +5483,11 @@ async function testFirefoxGeminiFileInputBridgeAssignsSanitizedFileOnly() {
   assert.ok(
     calls.debugEvents.some(
       (entry) =>
-        entry.label === "file-handoff:gemini-firefox-file-input-bridge-assigned" &&
-        entry.details?.mode === "file-input-bridge" &&
-        entry.details?.browser === "firefox" &&
-        entry.details?.host === "gemini.google.com" &&
-        entry.details?.rawFileCount === 1 &&
-        entry.details?.sanitizedFileCount === 1 &&
+        entry.label === "file-handoff:gemini-firefox-prime-assigned" &&
+        entry.details?.mode === "file-input-prime" &&
         entry.details?.inputFound === true
     ),
-    "expected Firefox Gemini file-input bridge diagnostics"
+    "expected Firefox Gemini primed file-input diagnostics"
   );
   assert.strictEqual(JSON.stringify(calls.debugEvents).includes(rawSecret), false);
 }
@@ -5800,6 +5874,120 @@ async function testFirefoxGeminiFileInputBridgeCapturesDelayedFiledataFromAlread
   );
 }
 
+async function testFirefoxGeminiPrimeCapturesDelayedFiledataBeforeSanitizedAssignment() {
+  const rawFile = {
+    name: "prime-delayed.env",
+    type: "text/plain",
+    size: 38,
+    text: "API_KEY=LeakGuardDropApiKey1234567890"
+  };
+  const sanitizedFile = {
+    name: "prime-delayed.env",
+    type: "text/plain",
+    size: 15,
+    text: "API_KEY=[PWM_1]"
+  };
+  const fileInputs = [];
+  let harness;
+  let pickerClick;
+  let delayedInput;
+  const uploadFilesMenuItem = createOverlayItem({
+    dataTestId: "local-images-files-uploader-button",
+    onClick: () => {
+      const input = createFileInput({ source: "light-dom", name: "Filedata", multiple: true });
+      delayedInput = input;
+      const retarget = { nodeType: 1, tagName: "DIV" };
+      pickerClick = createClickEvent(retarget, [retarget, input]);
+      Promise.resolve().then(() => {
+        for (const handler of [...harness.windowClickHandlers, ...harness.clickHandlers]) {
+          handler(pickerClick.event);
+        }
+      });
+    }
+  });
+  const closeMenuButton = createUploadTrigger({
+    ariaLabel: "Close upload file menu",
+    className: "upload-card-button close",
+    onClick: () => {
+      throw new Error("priming must not click the close upload menu button");
+    }
+  });
+  harness = createHandoffHarness({
+    userAgent: "Firefox",
+    fileInputs,
+    uploadTriggers: [closeMenuButton],
+    overlayItems: [uploadFilesMenuItem]
+  });
+  const event = {
+    type: "drop",
+    target: { nodeType: 1, tagName: "DIV", dispatchEvent: () => true },
+    dataTransfer: createDataTransfer({ files: [rawFile] })
+  };
+
+  const prime = harness.primeGeminiFirefoxUploadTarget(event, null);
+  const capturedInput = await prime.inputPromise;
+
+  assert.strictEqual(capturedInput, delayedInput);
+  assert.strictEqual(pickerClick.event.defaultPrevented, true);
+  assert.strictEqual(pickerClick.event.immediatePropagationStopped, true);
+  assert.deepStrictEqual(closeMenuButton.events, []);
+  assert.deepStrictEqual(Array.from(delayedInput.files || []), []);
+
+  const result = await harness.handOffPrimedGeminiFirefoxUploadTarget(prime, sanitizedFile);
+
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(delayedInput.files[0], sanitizedFile);
+  assert.notStrictEqual(delayedInput.files[0], rawFile);
+  assert.deepStrictEqual(delayedInput.events, ["input", "change"]);
+}
+
+async function testFirefoxGeminiFileInputBridgeUsesUploadFilesTextOverlayItem() {
+  const sanitizedFile = {
+    name: "text-overlay.env",
+    type: "text/plain",
+    size: 18,
+    text: "API_KEY=[PWM_1]"
+  };
+  const fileInputs = [];
+  const overlayItems = [];
+  const uploadFilesMenuItem = createOverlayItem({
+    ariaLabel: "",
+    text: "Upload files",
+    role: "menuitem",
+    onClick: () => {
+      fileInputs.push(createFileInput({ source: "light-dom", name: "Filedata", multiple: true }));
+    }
+  });
+  const uploadTrigger = createUploadTrigger({
+    ariaLabel: "Open upload file menu",
+    className: "upload-card-button open",
+    onClick: () => {
+      overlayItems.push(uploadFilesMenuItem);
+    }
+  });
+  const harness = createHandoffHarness({
+    userAgent: "Firefox",
+    fileInputs,
+    uploadTriggers: [uploadTrigger],
+    overlayItems
+  });
+  const event = {
+    type: "drop",
+    target: { nodeType: 1, tagName: "DIV", dispatchEvent: () => true },
+    dataTransfer: createDataTransfer()
+  };
+
+  const result = await harness.tryFirefoxGeminiFileInputBridge(
+    { sanitizedFile, redactedText: sanitizedFile.text },
+    { event, input: null }
+  );
+
+  assert.strictEqual(result.ok, true);
+  assert.deepStrictEqual(uploadTrigger.events, ["pointerdown", "mousedown", "mouseup", "click"]);
+  assert.deepStrictEqual(uploadFilesMenuItem.events, ["pointerdown", "mousedown", "mouseup", "click"]);
+  assert.strictEqual(fileInputs[0].files[0], sanitizedFile);
+}
+
 async function testFirefoxGeminiFileInputBridgeRejectsNonUploadOverlayItems() {
   const sanitizedFile = {
     name: "non-upload-menu.env",
@@ -6137,7 +6325,7 @@ async function testFirefoxGeminiFileInputBridgeMissingInputFailsClosed() {
 
   assert.strictEqual(event.defaultPrevented, true);
   assert.deepStrictEqual(composer.dispatched, []);
-  assert.strictEqual(calls.handoffs.length, 1);
+  assert.strictEqual(calls.handoffs.length, 0);
   assert.strictEqual(calls.textFallbacks.length, 1);
   assert.strictEqual(composer.text.includes(rawSecret), false);
   assert.ok(composer.text.includes("[PWM_"));
@@ -6151,11 +6339,10 @@ async function testFirefoxGeminiFileInputBridgeMissingInputFailsClosed() {
   assert.ok(
     calls.debugEvents.some(
       (entry) =>
-        entry.label === "file-handoff:gemini-firefox-file-input-bridge-text-fallback-success" &&
-        entry.details?.mode === "file-input-bridge" &&
-        entry.details?.inputFound === false
+        entry.label === "file-handoff:gemini-firefox-prime-input-not-found" &&
+        entry.details?.reason
     ),
-    "expected Firefox Gemini bridge text fallback diagnostics without raw file content"
+    "expected Firefox Gemini prime timeout diagnostics without raw file content"
   );
   assert.strictEqual(JSON.stringify(calls.debugEvents).includes(rawSecret), false);
 }
@@ -6245,7 +6432,7 @@ async function testFirefoxGeminiTextFallbackPreservesMultilineBlocks() {
   await maybeHandleDrop(event);
 
   assert.strictEqual(event.defaultPrevented, true);
-  assert.strictEqual(calls.handoffs.length, 1);
+  assert.strictEqual(calls.handoffs.length, 0);
   assert.strictEqual(calls.textFallbacks.length, 0);
   assert.ok(editor.text.includes(`LeakGuard sanitized file: 01-basic-secrets.env\n\n\`\`\`env\n${sanitizedText}\n\`\`\``));
   assert.strictEqual(editor.text.includes(rawSecret), false);
@@ -6257,6 +6444,126 @@ async function testFirefoxGeminiTextFallbackPreservesMultilineBlocks() {
     ),
     "expected Firefox Gemini fallback to use verified text insertion for multiline text"
   );
+}
+
+async function testFirefoxGeminiTextFallbackFindsEditorFromParagraphContainer() {
+  const rawSecret = "LeakGuardDropApiKey1234567890";
+  const sanitizedText = "OPENAI_API_KEY=[PWM_1]\nANTHROPIC_API_KEY=[PWM_2]";
+  const rawText = sanitizedText.replace(/\[PWM_\d+\]/g, rawSecret);
+  const editor = {
+    nodeType: 1,
+    tagName: "DIV",
+    className: "ql-editor",
+    text: "",
+    focusCalls: 0,
+    inputEvents: [],
+    attributes: {
+      contenteditable: "true"
+    },
+    getAttribute(name) {
+      return Object.prototype.hasOwnProperty.call(this.attributes, name) ? this.attributes[name] : null;
+    },
+    setAttribute(name, value) {
+      this.attributes[name] = String(value);
+    },
+    hasAttribute(name) {
+      return Object.prototype.hasOwnProperty.call(this.attributes, name);
+    },
+    removeAttribute(name) {
+      delete this.attributes[name];
+    },
+    focus() {
+      this.focusCalls += 1;
+    },
+    dispatchEvent(event) {
+      this.inputEvents.push(event);
+      return true;
+    }
+  };
+  Object.defineProperty(editor, "textContent", {
+    get() {
+      return this.text;
+    },
+    set(value) {
+      this.text = String(value || "");
+    }
+  });
+  const promptContainer = {
+    nodeType: 1,
+    tagName: "RICH-TEXTAREA",
+    querySelector(selector) {
+      return /contenteditable|ql-editor|textarea/.test(selector) ? editor : null;
+    }
+  };
+  const paragraphTarget = {
+    nodeType: 1,
+    tagName: "P",
+    closest(selector) {
+      return /rich-textarea|ql-container|text-input-field|input-area/.test(selector) ? promptContainer : null;
+    }
+  };
+  const rawFile = createTextFile({
+    name: "paragraph-container.env",
+    type: "",
+    text: rawText
+  });
+  const { maybeHandleDrop, calls } = createHarness({
+    navigator: { userAgent: "Firefox" },
+    location: { hostname: "gemini.google.com" },
+    document: {
+      activeElement: { tagName: "BUTTON", closest: () => null },
+      body: {
+        textContent: "",
+        querySelectorAll: () => []
+      },
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      execCommand(command, _showUi, value) {
+        if (command === "insertText") {
+          editor.text = String(value || "");
+          return true;
+        }
+        return false;
+      }
+    },
+    findComposer: () => null,
+    readLocalTextFileFromDataTransfer: async () => ({
+      handled: true,
+      ok: true,
+      text: rawText,
+      file: {
+        name: "paragraph-container.env",
+        type: "",
+        sizeBytes: rawFile.size
+      }
+    }),
+    requestRedaction: async () => ({
+      redactedText: sanitizedText
+    }),
+    handOffGeminiSanitizedFileUpload: (event, input, sanitizedFile) => {
+      calls.handoffs.push({ event, input, sanitizedFile, context: "gemini-file-input" });
+      return false;
+    }
+  });
+  const { event } = createEvent({
+    dataTransfer: {
+      types: ["Files"],
+      files: [rawFile],
+      items: [],
+      dropEffect: "none"
+    },
+    target: paragraphTarget
+  });
+
+  await maybeHandleDrop(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(calls.handoffs.length, 0);
+  assert.strictEqual(calls.textFallbacks.length, 0);
+  assert.ok(editor.text.includes("LeakGuard sanitized file: paragraph-container.env"));
+  assert.ok(editor.text.includes("OPENAI_API_KEY=[PWM_1]"));
+  assert.strictEqual(editor.text.includes(rawSecret), false);
+  assert.ok(editor.focusCalls > 0);
 }
 
 async function testFirefoxGeminiBlankTextInsertFallsBackToVerifiedRewrite() {
@@ -6466,7 +6773,7 @@ async function testFirefoxGeminiItemsOnlyDropExtractsFileAndUsesFileInputBridge(
   await maybeHandleDrop(event);
 
   assert.strictEqual(event.defaultPrevented, true);
-  assert.strictEqual(calls.handoffs.length, 1);
+  assert.strictEqual(calls.handoffs.length, 0);
   assert.strictEqual(calls.textFallbacks.length, 0);
   assert.strictEqual(editor.text, "");
   assert.strictEqual(fileInput.files.length, 1);
@@ -6488,11 +6795,11 @@ async function testFirefoxGeminiItemsOnlyDropExtractsFileAndUsesFileInputBridge(
   assert.ok(
     calls.debugEvents.some(
       (entry) =>
-        entry.label === "file-handoff:gemini-firefox-file-input-bridge-assigned" &&
-        entry.details?.mode === "file-input-bridge" &&
+        entry.label === "file-handoff:gemini-firefox-prime-assigned" &&
+        entry.details?.mode === "file-input-prime" &&
         entry.details?.inputFound === true
     ),
-    "expected Firefox Gemini file-input bridge assignment diagnostics"
+    "expected Firefox Gemini primed file-input assignment diagnostics"
   );
   assert.strictEqual(JSON.stringify(calls.debugEvents).includes(rawSecret), false);
 }
@@ -7457,6 +7764,7 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testGeminiStreamingHandoffUsesDiscoveredFileInput();
   await testGeminiDropNeverClicksUploadFlowWhenInputAppearsAfterClick();
   await testGeminiDropNeverClicksExistingOverlayMenuItem();
+  await testFirefoxGeminiDropPrimesUploadTargetBeforeRedaction();
   await testFirefoxGeminiFileInputBridgeAssignsSanitizedFileOnly();
   await testFirefoxGeminiFileInputBridgeOpensExactAriaMenuButton();
   await testFirefoxGeminiFileInputBridgeUsesUploadCardButtonFallback();
@@ -7464,6 +7772,8 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testFirefoxGeminiFileInputBridgeUsesAlreadyOpenUploadMenu();
   await testFirefoxGeminiFileInputBridgeCapturesDelayedFiledataAfterOpeningMenu();
   await testFirefoxGeminiFileInputBridgeCapturesDelayedFiledataFromAlreadyOpenMenu();
+  await testFirefoxGeminiPrimeCapturesDelayedFiledataBeforeSanitizedAssignment();
+  await testFirefoxGeminiFileInputBridgeUsesUploadFilesTextOverlayItem();
   await testFirefoxGeminiFileInputBridgeRejectsNonUploadOverlayItems();
   await testFirefoxGeminiFileInputBridgeAllowsHiddenSelectorAndCapturesFiledataInput();
   await testFirefoxGeminiFileInputBridgeRejectsUnsafeUploadButtons();
@@ -7539,6 +7849,7 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testGeminiSanitizerFailureBlocksRawPasteAndDrop();
   await testGeminiDropFallsBackToSanitizedComposerTextWhenNativeUploadUnavailable();
   await testFirefoxGeminiTextFallbackPreservesMultilineBlocks();
+  await testFirefoxGeminiTextFallbackFindsEditorFromParagraphContainer();
   await testFirefoxGeminiBlankTextInsertFallsBackToVerifiedRewrite();
   await testFirefoxGeminiEmptySanitizedTextDoesNotInsertBlankFallback();
   await testFirefoxGeminiItemsOnlyNullFileFailsClosed();
