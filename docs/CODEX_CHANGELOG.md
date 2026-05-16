@@ -12,6 +12,12 @@ Use this file as a short handoff log for AI-made changes. Add newest entries fir
 ```
 
 ## Entries
+### 2026-05-16 - v1.7.0 adapter-based file handoff
+- Goal: Standardized trusted pending file handoff across AI sites. LeakGuard now sanitizes or stream-redacts files first, stages only the sanitized file, and attaches it through trusted user upload flows where required by browser/site security.
+- Files: `src/content/content.js`, `tests/content_file_drop_interception.test.js`, `docs/file-handoff-architecture.md`, `docs/CODEX_CHANGELOG.md`
+- Tests: `node tests/content_file_drop_interception.test.js` -> pass
+- Notes: Gemini/Grok keep the proven pending attach path; ChatGPT, Claude, OpenAI Chat, and X now have adapters and diagnostics with pending attach feature-gated off until direct evidence requires it.
+
 ### 2026-05-16 - v1.7.0 streaming pending handoff
 - Goal: LeakGuard 1.7.0 adds trusted pending attach for Gemini/Grok large streamed files: files are stream-redacted locally first, then attached only after the user triggers the site's real upload flow.
 - Files: `src/content/content.js`, `src/content/overlay.css`, `tests/content_file_drop_interception.test.js`, `tests/productization.test.js`, `package.json`, `package-lock.json`, `manifests/base.json`, `docs/CODEX_CHANGELOG.md`

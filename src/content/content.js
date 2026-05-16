@@ -204,6 +204,14 @@
   let pendingGrokSanitizedFileObserver = null;
   let pendingGrokSanitizedFileTimer = 0;
   let pendingGrokSanitizedFileClickHandler = null;
+  const FILE_HANDOFF_PENDING_ATTACH_ENABLED = Object.freeze({
+    gemini: true,
+    grok: true,
+    chatgpt: false,
+    claude: false,
+    openai: false,
+    x: false
+  });
   let dmzOverlayEl = null;
   let dmzOverlayStatusEl = null;
   let dmzOverlayTimer = 0;
@@ -228,6 +236,7 @@
     extensionRuntimeAvailable = false;
     clearPendingGeminiGhostIngressClickInterceptor("extension-context-invalidated");
     clearPendingGeminiSanitizedFileHandoff("extension-context-invalidated");
+    clearPendingGrokSanitizedFileHandoff("extension-context-invalidated");
     setBadge("LeakGuard reloaded. Refresh this page.");
     hideBadgeSoon(5000);
   }
@@ -560,12 +569,13 @@
     }
   }
 
-  function markSanitizedFileHandoff(fileInput, files) {
+  function markSanitizedFileHandoff(fileInput, files, options = {}) {
     if (!isFileInputElement(fileInput)) return false;
     const assignedFiles = Array.from(files || []).filter(Boolean);
     if (!assignedFiles.length) return false;
 
-    const expiresAt = Date.now() + SANITIZED_FILE_HANDOFF_SUPPRESS_MS;
+    const ttlMs = Math.max(1, Number(options.ttlMs || SANITIZED_FILE_HANDOFF_SUPPRESS_MS));
+    const expiresAt = Date.now() + ttlMs;
     const signatures = [];
     sanitizedFileInputHandoffs.add(fileInput);
     sanitizedFileInputHandoffExpires.set(fileInput, expiresAt);
@@ -585,12 +595,12 @@
     debugReveal("file-input:sanitized-handoff-marked", {
       input: describeFileInputForDebug(fileInput, "sanitized-file-handoff"),
       files: assignedFiles.map(describeFileForDebug),
-      ttlMs: SANITIZED_FILE_HANDOFF_SUPPRESS_MS
+      ttlMs
     });
 
     setTimeout(() => {
       expireSanitizedFileHandoffMarks(fileInput, assignedFiles, signatures, expiresAt);
-    }, SANITIZED_FILE_HANDOFF_SUPPRESS_MS);
+    }, ttlMs);
     return true;
   }
 
@@ -698,6 +708,19 @@
       browser: isFirefoxRuntime() ? "firefox" : "other",
       host: location?.hostname || ""
     });
+  }
+
+  function shouldSuppressSanitizedFileReprocessing(eventOrInput, files) {
+    const fileInput = isFileInputElement(eventOrInput) ? eventOrInput : eventOrInput?.target || null;
+    const selectedFiles =
+      files ||
+      (isFileInputElement(eventOrInput) ? eventOrInput.files : eventOrInput?.target?.files) ||
+      [];
+    const suppression = getSanitizedFileInputHandoffSuppression(fileInput, selectedFiles);
+    if (suppression && eventOrInput?.type) {
+      suppressSanitizedFileInputHandoffEvent(eventOrInput, suppression);
+    }
+    return Boolean(suppression);
   }
 
   function isFirefoxProtectedFileInputEvent(event) {
@@ -1118,8 +1141,42 @@
     }
   }
 
-  function showPendingSanitizedAttachPrompt(options) {
-    options = options || {};
+  function showPendingSanitizedAttachPrompt(adapter, pending = null) {
+    let selectedAdapter = null;
+    let options = null;
+    if (pending) {
+      selectedAdapter =
+        typeof adapter === "string"
+          ? getFileHandoffAdapterById(adapter)
+          : adapter || getFileHandoffAdapterForLocation();
+      options = {
+        site: selectedAdapter?.id || pending.site || getCurrentHandoffDriverId(),
+        sanitizedFile: pending.sanitizedFile || null,
+        message:
+          pending.message ||
+          "Large file sanitized. Click Attach sanitized file, or click the site upload button to attach the sanitized version.",
+        onAttachClick: () => attachPendingSanitizedFileWithTrustedActivation(selectedAdapter, pending),
+        onInsertTextClick: () =>
+          insertPendingSanitizedFileText(
+            selectedAdapter?.id || pending.site || getCurrentHandoffDriverId(),
+            pending.event,
+            pending.input,
+            pending.sanitizedFile
+          ),
+        onDownloadClick: () =>
+          downloadPendingSanitizedFile(
+            selectedAdapter?.id || pending.site || getCurrentHandoffDriverId(),
+            pending.event,
+            pending.input,
+            pending.sanitizedFile
+          ),
+        onCancelClick: () =>
+          cancelPendingSanitizedFileAttach(selectedAdapter?.id || pending.site || getCurrentHandoffDriverId())
+      };
+    } else {
+      options = adapter || {};
+      selectedAdapter = options.adapter || getFileHandoffAdapterById(options.site) || getFileHandoffAdapterForLocation();
+    }
     const site = options.site || getCurrentHandoffDriverId();
     const sanitizedFile = options.sanitizedFile || null;
     const message =
@@ -1133,6 +1190,13 @@
         site,
         sanitizedFile: describeFileForDebug(sanitizedFile)
       });
+      if (label === "attach-clicked") {
+        debugReveal("file-handoff:pending-user-attach-clicked", {
+          site,
+          adapter: describeFileHandoffAdapter(selectedAdapter),
+          sanitizedFile: describeFileForDebug(sanitizedFile)
+        });
+      }
       if (typeof callback !== "function") return;
       try {
         await callback();
@@ -1145,6 +1209,12 @@
       debugReveal("pending-attach-prompt-shown", {
         site,
         rendered: false,
+        sanitizedFile: describeFileForDebug(sanitizedFile)
+      });
+      debugReveal("file-handoff:pending-prompt-shown", {
+        site,
+        rendered: false,
+        adapter: describeFileHandoffAdapter(selectedAdapter),
         sanitizedFile: describeFileForDebug(sanitizedFile)
       });
       return null;
@@ -1222,6 +1292,12 @@
     debugReveal("pending-attach-prompt-shown", {
       site,
       rendered: true,
+      sanitizedFile: describeFileForDebug(sanitizedFile)
+    });
+    debugReveal("file-handoff:pending-prompt-shown", {
+      site,
+      rendered: true,
+      adapter: describeFileHandoffAdapter(selectedAdapter),
       sanitizedFile: describeFileForDebug(sanitizedFile)
     });
     return prompt;
@@ -3398,6 +3474,10 @@
     return location.hostname === "chatgpt.com" || location.hostname === "chat.openai.com";
   }
 
+  function isOpenAiChatHost() {
+    return location.hostname === "chat.openai.com";
+  }
+
   function isGeminiHost() {
     return location.hostname === "gemini.google.com";
   }
@@ -3410,16 +3490,310 @@
     return location.hostname === "grok.com" || location.hostname.endsWith(".grok.com");
   }
 
+  function isXHost() {
+    return (
+      location.hostname === "x.com" ||
+      location.hostname.endsWith(".x.com") ||
+      location.hostname === "twitter.com" ||
+      location.hostname.endsWith(".twitter.com")
+    );
+  }
+
+  const FILE_HANDOFF_ADAPTERS = {
+    gemini: {
+      id: "gemini",
+      siteLabel: "Gemini",
+      hosts: ["gemini.google.com"],
+      supportsDirectFileInputAssignment: true,
+      supportsDirectDropReplay: false,
+      supportsPendingAttach: true,
+      supportsTrustedAttachButton: true,
+      pendingAttachEnabled: FILE_HANDOFF_PENDING_ATTACH_ENABLED.gemini,
+      uploadButtonSelectors: [
+        'button[aria-label="Open upload file menu"]',
+        "button.upload-card-button",
+        "mat-icon.upload-icon"
+      ],
+      uploadMenuItemSelectors: [
+        'button[data-test-id="local-images-files-uploader-button"]',
+        'button[role="menuitem"][aria-label*="Upload files"]'
+      ],
+      fileInputSelectors: [
+        'input[type="file"][name="Filedata"]',
+        'input[type="file"][multiple]',
+        'input[type="file"]'
+      ],
+      unsafeClickSelectors: [
+        '[aria-label*="send" i]',
+        '[aria-label*="submit" i]',
+        '[aria-label*="mic" i]',
+        '[aria-label*="voice" i]',
+        '[aria-label*="settings" i]',
+        '[aria-label*="close" i]',
+        '[aria-label*="remove" i]'
+      ],
+      resolveUploadTrigger: () => findGeminiUploadMenuButton(),
+      resolveUploadMenuItem: () => findGeminiUploadFilesMenuItem(),
+      resolveFileInput: (event, input) => findGeminiFileInput(event, input).fileInput,
+      isUploadClickTarget: (eventOrTarget) => isLikelyGeminiUploadClickTarget(eventOrTarget),
+      attachWithTrustedActivation: (pending) =>
+        performPendingGeminiUserAttach(pending.event, pending.input, pending.sanitizedFile)
+    },
+    grok: {
+      id: "grok",
+      siteLabel: "Grok",
+      hosts: ["grok.com"],
+      supportsDirectFileInputAssignment: true,
+      supportsDirectDropReplay: true,
+      supportsPendingAttach: true,
+      supportsTrustedAttachButton: true,
+      pendingAttachEnabled: FILE_HANDOFF_PENDING_ATTACH_ENABLED.grok,
+      uploadButtonSelectors: [
+        'button[aria-label*="upload" i]',
+        'button[aria-label*="attach" i]',
+        'button[title*="upload" i]',
+        'button[title*="attach" i]',
+        "button",
+        "label",
+        "[role='button']"
+      ],
+      uploadMenuItemSelectors: [],
+      fileInputSelectors: [
+        'input[type="file"][multiple]',
+        'input[type="file"][accept]',
+        'input[type="file"]'
+      ],
+      unsafeClickSelectors: [
+        '[aria-label*="send" i]',
+        '[aria-label*="submit" i]',
+        '[aria-label*="mic" i]',
+        '[aria-label*="voice" i]',
+        '[aria-label*="settings" i]',
+        '[aria-label*="close" i]',
+        '[aria-label*="remove" i]'
+      ],
+      resolveUploadTrigger: () => findGrokUploadButton(),
+      resolveUploadMenuItem: () => null,
+      resolveFileInput: (event, input) => discoverGrokPendingFileInput(event, input).fileInput,
+      isUploadClickTarget: (eventOrTarget) => isLikelyGrokUploadClickTarget(eventOrTarget),
+      attachWithTrustedActivation: (pending) =>
+        performPendingGrokUserAttach(pending.event, pending.input, pending.sanitizedFile)
+    },
+    chatgpt: {
+      id: "chatgpt",
+      siteLabel: "ChatGPT",
+      hosts: ["chatgpt.com"],
+      supportsDirectFileInputAssignment: true,
+      supportsDirectDropReplay: false,
+      supportsPendingAttach: true,
+      supportsTrustedAttachButton: true,
+      pendingAttachEnabled: FILE_HANDOFF_PENDING_ATTACH_ENABLED.chatgpt,
+      uploadButtonSelectors: [
+        'button[aria-label*="upload" i]',
+        'button[aria-label*="attach" i]',
+        'button[aria-label*="file" i]',
+        'button[data-testid*="upload" i]',
+        'button[data-testid*="attach" i]'
+      ],
+      uploadMenuItemSelectors: [],
+      fileInputSelectors: [
+        'input[type="file"][multiple]',
+        'input[type="file"][accept]',
+        'input[type="file"]'
+      ],
+      unsafeClickSelectors: [
+        '[aria-label*="send" i]',
+        '[aria-label*="submit" i]',
+        '[aria-label*="voice" i]',
+        '[aria-label*="mic" i]',
+        '[aria-label*="settings" i]',
+        '[aria-label*="close" i]',
+        '[aria-label*="remove" i]'
+      ],
+      resolveUploadTrigger: (event, input, adapter) => findGenericAdapterUploadTrigger(adapter, event, input),
+      resolveUploadMenuItem: () => null,
+      resolveFileInput: (event, input, adapter) => resolveGenericAdapterFileInput(adapter, event, input),
+      isUploadClickTarget: (eventOrTarget, adapter) => isLikelyGenericUploadClickTarget(adapter, eventOrTarget),
+      attachWithTrustedActivation: (pending, adapter) => attachGenericPendingWithTrustedActivation(adapter, pending)
+    },
+    claude: {
+      id: "claude",
+      siteLabel: "Claude",
+      hosts: ["claude.ai"],
+      supportsDirectFileInputAssignment: true,
+      supportsDirectDropReplay: false,
+      supportsPendingAttach: true,
+      supportsTrustedAttachButton: true,
+      pendingAttachEnabled: FILE_HANDOFF_PENDING_ATTACH_ENABLED.claude,
+      uploadButtonSelectors: [
+        'button[aria-label*="attach" i]',
+        'button[aria-label*="upload" i]',
+        'button[aria-label*="file" i]',
+        'button[title*="attach" i]',
+        'button[title*="upload" i]'
+      ],
+      uploadMenuItemSelectors: [],
+      fileInputSelectors: [
+        'input[type="file"][multiple]',
+        'input[type="file"][accept]',
+        'input[type="file"]'
+      ],
+      unsafeClickSelectors: [
+        '[aria-label*="send" i]',
+        '[aria-label*="submit" i]',
+        '[aria-label*="voice" i]',
+        '[aria-label*="mic" i]',
+        '[aria-label*="settings" i]',
+        '[aria-label*="close" i]',
+        '[aria-label*="remove" i]'
+      ],
+      resolveUploadTrigger: (event, input, adapter) => findGenericAdapterUploadTrigger(adapter, event, input),
+      resolveUploadMenuItem: () => null,
+      resolveFileInput: (event, input, adapter) => resolveGenericAdapterFileInput(adapter, event, input),
+      isUploadClickTarget: (eventOrTarget, adapter) => isLikelyGenericUploadClickTarget(adapter, eventOrTarget),
+      attachWithTrustedActivation: (pending, adapter) => attachGenericPendingWithTrustedActivation(adapter, pending)
+    },
+    openai: {
+      id: "openai",
+      siteLabel: "OpenAI Chat",
+      hosts: ["chat.openai.com"],
+      supportsDirectFileInputAssignment: true,
+      supportsDirectDropReplay: false,
+      supportsPendingAttach: true,
+      supportsTrustedAttachButton: true,
+      pendingAttachEnabled: FILE_HANDOFF_PENDING_ATTACH_ENABLED.openai,
+      uploadButtonSelectors: [
+        'button[aria-label*="upload" i]',
+        'button[aria-label*="attach" i]',
+        'button[aria-label*="file" i]',
+        'button[data-testid*="upload" i]',
+        'button[data-testid*="attach" i]'
+      ],
+      uploadMenuItemSelectors: [],
+      fileInputSelectors: [
+        'input[type="file"][multiple]',
+        'input[type="file"][accept]',
+        'input[type="file"]'
+      ],
+      unsafeClickSelectors: [
+        '[aria-label*="send" i]',
+        '[aria-label*="submit" i]',
+        '[aria-label*="voice" i]',
+        '[aria-label*="mic" i]',
+        '[aria-label*="settings" i]',
+        '[aria-label*="close" i]',
+        '[aria-label*="remove" i]'
+      ],
+      resolveUploadTrigger: (event, input, adapter) => findGenericAdapterUploadTrigger(adapter, event, input),
+      resolveUploadMenuItem: () => null,
+      resolveFileInput: (event, input, adapter) => resolveGenericAdapterFileInput(adapter, event, input),
+      isUploadClickTarget: (eventOrTarget, adapter) => isLikelyGenericUploadClickTarget(adapter, eventOrTarget),
+      attachWithTrustedActivation: (pending, adapter) => attachGenericPendingWithTrustedActivation(adapter, pending)
+    },
+    x: {
+      id: "x",
+      siteLabel: "X",
+      hosts: ["x.com", "twitter.com"],
+      supportsDirectFileInputAssignment: true,
+      supportsDirectDropReplay: false,
+      supportsPendingAttach: true,
+      supportsTrustedAttachButton: true,
+      pendingAttachEnabled: FILE_HANDOFF_PENDING_ATTACH_ENABLED.x,
+      uploadButtonSelectors: [
+        'input[type="file"]',
+        '[data-testid*="file" i]',
+        '[data-testid*="media" i]',
+        '[aria-label*="media" i]',
+        '[aria-label*="upload" i]',
+        '[aria-label*="attach" i]'
+      ],
+      uploadMenuItemSelectors: [],
+      fileInputSelectors: [
+        'input[type="file"][multiple]',
+        'input[type="file"][accept]',
+        'input[type="file"]'
+      ],
+      unsafeClickSelectors: [
+        '[data-testid="tweetButton"]',
+        '[data-testid="tweetButtonInline"]',
+        '[aria-label*="post" i]',
+        '[aria-label*="send" i]',
+        '[aria-label*="submit" i]',
+        '[aria-label*="voice" i]',
+        '[aria-label*="mic" i]',
+        '[aria-label*="settings" i]',
+        '[aria-label*="close" i]',
+        '[aria-label*="remove" i]'
+      ],
+      resolveUploadTrigger: (event, input, adapter) => findGenericAdapterUploadTrigger(adapter, event, input),
+      resolveUploadMenuItem: () => null,
+      resolveFileInput: (event, input, adapter) => resolveGenericAdapterFileInput(adapter, event, input),
+      isUploadClickTarget: (eventOrTarget, adapter) => isLikelyGenericUploadClickTarget(adapter, eventOrTarget),
+      attachWithTrustedActivation: (pending, adapter) => attachGenericPendingWithTrustedActivation(adapter, pending)
+    }
+  };
+
+  function getFileHandoffAdapterById(id) {
+    return FILE_HANDOFF_ADAPTERS[String(id || "").toLowerCase()] || null;
+  }
+
+  function hostMatchesFileHandoffAdapter(hostname, adapter) {
+    const host = String(hostname || "").toLowerCase();
+    return (adapter?.hosts || []).some((candidate) => {
+      const normalized = String(candidate || "").toLowerCase();
+      return host === normalized || host.endsWith(`.${normalized}`);
+    });
+  }
+
+  function getFileHandoffAdapterForLocation(targetLocation = location) {
+    const host = String(targetLocation?.hostname || "").toLowerCase();
+    return Object.values(FILE_HANDOFF_ADAPTERS).find((adapter) => hostMatchesFileHandoffAdapter(host, adapter)) || null;
+  }
+
+  function isFileHandoffAdapterPendingAttachEnabled(adapter) {
+    return Boolean(adapter?.supportsPendingAttach && adapter.pendingAttachEnabled !== false);
+  }
+
+  function describeFileHandoffAdapter(adapter) {
+    if (!adapter) return null;
+    return {
+      id: adapter.id || "",
+      siteLabel: adapter.siteLabel || adapter.id || "",
+      hosts: Array.from(adapter.hosts || []),
+      supportsDirectDropReplay: Boolean(adapter.supportsDirectDropReplay),
+      supportsPendingAttach: Boolean(adapter.supportsPendingAttach),
+      supportsTrustedAttachButton: Boolean(adapter.supportsTrustedAttachButton),
+      pendingAttachEnabled: isFileHandoffAdapterPendingAttachEnabled(adapter)
+    };
+  }
+
+  function debugFileHandoffAdapterSelected(adapter, reason = "") {
+    debugReveal("file-handoff:adapter-selected", {
+      reason,
+      host: location?.hostname || "",
+      adapter: describeFileHandoffAdapter(adapter)
+    });
+  }
+
   function getCurrentHandoffDriverId() {
     if (isGeminiHost()) return "gemini";
+    if (isOpenAiChatHost()) return "openai";
     if (isChatGptHost()) return "chatgpt";
     if (isClaudeHost()) return "claude";
     if (isGrokHost()) return "grok";
+    if (isXHost()) return "x";
     return "generic";
   }
 
   function isProtectedFileDropDriver(id) {
-    if (id === "gemini" || id === "chatgpt" || id === "claude" || id === "grok") {
+    if (
+      id === "gemini" ||
+      id === "chatgpt" ||
+      id === "claude" ||
+      id === "grok" ||
+      id === "openai" ||
+      id === "x"
+    ) {
       return true;
     }
     if (id !== "generic") {
@@ -5348,7 +5722,13 @@
       const queuedPending =
         uploadFlowWasReached &&
         shouldQueueFirefoxGeminiPendingSanitizedFileHandoff(context.event, payload.sanitizedFile, details) &&
-        queuePendingGeminiSanitizedFileHandoff(context.event, context.input, payload.sanitizedFile, details);
+        queuePendingSanitizedFileHandoff(
+          getFileHandoffAdapterById("gemini"),
+          context.event,
+          context.input,
+          payload.sanitizedFile,
+          details
+        );
       debugReveal(
         "file-handoff:gemini-firefox-file-input-bridge-input-not-found",
         {
@@ -5446,7 +5826,9 @@
       return false;
     }
 
-    const fileInput = resolveFileInputForHandoff(event, input);
+    const adapter = getFileHandoffAdapterById(driverId);
+    const fileInput =
+      adapter?.resolveFileInput?.(event, input, adapter) || resolveFileInputForHandoff(event, input);
     details.fileInputCountBeforeClick = fileInput ? 1 : 0;
     details.fileInputCountAfterTopTriggerClick = fileInput ? 1 : 0;
     details.fileInputCountAfterOverlayItemClick = fileInput ? 1 : 0;
@@ -5552,7 +5934,7 @@
       tryAttachSanitizedFile: async (payload, context) => {
         if (id === "gemini") return tryGeminiSanitizedFileAttach(payload, context.event, context.input);
         if (id === "grok") return handOffGrokSanitizedFileUpload(context.event, context.input, payload.sanitizedFile);
-        if (id === "chatgpt" || id === "claude" || id === "generic") {
+        if (id === "chatgpt" || id === "claude" || id === "openai" || id === "x" || id === "generic") {
           return tryRealFileInputSanitizedFileAttach(payload, context.event, context.input, id);
         }
         return false;
@@ -5572,6 +5954,8 @@
 
   async function handoffSanitizedPayload(payload, context) {
     const driver = context?.driver || getCurrentHandoffDriver();
+    const adapter = context?.adapter || driver.adapter || getFileHandoffAdapterForLocation();
+    debugFileHandoffAdapterSelected(adapter, "handoff");
     if (!driver?.canHandle?.(location, document)) {
       return { ok: false, stage: "driver-unavailable" };
     }
@@ -5580,10 +5964,28 @@
       return { ok: false, stage: "failed", reason: "unsafe_sanitized_payload" };
     }
 
+    debugReveal("file-handoff:direct-attempt-start", {
+      site: driver.id,
+      adapter: describeFileHandoffAdapter(adapter),
+      context: context?.context || "",
+      sanitizedFile: describeFileForDebug(payload.sanitizedFile)
+    });
     if (await driver.tryAttachSanitizedFile(payload, context)) {
+      debugReveal("file-handoff:direct-attempt-success", {
+        site: driver.id,
+        adapter: describeFileHandoffAdapter(adapter),
+        context: context?.context || "",
+        sanitizedFile: describeFileForDebug(payload.sanitizedFile)
+      });
       setDmzOverlayState("Attached sanitized file", "attached");
       return { ok: true, stage: "file", strategy: `${driver.id}-sanitized-file-handoff` };
     }
+    debugReveal("file-handoff:direct-attempt-failed", {
+      site: driver.id,
+      adapter: describeFileHandoffAdapter(adapter),
+      context: context?.context || "",
+      sanitizedFile: describeFileForDebug(payload.sanitizedFile)
+    });
 
     const firefoxGeminiBridgeResult =
       driver.id === "gemini"
@@ -5604,6 +6006,22 @@
     if (firefoxGeminiBridgeResult.handled) {
       setDmzOverlayState("Raw file blocked", "failed");
       return firefoxGeminiBridgeResult;
+    }
+
+    if (
+      context?.context === "drop" &&
+      payload?.sanitizedFile &&
+      isFileHandoffAdapterPendingAttachEnabled(adapter)
+    ) {
+      const pendingDetails = createSanitizedFileHandoffDetails(
+        context.event,
+        payload.sanitizedFile,
+        `${adapter.id}:pending-after-direct-failure`
+      );
+      if (queuePendingSanitizedFileHandoff(adapter, context.event, context.input, payload.sanitizedFile, pendingDetails)) {
+        hideDmzOverlay();
+        return { ok: true, stage: "pending", strategy: `${adapter.id}-pending-sanitized-file-handoff` };
+      }
     }
 
     const textInserted = await driver.insertSanitizedText(payload, context);
@@ -5752,6 +6170,82 @@
     };
   }
 
+  function normalizeFileHandoffAdapter(adapter) {
+    if (!adapter) return getFileHandoffAdapterForLocation();
+    if (typeof adapter === "string") return getFileHandoffAdapterById(adapter);
+    return adapter;
+  }
+
+  function queuePendingSanitizedFileHandoff(adapter, event, input, sanitizedFile, details = null) {
+    const selectedAdapter = normalizeFileHandoffAdapter(adapter);
+    debugFileHandoffAdapterSelected(selectedAdapter, "pending-queue");
+    if (!selectedAdapter || !sanitizedFile) return false;
+    if (!isFileHandoffAdapterPendingAttachEnabled(selectedAdapter)) {
+      debugReveal("file-handoff:pending-queue-skipped", {
+        site: selectedAdapter.id || "",
+        reason: "pending_attach_disabled",
+        adapter: describeFileHandoffAdapter(selectedAdapter),
+        sanitizedFile: describeFileForDebug(sanitizedFile)
+      });
+      return false;
+    }
+
+    let queued = false;
+    if (selectedAdapter.id === "gemini") {
+      queued = queuePendingGeminiSanitizedFileHandoff(event, input, sanitizedFile, details);
+    } else if (selectedAdapter.id === "grok") {
+      queued = queuePendingGrokSanitizedFileHandoff(event, input, sanitizedFile, details);
+    }
+
+    if (queued) {
+      debugReveal("file-handoff:pending-queued", {
+        site: selectedAdapter.id,
+        adapter: describeFileHandoffAdapter(selectedAdapter),
+        sanitizedFile: describeFileForDebug(sanitizedFile)
+      });
+    }
+    return queued;
+  }
+
+  function attemptPendingSanitizedFileHandoff(adapter, reason = "") {
+    const selectedAdapter = normalizeFileHandoffAdapter(adapter);
+    if (!selectedAdapter) return false;
+    if (selectedAdapter.id === "gemini") return attemptPendingGeminiSanitizedFileHandoff(reason);
+    if (selectedAdapter.id === "grok") return attemptPendingGrokSanitizedFileHandoff(reason);
+    return false;
+  }
+
+  function clearPendingSanitizedFileHandoff(adapter, reason = "") {
+    if (adapter == null) {
+      clearPendingGeminiSanitizedFileHandoff(reason);
+      clearPendingGrokSanitizedFileHandoff(reason);
+      return;
+    }
+    const selectedAdapter = normalizeFileHandoffAdapter(adapter);
+    if (!selectedAdapter) return;
+    if (selectedAdapter.id === "gemini") {
+      clearPendingGeminiSanitizedFileHandoff(reason);
+    } else if (selectedAdapter.id === "grok") {
+      clearPendingGrokSanitizedFileHandoff(reason);
+    }
+  }
+
+  async function attachPendingSanitizedFileWithTrustedActivation(adapter, pending) {
+    const selectedAdapter = normalizeFileHandoffAdapter(adapter);
+    if (!selectedAdapter || !pending?.sanitizedFile) return false;
+    if (!isFileHandoffAdapterPendingAttachEnabled(selectedAdapter)) {
+      debugReveal("file-handoff:pending-user-attach-skipped", {
+        site: selectedAdapter.id || "",
+        reason: "pending_attach_disabled",
+        adapter: describeFileHandoffAdapter(selectedAdapter),
+        sanitizedFile: describeFileForDebug(pending.sanitizedFile)
+      });
+      return false;
+    }
+    if (typeof selectedAdapter.attachWithTrustedActivation !== "function") return false;
+    return await selectedAdapter.attachWithTrustedActivation(pending, selectedAdapter);
+  }
+
   async function insertPendingSanitizedFileText(site, event, input, sanitizedFile) {
     if (!sanitizedFile) return false;
 
@@ -5770,8 +6264,7 @@
       composerResolved: true
     });
     if (inserted === true) {
-      if (site === "gemini") clearPendingGeminiSanitizedFileHandoff("insert-text");
-      if (site === "grok") clearPendingGrokSanitizedFileHandoff("insert-text");
+      clearPendingSanitizedFileHandoff(site, "insert-text");
       clearPendingSanitizedAttachPrompt("insert-text");
       return true;
     }
@@ -5796,16 +6289,14 @@
     );
     const downloaded = await downloadSanitizedFileFallback(event, input, payload, driver.id, details);
     if (downloaded) {
-      if (site === "gemini") clearPendingGeminiSanitizedFileHandoff("download");
-      if (site === "grok") clearPendingGrokSanitizedFileHandoff("download");
+      clearPendingSanitizedFileHandoff(site, "download");
       clearPendingSanitizedAttachPrompt("download");
     }
     return downloaded;
   }
 
   function cancelPendingSanitizedFileAttach(site) {
-    if (site === "gemini") clearPendingGeminiSanitizedFileHandoff("cancelled");
-    if (site === "grok") clearPendingGrokSanitizedFileHandoff("cancelled");
+    clearPendingSanitizedFileHandoff(site, "cancelled");
     clearPendingSanitizedAttachPrompt("cancelled");
     setBadge("Sanitized file attach cancelled");
     hideBadgeSoon(3200);
@@ -5908,6 +6399,12 @@
       input: describeFileInputForDebug(fileInput, "gemini-pending-user-attach-input"),
       sanitizedFile: describeFileForDebug(sanitizedFile)
     });
+    debugReveal("file-handoff:pending-input-captured", {
+      site: "gemini",
+      reason: "pending-user-attach",
+      input: describeFileInputForDebug(fileInput, "gemini-pending-user-attach-input"),
+      sanitizedFile: describeFileForDebug(sanitizedFile)
+    });
 
     const transfer = createSanitizedDataTransferForHandoff(sanitizedFile, details);
     const assigned = transfer
@@ -5923,6 +6420,12 @@
     }
 
     debugReveal("gemini-pending-user-attach-assigned", {
+      input: describeFileInputForDebug(fileInput, "gemini-pending-user-attach-input"),
+      sanitizedFile: describeFileForDebug(sanitizedFile)
+    });
+    debugReveal("file-handoff:pending-assigned", {
+      site: "gemini",
+      reason: "pending-user-attach",
       input: describeFileInputForDebug(fileInput, "gemini-pending-user-attach-input"),
       sanitizedFile: describeFileForDebug(sanitizedFile)
     });
@@ -6049,6 +6552,12 @@
       input: describeFileInputForDebug(fileInput, "grok-pending-user-attach-input"),
       sanitizedFile: describeFileForDebug(sanitizedFile)
     });
+    debugReveal("file-handoff:pending-input-captured", {
+      site: "grok",
+      reason: "pending-user-attach",
+      input: describeFileInputForDebug(fileInput, "grok-pending-user-attach-input"),
+      sanitizedFile: describeFileForDebug(sanitizedFile)
+    });
 
     const details = createSanitizedFileHandoffDetails(
       event,
@@ -6069,6 +6578,12 @@
     }
 
     debugReveal("grok-pending-user-attach-assigned", {
+      input: describeFileInputForDebug(fileInput, "grok-pending-user-attach-input"),
+      sanitizedFile: describeFileForDebug(sanitizedFile)
+    });
+    debugReveal("file-handoff:pending-assigned", {
+      site: "grok",
+      reason: "pending-user-attach",
       input: describeFileInputForDebug(fileInput, "grok-pending-user-attach-input"),
       sanitizedFile: describeFileForDebug(sanitizedFile)
     });
@@ -6114,6 +6629,12 @@
     }
 
     debugReveal("file-handoff:gemini-pending-cleared", {
+      reason,
+      ageMs: Math.max(0, Date.now() - Number(pending.createdAt || 0)),
+      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
+    });
+    debugReveal("file-handoff:pending-cleared", {
+      site: "gemini",
       reason,
       ageMs: Math.max(0, Date.now() - Number(pending.createdAt || 0)),
       sanitizedFile: describeFileForDebug(pending.sanitizedFile)
@@ -6239,6 +6760,12 @@
       });
       return false;
     }
+    debugReveal("file-handoff:pending-input-captured", {
+      site: "gemini",
+      reason,
+      input: describeFileInputForDebug(fileInput, "pending-gemini-file-input"),
+      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
+    });
 
     const details = createSanitizedFileHandoffDetails(
       event,
@@ -6268,6 +6795,12 @@
     }
 
     debugReveal("file-handoff:gemini-pending-assigned", {
+      reason,
+      input: describeFileInputForDebug(fileInput, "pending-gemini-file-input"),
+      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
+    });
+    debugReveal("file-handoff:pending-assigned", {
+      site: "gemini",
       reason,
       input: describeFileInputForDebug(fileInput, "pending-gemini-file-input"),
       sanitizedFile: describeFileForDebug(pending.sanitizedFile)
@@ -6323,6 +6856,14 @@
             Date.now() - Number(pendingGeminiSanitizedFileHandoff.createdAt || 0)
           )
         });
+        debugReveal("file-handoff:pending-site-upload-click-observed", {
+          site: "gemini",
+          target: describeElementForDebug(normalizeTarget(clickEvent?.target), "pending-upload-click"),
+          pendingAgeMs: Math.max(
+            0,
+            Date.now() - Number(pendingGeminiSanitizedFileHandoff.createdAt || 0)
+          )
+        });
         schedulePendingGeminiSanitizedFileAttempt("upload-click");
       }
     };
@@ -6355,15 +6896,13 @@
     });
     hideDmzOverlay();
     const pendingEvent = createPendingAttachEvent(event, "pending-gemini-sanitized-file-attach");
-    showPendingSanitizedAttachPrompt({
+    showPendingSanitizedAttachPrompt(getFileHandoffAdapterById("gemini"), {
       site: "gemini",
+      event: pendingEvent,
+      input,
       sanitizedFile,
       message:
-        "Large file sanitized. Click Attach sanitized file, or click Gemini Upload files to attach the sanitized version.",
-      onAttachClick: () => performPendingGeminiUserAttach(pendingEvent, input, sanitizedFile),
-      onInsertTextClick: () => insertPendingSanitizedFileText("gemini", pendingEvent, input, sanitizedFile),
-      onDownloadClick: () => downloadPendingSanitizedFile("gemini", pendingEvent, input, sanitizedFile),
-      onCancelClick: () => cancelPendingSanitizedFileAttach("gemini")
+        "Large file sanitized. Click Attach sanitized file, or click Gemini Upload files to attach the sanitized version."
     });
     setBadge(
       "Large file sanitized. Click Attach sanitized file, or click Gemini Upload files to attach the sanitized version."
@@ -6424,6 +6963,12 @@
     }
 
     debugReveal("file-handoff:grok-pending-cleared", {
+      reason,
+      ageMs: Math.max(0, Date.now() - Number(pending.createdAt || 0)),
+      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
+    });
+    debugReveal("file-handoff:pending-cleared", {
+      site: "grok",
       reason,
       ageMs: Math.max(0, Date.now() - Number(pending.createdAt || 0)),
       sanitizedFile: describeFileForDebug(pending.sanitizedFile)
@@ -6591,6 +7136,12 @@
       });
       return false;
     }
+    debugReveal("file-handoff:pending-input-captured", {
+      site: "grok",
+      reason,
+      input: describeFileInputForDebug(fileInput, "pending-grok-file-input"),
+      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
+    });
 
     const details = createSanitizedFileHandoffDetails(
       event,
@@ -6624,6 +7175,12 @@
       input: describeFileInputForDebug(fileInput, "pending-grok-file-input"),
       sanitizedFile: describeFileForDebug(pending.sanitizedFile)
     });
+    debugReveal("file-handoff:pending-assigned", {
+      site: "grok",
+      reason,
+      input: describeFileInputForDebug(fileInput, "pending-grok-file-input"),
+      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
+    });
     clearPendingGrokSanitizedFileHandoff("assigned");
     setBadge("LeakGuard attached the sanitized file.");
     hideBadgeSoon(3200);
@@ -6634,6 +7191,8 @@
   function queuePendingGrokSanitizedFileHandoff(event, input, sanitizedFile, details = null) {
     if (!isGrokHost() || event?.type !== "drop" || !sanitizedFile) return false;
 
+    const requestedHandoffStage = String(details?.handoffStage || "");
+    const isStreamingPending = requestedHandoffStage.includes("streaming");
     clearPendingGrokSanitizedFileHandoff("replaced");
     pendingGrokSanitizedFileHandoff = {
       sanitizedFile,
@@ -6644,7 +7203,9 @@
     };
 
     if (details) {
-      details.handoffStage = "grok:streaming-pending-user-upload-input";
+      details.handoffStage = isStreamingPending
+        ? requestedHandoffStage
+        : "grok:pending-user-upload-input";
       details.failureReason = "pending_until_user_exposes_file_input";
     }
 
@@ -6672,6 +7233,14 @@
             Date.now() - Number(pendingGrokSanitizedFileHandoff.createdAt || 0)
           )
         });
+        debugReveal("file-handoff:pending-site-upload-click-observed", {
+          site: "grok",
+          target: describeElementForDebug(normalizeTarget(clickEvent?.target), "pending-grok-upload-click"),
+          pendingAgeMs: Math.max(
+            0,
+            Date.now() - Number(pendingGrokSanitizedFileHandoff.createdAt || 0)
+          )
+        });
         schedulePendingGrokSanitizedFileAttempt("upload-click");
       }
     };
@@ -6685,26 +7254,30 @@
       clearPendingGrokSanitizedFileHandoff("expired");
     }, GROK_PENDING_SANITIZED_FILE_HANDOFF_MS);
 
-    debugReveal("file-handoff:grok-streaming-pending-queued", {
+    debugReveal("file-handoff:grok-pending-queued", {
       ttlMs: GROK_PENDING_SANITIZED_FILE_HANDOFF_MS,
       sanitizedFile: describeFileForDebug(sanitizedFile)
     });
+    if (isStreamingPending) {
+      debugReveal("file-handoff:grok-streaming-pending-queued", {
+        ttlMs: GROK_PENDING_SANITIZED_FILE_HANDOFF_MS,
+        sanitizedFile: describeFileForDebug(sanitizedFile)
+      });
+    }
     debugReveal("pending-attach-synthetic-loop-suppressed", {
       site: "grok",
-      streaming: true,
+      streaming: isStreamingPending,
       sanitizedFile: describeFileForDebug(sanitizedFile)
     });
     hideDmzOverlay();
     const pendingEvent = createPendingAttachEvent(event, "pending-grok-sanitized-file-attach");
-    showPendingSanitizedAttachPrompt({
+    showPendingSanitizedAttachPrompt(getFileHandoffAdapterById("grok"), {
       site: "grok",
+      event: pendingEvent,
+      input,
       sanitizedFile,
       message:
-        "Large file sanitized. Click Attach sanitized file, or click Grok Upload/Attach to attach the sanitized version.",
-      onAttachClick: () => performPendingGrokUserAttach(pendingEvent, input, sanitizedFile),
-      onInsertTextClick: () => insertPendingSanitizedFileText("grok", pendingEvent, input, sanitizedFile),
-      onDownloadClick: () => downloadPendingSanitizedFile("grok", pendingEvent, input, sanitizedFile),
-      onCancelClick: () => cancelPendingSanitizedFileAttach("grok")
+        "Large file sanitized. Click Attach sanitized file, or click Grok Upload/Attach to attach the sanitized version."
     });
     setBadge(
       "Large file sanitized. Click Attach sanitized file, or click Grok Upload/Attach to attach the sanitized version."
@@ -6992,6 +7565,250 @@
         collectRootsWithOpenShadow(element.shadowRoot, roots, visitedRoots, stats);
       }
     });
+  }
+
+  function candidateMatchesAnySelector(candidate, selectors) {
+    if (!candidate || !Array.isArray(selectors)) return false;
+    return selectors.some((selector) => {
+      try {
+        return Boolean(candidate.matches?.(selector));
+      } catch {
+        return false;
+      }
+    });
+  }
+
+  function getAdapterUploadClickCandidates(eventOrTarget) {
+    const rawCandidates = [];
+    try {
+      if (typeof eventOrTarget?.composedPath === "function") {
+        rawCandidates.push(...eventOrTarget.composedPath());
+      }
+    } catch {
+      // Host event paths are best-effort.
+    }
+    rawCandidates.push(eventOrTarget?.target || eventOrTarget);
+
+    const candidates = [];
+    const seen = new WeakSet();
+    for (const rawCandidate of rawCandidates) {
+      const candidate = normalizeTarget(rawCandidate);
+      if (!candidate || seen.has(candidate)) continue;
+      seen.add(candidate);
+      candidates.push(candidate);
+
+      try {
+        const closest = candidate.closest?.("button, label, input[type='file'], [role='button'], [role='menuitem']");
+        if (closest && !seen.has(closest)) {
+          seen.add(closest);
+          candidates.push(closest);
+        }
+      } catch {
+        // Synthetic and host-controlled nodes can reject selectors.
+      }
+    }
+    return candidates;
+  }
+
+  function isUnsafeFileHandoffClickTarget(adapter, candidate) {
+    if (!candidate) return true;
+    if (candidate.disabled) return true;
+    if (candidateMatchesAnySelector(candidate, adapter?.unsafeClickSelectors || [])) return true;
+    const meta = describeElementForDebug(candidate);
+    const haystack = `${meta?.ariaLabel || ""} ${meta?.title || ""} ${meta?.textSnippet || ""} ${meta?.className || ""}`.toLowerCase();
+    return /\b(?:send|submit|mic|microphone|voice|record|settings|close|remove|delete|drive|photos?|cloud|import)\b/.test(
+      haystack
+    );
+  }
+
+  function isLikelyGenericUploadClickTarget(adapter, eventOrTarget) {
+    return getAdapterUploadClickCandidates(eventOrTarget).some((candidate) => {
+      if (!candidate || isUnsafeFileHandoffClickTarget(adapter, candidate)) return false;
+      if (isFileInputElement(candidate)) return true;
+
+      const tag = String(candidate.tagName || "").toUpperCase();
+      const meta = describeElementForDebug(candidate);
+      const role = String(meta?.role || "").toLowerCase();
+      if (tag !== "BUTTON" && tag !== "LABEL" && tag !== "INPUT" && role !== "button" && role !== "menuitem") {
+        return false;
+      }
+      if (candidateMatchesAnySelector(candidate, adapter?.uploadButtonSelectors || [])) return true;
+      if (candidateMatchesAnySelector(candidate, adapter?.uploadMenuItemSelectors || [])) return true;
+
+      const haystack = `${meta?.ariaLabel || ""} ${meta?.title || ""} ${meta?.textSnippet || ""} ${meta?.className || ""}`.toLowerCase();
+      return /\b(?:upload|attach|files?|add)\b/.test(haystack);
+    });
+  }
+
+  function collectAdapterSelectorCandidates(adapter, selectors, event, input) {
+    const candidates = [];
+    const seen = new WeakSet();
+    const addCandidate = (candidate, source = "") => {
+      const normalized = normalizeTarget(candidate);
+      if (!normalized || seen.has(normalized)) return;
+      seen.add(normalized);
+      candidates.push({ candidate: normalized, source });
+    };
+
+    const target = normalizeTarget(event?.target);
+    for (const selector of selectors || []) {
+      try {
+        target?.closest?.("[role='dialog'], form, main, body")?.querySelectorAll?.(selector).forEach((candidate) => {
+          addCandidate(candidate, "target-scope");
+        });
+      } catch {
+        // Keep broad discovery available below.
+      }
+      try {
+        input?.closest?.("form")?.querySelectorAll?.(selector).forEach((candidate) => {
+          addCandidate(candidate, "composer-form");
+        });
+      } catch {
+        // Continue best-effort discovery.
+      }
+    }
+
+    const roots = [];
+    collectRootsWithOpenShadow(document, roots, new WeakSet(), null);
+    for (const root of roots) {
+      for (const selector of selectors || []) {
+        try {
+          root.querySelectorAll?.(selector).forEach((candidate) => {
+            addCandidate(candidate, root === document ? "document" : "shadow-root");
+          });
+        } catch {
+          // Some adapter selectors are intentionally modern and may not parse everywhere.
+        }
+      }
+    }
+
+    return candidates;
+  }
+
+  function resolveGenericAdapterFileInput(adapter, event, input) {
+    const candidates = collectAdapterSelectorCandidates(adapter, adapter?.fileInputSelectors || ["input[type='file']"], event, input)
+      .map(({ candidate }) => candidate)
+      .filter((candidate) => isFileInputElement(candidate) && !candidate.disabled);
+    if (candidates.length) return candidates[0];
+    return resolveFileInputForHandoff(event, input);
+  }
+
+  function findGenericAdapterUploadTrigger(adapter, event, input) {
+    const candidates = collectAdapterSelectorCandidates(adapter, adapter?.uploadButtonSelectors || [], event, input)
+      .map(({ candidate }) => candidate)
+      .filter((candidate) => !isFileInputElement(candidate) && isLikelyGenericUploadClickTarget(adapter, candidate));
+    return candidates[0] || null;
+  }
+
+  function activateAdapterUploadElementSafely(adapter, candidate) {
+    if (!candidate || isFileInputElement(candidate) || isUnsafeFileHandoffClickTarget(adapter, candidate)) {
+      return false;
+    }
+    if (!isLikelyGenericUploadClickTarget(adapter, candidate)) return false;
+    try {
+      for (const type of ["pointerdown", "mousedown", "mouseup", "click"]) {
+        candidate.dispatchEvent(createGeminiUploadMenuEvent(type));
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function waitForGenericAdapterFileInput(adapter, timeoutMs = 2500, event = null, input = null) {
+    let fileInput = adapter?.resolveFileInput?.(event, input, adapter) || resolveGenericAdapterFileInput(adapter, event, input);
+    if (fileInput) return fileInput;
+    if (typeof MutationObserver !== "function") return null;
+
+    return await new Promise((resolve) => {
+      let settled = false;
+      let observer = null;
+      let timeoutId = 0;
+      const finish = (force = false) => {
+        if (settled) return;
+        fileInput = adapter?.resolveFileInput?.(event, input, adapter) || resolveGenericAdapterFileInput(adapter, event, input);
+        if (!fileInput && !force) return;
+        settled = true;
+        if (observer) {
+          try {
+            observer.disconnect();
+          } catch {
+            // Best-effort cleanup only.
+          }
+        }
+        if (timeoutId) clearTimeout(timeoutId);
+        resolve(fileInput || null);
+      };
+
+      try {
+        observer = new MutationObserver(() => finish(false));
+        observer.observe(document.documentElement || document, {
+          childList: true,
+          subtree: true
+        });
+      } catch {
+        observer = null;
+      }
+      setTimeout(() => finish(false), 0);
+      timeoutId = setTimeout(() => finish(true), timeoutMs);
+    });
+  }
+
+  async function attachGenericPendingWithTrustedActivation(adapter, pending) {
+    if (!adapter || !isFileHandoffAdapterPendingAttachEnabled(adapter) || !pending?.sanitizedFile) {
+      return false;
+    }
+    const event = pending.event || { type: `pending-${adapter.id}-sanitized-file`, target: pending.target || null };
+    let fileInput = adapter.resolveFileInput?.(event, pending.input, adapter) || resolveGenericAdapterFileInput(adapter, event, pending.input);
+
+    if (!fileInput) {
+      const uploadTrigger =
+        adapter.resolveUploadTrigger?.(event, pending.input, adapter) ||
+        findGenericAdapterUploadTrigger(adapter, event, pending.input);
+      if (uploadTrigger) {
+        activateAdapterUploadElementSafely(adapter, uploadTrigger);
+      }
+      const menuItem = adapter.resolveUploadMenuItem?.(event, pending.input, adapter);
+      if (menuItem) {
+        activateAdapterUploadElementSafely(adapter, menuItem);
+      }
+      fileInput = await waitForGenericAdapterFileInput(adapter, 2500, event, pending.input);
+    }
+
+    if (!fileInput) {
+      debugReveal("file-handoff:pending-input-not-found", {
+        site: adapter.id,
+        adapter: describeFileHandoffAdapter(adapter),
+        sanitizedFile: describeFileForDebug(pending.sanitizedFile)
+      });
+      return false;
+    }
+
+    debugReveal("file-handoff:pending-input-captured", {
+      site: adapter.id,
+      input: describeFileInputForDebug(fileInput, `pending-${adapter.id}-file-input`),
+      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
+    });
+    const details = createSanitizedFileHandoffDetails(event, pending.sanitizedFile, `${adapter.id}:pending-user-attach`);
+    const transfer = createSanitizedDataTransferForHandoff(pending.sanitizedFile, details);
+    const assigned = transfer
+      ? handOffSanitizedFileInput(fileInput, transfer, {
+          dispatchInput: true,
+          details
+        })
+      : false;
+    if (!assigned) {
+      details.failureReason = details.failureReason || "pending_user_attach_assignment_failed";
+      logSanitizedFileHandoffFailure(details);
+      return false;
+    }
+    debugReveal("file-handoff:pending-assigned", {
+      site: adapter.id,
+      input: describeFileInputForDebug(fileInput, `pending-${adapter.id}-file-input`),
+      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
+    });
+    clearPendingSanitizedFileHandoff(adapter, "assigned");
+    return true;
   }
 
   function isRejectedGeminiUploadMenuItem(candidate) {
@@ -7696,7 +8513,7 @@
       if (shouldQueueFirefoxGeminiPendingSanitizedFileHandoff(event, sanitizedFile, details)) {
         const originalFailureReason = details.failureReason;
         const originalHandoffStage = details.handoffStage;
-        if (queuePendingGeminiSanitizedFileHandoff(event, input, sanitizedFile, details)) {
+        if (queuePendingSanitizedFileHandoff(getFileHandoffAdapterById("gemini"), event, input, sanitizedFile, details)) {
           debugReveal("file-handoff:gemini-firefox-pending-queued-after-native-miss", {
             handoffStage: originalHandoffStage,
             failureReason: originalFailureReason,
@@ -8087,7 +8904,15 @@
             "gemini:streaming-pending-user-upload-input"
           );
 
-          if (queuePendingGeminiSanitizedFileHandoff(event, input, streamResult.sanitizedFile, details)) {
+          if (
+            queuePendingSanitizedFileHandoff(
+              getFileHandoffAdapterById("gemini"),
+              event,
+              input,
+              streamResult.sanitizedFile,
+              details
+            )
+          ) {
             setBadge("LeakGuard sanitized the large file. Click Gemini Upload files to attach.");
             hideBadgeSoon(6500);
             refreshBadgeFromCurrentInput();
@@ -8111,7 +8936,15 @@
             "grok:streaming-pending-user-upload-input"
           );
 
-          if (queuePendingGrokSanitizedFileHandoff(event, input, streamResult.sanitizedFile, details)) {
+          if (
+            queuePendingSanitizedFileHandoff(
+              getFileHandoffAdapterById("grok"),
+              event,
+              input,
+              streamResult.sanitizedFile,
+              details
+            )
+          ) {
             setBadge("LeakGuard sanitized the large file. Click Grok Upload/Attach to attach.");
             hideBadgeSoon(6500);
             refreshBadgeFromCurrentInput();
@@ -9493,6 +10326,7 @@
     currentUrl = location.href;
     clearPendingGeminiGhostIngressClickInterceptor("navigation");
     clearPendingGeminiSanitizedFileHandoff("navigation");
+    clearPendingGrokSanitizedFileHandoff("navigation");
     clearAllRiskSessionState();
     await initState();
     rehydrateTree(document.body);

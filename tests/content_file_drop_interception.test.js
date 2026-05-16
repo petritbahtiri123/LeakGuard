@@ -5,6 +5,7 @@ const path = require("path");
 const repoRoot = path.join(__dirname, "..");
 const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
 const backgroundSource = fs.readFileSync(path.join(repoRoot, "src/background/core.js"), "utf8");
+const overlayCssSource = fs.readFileSync(path.join(repoRoot, "src/content/overlay.css"), "utf8");
 
 require(path.join(repoRoot, "src/content/file_paste_helpers.js"));
 require(path.join(repoRoot, "src/content/composer_helpers.js"));
@@ -18,7 +19,40 @@ function extractFunctionSource(source, name) {
   assert.ok(match, `expected to find function ${name}`);
 
   const start = match.index;
-  const openBrace = source.indexOf("{", start);
+  const signatureStart = source.indexOf("(", start);
+  assert.notStrictEqual(signatureStart, -1, `expected ${name} to have parameters`);
+  let signatureDepth = 0;
+  let signatureQuote = null;
+  let signatureEscaped = false;
+  let signatureEnd = -1;
+  for (let index = signatureStart; index < source.length; index += 1) {
+    const char = source[index];
+    if (signatureQuote) {
+      if (signatureEscaped) {
+        signatureEscaped = false;
+      } else if (char === "\\") {
+        signatureEscaped = true;
+      } else if (char === signatureQuote) {
+        signatureQuote = null;
+      }
+      continue;
+    }
+    if (char === '"' || char === "'" || char === "`") {
+      signatureQuote = char;
+      continue;
+    }
+    if (char === "(" || char === "{" || char === "[") {
+      signatureDepth += 1;
+    } else if (char === ")" || char === "}" || char === "]") {
+      signatureDepth -= 1;
+      if (signatureDepth === 0 && char === ")") {
+        signatureEnd = index;
+        break;
+      }
+    }
+  }
+  assert.notStrictEqual(signatureEnd, -1, `expected ${name} signature to close`);
+  const openBrace = source.indexOf("{", signatureEnd);
   assert.notStrictEqual(openBrace, -1, `expected ${name} to have a body`);
 
   let depth = 0;
@@ -83,6 +117,106 @@ function extractFunctionSource(source, name) {
   }
 
   throw new Error(`Could not extract function ${name}`);
+}
+
+function extractConstSource(source, name) {
+  const match = new RegExp(`const\\s+${name}\\s*=`).exec(source);
+  assert.ok(match, `expected to find const ${name}`);
+
+  let index = source.indexOf("=", match.index) + 1;
+  while (/\s/.test(source[index])) index += 1;
+
+  let depth = 0;
+  let quote = null;
+  let escaped = false;
+  let lineComment = false;
+  let blockComment = false;
+
+  for (; index < source.length; index += 1) {
+    const char = source[index];
+    const next = source[index + 1];
+
+    if (lineComment) {
+      if (char === "\n") lineComment = false;
+      continue;
+    }
+
+    if (blockComment) {
+      if (char === "*" && next === "/") {
+        blockComment = false;
+        index += 1;
+      }
+      continue;
+    }
+
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (char === "/" && next === "/") {
+      lineComment = true;
+      index += 1;
+      continue;
+    }
+
+    if (char === "/" && next === "*") {
+      blockComment = true;
+      index += 1;
+      continue;
+    }
+
+    if (char === '"' || char === "'" || char === "`") {
+      quote = char;
+      continue;
+    }
+
+    if (char === "{" || char === "(" || char === "[") {
+      depth += 1;
+    } else if (char === "}" || char === ")" || char === "]") {
+      depth -= 1;
+    } else if (char === ";" && depth === 0) {
+      return source.slice(match.index, index + 1);
+    }
+  }
+
+  throw new Error(`Could not extract const ${name}`);
+}
+
+function fileHandoffAdapterHarnessSource() {
+  return [
+    extractConstSource(contentSource, "FILE_HANDOFF_PENDING_ATTACH_ENABLED"),
+    extractConstSource(contentSource, "FILE_HANDOFF_ADAPTERS"),
+    extractFunctionSource(contentSource, "isOpenAiChatHost"),
+    extractFunctionSource(contentSource, "isXHost"),
+    extractFunctionSource(contentSource, "getFileHandoffAdapterById"),
+    extractFunctionSource(contentSource, "hostMatchesFileHandoffAdapter"),
+    extractFunctionSource(contentSource, "getFileHandoffAdapterForLocation"),
+    extractFunctionSource(contentSource, "isFileHandoffAdapterPendingAttachEnabled"),
+    extractFunctionSource(contentSource, "describeFileHandoffAdapter"),
+    extractFunctionSource(contentSource, "debugFileHandoffAdapterSelected"),
+    extractFunctionSource(contentSource, "candidateMatchesAnySelector"),
+    extractFunctionSource(contentSource, "getAdapterUploadClickCandidates"),
+    extractFunctionSource(contentSource, "isUnsafeFileHandoffClickTarget"),
+    extractFunctionSource(contentSource, "isLikelyGenericUploadClickTarget"),
+    extractFunctionSource(contentSource, "collectAdapterSelectorCandidates"),
+    extractFunctionSource(contentSource, "resolveGenericAdapterFileInput"),
+    extractFunctionSource(contentSource, "findGenericAdapterUploadTrigger"),
+    extractFunctionSource(contentSource, "activateAdapterUploadElementSafely"),
+    extractFunctionSource(contentSource, "waitForGenericAdapterFileInput"),
+    extractFunctionSource(contentSource, "attachGenericPendingWithTrustedActivation"),
+    extractFunctionSource(contentSource, "normalizeFileHandoffAdapter"),
+    extractFunctionSource(contentSource, "queuePendingSanitizedFileHandoff"),
+    extractFunctionSource(contentSource, "attemptPendingSanitizedFileHandoff"),
+    extractFunctionSource(contentSource, "clearPendingSanitizedFileHandoff"),
+    extractFunctionSource(contentSource, "attachPendingSanitizedFileWithTrustedActivation")
+  ];
 }
 
 function createDataTransfer({ files = true, exposeFiles = true, getAsFileReturnsNull = false } = {}) {
@@ -647,6 +781,7 @@ function createHarness(overrides = {}) {
       "let pendingGrokSanitizedFileTimer = 0;",
       "let pendingGrokSanitizedFileClickHandler = null;",
       "let pendingAttachPromptEl = null;",
+      ...fileHandoffAdapterHarnessSource(),
       "function setDmzOverlayState(message, state = \"\") { calls.dmzStates.push({ message, state }); }",
       "function scheduleDmzOverlayCleanup(delayMs = 1200) { calls.dmzCleanups.push(delayMs); }",
       "function setGeminiDmzOverlayState(message, state = \"\") { setDmzOverlayState(message, state); }",
@@ -718,6 +853,8 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "isGeminiHost"),
       extractFunctionSource(contentSource, "isClaudeHost"),
       extractFunctionSource(contentSource, "isGrokHost"),
+      extractFunctionSource(contentSource, "isOpenAiChatHost"),
+      extractFunctionSource(contentSource, "isXHost"),
       extractFunctionSource(contentSource, "getCurrentHandoffDriverId"),
       extractFunctionSource(contentSource, "isProtectedFileDropDriver"),
       extractFunctionSource(contentSource, "shouldHandleChatGptLargeTextPaste"),
@@ -1448,6 +1585,7 @@ function createHandoffHarness({
       'const GEMINI_SANITIZED_DOWNLOAD_MESSAGE = "Sanitized file downloaded. Upload the LeakGuard redacted copy to Gemini.";',
       'const GEMINI_SANITIZED_DOWNLOAD_MODAL_MESSAGE = "Gemini does not expose a safe upload target. LeakGuard downloaded a sanitized copy. Upload that redacted file manually.";',
       'const FIREFOX_GEMINI_FILE_INPUT_BRIDGE_FAILURE_MESSAGE = "LeakGuard blocked the raw file drop. Could not locate Gemini upload input. Please use the upload button or retry.";',
+      ...fileHandoffAdapterHarnessSource(),
       "function setDmzOverlayState() {}",
       "function setGeminiDmzOverlayState() {}",
       "function hideDmzOverlay() {}",
@@ -3061,11 +3199,14 @@ async function testGeminiPendingAttachPromptButtonCompletesTrustedAttach() {
   assert.strictEqual(harness.promptNodes[0].isConnected, false);
   for (const label of [
     "pending-attach-prompt-attach-clicked",
+    "file-handoff:pending-user-attach-clicked",
     "gemini-pending-user-attach-start",
     "gemini-pending-user-attach-menu-opened",
     "gemini-pending-user-attach-menu-item-clicked",
     "gemini-pending-user-attach-input-captured",
+    "file-handoff:pending-input-captured",
     "gemini-pending-user-attach-assigned",
+    "file-handoff:pending-assigned",
     "file-input:sanitized-handoff-marked"
   ]) {
     assert.ok(harness.debugEvents.some((entry) => entry.label === label), `expected ${label}`);
@@ -3174,13 +3315,88 @@ async function testGrokPendingAttachPromptButtonAssignsSanitizedFile() {
   assert.strictEqual(harness.promptNodes[0].isConnected, false);
   for (const label of [
     "pending-attach-prompt-attach-clicked",
+    "file-handoff:pending-user-attach-clicked",
     "grok-pending-user-attach-start",
     "grok-pending-user-attach-input-captured",
+    "file-handoff:pending-input-captured",
     "grok-pending-user-attach-assigned",
+    "file-handoff:pending-assigned",
     "file-input:sanitized-handoff-marked"
   ]) {
     assert.ok(harness.debugEvents.some((entry) => entry.label === label), `expected ${label}`);
   }
+}
+
+function testFileHandoffAdapterRegistryCoversSupportedSites() {
+  assert.ok(contentSource.includes("const FILE_HANDOFF_ADAPTERS = {"));
+  for (const [id, host] of [
+    ["gemini", "gemini.google.com"],
+    ["grok", "grok.com"],
+    ["chatgpt", "chatgpt.com"],
+    ["claude", "claude.ai"],
+    ["openai", "chat.openai.com"],
+    ["x", "x.com"]
+  ]) {
+    assert.ok(contentSource.includes(`${id}: {`), `expected ${id} adapter`);
+    assert.ok(contentSource.includes(`"${host}"`), `expected ${id} host ${host}`);
+  }
+  assert.ok(contentSource.includes("pendingAttachEnabled: FILE_HANDOFF_PENDING_ATTACH_ENABLED.gemini"));
+  assert.ok(contentSource.includes("pendingAttachEnabled: FILE_HANDOFF_PENDING_ATTACH_ENABLED.grok"));
+  assert.ok(contentSource.includes("pendingAttachEnabled: FILE_HANDOFF_PENDING_ATTACH_ENABLED.chatgpt"));
+  assert.ok(contentSource.includes("pendingAttachEnabled: FILE_HANDOFF_PENDING_ATTACH_ENABLED.claude"));
+  assert.ok(contentSource.includes("pendingAttachEnabled: FILE_HANDOFF_PENDING_ATTACH_ENABLED.openai"));
+  assert.ok(contentSource.includes("pendingAttachEnabled: FILE_HANDOFF_PENDING_ATTACH_ENABLED.x"));
+}
+
+function testGenericFileHandoffHelpersAndDiagnosticsExist() {
+  for (const functionName of [
+    "getFileHandoffAdapterForLocation",
+    "queuePendingSanitizedFileHandoff",
+    "attemptPendingSanitizedFileHandoff",
+    "clearPendingSanitizedFileHandoff",
+    "showPendingSanitizedAttachPrompt",
+    "attachPendingSanitizedFileWithTrustedActivation",
+    "markSanitizedFileHandoff",
+    "shouldSuppressSanitizedFileReprocessing"
+  ]) {
+    assert.ok(contentSource.includes(`function ${functionName}`), `expected ${functionName}`);
+  }
+  for (const label of [
+    "file-handoff:adapter-selected",
+    "file-handoff:direct-attempt-start",
+    "file-handoff:direct-attempt-success",
+    "file-handoff:direct-attempt-failed",
+    "file-handoff:pending-queued",
+    "file-handoff:pending-prompt-shown",
+    "file-handoff:pending-user-attach-clicked",
+    "file-handoff:pending-site-upload-click-observed",
+    "file-handoff:pending-input-captured",
+    "file-handoff:pending-assigned",
+    "file-handoff:pending-cleared"
+  ]) {
+    assert.ok(contentSource.includes(label), `expected debug label ${label}`);
+  }
+}
+
+function testPendingAttachPromptCssIsNonBlocking() {
+  const promptRule = /\.pwm-pending-attach-prompt\s*\{[^}]+\}/.exec(overlayCssSource)?.[0] || "";
+  const cardRule = /\.pwm-pending-attach-card\s*\{[^}]+\}/.exec(overlayCssSource)?.[0] || "";
+  assert.ok(promptRule.includes("position: fixed"));
+  assert.ok(promptRule.includes("pointer-events: none"));
+  assert.ok(!/inset\s*:\s*0/.test(promptRule), "pending attach prompt must not be fullscreen");
+  assert.ok(/(?:right|left|top|bottom)\s*:/.test(promptRule), "pending prompt should be edge-positioned");
+  assert.ok(cardRule.includes("pointer-events: auto"));
+}
+
+function testUnprovenAdaptersKeepPendingAttachFeatureGated() {
+  for (const id of ["chatgpt", "claude", "openai", "x"]) {
+    const pattern = new RegExp(`${id}: \\{[\\s\\S]*?pendingAttachEnabled: FILE_HANDOFF_PENDING_ATTACH_ENABLED\\.${id}`);
+    assert.ok(pattern.test(contentSource), `expected ${id} pending attach to be feature-flagged`);
+  }
+  assert.ok(
+    contentSource.includes("if (id === \"chatgpt\" || id === \"claude\" || id === \"openai\" || id === \"x\" || id === \"generic\")"),
+    "existing direct file-input path should stay available for ChatGPT/Claude/OpenAI/X"
+  );
 }
 
 async function testSanitizedFileInputRedispatchDoesNotRescanSanitizedFile() {
@@ -9023,6 +9239,10 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testGeminiPendingAttachPromptButtonCompletesTrustedAttach();
   await testGrokPendingUploadClickThenFileInputAssignsSanitizedFile();
   await testGrokPendingAttachPromptButtonAssignsSanitizedFile();
+  testFileHandoffAdapterRegistryCoversSupportedSites();
+  testGenericFileHandoffHelpersAndDiagnosticsExist();
+  testPendingAttachPromptCssIsNonBlocking();
+  testUnprovenAdaptersKeepPendingAttachFeatureGated();
   await testSanitizedFileInputRedispatchDoesNotRescanSanitizedFile();
   await testGeminiStreamingPendingAttachRedispatchDoesNotRestream();
   await testGeminiFiftyMiBPendingAttachRedispatchDoesNotRestream();
