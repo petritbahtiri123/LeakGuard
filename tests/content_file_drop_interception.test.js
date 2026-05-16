@@ -400,6 +400,19 @@ function createHarness(overrides = {}) {
     Node: { ELEMENT_NODE: 1 },
     Event,
     DataTransfer: HarnessDataTransfer,
+    MutationObserver: class {
+      constructor(callback) {
+        this.callback = callback;
+      }
+      observe() {}
+      disconnect() {}
+    },
+    setTimeout: (callback, delay = 0) => {
+      if (delay === 0) callback();
+      if (delay === 450 || delay === 2500 || delay === 3000) Promise.resolve().then(callback);
+      return 0;
+    },
+    clearTimeout: () => {},
     InputEvent: typeof InputEvent === "function" ? InputEvent : Event,
     console: {
       log: () => {},
@@ -587,6 +600,7 @@ function createHarness(overrides = {}) {
       'const LOCAL_FILE_SANITIZED_TEXT_FALLBACK_MESSAGE = "Sanitized content inserted as text because the site did not accept a sanitized file upload.";',
       'const FIREFOX_GEMINI_DROP_FILE_UNAVAILABLE_MESSAGE = "Firefox did not expose the dropped file to LeakGuard. Use Gemini\\\'s upload button so LeakGuard can sanitize and replace the selected file before upload.";',
       'const FIREFOX_GEMINI_FILE_INPUT_BRIDGE_FAILURE_MESSAGE = "LeakGuard blocked the raw file drop. Could not locate Gemini upload input. Please use the upload button or retry.";',
+      'const GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MESSAGE = "LeakGuard sanitized the file. Click Gemini Upload files to attach the sanitized version.";',
       "const PROGRAMMATIC_INPUT_SUPPRESS_MS = 500;",
       "const CHATGPT_LARGE_PASTE_FILE_THRESHOLD = 16 * 1024;",
       'const CHATGPT_SANITIZED_PASTE_FILE_NAME = "leakguard-redacted-paste.txt";',
@@ -595,6 +609,7 @@ function createHarness(overrides = {}) {
       "const GEMINI_LARGE_TEXT_SUPPRESS_MS = 2500;",
       "const GEMINI_UPLOAD_INPUT_WAIT_MS = 450;",
       "const GEMINI_GHOST_INGRESS_TIMEOUT_MS = 2200;",
+      "const GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MS = 30000;",
       "const LOCAL_TEXT_FAST_MAX_BYTES = 2 * 1024 * 1024;",
       "const LOCAL_TEXT_OPTIMIZED_MAX_BYTES = 4 * 1024 * 1024;",
       "const LOCAL_TEXT_HARD_BLOCK_BYTES = 4 * 1024 * 1024;",
@@ -604,6 +619,11 @@ function createHarness(overrides = {}) {
       "let syntheticFileListCapabilityCache = null;",
       "let inputFileAssignmentCapabilityCache = null;",
       "const firefoxFileInputTransactions = new WeakMap();",
+      "let pendingGeminiSanitizedFileHandoff = null;",
+      "let pendingGeminiSanitizedFileObserver = null;",
+      "let pendingGeminiSanitizedFileTimer = 0;",
+      "let pendingGeminiSanitizedFileClickHandler = null;",
+      "let pendingGeminiGhostIngressClickCleanup = null;",
       "function setDmzOverlayState(message, state = \"\") { calls.dmzStates.push({ message, state }); }",
       "function scheduleDmzOverlayCleanup(delayMs = 1200) { calls.dmzCleanups.push(delayMs); }",
       "function setGeminiDmzOverlayState(message, state = \"\") { setDmzOverlayState(message, state); }",
@@ -618,6 +638,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "canAssignFilesToInput"),
       extractFunctionSource(contentSource, "shouldUseFirefoxTextFallbackForFileHandoff"),
       extractFunctionSource(contentSource, "isExpectedFirefoxGeminiNoPickerMiss"),
+      extractFunctionSource(contentSource, "shouldQueueFirefoxGeminiPendingSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "getFirefoxRawFileUploadBlockedMessage"),
       extractFunctionSource(contentSource, "getFileMetadataSignature"),
       extractFunctionSource(contentSource, "getFileListMetadataSignature"),
@@ -712,6 +733,13 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "describeUploadTriggerForDebug"),
       extractFunctionSource(contentSource, "sanitizeDownloadFileNameSegment"),
       extractFunctionSource(contentSource, "logSanitizedFileHandoffFailure"),
+      extractFunctionSource(contentSource, "clearPendingGeminiGhostIngressClickInterceptor"),
+      extractFunctionSource(contentSource, "clearPendingGeminiSanitizedFileHandoff"),
+      extractFunctionSource(contentSource, "isLikelyGeminiUploadClickTarget"),
+      extractFunctionSource(contentSource, "schedulePendingGeminiSanitizedFileAttempt"),
+      extractFunctionSource(contentSource, "describeGeminiHandoffDiscovery"),
+      extractFunctionSource(contentSource, "attemptPendingGeminiSanitizedFileHandoff"),
+      extractFunctionSource(contentSource, "queuePendingGeminiSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "originalFileMetadataFromLocalFile"),
       extractFunctionSource(contentSource, "createSanitizedPayload"),
       extractFunctionSource(contentSource, "isSafeSanitizedPayload"),
@@ -753,6 +781,8 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "isGeminiHiddenFileSelectorTrigger"),
       extractFunctionSource(contentSource, "collectGeminiHiddenFileSelectorTriggersFromRoot"),
       extractFunctionSource(contentSource, "findGeminiHiddenFileSelectorTrigger"),
+      extractFunctionSource(contentSource, "findGeminiHiddenFileSelectorTriggerInNode"),
+      extractFunctionSource(contentSource, "findGeminiHiddenFileSelectorTriggerInMutations"),
       extractFunctionSource(contentSource, "activateGeminiHiddenFileSelectorTriggerSafely"),
       extractFunctionSource(contentSource, "waitForGeminiUploadFilesMenuItem"),
       extractFunctionSource(contentSource, "discoverGeminiUploadOverlayItem"),
@@ -1282,6 +1312,7 @@ function createHandoffHarness({
       "const GEMINI_UPLOAD_INPUT_WAIT_MS = 450;",
       "const GEMINI_GHOST_INGRESS_TIMEOUT_MS = 2200;",
       "const GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MS = 30000;",
+      'const GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MESSAGE = "LeakGuard sanitized the file. Click Gemini Upload files to attach the sanitized version.";',
       "let pendingGeminiSanitizedFileHandoff = null;",
       "let pendingGeminiSanitizedFileObserver = null;",
       "let pendingGeminiSanitizedFileTimer = 0;",
@@ -1294,6 +1325,7 @@ function createHandoffHarness({
       'const GEMINI_SANITIZED_DOWNLOAD_MESSAGE = "Sanitized file downloaded. Upload the LeakGuard redacted copy to Gemini.";',
       'const GEMINI_SANITIZED_DOWNLOAD_MODAL_MESSAGE = "Gemini does not expose a safe upload target. LeakGuard downloaded a sanitized copy. Upload that redacted file manually.";',
       'const FIREFOX_GEMINI_FILE_INPUT_BRIDGE_FAILURE_MESSAGE = "LeakGuard blocked the raw file drop. Could not locate Gemini upload input. Please use the upload button or retry.";',
+      "function setGeminiDmzOverlayState() {}",
       extractFunctionSource(contentSource, "normalizeTarget"),
       extractFunctionSource(contentSource, "isFirefoxRuntime"),
       extractFunctionSource(contentSource, "createSafeCapabilityProbeFile"),
@@ -1301,6 +1333,7 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "canAssignFilesToInput"),
       extractFunctionSource(contentSource, "shouldUseFirefoxTextFallbackForFileHandoff"),
       extractFunctionSource(contentSource, "isExpectedFirefoxGeminiNoPickerMiss"),
+      extractFunctionSource(contentSource, "shouldQueueFirefoxGeminiPendingSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "getFileMetadataSignature"),
       extractFunctionSource(contentSource, "getFileListMetadataSignature"),
       extractFunctionSource(contentSource, "getFirefoxFileInputTransaction"),
@@ -1394,6 +1427,8 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "isGeminiHiddenFileSelectorTrigger"),
       extractFunctionSource(contentSource, "collectGeminiHiddenFileSelectorTriggersFromRoot"),
       extractFunctionSource(contentSource, "findGeminiHiddenFileSelectorTrigger"),
+      extractFunctionSource(contentSource, "findGeminiHiddenFileSelectorTriggerInNode"),
+      extractFunctionSource(contentSource, "findGeminiHiddenFileSelectorTriggerInMutations"),
       extractFunctionSource(contentSource, "activateGeminiHiddenFileSelectorTriggerSafely"),
       extractFunctionSource(contentSource, "waitForGeminiUploadFilesMenuItem"),
       extractFunctionSource(contentSource, "waitForGeminiFileInput"),
@@ -1426,6 +1461,16 @@ function createHandoffHarness({
     observers,
     stats
   };
+}
+
+async function queuePendingGeminiHandoffThroughGhostTimeout(harness, event, sanitizedFile) {
+  const handoffPromise = harness.handOffGeminiSanitizedFileUpload(event, null, sanitizedFile, {
+    allowUploadUiClick: true
+  });
+  const ghostTimeout = harness.timeoutCallbacks.find((entry) => entry.delay === 2200);
+  assert.ok(ghostTimeout, "expected Gemini ghost ingress timeout to drive pending handoff");
+  ghostTimeout.callback();
+  return await handoffPromise;
 }
 
 function createDmzOverlayHarness({
@@ -2080,6 +2125,141 @@ async function testGeminiGhostIngressInterceptsEphemeralFileInputClick() {
   );
 }
 
+async function testFirefoxGeminiGhostIngressUsesHiddenSelectorFallback() {
+  const rawSecret = "LeakGuardDropApiKey1234567890";
+  const sanitizedFile = {
+    name: "firefox-hidden-ghost.env",
+    type: "text/plain",
+    size: 24,
+    text: "API_KEY=[PWM_1]"
+  };
+  let input = null;
+  let inputClick = null;
+  let interceptorWasInstalledBeforeUploadClick = false;
+  let harness = null;
+  const uploadTrigger = createUploadTrigger({
+    ariaLabel: "Open upload file menu",
+    onClick: () => {
+      interceptorWasInstalledBeforeUploadClick = harness.windowClickHandlers.length === 1;
+    }
+  });
+  const overlayItem = createOverlayItem({
+    dataTestId: "local-images-files-uploader-button",
+    onClick: () => {
+      // Firefox/Gemini can ignore the visible item click; hidden selector fallback must finish the chain.
+    }
+  });
+  const hiddenTrigger = createHiddenFileSelectorTrigger({
+    onClick: () => {
+      assert.strictEqual(harness.windowClickHandlers.length, 1);
+      input = createFileInput({ name: "Filedata", multiple: true });
+      input.click = () => {
+        throw new Error("Firefox Gemini ghost ingress must not call input.click()");
+      };
+      input.showPicker = () => {
+        throw new Error("Firefox Gemini ghost ingress must not call input.showPicker()");
+      };
+      inputClick = createClickEvent(input);
+      harness.windowClickHandlers[0](inputClick.event);
+    }
+  });
+  harness = createHandoffHarness({
+    userAgent: "Firefox",
+    uploadTriggers: [uploadTrigger],
+    overlayItems: [overlayItem],
+    hiddenTriggers: [hiddenTrigger]
+  });
+  const event = {
+    type: "drop",
+    target: { nodeType: 1, tagName: "DIV", dispatchEvent: () => true },
+    dataTransfer: createDataTransfer()
+  };
+
+  const handedOff = await harness.handOffGeminiSanitizedFileUpload(event, null, sanitizedFile, {
+    allowUploadUiClick: true
+  });
+
+  assert.strictEqual(interceptorWasInstalledBeforeUploadClick, true);
+  assert.strictEqual(handedOff, true);
+  assert.deepStrictEqual(uploadTrigger.events, ["click"]);
+  assert.deepStrictEqual(overlayItem.events, ["pointerdown", "mousedown", "mouseup", "click"]);
+  assert.ok(hiddenTrigger.events.includes("click"));
+  assert.strictEqual(inputClick.calls.preventDefault, 1);
+  assert.strictEqual(inputClick.calls.stopImmediatePropagation, 1);
+  assert.strictEqual(input.files[0], sanitizedFile);
+  assert.strictEqual(JSON.stringify(input.files).includes(rawSecret), false);
+  assert.deepStrictEqual(input.events, ["input", "change"]);
+  assert.strictEqual(harness.windowClickHandlers.length, 0);
+}
+
+async function testFirefoxGeminiGhostIngressUsesDelayedHiddenSelectorFallback() {
+  const rawSecret = "LeakGuardDropApiKey1234567890";
+  const sanitizedFile = {
+    name: "firefox-delayed-hidden-ghost.env",
+    type: "text/plain",
+    size: 24,
+    text: "API_KEY=[PWM_1]"
+  };
+  const hiddenTriggers = [];
+  let input = null;
+  let inputClick = null;
+  let hiddenTrigger = null;
+  let harness = null;
+  const uploadTrigger = createUploadTrigger({ ariaLabel: "Open upload file menu" });
+  const overlayItem = createOverlayItem({
+    dataTestId: "local-images-files-uploader-button",
+    onClick: () => {
+      hiddenTrigger = createHiddenFileSelectorTrigger({
+        onClick: () => {
+          assert.strictEqual(harness.windowClickHandlers.length, 1);
+          input = createFileInput({ name: "Filedata", multiple: true });
+          input.click = () => {
+            throw new Error("Firefox Gemini ghost ingress must not call input.click()");
+          };
+          input.showPicker = () => {
+            throw new Error("Firefox Gemini ghost ingress must not call input.showPicker()");
+          };
+          inputClick = createClickEvent(input);
+          harness.windowClickHandlers[0](inputClick.event);
+        }
+      });
+      hiddenTriggers.push(hiddenTrigger);
+      const observer = harness.observers.find((candidate) => !candidate.disconnected);
+      assert.ok(observer, "expected ghost-ingress observer to remain active after Upload files click");
+      observer.trigger([{ target: hiddenTrigger, addedNodes: [hiddenTrigger] }]);
+    }
+  });
+  harness = createHandoffHarness({
+    userAgent: "Firefox",
+    uploadTriggers: [uploadTrigger],
+    overlayItems: [overlayItem],
+    hiddenTriggers
+  });
+  const event = {
+    type: "drop",
+    target: { nodeType: 1, tagName: "DIV", dispatchEvent: () => true },
+    dataTransfer: createDataTransfer()
+  };
+
+  const handedOff = await harness.handOffGeminiSanitizedFileUpload(event, null, sanitizedFile, {
+    allowUploadUiClick: true
+  });
+
+  assert.strictEqual(handedOff, true);
+  assert.deepStrictEqual(uploadTrigger.events, ["click"]);
+  assert.deepStrictEqual(overlayItem.events, ["pointerdown", "mousedown", "mouseup", "click"]);
+  assert.ok(hiddenTrigger.events.includes("click"));
+  assert.strictEqual(inputClick.calls.preventDefault, 1);
+  assert.strictEqual(input.files[0], sanitizedFile);
+  assert.strictEqual(JSON.stringify(input.files).includes(rawSecret), false);
+  assert.deepStrictEqual(input.events, ["input", "change"]);
+  assert.ok(
+    harness.debugEvents.some((entry) => entry.label === "file-handoff:gemini-firefox-prime-hidden-trigger-clicked"),
+    "expected delayed hidden selector activation diagnostics"
+  );
+  assert.strictEqual(harness.windowClickHandlers.length, 0);
+}
+
 async function testFirefoxGeminiDropLocalHandoffAllowsUploadUiAndCapturesHiddenInput() {
   const rawSecret = "LeakGuardDropApiKey1234567890";
   const rawFile = {
@@ -2146,7 +2326,7 @@ async function testFirefoxGeminiDropLocalHandoffAllowsUploadUiAndCapturesHiddenI
   assert.strictEqual(interceptorWasInstalledBeforeUploadClick, true);
   assert.strictEqual(handedOff, true);
   assert.deepStrictEqual(uploadTrigger.events, ["click"]);
-  assert.deepStrictEqual(overlayItem.events, ["click"]);
+  assert.deepStrictEqual(overlayItem.events, ["pointerdown", "mousedown", "mouseup", "click"]);
   assert.strictEqual(hiddenSelectorClick.event.defaultPrevented, false);
   assert.strictEqual(hiddenSelectorClick.calls.stopImmediatePropagation, 0);
   assert.strictEqual(inputClick.event.defaultPrevented, true);
@@ -2279,14 +2459,8 @@ async function testGeminiPendingDropAssignsSanitizedFileWhenInputLaterAppears() 
     ariaLabel: "Open upload file menu",
     className: "upload-card mat-mdc-button"
   });
-  const {
-    handOffGeminiSanitizedFileUpload,
-    attemptPendingGeminiSanitizedFileHandoff,
-    hasPendingGeminiSanitizedFileHandoff,
-    debugEvents,
-    fallbackDrops,
-    consoleErrors
-  } = createHandoffHarness({
+  const harness = createHandoffHarness({
+    userAgent: "Firefox",
     fileInputs,
     uploadTriggers: [uploadTrigger]
   });
@@ -2310,21 +2484,21 @@ async function testGeminiPendingDropAssignsSanitizedFileWhenInputLaterAppears() 
     })
   };
 
-  const handedOff = await handOffGeminiSanitizedFileUpload(event, null, sanitizedFile);
+  const handedOff = await queuePendingGeminiHandoffThroughGhostTimeout(harness, event, sanitizedFile);
   fileInputs.push(createFileInput({ source: "light-dom" }));
-  const assigned = attemptPendingGeminiSanitizedFileHandoff("test-input-added");
+  const assigned = harness.attemptPendingGeminiSanitizedFileHandoff("test-input-added");
 
   assert.strictEqual(handedOff, false);
   assert.strictEqual(assigned, true);
-  assert.strictEqual(hasPendingGeminiSanitizedFileHandoff(sanitizedFile), false);
+  assert.strictEqual(harness.hasPendingGeminiSanitizedFileHandoff(sanitizedFile), false);
   assert.strictEqual(fileInputs[0].files.length, 1);
   assert.strictEqual(fileInputs[0].files[0], sanitizedFile);
   assert.deepStrictEqual(fileInputs[0].events, ["input", "change"]);
-  assert.strictEqual(fallbackDrops.length, 0);
-  assert.strictEqual(consoleErrors.length, 0);
-  assert.strictEqual(JSON.stringify(debugEvents).includes(rawSecret), false);
+  assert.strictEqual(harness.fallbackDrops.length, 0);
+  assert.strictEqual(harness.consoleErrors.length, 0);
+  assert.strictEqual(JSON.stringify(harness.debugEvents).includes(rawSecret), false);
   assert.ok(
-    debugEvents.some((entry) => entry.label === "file-handoff:gemini-pending-assigned"),
+    harness.debugEvents.some((entry) => entry.label === "file-handoff:gemini-pending-assigned"),
     "expected pending Gemini sanitized file to attach when a real input appears"
   );
 }
@@ -2337,14 +2511,8 @@ async function testGeminiPendingMutationObserverAssignsWhenInputAppears() {
     text: "API_KEY=[PWM_1]"
   };
   const fileInputs = [];
-  const {
-    handOffGeminiSanitizedFileUpload,
-    hasPendingGeminiSanitizedFileHandoff,
-    observers,
-    fallbackDrops,
-    consoleErrors,
-    debugEvents
-  } = createHandoffHarness({
+  const harness = createHandoffHarness({
+    userAgent: "Firefox",
     fileInputs,
     uploadTriggers: [
       createUploadTrigger({
@@ -2358,18 +2526,20 @@ async function testGeminiPendingMutationObserverAssignsWhenInputAppears() {
     dataTransfer: createDataTransfer()
   };
 
-  await handOffGeminiSanitizedFileUpload(event, null, sanitizedFile);
-  assert.ok(observers.length >= 1, "expected pending handoff MutationObserver");
+  await queuePendingGeminiHandoffThroughGhostTimeout(harness, event, sanitizedFile);
+  assert.ok(harness.observers.length >= 1, "expected pending handoff MutationObserver");
   fileInputs.push(createFileInput({ source: "light-dom" }));
-  observers[0].trigger();
+  const pendingObserver = harness.observers.find((observer) => !observer.disconnected);
+  assert.ok(pendingObserver, "expected active pending handoff observer");
+  pendingObserver.trigger();
 
-  assert.strictEqual(hasPendingGeminiSanitizedFileHandoff(sanitizedFile), false);
+  assert.strictEqual(harness.hasPendingGeminiSanitizedFileHandoff(sanitizedFile), false);
   assert.strictEqual(fileInputs[0].files[0], sanitizedFile);
   assert.deepStrictEqual(fileInputs[0].events, ["input", "change"]);
-  assert.strictEqual(fallbackDrops.length, 0);
-  assert.strictEqual(consoleErrors.length, 0);
+  assert.strictEqual(harness.fallbackDrops.length, 0);
+  assert.strictEqual(harness.consoleErrors.length, 0);
   assert.ok(
-    debugEvents.some((entry) => entry.label === "file-handoff:gemini-pending-assigned"),
+    harness.debugEvents.some((entry) => entry.label === "file-handoff:gemini-pending-assigned"),
     "expected MutationObserver to complete pending sanitized handoff"
   );
 }
@@ -2390,13 +2560,8 @@ async function testGeminiPendingDropLogsExposureDiagnosticsWithoutRawContent() {
     ariaLabel: "Open upload file menu",
     className: "upload-card-button"
   });
-  const {
-    handOffGeminiSanitizedFileUpload,
-    attemptPendingGeminiSanitizedFileHandoff,
-    debugEvents,
-    fallbackDrops,
-    consoleErrors
-  } = createHandoffHarness({
+  const harness = createHandoffHarness({
+    userAgent: "Firefox",
     uploadTriggers: [uploadTrigger],
     overlayItems: [overlayItem]
   });
@@ -2420,13 +2585,13 @@ async function testGeminiPendingDropLogsExposureDiagnosticsWithoutRawContent() {
     })
   };
 
-  await handOffGeminiSanitizedFileUpload(event, null, sanitizedFile);
-  const assigned = attemptPendingGeminiSanitizedFileHandoff("manual-diagnostics");
+  await queuePendingGeminiHandoffThroughGhostTimeout(harness, event, sanitizedFile);
+  const assigned = harness.attemptPendingGeminiSanitizedFileHandoff("manual-diagnostics");
 
   assert.strictEqual(assigned, false);
-  assert.strictEqual(fallbackDrops.length, 0);
-  assert.strictEqual(consoleErrors.length, 0);
-  const diagnostic = debugEvents.find(
+  assert.strictEqual(harness.fallbackDrops.length, 0);
+  assert.strictEqual(harness.consoleErrors.length, 0);
+  const diagnostic = harness.debugEvents.find(
     (entry) =>
       entry.label === "file-handoff:gemini-pending-input-not-found" &&
       entry.payload.reason === "manual-diagnostics"
@@ -2446,12 +2611,8 @@ async function testGeminiPendingHandoffStoresSanitizedFileOnly() {
     size: 18,
     text: "API_KEY=[PWM_1]"
   };
-  const {
-    handOffGeminiSanitizedFileUpload,
-    getPendingGeminiSanitizedFileHandoffDebug,
-    fallbackDrops,
-    consoleErrors
-  } = createHandoffHarness({
+  const harness = createHandoffHarness({
+    userAgent: "Firefox",
     uploadTriggers: [
       createUploadTrigger({
         ariaLabel: "Open upload file menu"
@@ -2473,9 +2634,9 @@ async function testGeminiPendingHandoffStoresSanitizedFileOnly() {
     })
   };
 
-  await handOffGeminiSanitizedFileUpload(event, null, sanitizedFile);
+  await queuePendingGeminiHandoffThroughGhostTimeout(harness, event, sanitizedFile);
 
-  const pending = getPendingGeminiSanitizedFileHandoffDebug();
+  const pending = harness.getPendingGeminiSanitizedFileHandoffDebug();
   assert.ok(pending, "expected pending sanitized handoff");
   assert.deepStrictEqual(
     pending.keys.sort(),
@@ -2483,8 +2644,8 @@ async function testGeminiPendingHandoffStoresSanitizedFileOnly() {
   );
   assert.strictEqual(pending.sanitizedFile, sanitizedFile);
   assert.strictEqual(JSON.stringify(pending.sanitizedFileDebug).includes(rawSecret), false);
-  assert.strictEqual(fallbackDrops.length, 0);
-  assert.strictEqual(consoleErrors.length, 0);
+  assert.strictEqual(harness.fallbackDrops.length, 0);
+  assert.strictEqual(harness.consoleErrors.length, 0);
 }
 
 async function testGeminiPendingHandoffExpiresAndCleansUp() {
@@ -2494,15 +2655,8 @@ async function testGeminiPendingHandoffExpiresAndCleansUp() {
     size: 18,
     text: "API_KEY=[PWM_1]"
   };
-  const {
-    handOffGeminiSanitizedFileUpload,
-    hasPendingGeminiSanitizedFileHandoff,
-    clickHandlers,
-    timeoutCallbacks,
-    clearedTimeouts,
-    observers,
-    debugEvents
-  } = createHandoffHarness({
+  const harness = createHandoffHarness({
+    userAgent: "Firefox",
     uploadTriggers: [
       createUploadTrigger({
         ariaLabel: "Open upload file menu"
@@ -2515,21 +2669,21 @@ async function testGeminiPendingHandoffExpiresAndCleansUp() {
     dataTransfer: createDataTransfer()
   };
 
-  await handOffGeminiSanitizedFileUpload(event, null, sanitizedFile);
-  const expiryTimer = timeoutCallbacks.find((entry) => entry.delay === 30000);
+  await queuePendingGeminiHandoffThroughGhostTimeout(harness, event, sanitizedFile);
+  const expiryTimer = harness.timeoutCallbacks.find((entry) => entry.delay === 30000);
   assert.ok(expiryTimer, "expected pending handoff expiry timer");
-  assert.strictEqual(hasPendingGeminiSanitizedFileHandoff(sanitizedFile), true);
-  assert.strictEqual(clickHandlers.length, 1);
-  assert.ok(observers.length >= 1);
+  assert.strictEqual(harness.hasPendingGeminiSanitizedFileHandoff(sanitizedFile), true);
+  assert.strictEqual(harness.clickHandlers.length, 1);
+  assert.ok(harness.observers.length >= 1);
 
   expiryTimer.callback();
 
-  assert.strictEqual(hasPendingGeminiSanitizedFileHandoff(sanitizedFile), false);
-  assert.strictEqual(clickHandlers.length, 0);
-  assert.ok(clearedTimeouts.includes(expiryTimer.id));
-  assert.ok(observers.some((observer) => observer.disconnected));
+  assert.strictEqual(harness.hasPendingGeminiSanitizedFileHandoff(sanitizedFile), false);
+  assert.strictEqual(harness.clickHandlers.length, 0);
+  assert.ok(harness.clearedTimeouts.includes(expiryTimer.id));
+  assert.ok(harness.observers.some((observer) => observer.disconnected));
   assert.ok(
-    debugEvents.some(
+    harness.debugEvents.some(
       (entry) => entry.label === "file-handoff:gemini-pending-cleared" && entry.payload.reason === "expired"
     )
   );
@@ -2548,14 +2702,8 @@ async function testGeminiPendingHandoffReplacementClearsOldState() {
     size: 19,
     text: "SECOND=[PWM_2]"
   };
-  const {
-    handOffGeminiSanitizedFileUpload,
-    hasPendingGeminiSanitizedFileHandoff,
-    getPendingGeminiSanitizedFileHandoffDebug,
-    clickHandlers,
-    observers,
-    debugEvents
-  } = createHandoffHarness({
+  const harness = createHandoffHarness({
+    userAgent: "Firefox",
     uploadTriggers: [
       createUploadTrigger({
         ariaLabel: "Open upload file menu"
@@ -2568,17 +2716,17 @@ async function testGeminiPendingHandoffReplacementClearsOldState() {
     dataTransfer: createDataTransfer()
   };
 
-  await handOffGeminiSanitizedFileUpload(event, null, firstSanitizedFile);
-  await handOffGeminiSanitizedFileUpload(event, null, secondSanitizedFile);
+  await queuePendingGeminiHandoffThroughGhostTimeout(harness, event, firstSanitizedFile);
+  await queuePendingGeminiHandoffThroughGhostTimeout(harness, event, secondSanitizedFile);
 
-  const pending = getPendingGeminiSanitizedFileHandoffDebug();
-  assert.strictEqual(hasPendingGeminiSanitizedFileHandoff(firstSanitizedFile), false);
-  assert.strictEqual(hasPendingGeminiSanitizedFileHandoff(secondSanitizedFile), true);
+  const pending = harness.getPendingGeminiSanitizedFileHandoffDebug();
+  assert.strictEqual(harness.hasPendingGeminiSanitizedFileHandoff(firstSanitizedFile), false);
+  assert.strictEqual(harness.hasPendingGeminiSanitizedFileHandoff(secondSanitizedFile), true);
   assert.strictEqual(pending.sanitizedFile, secondSanitizedFile);
-  assert.strictEqual(clickHandlers.length, 1);
-  assert.ok(observers.some((observer) => observer.disconnected));
+  assert.strictEqual(harness.clickHandlers.length, 1);
+  assert.ok(harness.observers.some((observer) => observer.disconnected));
   assert.ok(
-    debugEvents.some(
+    harness.debugEvents.some(
       (entry) => entry.label === "file-handoff:gemini-pending-cleared" && entry.payload.reason === "replaced"
     )
   );
@@ -2598,12 +2746,8 @@ async function testGeminiPendingClickObserverDoesNotClickUploadUi() {
       throw new Error("Pending handoff must observe user clicks, not call click()");
     }
   });
-  const {
-    handOffGeminiSanitizedFileUpload,
-    clickHandlers,
-    debugEvents,
-    consoleErrors
-  } = createHandoffHarness({
+  const harness = createHandoffHarness({
+    userAgent: "Firefox",
     uploadTriggers: [uploadTrigger]
   });
   const event = {
@@ -2612,8 +2756,8 @@ async function testGeminiPendingClickObserverDoesNotClickUploadUi() {
     dataTransfer: createDataTransfer()
   };
 
-  await handOffGeminiSanitizedFileUpload(event, null, sanitizedFile);
-  assert.strictEqual(clickHandlers.length, 1);
+  await queuePendingGeminiHandoffThroughGhostTimeout(harness, event, sanitizedFile);
+  assert.strictEqual(harness.clickHandlers.length, 1);
 
   const clickEvent = {
     target: uploadTrigger,
@@ -2631,16 +2775,72 @@ async function testGeminiPendingClickObserverDoesNotClickUploadUi() {
     }
   };
 
-  clickHandlers[0](clickEvent);
+  harness.clickHandlers[0](clickEvent);
 
   assert.deepStrictEqual(uploadTrigger.events, []);
   assert.strictEqual(clickEvent.defaultPrevented, false);
   assert.strictEqual(clickEvent.propagationStopped, false);
   assert.strictEqual(clickEvent.immediatePropagationStopped, false);
-  assert.strictEqual(consoleErrors.length, 0);
+  assert.strictEqual(harness.consoleErrors.length, 0);
   assert.ok(
-    debugEvents.some((entry) => entry.label === "file-handoff:gemini-upload-click-observed"),
+    harness.debugEvents.some((entry) => entry.label === "file-handoff:gemini-upload-click-observed"),
     "expected click observation without programmatic upload click"
+  );
+}
+
+async function testGeminiPendingUploadClickThenFiledataInputAssignsSanitizedFile() {
+  const sanitizedFile = {
+    name: "click-filedata-gemini.env",
+    type: "text/plain",
+    size: 18,
+    text: "API_KEY=[PWM_1]"
+  };
+  const fileInputs = [];
+  const uploadTrigger = createUploadTrigger({
+    ariaLabel: "Open upload file menu",
+    className: "upload-card-button"
+  });
+  const menuItem = createOverlayItem({
+    ariaLabel: "Upload files. Documents, data, code files",
+    text: "Upload files"
+  });
+  const dataTestButton = createOverlayItem({
+    ariaLabel: "",
+    text: "",
+    role: "",
+    dataTestId: "local-images-files-uploader-button"
+  });
+  const hiddenTrigger = createHiddenFileSelectorTrigger();
+  const harness = createHandoffHarness({
+    userAgent: "Firefox",
+    fileInputs,
+    uploadTriggers: [uploadTrigger]
+  });
+  const event = {
+    type: "drop",
+    target: { nodeType: 1, tagName: "DIV", dispatchEvent: () => true },
+    dataTransfer: createDataTransfer()
+  };
+
+  await queuePendingGeminiHandoffThroughGhostTimeout(harness, event, sanitizedFile);
+  assert.strictEqual(harness.clickHandlers.length, 1);
+
+  for (const target of [uploadTrigger, dataTestButton, menuItem, hiddenTrigger]) {
+    harness.clickHandlers[0](createClickEvent(target).event);
+  }
+
+  fileInputs.push(createFileInput({ source: "light-dom", name: "Filedata", multiple: true }));
+  const pendingObserver = harness.observers.find((observer) => !observer.disconnected);
+  assert.ok(pendingObserver, "expected pending observer to watch for Filedata input");
+  pendingObserver.trigger();
+
+  assert.strictEqual(fileInputs[0].files.length, 1);
+  assert.strictEqual(fileInputs[0].files[0], sanitizedFile);
+  assert.deepStrictEqual(fileInputs[0].events, ["input", "change"]);
+  assert.strictEqual(harness.hasPendingGeminiSanitizedFileHandoff(sanitizedFile), false);
+  assert.strictEqual(
+    harness.debugEvents.filter((entry) => entry.label === "file-handoff:gemini-upload-click-observed").length,
+    4
   );
 }
 
@@ -5373,40 +5573,18 @@ async function testGeminiDropFallsBackToSanitizedComposerTextWhenNativeUploadUna
   assert.strictEqual(calls.modals.flat().join("\n").includes(rawSecret), false);
 }
 
-async function testFirefoxGeminiDropPrimesUploadTargetBeforeRedaction() {
+async function testFirefoxGeminiDropUsesChromeGhostAttachAfterRedaction() {
   const rawSecret = "LeakGuardDropApiKey1234567890";
   const rawFile = createTextFile({
-    name: "prime-before-redaction.env",
+    name: "firefox-chrome-style.env",
     type: "text/plain",
     text: `API_KEY=${rawSecret}`
   });
-  const fileInput = createFileInput({ source: "light-dom", name: "Filedata", multiple: true });
-  const documentRoot = {
-    activeElement: { tagName: "DIV", closest: () => null },
-    body: {
-      textContent: "",
-      querySelectorAll(selector) {
-        return selector === "input[type='file']" ? [fileInput] : [];
-      }
-    },
-    querySelectorAll(selector) {
-      if (selector === "input[type='file']") return [fileInput];
-      if (selector === "*") return [];
-      return [];
-    },
-    querySelector: () => null,
-    createElement: (tagName) => ({
-      tagName: String(tagName || "").toUpperCase(),
-      type: "",
-      files: []
-    })
-  };
-  let redactionSawPrime = false;
-  let redactionSawUnassignedInput = false;
+  let attachOptions = null;
+  let attachSawSanitizedFileCreated = false;
   const { maybeHandleDrop, calls } = createHarness({
     navigator: { userAgent: "Firefox" },
     location: { hostname: "gemini.google.com" },
-    document: documentRoot,
     readLocalTextFileFromDataTransfer: async () => ({
       handled: true,
       ok: true,
@@ -5414,15 +5592,16 @@ async function testFirefoxGeminiDropPrimesUploadTargetBeforeRedaction() {
       file: rawFile
     }),
     requestRedaction: async (text, findings, options) => {
-      redactionSawPrime = calls.debugEvents.some(
-        (entry) => entry.label === "file-handoff:gemini-firefox-prime-start"
-      );
-      redactionSawUnassignedInput = Number(fileInput.files?.length || 0) === 0;
       calls.redactions.push({ text, findings, options });
       return { redactedText: "API_KEY=[PWM_1]" };
     },
-    handOffGeminiSanitizedFileUpload: () => {
-      throw new Error("Firefox Gemini drop must use the primed input before late upload handoff");
+    handOffGeminiSanitizedFileUpload: (event, input, sanitizedFile, options) => {
+      attachOptions = options;
+      attachSawSanitizedFileCreated = calls.debugEvents.some(
+        (entry) => entry.label === "file-handoff:sanitized-file-created"
+      );
+      calls.handoffs.push({ event, input, sanitizedFile, context: "gemini-file-input" });
+      return true;
     }
   });
   const { event } = createEvent({
@@ -5437,13 +5616,18 @@ async function testFirefoxGeminiDropPrimesUploadTargetBeforeRedaction() {
 
   await maybeHandleDrop(event);
 
-  assert.strictEqual(redactionSawPrime, true);
-  assert.strictEqual(redactionSawUnassignedInput, true);
-  assert.strictEqual(fileInput.files.length, 1);
-  assert.notStrictEqual(fileInput.files[0], rawFile);
-  assert.strictEqual(fileInput.files[0].text.includes(rawSecret), false);
-  assert.ok(fileInput.files[0].text.includes("[PWM_1]"));
-  assert.deepStrictEqual(fileInput.events, ["input", "change"]);
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(attachSawSanitizedFileCreated, true);
+  assert.strictEqual(attachOptions?.allowUploadUiClick, true);
+  assert.strictEqual(calls.handoffs.length, 1);
+  assert.notStrictEqual(calls.handoffs[0].sanitizedFile, rawFile);
+  assert.strictEqual(calls.handoffs[0].sanitizedFile.text.includes(rawSecret), false);
+  assert.ok(calls.handoffs[0].sanitizedFile.text.includes("[PWM_1]"));
+  assert.strictEqual(calls.textFallbacks.length, 0);
+  assert.strictEqual(
+    calls.debugEvents.some((entry) => entry.label === "file-handoff:gemini-firefox-prime-start"),
+    false
+  );
 }
 
 async function testFirefoxGeminiFileInputBridgeAssignsSanitizedFileOnly() {
@@ -5497,7 +5681,7 @@ async function testFirefoxGeminiFileInputBridgeAssignsSanitizedFileOnly() {
   await maybeHandleDrop(event);
 
   assert.strictEqual(event.defaultPrevented, true);
-  assert.strictEqual(calls.handoffs.length, 0);
+  assert.strictEqual(calls.handoffs.length, 1);
   assert.strictEqual(calls.redactions.length, 1);
   assert.strictEqual(fileInput.files.length, 1);
   assert.notStrictEqual(fileInput.files[0], rawFile);
@@ -5511,11 +5695,11 @@ async function testFirefoxGeminiFileInputBridgeAssignsSanitizedFileOnly() {
   assert.ok(
     calls.debugEvents.some(
       (entry) =>
-        entry.label === "file-handoff:gemini-firefox-prime-assigned" &&
-        entry.details?.mode === "file-input-prime" &&
+        entry.label === "file-handoff:gemini-firefox-file-input-bridge-assigned" &&
+        entry.details?.mode === "file-input-bridge" &&
         entry.details?.inputFound === true
     ),
-    "expected Firefox Gemini primed file-input diagnostics"
+    "expected Firefox Gemini file-input bridge diagnostics"
   );
   assert.strictEqual(JSON.stringify(calls.debugEvents).includes(rawSecret), false);
 }
@@ -6485,10 +6669,15 @@ async function testFirefoxGeminiFileInputBridgeFailsClosedWhenMenuOpensWithoutIn
     { event, input: null }
   );
 
-  assert.strictEqual(result.ok, false);
-  assert.strictEqual(result.message, "LeakGuard blocked the raw file drop. Could not locate Gemini upload input. Please use the upload button or retry.");
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.stage, "pending");
+  assert.strictEqual(result.strategy, "gemini-firefox-pending-sanitized-file-handoff");
+  assert.strictEqual(harness.hasPendingGeminiSanitizedFileHandoff(sanitizedFile), true);
   assert.deepStrictEqual(uploadTrigger.events, ["pointerdown", "mousedown", "mouseup", "click"]);
   assert.deepStrictEqual(uploadFilesMenuItem.events, ["pointerdown", "mousedown", "mouseup", "click"]);
+  assert.deepStrictEqual(harness.badges.at(-1), [
+    "LeakGuard sanitized the file. Click Gemini Upload files to attach the sanitized version."
+  ]);
 }
 
 async function testChromeGeminiFileInputBridgeRemainsInactive() {
@@ -6525,7 +6714,7 @@ async function testChromeGeminiFileInputBridgeRemainsInactive() {
   assert.deepStrictEqual(uploadTrigger.events, []);
 }
 
-async function testFirefoxGeminiFileInputBridgeMissingInputFailsClosed() {
+async function testFirefoxGeminiFileInputBridgeMissingInputQueuesPendingHandoff() {
   const rawSecret = "LeakGuardDropApiKey1234567890";
   const composer = {
     tagName: "TEXTAREA",
@@ -6537,14 +6726,43 @@ async function testFirefoxGeminiFileInputBridgeMissingInputFailsClosed() {
       return true;
     }
   };
+  const overlayItems = [];
+  const uploadFilesMenuItem = createOverlayItem({
+    dataTestId: "local-images-files-uploader-button"
+  });
+  const uploadTrigger = createUploadTrigger({
+    ariaLabel: "Open upload file menu",
+    className: "upload-card-button",
+    onClick: () => {
+      if (!overlayItems.length) overlayItems.push(uploadFilesMenuItem);
+    }
+  });
+  const queryGeminiUploadDom = (selector) => {
+    if (
+      selector === 'button[data-test-id="local-images-files-uploader-button"]' ||
+      selector === 'button[role="menuitem"][aria-label*="Upload files"]' ||
+      selector === '[role="menuitem"]'
+    ) {
+      return overlayItems;
+    }
+    if (
+      selector === 'button[aria-label="Open upload file menu"]' ||
+      selector === "button.upload-card-button" ||
+      selector === "button"
+    ) {
+      return [uploadTrigger, ...overlayItems];
+    }
+    if (selector === "*") return [];
+    return [];
+  };
   const documentRoot = {
     activeElement: composer,
     body: {
       textContent: "",
-      querySelectorAll: () => []
+      querySelectorAll: queryGeminiUploadDom
     },
     querySelector: () => null,
-    querySelectorAll: () => [],
+    querySelectorAll: queryGeminiUploadDom,
     createElement: (tagName) => ({
       tagName: String(tagName || "").toUpperCase(),
       type: "",
@@ -6579,10 +6797,10 @@ async function testFirefoxGeminiFileInputBridgeMissingInputFailsClosed() {
 
   assert.strictEqual(event.defaultPrevented, true);
   assert.deepStrictEqual(composer.dispatched, []);
-  assert.strictEqual(calls.handoffs.length, 0);
-  assert.strictEqual(calls.textFallbacks.length, 1);
+  assert.strictEqual(calls.handoffs.length, 1);
+  assert.strictEqual(calls.textFallbacks.length, 0);
+  assert.strictEqual(composer.text, "");
   assert.strictEqual(composer.text.includes(rawSecret), false);
-  assert.ok(composer.text.includes("[PWM_"));
   assert.ok(
     !calls.modals.some(
       ([title, message]) =>
@@ -6593,11 +6811,14 @@ async function testFirefoxGeminiFileInputBridgeMissingInputFailsClosed() {
   assert.ok(
     calls.debugEvents.some(
       (entry) =>
-        entry.label === "file-handoff:gemini-firefox-prime-input-not-found" &&
-        entry.details?.reason
+        entry.label === "file-handoff:gemini-firefox-file-input-bridge-input-not-found" &&
+        entry.details?.queuedPending === true
     ),
-    "expected Firefox Gemini prime timeout diagnostics without raw file content"
+    "expected Firefox Gemini bridge to queue pending sanitized file handoff"
   );
+  assert.deepStrictEqual(calls.badges.at(-1), [
+    "LeakGuard sanitized the file. Click Gemini Upload files to attach the sanitized version."
+  ]);
   assert.strictEqual(JSON.stringify(calls.debugEvents).includes(rawSecret), false);
 }
 
@@ -6686,7 +6907,7 @@ async function testFirefoxGeminiTextFallbackPreservesMultilineBlocks() {
   await maybeHandleDrop(event);
 
   assert.strictEqual(event.defaultPrevented, true);
-  assert.strictEqual(calls.handoffs.length, 0);
+  assert.strictEqual(calls.handoffs.length, 1);
   assert.strictEqual(calls.textFallbacks.length, 0);
   assert.ok(editor.text.includes(`LeakGuard sanitized file: 01-basic-secrets.env\n\n\`\`\`env\n${sanitizedText}\n\`\`\``));
   assert.strictEqual(editor.text.includes(rawSecret), false);
@@ -6812,7 +7033,7 @@ async function testFirefoxGeminiTextFallbackFindsEditorFromParagraphContainer() 
   await maybeHandleDrop(event);
 
   assert.strictEqual(event.defaultPrevented, true);
-  assert.strictEqual(calls.handoffs.length, 0);
+  assert.strictEqual(calls.handoffs.length, 1);
   assert.strictEqual(calls.textFallbacks.length, 0);
   assert.ok(editor.text.includes("LeakGuard sanitized file: paragraph-container.env"));
   assert.ok(editor.text.includes("OPENAI_API_KEY=[PWM_1]"));
@@ -7027,7 +7248,7 @@ async function testFirefoxGeminiItemsOnlyDropExtractsFileAndUsesFileInputBridge(
   await maybeHandleDrop(event);
 
   assert.strictEqual(event.defaultPrevented, true);
-  assert.strictEqual(calls.handoffs.length, 0);
+  assert.strictEqual(calls.handoffs.length, 1);
   assert.strictEqual(calls.textFallbacks.length, 0);
   assert.strictEqual(editor.text, "");
   assert.strictEqual(fileInput.files.length, 1);
@@ -7049,11 +7270,11 @@ async function testFirefoxGeminiItemsOnlyDropExtractsFileAndUsesFileInputBridge(
   assert.ok(
     calls.debugEvents.some(
       (entry) =>
-        entry.label === "file-handoff:gemini-firefox-prime-assigned" &&
-        entry.details?.mode === "file-input-prime" &&
+        entry.label === "file-handoff:gemini-firefox-file-input-bridge-assigned" &&
+        entry.details?.mode === "file-input-bridge" &&
         entry.details?.inputFound === true
     ),
-    "expected Firefox Gemini primed file-input assignment diagnostics"
+    "expected Firefox Gemini file-input bridge diagnostics"
   );
   assert.strictEqual(JSON.stringify(calls.debugEvents).includes(rawSecret), false);
 }
@@ -8018,7 +8239,7 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testGeminiStreamingHandoffUsesDiscoveredFileInput();
   await testGeminiDropNeverClicksUploadFlowWhenInputAppearsAfterClick();
   await testGeminiDropNeverClicksExistingOverlayMenuItem();
-  await testFirefoxGeminiDropPrimesUploadTargetBeforeRedaction();
+  await testFirefoxGeminiDropUsesChromeGhostAttachAfterRedaction();
   await testFirefoxGeminiFileInputBridgeAssignsSanitizedFileOnly();
   await testFirefoxGeminiFileInputBridgeOpensExactAriaMenuButton();
   await testFirefoxGeminiFileInputBridgeUsesUploadCardButtonFallback();
@@ -8038,17 +8259,27 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testFirefoxGeminiFileInputBridgeDoesNotClickHiddenLocalUploadButtons();
   await testFirefoxGeminiFileInputBridgeFailsClosedWhenMenuOpensWithoutInput();
   await testChromeGeminiFileInputBridgeRemainsInactive();
-  await testFirefoxGeminiFileInputBridgeMissingInputFailsClosed();
+  await testFirefoxGeminiFileInputBridgeMissingInputQueuesPendingHandoff();
   testFirefoxGeminiFileInputBridgeDoesNotReplayOrOpenPicker();
   await testFirefoxGeminiItemsOnlyDropExtractsFileAndUsesFileInputBridge();
   await testGeminiDropGhostIngressAttachesSanitizedFileAfterVisibleUploadFlow();
   await testGeminiGhostIngressInterceptsEphemeralFileInputClick();
+  await testFirefoxGeminiGhostIngressUsesHiddenSelectorFallback();
+  await testFirefoxGeminiGhostIngressUsesDelayedHiddenSelectorFallback();
   await testFirefoxGeminiDropLocalHandoffAllowsUploadUiAndCapturesHiddenInput();
   await testGeminiGhostIngressClickInterceptorIgnoresUnrelatedFileInput();
   await testGeminiGhostIngressClickInterceptorRemovedAfterTimeout();
   await testGeminiGhostIngressClickInterceptorRemovedAfterAssignmentFailure();
   await testGeminiSanitizedDownloadFailureFailsClosed();
   await testFirefoxGeminiNoPickerMissIsSoftBeforeFallback();
+  await testGeminiPendingDropAssignsSanitizedFileWhenInputLaterAppears();
+  await testGeminiPendingMutationObserverAssignsWhenInputAppears();
+  await testGeminiPendingDropLogsExposureDiagnosticsWithoutRawContent();
+  await testGeminiPendingHandoffStoresSanitizedFileOnly();
+  await testGeminiPendingHandoffExpiresAndCleansUp();
+  await testGeminiPendingHandoffReplacementClearsOldState();
+  await testGeminiPendingClickObserverDoesNotClickUploadUi();
+  await testGeminiPendingUploadClickThenFiledataInputAssignsSanitizedFile();
   testGeminiUploadHandoffDoesNotRedispatchSyntheticDrop();
   testSanitizedDownloadBackgroundHookExists();
   testGeminiUploadDiscoveryDoesNotRequireMaterialClassSelectors();
