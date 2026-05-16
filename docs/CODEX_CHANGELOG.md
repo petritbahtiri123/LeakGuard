@@ -12,6 +12,12 @@ Use this file as a short handoff log for AI-made changes. Add newest entries fir
 ```
 
 ## Entries
+### 2026-05-16 - ChatGPT streamed file-only handoff
+- Goal: Let ChatGPT large streamed drops try sanitized file-input assignment even when the streamed sanitized file is not read back into memory, while still failing closed if no safe file input is available.
+- Files: `src/content/content.js`, `tests/content_file_drop_interception.test.js`, `docs/CODEX_CHANGELOG.md`
+- Tests: `node --check src/content/content.js` -> pass; `node tests/content_file_drop_interception.test.js` -> pass; `node tests/security.test.js` -> pass; `node tests/typed_interception.test.js` -> pass; `npm test` -> pass; `npm run build:all` -> pass
+- Notes: ChatGPT pending attach remains disabled; streamed sanitized files skip automatic text/download fallback so they are not read back unless a future explicit user fallback is added.
+
 ### 2026-05-16 - ChatGPT composer sync hardening
 - Goal: Fix ChatGPT composer sync after sanitized rewrites by adding ChatGPT-only safe diagnostics, layered contenteditable/textarea writes, verification, and one retry before fail-closed handling. ChatGPT pending attach remains disabled.
 - Files: `src/content/content.js`, `tests/content_file_drop_interception.test.js`, `docs/RELEASE_QA_CHECKLIST.md`, `docs/CODEX_CHANGELOG.md`

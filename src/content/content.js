@@ -6234,12 +6234,16 @@
     };
   }
 
+  function isFileOnlySanitizedPayload(payload) {
+    return Boolean(payload?.allowFileOnlyHandoff && !String(payload?.redactedText || "").trim());
+  }
+
   function isSafeSanitizedPayload(payload) {
     return Boolean(
       payload &&
         payload.sanitizedFile &&
         typeof payload.redactedText === "string" &&
-        payload.redactedText.length > 0
+        (payload.redactedText.length > 0 || payload.allowFileOnlyHandoff === true)
     );
   }
 
@@ -6452,17 +6456,28 @@
       }
     }
 
-    const textInserted = await driver.insertSanitizedText(payload, context);
-    if (textInserted === true) {
-      setDmzOverlayState("Inserted sanitized content", "inserted");
-      return { ok: true, stage: "text", strategy: `${driver.id}-sanitized-text-fallback` };
-    }
-    if (textInserted === "cancelled") {
-      return { ok: false, stage: "text", reason: "sanitized_text_cancelled" };
-    }
+    const fileOnlyPayload = isFileOnlySanitizedPayload(payload);
+    if (!fileOnlyPayload) {
+      const textInserted = await driver.insertSanitizedText(payload, context);
+      if (textInserted === true) {
+        setDmzOverlayState("Inserted sanitized content", "inserted");
+        return { ok: true, stage: "text", strategy: `${driver.id}-sanitized-text-fallback` };
+      }
+      if (textInserted === "cancelled") {
+        return { ok: false, stage: "text", reason: "sanitized_text_cancelled" };
+      }
 
-    if (await driver.emergencyDownload(payload, context)) {
-      return { ok: true, stage: "download", strategy: `${driver.id}-sanitized-download-fallback` };
+      if (await driver.emergencyDownload(payload, context)) {
+        return { ok: true, stage: "download", strategy: `${driver.id}-sanitized-download-fallback` };
+      }
+    } else {
+      debugReveal("file-handoff:file-only-fallback-skipped", {
+        site: driver.id,
+        adapter: describeFileHandoffAdapter(adapter),
+        context: context?.context || "",
+        sanitizedFile: describeFileForDebug(payload.sanitizedFile),
+        reason: "streamed_sanitized_file_not_read_back"
+      });
     }
 
     setDmzOverlayState("Raw file blocked", "failed");
@@ -9395,6 +9410,8 @@
           analysis: null,
           result: null
         });
+        payload.allowFileOnlyHandoff = true;
+        payload.streamed = true;
         const handoffResult =
           context === "drop"
             ? await driver.handoff(payload, { event, input, context, driver, composerResolved: true })

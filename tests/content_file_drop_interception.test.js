@@ -1020,6 +1020,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "getPendingGrokSanitizedFileHandoffDebug"),
       extractFunctionSource(contentSource, "originalFileMetadataFromLocalFile"),
       extractFunctionSource(contentSource, "createSanitizedPayload"),
+      extractFunctionSource(contentSource, "isFileOnlySanitizedPayload"),
       extractFunctionSource(contentSource, "isSafeSanitizedPayload"),
       extractFunctionSource(contentSource, "createGeminiSanitizedPayload"),
       extractFunctionSource(contentSource, "fallbackLanguageFromFileName"),
@@ -3596,6 +3597,22 @@ async function assertStreamingPendingAttachRedispatchIsSuppressed({
           bytesProcessed: sourceFile.size
         };
       }
+    },
+    document: {
+      activeElement: composer,
+      execCommand: () => false,
+      createRange: () => null,
+      createElement: (tagName) => ({
+        tagName: String(tagName || "").toUpperCase(),
+        type: "",
+        files: []
+      }),
+      querySelectorAll(selector) {
+        const value = String(selector || "");
+        return value.includes('input[type="file"]') || value.includes("input[type='file']")
+          ? [fileInput]
+          : [];
+      }
     }
   });
   const drop = createEvent({
@@ -5234,12 +5251,17 @@ async function testDropOverHardLimitUsesStreamingSanitizedFileHandoff() {
   const composer = {
     tagName: "TEXTAREA",
     text: "",
-    selection: { start: 0, end: 0 }
+    selection: { start: 0, end: 0 },
+    closest: () => null
   };
+  const fileInput = createFileInput({ multiple: true });
   const sanitizedFile = {
     name: "large-stream.env",
     type: "text/plain",
-    text: "API_KEY=[PWM_1]"
+    size: 15,
+    async text() {
+      throw new Error("streaming ChatGPT handoff must not read sanitized fallback text");
+    }
   };
   const { maybeHandleDrop, calls } = createHarness({
     findComposer: () => composer,
@@ -5292,10 +5314,90 @@ async function testDropOverHardLimitUsesStreamingSanitizedFileHandoff() {
   assert.strictEqual(calls.redactions[0].options?.skipBackgroundScan, true);
   assert.strictEqual(calls.redactions[0].options?.auditReason, "streaming_file_redaction");
   assert.strictEqual(calls.handoffs.length, 0);
-  assert.strictEqual(calls.runtimeMessages.length, 1);
-  assert.strictEqual(calls.runtimeMessages[0].redactedText, sanitizedFile.text);
+  assert.strictEqual(calls.originalFileInputHandoffs.length, 1);
+  assert.strictEqual(calls.originalFileInputHandoffs[0].fileInput, fileInput);
+  assert.strictEqual(fileInput.files[0], sanitizedFile);
+  assert.deepStrictEqual(fileInput.events, ["input", "change"]);
+  assert.strictEqual(calls.runtimeMessages.length, 0);
+  assert.strictEqual(calls.modals.some(([title]) => title === "Raw file upload blocked"), false);
   assert.ok(calls.badges.some(([message]) => String(message || "").includes("Streaming redaction")));
-  assert.ok(calls.badges.some(([message]) => message === "Sanitized download ready"));
+  assert.ok(calls.badges.some(([message]) => message === "LeakGuard attached a sanitized local file."));
+  assert.ok(calls.debugEvents.some((entry) => entry.label === "file-handoff:direct-attempt-success"));
+}
+
+async function testChatGptStreamingDropWithoutFileInputFailsClosedWithoutReadingSanitizedText() {
+  const sourceFile = {
+    name: "large-stream-no-input.env",
+    type: "text/plain",
+    size: 5 * 1024 * 1024,
+    async text() {
+      throw new Error("streaming drop must not call file.text()");
+    }
+  };
+  const composer = {
+    tagName: "TEXTAREA",
+    text: "",
+    selection: { start: 0, end: 0 }
+  };
+  const sanitizedFile = {
+    name: "large-stream-no-input.env",
+    type: "text/plain",
+    size: 15,
+    async text() {
+      throw new Error("file-only streamed handoff must not read sanitized text fallback");
+    }
+  };
+  const { maybeHandleDrop, calls } = createHarness({
+    location: { hostname: "chatgpt.com" },
+    findComposer: () => composer,
+    readLocalTextFileFromDataTransfer: async (transfer) => {
+      calls.reads.push(transfer);
+      return {
+        handled: true,
+        ok: false,
+        code: "streaming_required",
+        sourceFile,
+        file: {
+          name: sourceFile.name,
+          type: sourceFile.type,
+          sizeBytes: sourceFile.size
+        }
+      };
+    },
+    StreamingFileRedactor: {
+      LARGE_TEXT_STREAMING_MAX_BYTES: 50 * 1024 * 1024,
+      STREAMING_BLOCK_TITLE: "File too large for local redaction",
+      STREAMING_BLOCK_MESSAGE:
+        "This file is over 50 MB. LeakGuard blocked the upload because it cannot safely sanitize it yet.",
+      redactTextFileStream: async (file, options) => {
+        assert.strictEqual(file, sourceFile);
+        await options.redactText("API_KEY=LeakGuardDropApiKey1234567890");
+        return {
+          action: "redacted",
+          sanitizedFile,
+          findingsCount: 1,
+          bytesProcessed: sourceFile.size
+        };
+      }
+    }
+  });
+  const { event } = createEvent({
+    dataTransfer: {
+      types: ["Files"],
+      files: [sourceFile],
+      items: [],
+      dropEffect: "none"
+    },
+    target: composer
+  });
+
+  await maybeHandleDrop(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(calls.originalFileInputHandoffs?.length || 0, 0);
+  assert.strictEqual(calls.runtimeMessages.length, 0);
+  assert.ok(calls.modals.some(([title]) => title === "Raw file upload blocked"));
+  assert.ok(calls.debugEvents.some((entry) => entry.label === "file-handoff:file-only-fallback-skipped"));
 }
 
 async function testGeminiStreamingDropQueuesPendingAfterStreamingWithoutTextFallback() {
@@ -9559,6 +9661,7 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testChatGptOverHardLimitPasteIsBlockedBeforeHandoff();
   await testGeminiOverHardLimitDropIsBlockedBeforeInsertion();
   await testDropOverHardLimitUsesStreamingSanitizedFileHandoff();
+  await testChatGptStreamingDropWithoutFileInputFailsClosedWithoutReadingSanitizedText();
   await testGeminiStreamingDropQueuesPendingAfterStreamingWithoutTextFallback();
   await testGeminiStreamingDropAtFiftyMiBQueuesPendingHandoff();
   await testGrokStreamingDropQueuesPendingAfterStreamingWithoutTextFallback();
