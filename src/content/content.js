@@ -138,10 +138,15 @@
   let statusPanelPauseBtn = null;
   let extensionRuntimeAvailable = true;
   const sanitizedFileInputHandoffs = new WeakSet();
+  const sanitizedFileInputHandoffExpires = new WeakMap();
+  const sanitizedFileHandoffFiles = new WeakSet();
+  const sanitizedFileHandoffFileExpires = new WeakMap();
+  const sanitizedFileHandoffSignatures = new Map();
   const firefoxFileInputTransactions = new WeakMap();
   const rawFileDropInterceptions = new WeakSet();
   const fileDragEventRoots = new WeakSet();
   const editorRiskState = new WeakMap();
+  const SANITIZED_FILE_HANDOFF_SUPPRESS_MS = 30000;
   const PROGRAMMATIC_INPUT_SUPPRESS_MS = 500;
   const CHATGPT_LARGE_PASTE_FILE_THRESHOLD = 16 * 1024;
   const CHATGPT_SANITIZED_PASTE_FILE_NAME = "leakguard-redacted-paste.txt";
@@ -472,6 +477,227 @@
 
   function getFileListMetadataSignature(files) {
     return Array.from(files || []).map(getFileMetadataSignature).join("||");
+  }
+
+  function isWeakSetFileObject(file) {
+    return Boolean(file && (typeof file === "object" || typeof file === "function"));
+  }
+
+  function deleteSanitizedFileHandoffMark(fileInput, files) {
+    if (isFileInputElement(fileInput)) {
+      sanitizedFileInputHandoffs.delete(fileInput);
+      sanitizedFileInputHandoffExpires.delete(fileInput);
+    }
+    for (const file of Array.from(files || [])) {
+      if (isWeakSetFileObject(file)) {
+        sanitizedFileHandoffFiles.delete(file);
+        sanitizedFileHandoffFileExpires.delete(file);
+      }
+      const signature = getFileMetadataSignature(file);
+      if (signature) {
+        sanitizedFileHandoffSignatures.delete(signature);
+      }
+    }
+  }
+
+  function expireSanitizedFileHandoffMarks(fileInput, files, signatures, expiresAt) {
+    const now = Date.now();
+    let inputExpired = false;
+    let fileCount = 0;
+    let signatureCount = 0;
+
+    if (isFileInputElement(fileInput)) {
+      const inputExpiresAt = Number(sanitizedFileInputHandoffExpires.get(fileInput) || 0);
+      if (inputExpiresAt && inputExpiresAt <= now && inputExpiresAt <= expiresAt) {
+        sanitizedFileInputHandoffs.delete(fileInput);
+        sanitizedFileInputHandoffExpires.delete(fileInput);
+        inputExpired = true;
+      }
+    }
+
+    for (const file of files || []) {
+      if (!isWeakSetFileObject(file)) continue;
+      const fileExpiresAt = Number(sanitizedFileHandoffFileExpires.get(file) || 0);
+      if (fileExpiresAt && fileExpiresAt <= now && fileExpiresAt <= expiresAt) {
+        sanitizedFileHandoffFiles.delete(file);
+        sanitizedFileHandoffFileExpires.delete(file);
+        fileCount += 1;
+      }
+    }
+
+    for (const signature of signatures || []) {
+      const signatureExpiresAt = Number(sanitizedFileHandoffSignatures.get(signature) || 0);
+      if (signatureExpiresAt && signatureExpiresAt <= now && signatureExpiresAt <= expiresAt) {
+        sanitizedFileHandoffSignatures.delete(signature);
+        signatureCount += 1;
+      }
+    }
+
+    if (inputExpired || fileCount > 0 || signatureCount > 0) {
+      debugReveal("file-input:sanitized-handoff-expired", {
+        inputExpired,
+        fileCount,
+        signatureCount,
+        ttlMs: SANITIZED_FILE_HANDOFF_SUPPRESS_MS
+      });
+    }
+  }
+
+  function pruneExpiredSanitizedFileHandoffSignatures(now = Date.now()) {
+    let expiredCount = 0;
+    for (const [signature, expiresAt] of sanitizedFileHandoffSignatures) {
+      if (Number(expiresAt || 0) <= now) {
+        sanitizedFileHandoffSignatures.delete(signature);
+        expiredCount += 1;
+      }
+    }
+    if (expiredCount > 0) {
+      debugReveal("file-input:sanitized-handoff-expired", {
+        inputExpired: false,
+        signatureCount: expiredCount,
+        ttlMs: SANITIZED_FILE_HANDOFF_SUPPRESS_MS
+      });
+    }
+  }
+
+  function markSanitizedFileHandoff(fileInput, files) {
+    if (!isFileInputElement(fileInput)) return false;
+    const assignedFiles = Array.from(files || []).filter(Boolean);
+    if (!assignedFiles.length) return false;
+
+    const expiresAt = Date.now() + SANITIZED_FILE_HANDOFF_SUPPRESS_MS;
+    const signatures = [];
+    sanitizedFileInputHandoffs.add(fileInput);
+    sanitizedFileInputHandoffExpires.set(fileInput, expiresAt);
+
+    for (const file of assignedFiles) {
+      if (isWeakSetFileObject(file)) {
+        sanitizedFileHandoffFiles.add(file);
+        sanitizedFileHandoffFileExpires.set(file, expiresAt);
+      }
+      const signature = getFileMetadataSignature(file);
+      if (signature) {
+        sanitizedFileHandoffSignatures.set(signature, expiresAt);
+        signatures.push(signature);
+      }
+    }
+
+    debugReveal("file-input:sanitized-handoff-marked", {
+      input: describeFileInputForDebug(fileInput, "sanitized-file-handoff"),
+      files: assignedFiles.map(describeFileForDebug),
+      ttlMs: SANITIZED_FILE_HANDOFF_SUPPRESS_MS
+    });
+
+    setTimeout(() => {
+      expireSanitizedFileHandoffMarks(fileInput, assignedFiles, signatures, expiresAt);
+    }, SANITIZED_FILE_HANDOFF_SUPPRESS_MS);
+    return true;
+  }
+
+  function isSanitizedFileHandoffFile(file, now = Date.now()) {
+    if (isWeakSetFileObject(file) && sanitizedFileHandoffFiles.has(file)) {
+      const fileExpiresAt = Number(sanitizedFileHandoffFileExpires.get(file) || 0);
+      if (fileExpiresAt > now) {
+        return true;
+      }
+      sanitizedFileHandoffFiles.delete(file);
+      sanitizedFileHandoffFileExpires.delete(file);
+      if (fileExpiresAt) {
+        debugReveal("file-input:sanitized-handoff-expired", {
+          inputExpired: false,
+          fileCount: 1,
+          signatureCount: 0,
+          ttlMs: SANITIZED_FILE_HANDOFF_SUPPRESS_MS
+        });
+      }
+    }
+
+    const signature = getFileMetadataSignature(file);
+    if (!signature) return false;
+
+    const expiresAt = Number(sanitizedFileHandoffSignatures.get(signature) || 0);
+    if (!expiresAt) return false;
+    if (expiresAt <= now) {
+      sanitizedFileHandoffSignatures.delete(signature);
+      debugReveal("file-input:sanitized-handoff-expired", {
+        inputExpired: false,
+        fileCount: 0,
+        signatureCount: 1,
+        ttlMs: SANITIZED_FILE_HANDOFF_SUPPRESS_MS
+      });
+      return false;
+    }
+    return true;
+  }
+
+  function getSanitizedFileInputHandoffSuppression(fileInput, files) {
+    if (!isFileInputElement(fileInput)) return null;
+    const selectedFiles = Array.from(files || []).filter(Boolean);
+    const now = Date.now();
+    pruneExpiredSanitizedFileHandoffSignatures(now);
+
+    const inputExpiresAt = Number(sanitizedFileInputHandoffExpires.get(fileInput) || 0);
+    const inputMarked = sanitizedFileInputHandoffs.has(fileInput);
+    const inputActive = Boolean(inputMarked && inputExpiresAt && inputExpiresAt > now);
+    const allFilesMatch = selectedFiles.every((file) => isSanitizedFileHandoffFile(file, now));
+
+    if (inputMarked && inputExpiresAt && inputExpiresAt <= now) {
+      sanitizedFileInputHandoffs.delete(fileInput);
+      sanitizedFileInputHandoffExpires.delete(fileInput);
+      debugReveal("file-input:sanitized-handoff-expired", {
+        inputExpired: true,
+        signatureCount: 0,
+        ttlMs: SANITIZED_FILE_HANDOFF_SUPPRESS_MS
+      });
+    }
+
+    if (!selectedFiles.length) {
+      return inputActive
+        ? {
+            inputMatch: true,
+            signatureMatch: false,
+            files: []
+          }
+        : null;
+    }
+
+    if (!allFilesMatch) {
+      if (inputActive) {
+        sanitizedFileInputHandoffs.delete(fileInput);
+        sanitizedFileInputHandoffExpires.delete(fileInput);
+      }
+      return null;
+    }
+
+    return {
+      inputMatch: inputActive,
+      signatureMatch: true,
+      files: selectedFiles
+    };
+  }
+
+  function suppressSanitizedFileInputHandoffEvent(event, suppression) {
+    const fileInput = event?.target || null;
+    if (suppression.inputMatch) {
+      debugReveal("file-input:sanitized-handoff-input-match", {
+        eventType: event?.type || "",
+        input: describeFileInputForDebug(fileInput, "sanitized-file-handoff"),
+        files: suppression.files.map(describeFileForDebug)
+      });
+    }
+    if (suppression.signatureMatch) {
+      debugReveal("file-input:sanitized-handoff-signature-match", {
+        eventType: event?.type || "",
+        files: suppression.files.map(describeFileForDebug)
+      });
+    }
+    debugReveal("file-input:sanitized-handoff-suppressed", {
+      eventType: event?.type || "",
+      input: describeFileInputForDebug(fileInput, "sanitized-file-handoff"),
+      files: suppression.files.map(describeFileForDebug),
+      browser: isFirefoxRuntime() ? "firefox" : "other",
+      host: location?.hostname || ""
+    });
   }
 
   function isFirefoxProtectedFileInputEvent(event) {
@@ -3149,7 +3375,7 @@
     const target = event?.target || document.activeElement;
     if (context === "drop") {
       const fileInput = resolveFileInputForHandoff(event, null);
-      if (fileInput && handOffSanitizedFileInput(fileInput, transfer, { dispatchInput: true })) {
+      if (fileInput && handOffSanitizedFileInput(fileInput, transfer, { dispatchInput: true, markSanitized: false })) {
         return true;
       }
 
@@ -7001,15 +7227,20 @@
     const handoffOptions = options || {};
     const details = handoffOptions.details || null;
     const dispatchInputEvent = handoffOptions.dispatchInput !== false;
+    const markAsSanitized = handoffOptions.markSanitized !== false;
     const events = [];
+    const transferFiles = Array.from(transfer.files || []);
     try {
-      sanitizedFileInputHandoffs.add(fileInput);
       fileInput.files = transfer.files;
       if (details) details.inputFilesAssignmentSucceeded = true;
       if (Number(fileInput.files?.length || 0) <= 0) {
         if (details) details.failureReason = "input_files_assignment_empty";
-        sanitizedFileInputHandoffs.delete(fileInput);
         return false;
+      }
+      if (markAsSanitized) {
+        markSanitizedFileHandoff(fileInput, fileInput.files);
+      } else {
+        sanitizedFileInputHandoffs.add(fileInput);
       }
       if (isFirefoxRuntime() && isProtectedFileDropDriver(getCurrentHandoffDriverId())) {
         markFirefoxFileInputTransactionReplaced(fileInput, fileInput.files);
@@ -7055,7 +7286,7 @@
         input: describeFileInputForDebug(fileInput, "resolved"),
         files: Array.from(transfer.files || []).map(describeFileForDebug)
       });
-      sanitizedFileInputHandoffs.delete(fileInput);
+      deleteSanitizedFileHandoffMark(fileInput, transferFiles);
       try {
         fileInput.value = "";
       } catch {
@@ -8214,6 +8445,17 @@
       return;
     }
 
+    const selectedFiles = Array.from(event.target.files || []);
+    const sanitizedHandoffSuppression = getSanitizedFileInputHandoffSuppression(event.target, selectedFiles);
+    if (sanitizedHandoffSuppression) {
+      suppressSanitizedFileInputHandoffEvent(event, sanitizedHandoffSuppression);
+      return {
+        handled: true,
+        ok: true,
+        strategy: "sanitized-file-handoff-suppressed"
+      };
+    }
+
     const isFirefoxProtectedInput = isFirefoxProtectedFileInputEvent(event);
     const existingTransaction = isFirefoxProtectedInput ? getFirefoxFileInputTransaction(event.target) : null;
 
@@ -8260,7 +8502,6 @@
       return;
     }
 
-    const selectedFiles = Array.from(event.target.files || []);
     let transaction = null;
     if (isFirefoxProtectedInput) {
       transaction = setFirefoxFileInputTransaction(event.target, {
