@@ -158,7 +158,7 @@ function createEvent({
   return { event, calls };
 }
 
-function createClickEvent(target) {
+function createClickEvent(target, path = null) {
   const calls = {
     preventDefault: 0,
     stopPropagation: 0,
@@ -181,7 +181,8 @@ function createClickEvent(target) {
     stopImmediatePropagation() {
       calls.stopImmediatePropagation += 1;
       event.immediatePropagationStopped = true;
-    }
+    },
+    composedPath: Array.isArray(path) ? () => path : undefined
   };
   return { event, calls };
 }
@@ -738,6 +739,8 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "findGeminiUploadMenuButton"),
       extractFunctionSource(contentSource, "describeGeminiUploadMenuDiscovery"),
       extractFunctionSource(contentSource, "createGeminiUploadMenuEvent"),
+      extractFunctionSource(contentSource, "isGeminiFileDataInputElement"),
+      extractFunctionSource(contentSource, "findGeminiFileDataInputFromEvent"),
       extractFunctionSource(contentSource, "createGeminiFirefoxFilePickerGuard"),
       extractFunctionSource(contentSource, "openGeminiUploadMenuSafely"),
       extractFunctionSource(contentSource, "isSafeGeminiUploadFilesMenuItem"),
@@ -981,7 +984,7 @@ function createHiddenFileSelectorTrigger({ onClick = null } = {}) {
   };
 }
 
-function createClickEvent(target) {
+function createClickEvent(target, path = null) {
   const calls = {
     preventDefault: 0,
     stopPropagation: 0,
@@ -1004,7 +1007,8 @@ function createClickEvent(target) {
     stopImmediatePropagation() {
       calls.stopImmediatePropagation += 1;
       event.immediatePropagationStopped = true;
-    }
+    },
+    composedPath: Array.isArray(path) ? () => path : undefined
   };
   return { event, calls };
 }
@@ -1228,7 +1232,8 @@ function createHandoffHarness({
     setTimeout: (callback, delay = 0) => {
       const id = timeoutCallbacks.length + 1;
       timeoutCallbacks.push({ id, callback, delay });
-      if (delay === 0 || delay === 3000) callback();
+      if (delay === 0) callback();
+      if (delay === 2500 || delay === 3000) Promise.resolve().then(callback);
       return id;
     },
     clearTimeout: (id) => {
@@ -1351,6 +1356,8 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "findGeminiUploadMenuButton"),
       extractFunctionSource(contentSource, "describeGeminiUploadMenuDiscovery"),
       extractFunctionSource(contentSource, "createGeminiUploadMenuEvent"),
+      extractFunctionSource(contentSource, "isGeminiFileDataInputElement"),
+      extractFunctionSource(contentSource, "findGeminiFileDataInputFromEvent"),
       extractFunctionSource(contentSource, "createGeminiFirefoxFilePickerGuard"),
       extractFunctionSource(contentSource, "openGeminiUploadMenuSafely"),
       extractFunctionSource(contentSource, "isSafeGeminiUploadFilesMenuItem"),
@@ -5653,6 +5660,146 @@ async function testFirefoxGeminiFileInputBridgeUsesAlreadyOpenUploadMenu() {
   );
 }
 
+async function testFirefoxGeminiFileInputBridgeCapturesDelayedFiledataAfterOpeningMenu() {
+  const rawSecret = "LeakGuardDropApiKey1234567890";
+  const sanitizedFile = {
+    name: "delayed-closed-menu.env",
+    type: "text/plain",
+    size: 18,
+    text: "API_KEY=[PWM_1]"
+  };
+  const rawFile = {
+    name: "delayed-closed-menu.env",
+    type: "text/plain",
+    size: 42,
+    text: `API_KEY=${rawSecret}`
+  };
+  const fileInputs = [];
+  const overlayItems = [];
+  let harness;
+  let pickerClick;
+  let delayedInput;
+  const uploadFilesMenuItem = createOverlayItem({
+    dataTestId: "local-images-files-uploader-button",
+    onClick: () => {
+      const input = createFileInput({ source: "light-dom", name: "Filedata", multiple: true });
+      input.click = () => {
+        throw new Error("Firefox Gemini bridge must not call input.click()");
+      };
+      input.showPicker = () => {
+        throw new Error("Firefox Gemini bridge must not call input.showPicker()");
+      };
+      delayedInput = input;
+      const retarget = { nodeType: 1, tagName: "DIV" };
+      pickerClick = createClickEvent(retarget, [retarget, input]);
+      Promise.resolve().then(() => {
+        for (const handler of [...harness.windowClickHandlers, ...harness.clickHandlers]) {
+          handler(pickerClick.event);
+        }
+      });
+    }
+  });
+  const uploadTrigger = createUploadTrigger({
+    ariaLabel: "Open upload file menu",
+    className: "upload-card-button open",
+    onClick: () => {
+      if (!overlayItems.length) overlayItems.push(uploadFilesMenuItem);
+    }
+  });
+  harness = createHandoffHarness({
+    userAgent: "Firefox",
+    fileInputs,
+    uploadTriggers: [uploadTrigger],
+    overlayItems
+  });
+  const event = {
+    type: "drop",
+    target: { nodeType: 1, tagName: "DIV", dispatchEvent: () => true },
+    dataTransfer: createDataTransfer({ files: [rawFile] })
+  };
+
+  const result = await harness.tryFirefoxGeminiFileInputBridge(
+    { sanitizedFile, redactedText: sanitizedFile.text },
+    { event, input: null }
+  );
+
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(pickerClick.event.defaultPrevented, true);
+  assert.strictEqual(pickerClick.event.immediatePropagationStopped, true);
+  assert.strictEqual(delayedInput.name, "Filedata");
+  assert.strictEqual(delayedInput.files[0], sanitizedFile);
+  assert.notStrictEqual(delayedInput.files[0], rawFile);
+  assert.strictEqual(JSON.stringify(delayedInput.files).includes(rawSecret), false);
+  assert.ok(
+    harness.debugEvents.some(
+      (entry) =>
+        entry.label === "file-handoff:gemini-firefox-file-input-bridge-assigned" &&
+        entry.payload?.inputFound === true
+    ),
+    "expected delayed Filedata capture to assign sanitized file"
+  );
+}
+
+async function testFirefoxGeminiFileInputBridgeCapturesDelayedFiledataFromAlreadyOpenMenu() {
+  const sanitizedFile = {
+    name: "delayed-open-menu.env",
+    type: "text/plain",
+    size: 18,
+    text: "API_KEY=[PWM_1]"
+  };
+  const fileInputs = [];
+  let harness;
+  let pickerClick;
+  let delayedInput;
+  const uploadFilesMenuItem = createOverlayItem({
+    dataTestId: "local-images-files-uploader-button",
+    onClick: () => {
+      const input = createFileInput({ source: "light-dom", name: "Filedata", multiple: true });
+      delayedInput = input;
+      const retarget = { nodeType: 1, tagName: "DIV" };
+      pickerClick = createClickEvent(retarget, [retarget, input]);
+      Promise.resolve().then(() => {
+        for (const handler of [...harness.windowClickHandlers, ...harness.clickHandlers]) {
+          handler(pickerClick.event);
+        }
+      });
+    }
+  });
+  const closeMenuButton = createUploadTrigger({
+    ariaLabel: "Close upload file menu",
+    className: "upload-card-button close",
+    onClick: () => {
+      throw new Error("already-open delayed flow must not click the close button");
+    }
+  });
+  harness = createHandoffHarness({
+    userAgent: "Firefox",
+    fileInputs,
+    uploadTriggers: [closeMenuButton],
+    overlayItems: [uploadFilesMenuItem]
+  });
+  const event = {
+    type: "drop",
+    target: { nodeType: 1, tagName: "DIV", dispatchEvent: () => true },
+    dataTransfer: createDataTransfer()
+  };
+
+  const result = await harness.tryFirefoxGeminiFileInputBridge(
+    { sanitizedFile, redactedText: sanitizedFile.text },
+    { event, input: null }
+  );
+
+  assert.strictEqual(result.ok, true);
+  assert.deepStrictEqual(closeMenuButton.events, []);
+  assert.strictEqual(pickerClick.event.defaultPrevented, true);
+  assert.strictEqual(pickerClick.event.immediatePropagationStopped, true);
+  assert.strictEqual(delayedInput.files[0], sanitizedFile);
+  assert.ok(
+    harness.listenerEvents.some((entry) => entry.action === "add" && entry.type === "click" && entry.capture),
+    "expected capture-phase click guard to remain active for delayed input"
+  );
+}
+
 async function testFirefoxGeminiFileInputBridgeRejectsNonUploadOverlayItems() {
   const sanitizedFile = {
     name: "non-upload-menu.env",
@@ -5991,11 +6138,11 @@ async function testFirefoxGeminiFileInputBridgeMissingInputFailsClosed() {
   assert.strictEqual(event.defaultPrevented, true);
   assert.deepStrictEqual(composer.dispatched, []);
   assert.strictEqual(calls.handoffs.length, 1);
-  assert.strictEqual(calls.textFallbacks.length, 0);
+  assert.strictEqual(calls.textFallbacks.length, 1);
   assert.strictEqual(composer.text.includes(rawSecret), false);
-  assert.strictEqual(composer.text, "");
+  assert.ok(composer.text.includes("[PWM_"));
   assert.ok(
-    calls.modals.some(
+    !calls.modals.some(
       ([title, message]) =>
         title === "Raw file upload blocked" &&
         message === "LeakGuard blocked the raw file drop. Could not locate Gemini upload input. Please use the upload button or retry."
@@ -6004,15 +6151,11 @@ async function testFirefoxGeminiFileInputBridgeMissingInputFailsClosed() {
   assert.ok(
     calls.debugEvents.some(
       (entry) =>
-        entry.label === "file-handoff:gemini-firefox-file-input-bridge-input-not-found" &&
+        entry.label === "file-handoff:gemini-firefox-file-input-bridge-text-fallback-success" &&
         entry.details?.mode === "file-input-bridge" &&
-        entry.details?.inputFound === false &&
-        entry.details?.bridgeUi?.overlayItemFoundBeforeMenuOpen === false &&
-        entry.details?.bridgeUi?.uploadFilesMenuItemClicked === false &&
-        entry.details?.uploadMenu?.candidateCount === 0 &&
-        entry.details?.overlay?.overlayItemCount === 0
+        entry.details?.inputFound === false
     ),
-    "expected Firefox Gemini bridge fail-closed diagnostics without raw file content"
+    "expected Firefox Gemini bridge text fallback diagnostics without raw file content"
   );
   assert.strictEqual(JSON.stringify(calls.debugEvents).includes(rawSecret), false);
 }
@@ -7319,6 +7462,8 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testFirefoxGeminiFileInputBridgeUsesUploadCardButtonFallback();
   await testFirefoxGeminiFileInputBridgeUsesSourceUploadIconFallback();
   await testFirefoxGeminiFileInputBridgeUsesAlreadyOpenUploadMenu();
+  await testFirefoxGeminiFileInputBridgeCapturesDelayedFiledataAfterOpeningMenu();
+  await testFirefoxGeminiFileInputBridgeCapturesDelayedFiledataFromAlreadyOpenMenu();
   await testFirefoxGeminiFileInputBridgeRejectsNonUploadOverlayItems();
   await testFirefoxGeminiFileInputBridgeAllowsHiddenSelectorAndCapturesFiledataInput();
   await testFirefoxGeminiFileInputBridgeRejectsUnsafeUploadButtons();
