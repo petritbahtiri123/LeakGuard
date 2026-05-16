@@ -742,6 +742,8 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "createGeminiUploadMenuEvent"),
       extractFunctionSource(contentSource, "isGeminiFileDataInputElement"),
       extractFunctionSource(contentSource, "findGeminiFileDataInputFromEvent"),
+      extractFunctionSource(contentSource, "findGeminiFileDataInputInNode"),
+      extractFunctionSource(contentSource, "findGeminiFileDataInputInMutations"),
       extractFunctionSource(contentSource, "createGeminiFirefoxFilePickerGuard"),
       extractFunctionSource(contentSource, "openGeminiUploadMenuSafely"),
       extractFunctionSource(contentSource, "isSafeGeminiUploadFilesMenuItem"),
@@ -1089,8 +1091,8 @@ function createHandoffHarness({
       this.disconnected = true;
     }
 
-    trigger() {
-      this.callback([]);
+    trigger(mutations = []) {
+      this.callback(mutations);
     }
   }
 
@@ -1361,6 +1363,8 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "createGeminiUploadMenuEvent"),
       extractFunctionSource(contentSource, "isGeminiFileDataInputElement"),
       extractFunctionSource(contentSource, "findGeminiFileDataInputFromEvent"),
+      extractFunctionSource(contentSource, "findGeminiFileDataInputInNode"),
+      extractFunctionSource(contentSource, "findGeminiFileDataInputInMutations"),
       extractFunctionSource(contentSource, "createGeminiFirefoxFilePickerGuard"),
       extractFunctionSource(contentSource, "openGeminiUploadMenuSafely"),
       extractFunctionSource(contentSource, "isSafeGeminiUploadFilesMenuItem"),
@@ -5941,6 +5945,59 @@ async function testFirefoxGeminiPrimeCapturesDelayedFiledataBeforeSanitizedAssig
   assert.deepStrictEqual(delayedInput.events, ["input", "change"]);
 }
 
+async function testFirefoxGeminiPrimeCapturesTransientMutationFiledataInput() {
+  const sanitizedFile = {
+    name: "prime-mutation.env",
+    type: "text/plain",
+    size: 15,
+    text: "API_KEY=[PWM_1]"
+  };
+  const fileInputs = [];
+  let harness;
+  let transientInput;
+  const uploadFilesMenuItem = createOverlayItem({
+    dataTestId: "local-images-files-uploader-button",
+    onClick: () => {
+      transientInput = createFileInput({ source: "hidden", name: "Filedata", multiple: true });
+      Promise.resolve().then(() => {
+        const observer = harness.observers.find((candidate) => !candidate.disconnected);
+        assert.ok(observer, "expected priming MutationObserver to remain active after Upload files click");
+        observer.trigger([{ addedNodes: [transientInput], target: { nodeType: 1, tagName: "DIV" } }]);
+      });
+    }
+  });
+  const closeMenuButton = createUploadTrigger({
+    ariaLabel: "Close upload file menu",
+    className: "upload-card-button close",
+    onClick: () => {
+      throw new Error("priming must not click close while menu is already open");
+    }
+  });
+  harness = createHandoffHarness({
+    userAgent: "Firefox",
+    fileInputs,
+    uploadTriggers: [closeMenuButton],
+    overlayItems: [uploadFilesMenuItem]
+  });
+  const event = {
+    type: "drop",
+    target: { nodeType: 1, tagName: "DIV", dispatchEvent: () => true },
+    dataTransfer: createDataTransfer()
+  };
+
+  const prime = harness.primeGeminiFirefoxUploadTarget(event, null);
+  const capturedInput = await prime.inputPromise;
+
+  assert.strictEqual(capturedInput, transientInput);
+  assert.deepStrictEqual(Array.from(transientInput.files || []), []);
+
+  const result = await harness.handOffPrimedGeminiFirefoxUploadTarget(prime, sanitizedFile);
+
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(transientInput.files[0], sanitizedFile);
+  assert.deepStrictEqual(transientInput.events, ["input", "change"]);
+}
+
 async function testFirefoxGeminiFileInputBridgeUsesUploadFilesTextOverlayItem() {
   const sanitizedFile = {
     name: "text-overlay.env",
@@ -7773,6 +7830,7 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testFirefoxGeminiFileInputBridgeCapturesDelayedFiledataAfterOpeningMenu();
   await testFirefoxGeminiFileInputBridgeCapturesDelayedFiledataFromAlreadyOpenMenu();
   await testFirefoxGeminiPrimeCapturesDelayedFiledataBeforeSanitizedAssignment();
+  await testFirefoxGeminiPrimeCapturesTransientMutationFiledataInput();
   await testFirefoxGeminiFileInputBridgeUsesUploadFilesTextOverlayItem();
   await testFirefoxGeminiFileInputBridgeRejectsNonUploadOverlayItems();
   await testFirefoxGeminiFileInputBridgeAllowsHiddenSelectorAndCapturesFiledataInput();

@@ -4227,6 +4227,47 @@
     return candidates.find(isGeminiFileDataInputElement) || null;
   }
 
+  function findGeminiFileDataInputInNode(node) {
+    if (isGeminiFileDataInputElement(node)) return node;
+    const roots = [];
+    if (node?.querySelector || node?.querySelectorAll) roots.push(node);
+    if (node?.shadowRoot) roots.push(node.shadowRoot);
+    for (const root of roots) {
+      try {
+        const exact = root.querySelector?.('input[type="file"][name="Filedata"]');
+        if (isGeminiFileDataInputElement(exact)) return exact;
+      } catch {
+        // Keep scanning best-effort.
+      }
+      try {
+        const multiple = root.querySelector?.('input[type="file"][multiple]');
+        if (isGeminiFileDataInputElement(multiple)) return multiple;
+      } catch {
+        // Keep scanning best-effort.
+      }
+      try {
+        const inputs = Array.from(root.querySelectorAll?.('input[type="file"]') || []);
+        const match = inputs.find(isGeminiFileDataInputElement);
+        if (match) return match;
+      } catch {
+        // Keep scanning best-effort.
+      }
+    }
+    return null;
+  }
+
+  function findGeminiFileDataInputInMutations(mutations) {
+    for (const mutation of Array.from(mutations || [])) {
+      for (const node of Array.from(mutation?.addedNodes || [])) {
+        const input = findGeminiFileDataInputInNode(node);
+        if (input) return input;
+      }
+      const input = findGeminiFileDataInputInNode(mutation?.target);
+      if (input) return input;
+    }
+    return null;
+  }
+
   function createGeminiFirefoxFilePickerGuard() {
     let capturedInput = null;
     const registrations = [];
@@ -4466,9 +4507,11 @@
       let settled = false;
       let observer = null;
       let timeoutId = 0;
-      const finish = (reason = "") => {
+      const finish = (reason = "", directInput = null) => {
         if (settled) return;
-        result = findGeminiFileInput(event, input);
+        result = directInput
+          ? { discovery: result.discovery || {}, fileInput: directInput }
+          : findGeminiFileInput(event, input);
         if (!result.fileInput && !reason) return;
         settled = true;
         if (observer) {
@@ -4501,7 +4544,7 @@
       };
 
       try {
-        observer = new MutationObserver(() => finish());
+        observer = new MutationObserver((mutations) => finish("", findGeminiFileDataInputInMutations(mutations)));
         observer.observe(document.body || document.documentElement || document, {
           childList: true,
           subtree: true
