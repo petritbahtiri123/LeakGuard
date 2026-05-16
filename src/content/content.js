@@ -40,8 +40,18 @@
   } = FilePasteHelpers || {};
   const StreamingFileRedactor = globalThis.PWM?.StreamingFileRedactor || {};
 
+  const CHATGPT_COMPOSER_SELECTORS = [
+    "#prompt-textarea",
+    "[data-testid='prompt-textarea']",
+    "[contenteditable='true'][data-testid='prompt-textarea']",
+    "[contenteditable='true'][role='textbox']",
+    "textarea[data-testid='prompt-textarea']",
+    "main form [contenteditable='true']",
+    "form [contenteditable='true']"
+  ];
   const COMPOSER_SELECTORS = [
     "#prompt-textarea",
+    "[data-testid='prompt-textarea']",
     "textarea[data-testid='prompt-textarea']",
     "textarea[placeholder*='Message' i]",
     "main form textarea",
@@ -59,7 +69,10 @@
     "[contenteditable='true'][role='textbox'][data-testid*='prompt']",
     "[contenteditable]:not([contenteditable='false'])[data-testid*='prompt']",
     "[contenteditable='true'][role='textbox'][aria-label*='message' i]",
+    "[contenteditable='true'][role='textbox']",
     "[contenteditable]:not([contenteditable='false'])[role='textbox']",
+    "main form [contenteditable='true']",
+    "form [contenteditable='true']",
     "main form [contenteditable='true'][role='textbox']",
     "form [contenteditable='true'][role='textbox']",
     "main [contenteditable='true'][role='textbox']",
@@ -150,6 +163,8 @@
   const PROGRAMMATIC_INPUT_SUPPRESS_MS = 500;
   const CHATGPT_LARGE_PASTE_FILE_THRESHOLD = 16 * 1024;
   const CHATGPT_SANITIZED_PASTE_FILE_NAME = "leakguard-redacted-paste.txt";
+  const CHATGPT_SYNC_EVENT_DATA_MAX_CHARS = 256 * 1024;
+  const CHATGPT_SYNC_VERIFY_DELAY_MS = 80;
   const GEMINI_DIRECT_TEXT_INSERT_THRESHOLD = 8 * 1024;
   const GEMINI_AUTO_INSERT_TEXT_LIMIT = 256 * 1024;
   const GEMINI_LARGE_TEXT_SUPPRESS_MS = 2500;
@@ -323,6 +338,102 @@
     console.groupCollapsed(`[PWM] ${label}`);
     console.log(payload);
     console.groupEnd();
+  }
+
+  function getSafeElementAttribute(el, name) {
+    try {
+      return String(el?.getAttribute?.(name) || "");
+    } catch {
+      return "";
+    }
+  }
+
+  function countDebugPlaceholders(text) {
+    return (String(text || "").match(/\[[A-Z_]+_\d+\]/g) || []).length;
+  }
+
+  function getDebugTextLength(value) {
+    return normalizeComposerText(value || "").length;
+  }
+
+  function getChatGptSendButtonDebugState(input) {
+    if (typeof Element === "undefined") return null;
+    try {
+      const button = findSendButton(input);
+      if (!button) {
+        return {
+          found: false,
+          enabled: null
+        };
+      }
+      const disabled = Boolean(
+        button.disabled ||
+          button.getAttribute?.("disabled") != null ||
+          button.getAttribute?.("aria-disabled") === "true"
+      );
+      return {
+        found: true,
+        enabled: !disabled
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  function getChatGptComposerSyncDebug(input, expectedText = "", actualText = null) {
+    const actual = actualText == null ? getInputText(input) : normalizeComposerText(actualText);
+    const innerText = normalizeComposerText(input?.innerText || "");
+    const textContent = normalizeComposerText(input?.textContent || "");
+    let selection = null;
+    try {
+      selection = getSelectionOffsets(input);
+    } catch {
+      selection = null;
+    }
+    let className = "";
+    try {
+      className =
+        typeof input?.className === "string"
+          ? input.className
+          : getSafeElementAttribute(input, "class");
+    } catch {
+      className = "";
+    }
+
+    return {
+      host: location?.hostname || "",
+      input: {
+        tag: input?.tagName || "",
+        role: getSafeElementAttribute(input, "role") || input?.role || "",
+        contenteditable: getSafeElementAttribute(input, "contenteditable"),
+        dataTestId: getSafeElementAttribute(input, "data-testid"),
+        id: input?.id || getSafeElementAttribute(input, "id"),
+        classSnippet: className.slice(0, 96)
+      },
+      expectedLength: getDebugTextLength(expectedText),
+      actualLength: getDebugTextLength(actual),
+      innerTextLength: getDebugTextLength(innerText),
+      textContentLength: getDebugTextLength(textContent),
+      placeholderCount: countDebugPlaceholders(actual || expectedText),
+      expectedPlaceholderCount: countDebugPlaceholders(expectedText),
+      actualPlaceholderCount: countDebugPlaceholders(actual),
+      selection:
+        selection && Number.isFinite(Number(selection.start)) && Number.isFinite(Number(selection.end))
+          ? {
+              start: Number(selection.start),
+              end: Number(selection.end)
+            }
+          : null,
+      sendButton: getChatGptSendButtonDebugState(input)
+    };
+  }
+
+  function debugChatGptSync(label, input, expectedText = "", actualText = null, extra = {}) {
+    if (!isChatGptHost()) return;
+    debugReveal(label, {
+      ...getChatGptComposerSyncDebug(input, expectedText, actualText),
+      ...(extra || {})
+    });
   }
 
   function collectFailureDetails(input, expectedText, actualText, context) {
@@ -2151,6 +2262,12 @@
       if (active) candidates.push(active);
     }
 
+    if (isChatGptHost()) {
+      for (const selector of CHATGPT_COMPOSER_SELECTORS) {
+        document.querySelectorAll(selector).forEach((el) => candidates.push(el));
+      }
+    }
+
     for (const selector of COMPOSER_SELECTORS) {
       document.querySelectorAll(selector).forEach((el) => candidates.push(el));
     }
@@ -2711,8 +2828,275 @@
     );
   }
 
+  function focusChatGptComposer(input) {
+    if (!input || typeof input.focus !== "function") return;
+    try {
+      input.focus({ preventScroll: true });
+    } catch {
+      try {
+        input.focus();
+      } catch {
+        // Focus is a sync hint only.
+      }
+    }
+  }
+
+  function placeChatGptCaretAtEnd(input) {
+    if (!input) return;
+    try {
+      if (isTextArea(input) && typeof input.setSelectionRange === "function") {
+        const textLength = getInputText(input).length;
+        input.setSelectionRange(textLength, textLength);
+        return;
+      }
+    } catch {
+      // Best-effort only.
+    }
+
+    if (!isContentEditable(input) || typeof window?.getSelection !== "function") return;
+    try {
+      const selection = window.getSelection();
+      const range = document.createRange?.();
+      if (!selection || !range) return;
+      range.selectNodeContents(input);
+      range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    } catch {
+      // Selection APIs can be blocked by host-controlled DOM.
+    }
+  }
+
+  function dispatchChatGptComposerInputEvent(input, inputType, data) {
+    if (!input?.dispatchEvent) return false;
+    const safeData =
+      typeof data === "string" && data.length <= CHATGPT_SYNC_EVENT_DATA_MAX_CHARS
+        ? data
+        : null;
+    let event = null;
+    try {
+      event = new InputEvent("input", {
+        bubbles: true,
+        composed: true,
+        inputType,
+        data: safeData
+      });
+    } catch {
+      event = new Event("input", { bubbles: true, composed: true });
+    }
+    try {
+      input.dispatchEvent(event);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function dispatchChatGptComposerBeforeInput(input, inputType, data) {
+    if (!input?.dispatchEvent) return false;
+    const safeData =
+      typeof data === "string" && data.length <= CHATGPT_SYNC_EVENT_DATA_MAX_CHARS
+        ? data
+        : null;
+    let event = null;
+    try {
+      event = new InputEvent("beforeinput", {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        inputType,
+        data: safeData
+      });
+    } catch {
+      event = new Event("beforeinput", { bubbles: true, cancelable: true, composed: true });
+    }
+    try {
+      input.dispatchEvent(event);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function dispatchChatGptComposerChange(input) {
+    if (!input?.dispatchEvent) return false;
+    try {
+      input.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function nudgeChatGptComposerState(input, expectedText, strategy) {
+    focusChatGptComposer(input);
+    placeChatGptCaretAtEnd(input);
+    try {
+      document.dispatchEvent?.(new Event("selectionchange", { bubbles: true }));
+    } catch {
+      // Host may not expose document-level dispatch.
+    }
+    debugChatGptSync("chatgpt-sync:react-state-nudge", input, expectedText, null, {
+      strategy
+    });
+  }
+
+  async function waitForChatGptComposerVerification() {
+    await new Promise((resolve) => window.setTimeout(resolve, CHATGPT_SYNC_VERIFY_DELAY_MS));
+  }
+
+  function tryChatGptExecCommandWrite(input, writeText, options = {}) {
+    if (!isContentEditable(input)) return false;
+    if (writeText.length > CHATGPT_SYNC_EVENT_DATA_MAX_CHARS) return false;
+    if (typeof document?.execCommand !== "function") return false;
+
+    focusChatGptComposer(input);
+    dispatchChatGptComposerBeforeInput(input, "insertReplacementText", writeText);
+
+    let selected = false;
+    try {
+      selected = Boolean(document.execCommand("selectAll", false, null));
+    } catch {
+      selected = false;
+    }
+    if (!selected) return false;
+
+    let inserted = false;
+    try {
+      inserted = Boolean(document.execCommand("insertText", false, writeText));
+    } catch {
+      inserted = false;
+    }
+    if (!inserted) return false;
+
+    if (Number.isFinite(options.caretOffset)) {
+      placeChatGptCaretAtEnd(input);
+    } else {
+      placeChatGptCaretAtEnd(input);
+    }
+    dispatchChatGptComposerInputEvent(input, "insertReplacementText", writeText);
+    dispatchChatGptComposerChange(input);
+    return true;
+  }
+
+  function tryChatGptDirectWrite(input, writeText, options = {}) {
+    suppressFollowupInputScan(options.suppressMs || PROGRAMMATIC_INPUT_SUPPRESS_MS);
+    focusChatGptComposer(input);
+    const written = setInputTextDirect(input, writeText, {
+      caretOffset: options.caretOffset
+    });
+    if (!written) return false;
+    dispatchChatGptComposerInputEvent(input, "insertReplacementText", null);
+    dispatchChatGptComposerChange(input);
+    return true;
+  }
+
+  function tryChatGptComposerHelperWrite(input, writeText, options = {}) {
+    suppressFollowupInputScan(options.suppressMs || PROGRAMMATIC_INPUT_SUPPRESS_MS);
+    focusChatGptComposer(input);
+    setInputText(input, writeText, {
+      caretOffset: options.caretOffset
+    });
+    return true;
+  }
+
+  async function runChatGptSyncedWriteAttempt(input, plan, options, strategy) {
+    const expected = plan.canonical;
+    const writeText = plan.writeText;
+    debugChatGptSync("chatgpt-sync:write-plan", input, expected, null, {
+      strategy,
+      eventData: writeText.length <= CHATGPT_SYNC_EVENT_DATA_MAX_CHARS ? "included" : "omitted"
+    });
+
+    suppressFollowupInputScan(options.suppressMs || PROGRAMMATIC_INPUT_SUPPRESS_MS);
+    let writeAccepted = false;
+    if (strategy === "exec-command") {
+      writeAccepted = tryChatGptExecCommandWrite(input, writeText, options);
+    } else if (strategy === "composer-helper") {
+      writeAccepted = tryChatGptComposerHelperWrite(input, writeText, options);
+    } else {
+      writeAccepted = tryChatGptDirectWrite(input, writeText, options);
+    }
+
+    const actualAfterWrite = getInputText(input);
+    debugChatGptSync("chatgpt-sync:after-write", input, expected, actualAfterWrite, {
+      strategy,
+      writeAccepted
+    });
+    nudgeChatGptComposerState(input, expected, strategy);
+    await waitForChatGptComposerVerification();
+    const actual = await readStableComposerText(input, 2);
+    if (writeAccepted && matchesComposerPlan(plan, actual)) {
+      debugChatGptSync("chatgpt-sync:verification-pass", input, expected, actual, {
+        strategy
+      });
+      return {
+        ok: true,
+        actual,
+        strategy: `chatgpt-${strategy}`
+      };
+    }
+
+    debugChatGptSync("chatgpt-sync:verification-failed", input, expected, actual, {
+      strategy,
+      writeAccepted
+    });
+    return {
+      ok: false,
+      actual,
+      strategy: `chatgpt-${strategy}`
+    };
+  }
+
+  async function applyChatGptSyncedComposerText(input, expectedText, options = {}) {
+    if (!isChatGptHost()) {
+      return { ok: false, actual: getInputText(input), strategy: "not-chatgpt" };
+    }
+    const plan = buildComposerWritePlan(input, expectedText);
+    debugChatGptSync("chatgpt-sync:before-write", input, plan.canonical, null, {
+      context: options.context || ""
+    });
+
+    const writeText = plan.writeText;
+    const attempts =
+      isContentEditable(input) && writeText.length <= CHATGPT_SYNC_EVENT_DATA_MAX_CHARS
+        ? ["exec-command", "direct-dom"]
+        : writeText.length <= CHATGPT_SYNC_EVENT_DATA_MAX_CHARS
+          ? ["direct-dom", "composer-helper"]
+          : ["direct-dom"];
+
+    let lastResult = {
+      ok: false,
+      actual: getInputText(input),
+      strategy: "not-attempted"
+    };
+    for (const strategy of attempts) {
+      lastResult = await runChatGptSyncedWriteAttempt(input, plan, options, strategy);
+      if (lastResult.ok) {
+        return lastResult;
+      }
+    }
+
+    if (typeof options.restoreText === "string") {
+      tryChatGptDirectWrite(input, normalizeComposerText(options.restoreText), {
+        caretOffset: options.restoreCaretOffset,
+        suppressMs: options.suppressMs
+      });
+      await readStableComposerText(input, 2);
+    }
+
+    return lastResult;
+  }
+
   async function applyComposerText(input, expectedText, options) {
     options = options || {};
+    if (typeof isChatGptHost === "function" && isChatGptHost()) {
+      return applyChatGptSyncedComposerText(input, expectedText, {
+        ...options,
+        context: options.context || "composer-rewrite"
+      });
+    }
+
     const plan = buildComposerWritePlan(input, expectedText);
     const expected = plan.canonical;
     const writeText = plan.writeText;
@@ -3822,22 +4206,51 @@
   }
 
   async function applyChatGptLargePasteTextFallback(input, originalText, selection, redactedText) {
-    if (!input || typeof setInputTextDirect !== "function") return false;
-
-    const next = spliceSelectionText(originalText, selection, String(redactedText || ""));
-    const plan = buildComposerWritePlan(input, next.text);
-
-    suppressFollowupInputScan(GEMINI_LARGE_TEXT_SUPPRESS_MS);
-    if (!setInputTextDirect(input, plan.writeText, { caretOffset: next.caretOffset })) {
+    if (!input || typeof setInputTextDirect !== "function") {
+      debugReveal("chatgpt-large-paste:text-fallback-failed", {
+        host: location?.hostname || "",
+        reason: "missing_input_or_writer"
+      });
       return false;
     }
 
-    const actual = await readStableComposerText(input);
-    if (matchesComposerPlan(plan, actual)) {
+    const next = spliceSelectionText(originalText, selection, String(redactedText || ""));
+    debugReveal("chatgpt-large-paste:text-fallback-start", {
+      host: location?.hostname || "",
+      expectedLength: normalizeComposerText(next.text).length,
+      placeholderCount: countDebugPlaceholders(next.text),
+      selection: {
+        start: Number(selection?.start ?? 0),
+        end: Number(selection?.end ?? 0)
+      }
+    });
+    const applied = await applyChatGptSyncedComposerText(input, next.text, {
+      context: "large-paste-text-fallback",
+      caretOffset: next.caretOffset,
+      restoreText: originalText,
+      restoreCaretOffset: selection?.end,
+      suppressMs: GEMINI_LARGE_TEXT_SUPPRESS_MS
+    });
+
+    if (applied.ok) {
+      debugReveal("chatgpt-large-paste:text-fallback-success", {
+        host: location?.hostname || "",
+        expectedLength: normalizeComposerText(next.text).length,
+        actualLength: normalizeComposerText(applied.actual).length,
+        placeholderCount: countDebugPlaceholders(applied.actual),
+        strategy: applied.strategy
+      });
       return true;
     }
 
-    await showRewriteFailure("paste", collectFailureDetails(input, next.text, actual, "paste"));
+    debugReveal("chatgpt-large-paste:text-fallback-failed", {
+      host: location?.hostname || "",
+      expectedLength: normalizeComposerText(next.text).length,
+      actualLength: normalizeComposerText(applied.actual).length,
+      placeholderCount: countDebugPlaceholders(applied.actual),
+      strategy: applied.strategy
+    });
+    await showRewriteFailure("paste", collectFailureDetails(input, next.text, applied.actual, "paste"));
     refreshBadgeFromCurrentInput();
     return false;
   }
@@ -3875,7 +4288,19 @@
         file: describeFileForDebug(sanitizedFile)
       });
 
+      debugReveal("chatgpt-large-paste:file-handoff-attempt", {
+        host: location?.hostname || "",
+        redactedLength: redactedText.length,
+        placeholderCount: countDebugPlaceholders(redactedText),
+        file: describeFileForDebug(sanitizedFile)
+      });
       if (sanitizedFile && (await handOffSanitizedLocalFile(event, input, sanitizedFile, "paste"))) {
+        debugReveal("chatgpt-large-paste:file-handoff-success", {
+          host: location?.hostname || "",
+          redactedLength: redactedText.length,
+          placeholderCount: countDebugPlaceholders(redactedText),
+          file: describeFileForDebug(sanitizedFile)
+        });
         if (optimizedStatus) {
           clearLocalPayloadOptimizationStatus(sizeInfo, "complete");
         }
@@ -3884,11 +4309,14 @@
         refreshBadgeFromCurrentInput();
         return true;
       }
+      debugReveal("chatgpt-large-paste:file-handoff-failed", {
+        host: location?.hostname || "",
+        redactedLength: redactedText.length,
+        placeholderCount: countDebugPlaceholders(redactedText),
+        file: describeFileForDebug(sanitizedFile)
+      });
 
       if (await applyChatGptLargePasteTextFallback(input, originalText, selection, redactedText)) {
-        debugReveal("chatgpt-large-paste:text-fallback-success", {
-          redactedLength: redactedText.length
-        });
         if (optimizedStatus) {
           clearLocalPayloadOptimizationStatus(sizeInfo, "complete");
         }
@@ -8961,9 +9389,8 @@
           );
         }
 
-        const fallbackText = isGeminiHost() ? await readSanitizedFileTextForFallback(streamResult.sanitizedFile) : "";
         const driver = getCurrentHandoffDriver();
-        const payload = driver.preparePayload(streamResult.sanitizedFile, fallbackText, {
+        const payload = driver.preparePayload(streamResult.sanitizedFile, "", {
           localFile: localFile.sourceFile || localFile.file,
           analysis: null,
           result: null

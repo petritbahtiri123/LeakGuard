@@ -94,6 +94,7 @@
 
 - In Firefox on ChatGPT, upload unsupported files such as PDF, DOCX, image, archive, executable, binary, and invalid UTF-8 text files; confirm LeakGuard shows only a non-blocking warning that the file was not scanned/redacted and normal site upload continues.
 - In Firefox on ChatGPT, confirm unsupported and invalid UTF-8 uploads do not show `Local file not attached`, do not claim sanitization, and do not block native upload by default.
+- If Firefox ChatGPT login is blocked by account Advanced Security, mark Firefox ChatGPT as limited manual coverage and rely on Chrome live QA plus automated ChatGPT DOM/state tests for release gating.
 - In Firefox on Gemini, drag and drop a supported UTF-8 text file and confirm LeakGuard scans/redacts locally, then hands off a sanitized file or inserts sanitized text without leaking raw content.
 - In Firefox on ChatGPT, Grok, Gemini, Perplexity, and one user-managed protected site, drag and drop a supported UTF-8 text file and confirm either sanitized file handoff or sanitized text insertion succeeds without raw secrets.
 - In Chrome on Gemini, drag and drop supported UTF-8 text/config/code files at small size, 5 MB, 25 MB, and exactly 50 MiB; confirm LeakGuard redacts locally and Gemini receives only sanitized content.

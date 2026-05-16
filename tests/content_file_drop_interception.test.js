@@ -445,6 +445,71 @@ function createGeminiEditor(initialText = "") {
   return { editor, child };
 }
 
+function createChatGptContentEditableComposer(initialText = "") {
+  const events = [];
+  const composer = {
+    nodeType: 1,
+    tagName: "DIV",
+    id: "prompt-textarea",
+    className: "ProseMirror",
+    isContentEditable: true,
+    text: initialText,
+    selection: { start: initialText.length, end: initialText.length },
+    focusCalls: 0,
+    events,
+    focus() {
+      this.focusCalls += 1;
+    },
+    getAttribute(name) {
+      if (name === "contenteditable") return "true";
+      if (name === "data-testid") return "prompt-textarea";
+      if (name === "role") return "textbox";
+      if (name === "id") return this.id;
+      if (name === "class") return this.className;
+      return "";
+    },
+    closest(selector) {
+      if (
+        selector === "form" ||
+        selector === "main" ||
+        selector === "[contenteditable='true']" ||
+        selector === '[contenteditable="true"]'
+      ) {
+        return null;
+      }
+      return null;
+    },
+    contains(node) {
+      return node === this;
+    },
+    dispatchEvent(event) {
+      events.push({
+        type: event.type,
+        inputType: event.inputType || "",
+        dataLength: typeof event.data === "string" ? event.data.length : null
+      });
+      return true;
+    }
+  };
+  Object.defineProperty(composer, "innerText", {
+    get() {
+      return this.text;
+    },
+    set(value) {
+      this.text = String(value || "");
+    }
+  });
+  Object.defineProperty(composer, "textContent", {
+    get() {
+      return this.text;
+    },
+    set(value) {
+      this.text = String(value || "");
+    }
+  });
+  return composer;
+}
+
 function createTextFile({ name = "secrets.env", type = "text/plain", text }) {
   const input = String(text || "");
   return {
@@ -584,6 +649,8 @@ function createHarness(overrides = {}) {
     FilePasteHelpers: globalThis.PWM.FilePasteHelpers,
     StreamingFileRedactor: globalThis.PWM.StreamingFileRedactor || {},
     normalizeComposerText: globalThis.PWM.ComposerHelpers.normalizeComposerText,
+    isTextArea: globalThis.PWM.ComposerHelpers.isTextArea,
+    isContentEditable: globalThis.PWM.ComposerHelpers.isContentEditable,
     spliceSelectionText: globalThis.PWM.ComposerHelpers.spliceSelectionText,
     buildComposerWritePlan: (input, text) => ({
       canonical: globalThis.PWM.ComposerHelpers.normalizeComposerText(text),
@@ -749,6 +816,8 @@ function createHarness(overrides = {}) {
       "const PROGRAMMATIC_INPUT_SUPPRESS_MS = 500;",
       "const CHATGPT_LARGE_PASTE_FILE_THRESHOLD = 16 * 1024;",
       'const CHATGPT_SANITIZED_PASTE_FILE_NAME = "leakguard-redacted-paste.txt";',
+      "const CHATGPT_SYNC_EVENT_DATA_MAX_CHARS = 256 * 1024;",
+      "const CHATGPT_SYNC_VERIFY_DELAY_MS = 80;",
       "const GEMINI_DIRECT_TEXT_INSERT_THRESHOLD = 8 * 1024;",
       "const GEMINI_AUTO_INSERT_TEXT_LIMIT = 256 * 1024;",
       "const GEMINI_LARGE_TEXT_SUPPRESS_MS = 2500;",
@@ -859,6 +928,24 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "isProtectedFileDropDriver"),
       extractFunctionSource(contentSource, "shouldHandleChatGptLargeTextPaste"),
       extractFunctionSource(contentSource, "createSanitizedChatGptPasteFile"),
+      extractFunctionSource(contentSource, "getSafeElementAttribute"),
+      extractFunctionSource(contentSource, "countDebugPlaceholders"),
+      extractFunctionSource(contentSource, "getDebugTextLength"),
+      extractFunctionSource(contentSource, "getChatGptSendButtonDebugState"),
+      extractFunctionSource(contentSource, "getChatGptComposerSyncDebug"),
+      extractFunctionSource(contentSource, "debugChatGptSync"),
+      extractFunctionSource(contentSource, "focusChatGptComposer"),
+      extractFunctionSource(contentSource, "placeChatGptCaretAtEnd"),
+      extractFunctionSource(contentSource, "dispatchChatGptComposerInputEvent"),
+      extractFunctionSource(contentSource, "dispatchChatGptComposerBeforeInput"),
+      extractFunctionSource(contentSource, "dispatchChatGptComposerChange"),
+      extractFunctionSource(contentSource, "nudgeChatGptComposerState"),
+      extractFunctionSource(contentSource, "waitForChatGptComposerVerification"),
+      extractFunctionSource(contentSource, "tryChatGptExecCommandWrite"),
+      extractFunctionSource(contentSource, "tryChatGptDirectWrite"),
+      extractFunctionSource(contentSource, "tryChatGptComposerHelperWrite"),
+      extractFunctionSource(contentSource, "runChatGptSyncedWriteAttempt"),
+      extractFunctionSource(contentSource, "applyChatGptSyncedComposerText"),
       extractFunctionSource(contentSource, "applyChatGptLargePasteTextFallback"),
       extractFunctionSource(contentSource, "maybeHandleChatGptLargeTextPaste"),
       extractFunctionSource(contentSource, "resolveGeminiEditorTarget"),
@@ -3562,8 +3649,8 @@ async function assertStreamingPendingAttachRedispatchIsSuppressed({
 async function testGeminiStreamingPendingAttachRedispatchDoesNotRestream() {
   await assertStreamingPendingAttachRedispatchIsSuppressed({
     hostname: "gemini.google.com",
-    sourceName: "large-stream-gemini.env",
-    sourceSize: 5 * 1024 * 1024,
+    sourceName: "large-stream-gemini-50mb.env",
+    sourceSize: 50 * 1024 * 1024,
     queuedLabel: "file-handoff:gemini-streaming-pending-queued"
   });
 }
@@ -6297,6 +6384,18 @@ async function testChatGptLargePasteCreatesSanitizedPlainTextFileHandoff() {
   assert.strictEqual(calls.directTextWrites?.length || 0, 0);
   assert.strictEqual(composer.text, "");
   assert.ok(
+    calls.debugEvents.some((entry) => entry.label === "chatgpt-large-paste:file-handoff-attempt"),
+    "expected ChatGPT file handoff attempt diagnostics"
+  );
+  assert.ok(
+    calls.debugEvents.some((entry) => entry.label === "chatgpt-large-paste:file-handoff-success"),
+    "expected ChatGPT file handoff success diagnostics"
+  );
+  assert.ok(
+    !calls.debugEvents.some((entry) => entry.label === "chatgpt-large-paste:text-fallback-start"),
+    "text fallback must not run after ChatGPT file handoff succeeds"
+  );
+  assert.ok(
     calls.badges.some(([message]) => message === "LeakGuard redacted pasted text before attachment.")
   );
 }
@@ -6345,6 +6444,22 @@ async function testChatGptLargePasteFallsBackToSanitizedTextOnlyWhenFileHandoffF
   assert.strictEqual(calls.handoffs.length, 1);
   assert.strictEqual(calls.textFallbacks.length, 0, "large fallback should avoid paste-decision event data");
   assert.strictEqual(calls.directTextWrites.length, 1);
+  assert.ok(
+    calls.debugEvents.some((entry) => entry.label === "chatgpt-large-paste:file-handoff-failed"),
+    "expected ChatGPT file handoff failed diagnostics"
+  );
+  assert.ok(
+    calls.debugEvents.some((entry) => entry.label === "chatgpt-large-paste:text-fallback-start"),
+    "expected ChatGPT text fallback start diagnostics"
+  );
+  assert.ok(
+    calls.debugEvents.some((entry) => entry.label === "chatgpt-large-paste:text-fallback-success"),
+    "expected ChatGPT verified text fallback diagnostics"
+  );
+  assert.ok(
+    calls.debugEvents.some((entry) => entry.label === "chatgpt-sync:verification-pass"),
+    "expected ChatGPT sync verification to pass"
+  );
   assert.strictEqual(calls.directTextWrites[0].text.includes(repeatedKey), false);
   assert.strictEqual(calls.directTextWrites[0].text.includes(dbPassword), false);
   assert.strictEqual(calls.directTextWrites[0].text.includes(awsSecret), false);
@@ -6354,6 +6469,163 @@ async function testChatGptLargePasteFallsBackToSanitizedTextOnlyWhenFileHandoffF
   assert.ok(composer.text.startsWith("Before:\n"));
   assert.ok(composer.text.includes("OPENAI_API_KEY=[PWM_1]"));
   assert.ok(composer.text.includes("backup_key=[PWM_1]"));
+}
+
+async function testChatGptContenteditableComposerRewriteSync() {
+  const { text, repeatedKey, dbPassword, awsSecret } = buildLargeChatGptPastePayload();
+  const redactedText = redactChatGptPasteFixture(text, repeatedKey, dbPassword, awsSecret);
+  const composer = createChatGptContentEditableComposer("");
+  let selected = false;
+  const { maybeHandlePaste, calls } = createHarness({
+    location: { hostname: "chatgpt.com" },
+    getInputText: (input) => input?.text || "",
+    getSelectionOffsets: (input) => input?.selection || { start: 0, end: 0 },
+    analyzeText: (input) => ({
+      normalizedText: input,
+      secretFindings: input.includes(repeatedKey) ? [{ raw: repeatedKey }] : [],
+      findings: input.includes(repeatedKey) ? [{ raw: repeatedKey }] : [],
+      placeholderNormalized: false
+    }),
+    requestRedaction: async (input, findings) => {
+      calls.redactions.push({ text: input, findings });
+      return { redactedText };
+    },
+    handOffSanitizedLocalFile: (event, input, sanitizedFile, context) => {
+      calls.handoffs.push({ event, input, sanitizedFile, context });
+      return false;
+    },
+    document: {
+      activeElement: composer,
+      createRange: () => null,
+      dispatchEvent: (event) => {
+        calls.documentEvents = calls.documentEvents || [];
+        calls.documentEvents.push(event.type);
+        return true;
+      },
+      execCommand(command, _showUi, value) {
+        calls.execCommands = calls.execCommands || [];
+        calls.execCommands.push({ command, valueLength: typeof value === "string" ? value.length : null });
+        if (command === "selectAll") {
+          selected = true;
+          return true;
+        }
+        if (command === "insertText" && selected) {
+          composer.text = String(value || "");
+          composer.selection = { start: composer.text.length, end: composer.text.length };
+          selected = false;
+          return true;
+        }
+        return false;
+      },
+      createElement: (tagName) => ({
+        tagName: String(tagName || "").toUpperCase(),
+        type: "",
+        files: []
+      })
+    }
+  });
+  const { event } = createClipboardEvent({
+    text,
+    target: composer
+  });
+
+  await maybeHandlePaste(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(calls.handoffs.length, 1);
+  assert.strictEqual(calls.textFallbacks.length, 0);
+  assert.strictEqual(composer.text, redactedText);
+  assert.strictEqual(composer.innerText, redactedText);
+  assert.strictEqual(composer.textContent, redactedText);
+  assert.strictEqual(composer.text.includes(repeatedKey), false);
+  assert.strictEqual(composer.text.includes(dbPassword), false);
+  assert.strictEqual(composer.text.includes(awsSecret), false);
+  assert.ok(calls.execCommands.some((entry) => entry.command === "selectAll"));
+  assert.ok(calls.execCommands.some((entry) => entry.command === "insertText"));
+  assert.ok(composer.events.some((entry) => entry.type === "beforeinput"));
+  assert.ok(composer.events.some((entry) => entry.type === "input"));
+  assert.ok(composer.events.some((entry) => entry.type === "change"));
+  for (const label of [
+    "chatgpt-sync:before-write",
+    "chatgpt-sync:write-plan",
+    "chatgpt-sync:after-write",
+    "chatgpt-sync:react-state-nudge",
+    "chatgpt-sync:verification-pass"
+  ]) {
+    assert.ok(calls.debugEvents.some((entry) => entry.label === label), `expected ${label}`);
+  }
+}
+
+async function testChatGptOutOfSyncFallbackRetriesAndVerifies() {
+  const { text, repeatedKey, dbPassword, awsSecret } = buildLargeChatGptPastePayload();
+  const redactedText = redactChatGptPasteFixture(text, repeatedKey, dbPassword, awsSecret);
+  const composer = {
+    tagName: "TEXTAREA",
+    text: "",
+    selection: { start: 0, end: 0 }
+  };
+  let directWrites = 0;
+  const { maybeHandlePaste, calls } = createHarness({
+    location: { hostname: "chatgpt.com" },
+    getInputText: (input) => {
+      if (directWrites === 1 && !(calls.primaryTextWrites?.length)) {
+        return "STALE_RAW_DOM_STATE";
+      }
+      return input?.text || "";
+    },
+    analyzeText: (input) => ({
+      normalizedText: input,
+      secretFindings: input.includes(repeatedKey) ? [{ raw: repeatedKey }] : [],
+      findings: input.includes(repeatedKey) ? [{ raw: repeatedKey }] : [],
+      placeholderNormalized: false
+    }),
+    requestRedaction: async (input, findings) => {
+      calls.redactions.push({ text: input, findings });
+      return { redactedText };
+    },
+    handOffSanitizedLocalFile: (event, input, sanitizedFile, context) => {
+      calls.handoffs.push({ event, input, sanitizedFile, context });
+      return false;
+    },
+    setInputTextDirect: (input, value, options = {}) => {
+      directWrites += 1;
+      calls.directTextWrites = calls.directTextWrites || [];
+      calls.directTextWrites.push({ input, text: String(value || ""), options });
+      input.text = String(value || "");
+      return true;
+    }
+  });
+  const { event } = createClipboardEvent({
+    text,
+    target: composer
+  });
+
+  await maybeHandlePaste(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(calls.handoffs.length, 1);
+  assert.strictEqual(calls.directTextWrites.length, 1);
+  assert.strictEqual(calls.primaryTextWrites.length, 1);
+  assert.strictEqual(composer.text.includes(repeatedKey), false);
+  assert.strictEqual(composer.text.includes(dbPassword), false);
+  assert.strictEqual(composer.text.includes(awsSecret), false);
+  assert.ok(calls.debugEvents.some((entry) => entry.label === "chatgpt-sync:verification-failed"));
+  assert.ok(calls.debugEvents.some((entry) => entry.label === "chatgpt-sync:react-state-nudge"));
+  assert.ok(calls.debugEvents.some((entry) => entry.label === "chatgpt-sync:verification-pass"));
+  assert.strictEqual(calls.modals.length, 0);
+}
+
+function testChatGptPendingAttachRemainsDisabled() {
+  const queueSource = extractFunctionSource(contentSource, "queuePendingSanitizedFileHandoff");
+  assert.ok(
+    contentSource.includes("chatgpt: false") &&
+      contentSource.includes("pendingAttachEnabled: FILE_HANDOFF_PENDING_ATTACH_ENABLED.chatgpt"),
+    "ChatGPT pending attach should stay diagnostic-gated off"
+  );
+  assert.ok(
+    !queueSource.includes('selectedAdapter.id === "chatgpt"'),
+    "ChatGPT should not queue pending sanitized attach in v1.7.0"
+  );
 }
 
 async function testNonChatGptLargePasteDoesNotUsePlainTextFileHandoff() {
@@ -9273,6 +9545,9 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testGeminiQlEditorPastePauseInsertsRawText();
   await testChatGptLargePasteCreatesSanitizedPlainTextFileHandoff();
   await testChatGptLargePasteFallsBackToSanitizedTextOnlyWhenFileHandoffFails();
+  await testChatGptContenteditableComposerRewriteSync();
+  await testChatGptOutOfSyncFallbackRetriesAndVerifies();
+  testChatGptPendingAttachRemainsDisabled();
   await testNonChatGptLargePasteDoesNotUsePlainTextFileHandoff();
   await testSmallChatGptPasteDoesNotUsePlainTextFileHandoff();
   await testGeminiQlEditorDropTextFileIsSanitizedAndHandedOff();

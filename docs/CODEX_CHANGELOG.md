@@ -12,6 +12,18 @@ Use this file as a short handoff log for AI-made changes. Add newest entries fir
 ```
 
 ## Entries
+### 2026-05-16 - ChatGPT composer sync hardening
+- Goal: Fix ChatGPT composer sync after sanitized rewrites by adding ChatGPT-only safe diagnostics, layered contenteditable/textarea writes, verification, and one retry before fail-closed handling. ChatGPT pending attach remains disabled.
+- Files: `src/content/content.js`, `tests/content_file_drop_interception.test.js`, `docs/RELEASE_QA_CHECKLIST.md`, `docs/CODEX_CHANGELOG.md`
+- Tests: `node --check src/content/content.js` -> pass; `node tests/typed_interception.test.js` -> pass; `node tests/content_file_drop_interception.test.js` -> pass; `node tests/security.test.js` -> pass; `npm test` -> pass; `npm run build:all` -> pass
+- Notes: Gemini/Grok pending attach architecture is unchanged; Firefox ChatGPT live QA may be limited when account Advanced Security blocks login.
+
+### 2026-05-16 - v1.7.0 release hardening
+- Goal: Standardized trusted pending file handoff for AI upload flows. Gemini and Grok now sanitize or stream-redact files locally first, then attach only the sanitized file through trusted user upload flows. Large streamed files avoid automatic text insertion and duplicate reprocessing is suppressed.
+- Files: `src/content/content.js`, `scripts/package-extension.mjs`, `tests/build_targets.test.js`, `tests/content_file_drop_interception.test.js`, `docs/file-handoff-architecture.md`, `docs/CODEX_CHANGELOG.md`
+- Tests: `node --check src/content/content.js` -> pass; `node tests/content_file_drop_interception.test.js` -> pass; `node tests/streaming_file_redactor.test.js` -> pass; `node tests/file_paste_helpers.test.js` -> pass; `node tests/security.test.js` -> pass; `node tests/productization.test.js` -> pass; `node tests/build_targets.test.js` -> pass; `npm test` -> pass; `npm run build:all` -> pass
+- Notes: Pending attach remains enabled only for Gemini/Grok; ChatGPT, Claude, OpenAI Chat, and X keep diagnostic adapters with pending attach feature-gated off.
+
 ### 2026-05-16 - v1.7.0 adapter-based file handoff
 - Goal: Standardized trusted pending file handoff across AI sites. LeakGuard now sanitizes or stream-redacts files first, stages only the sanitized file, and attaches it through trusted user upload flows where required by browser/site security.
 - Files: `src/content/content.js`, `tests/content_file_drop_interception.test.js`, `docs/file-handoff-architecture.md`, `docs/CODEX_CHANGELOG.md`

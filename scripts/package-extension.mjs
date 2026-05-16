@@ -10,7 +10,8 @@ const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "..");
 
 const target = process.argv[2];
-const version = process.argv[3] || "1.6.0";
+const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
+const version = process.argv[3] || packageJson.version;
 
 if (!target) {
   console.error("Usage: node scripts/package-extension.mjs <chrome|firefox|chrome-enterprise|firefox-enterprise> [version]");
