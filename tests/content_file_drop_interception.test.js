@@ -736,7 +736,13 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "collectGeminiUploadMenuButtonsFromRoot"),
       extractFunctionSource(contentSource, "findGeminiUploadMenuButton"),
       extractFunctionSource(contentSource, "createGeminiUploadMenuEvent"),
+      extractFunctionSource(contentSource, "createGeminiFirefoxFilePickerGuard"),
       extractFunctionSource(contentSource, "openGeminiUploadMenuSafely"),
+      extractFunctionSource(contentSource, "isSafeGeminiUploadFilesMenuItem"),
+      extractFunctionSource(contentSource, "collectGeminiUploadFilesMenuItemsFromRoot"),
+      extractFunctionSource(contentSource, "findGeminiUploadFilesMenuItem"),
+      extractFunctionSource(contentSource, "openGeminiUploadFilesMenuItemSafely"),
+      extractFunctionSource(contentSource, "waitForGeminiUploadFilesMenuItem"),
       extractFunctionSource(contentSource, "waitForGeminiFileInput"),
       extractFunctionSource(contentSource, "verifyGeminiFirefoxFileInputBridgeAssignment"),
       extractFunctionSource(contentSource, "tryFirefoxGeminiFileInputBridge"),
@@ -853,6 +859,7 @@ function createOverlayItem({
   text = "Upload files",
   role = "menuitem",
   className = "mat-mdc-menu-item",
+  dataTestId = "",
   onClick = null
 } = {}) {
   const events = [];
@@ -869,10 +876,19 @@ function createOverlayItem({
       if (name === "aria-label") return ariaLabel;
       if (name === "class") return className;
       if (name === "role") return role;
+      if (name === "data-test-id") return dataTestId;
       return "";
     },
     matches(selector) {
-      return selector === '[role="menuitem"]' || selector === "button";
+      return (
+        selector === '[role="menuitem"]' ||
+        selector === "button" ||
+        (selector === 'button[data-test-id="local-images-files-uploader-button"]' &&
+          dataTestId === "local-images-files-uploader-button") ||
+        (selector === 'button[role="menuitem"][aria-label*="Upload files"]' &&
+          role === "menuitem" &&
+          ariaLabel.includes("Upload files"))
+      );
     },
     click() {
       events.push("click");
@@ -880,6 +896,33 @@ function createOverlayItem({
         onClick();
       }
       return true;
+    },
+    dispatchEvent(event) {
+      events.push(event.type);
+      if (event.type === "click" && typeof onClick === "function") {
+        onClick();
+      }
+      return true;
+    }
+  };
+}
+
+function createHiddenFileSelectorTrigger({ onClick = null } = {}) {
+  const events = [];
+  return {
+    nodeType: 1,
+    tagName: "BUTTON",
+    className: "hidden-local-file-image-selector-button",
+    disabled: false,
+    events,
+    getAttribute(name) {
+      if (name === "class") return this.className;
+      if (name === "xapfileselectortrigger") return "";
+      if (name === "aria-hidden") return "true";
+      return "";
+    },
+    hasAttribute(name) {
+      return name === "xapfileselectortrigger" || name === "aria-hidden";
     },
     dispatchEvent(event) {
       events.push(event.type);
@@ -940,6 +983,10 @@ function createHandoffHarness({
   const badges = [];
   const clickHandlers = [];
   const windowClickHandlers = [];
+  const windowPointerHandlers = [];
+  const windowMouseDownHandlers = [];
+  const documentPointerHandlers = [];
+  const documentMouseDownHandlers = [];
   const listenerEvents = [];
   const timeoutCallbacks = [];
   const observers = [];
@@ -1000,6 +1047,8 @@ function createHandoffHarness({
       if (
         selector === 'button[aria-label="Add files"]' ||
         selector === 'button[aria-label="Open upload file menu"]' ||
+        selector === 'button[data-test-id="local-images-files-uploader-button"]' ||
+        selector === 'button[role="menuitem"][aria-label*="Upload files"]' ||
         selector === "button.upload-card-button" ||
         selector === '[role="button"][aria-label*="add files" i]' ||
           selector === '[role="button"][aria-label*="upload" i]' ||
@@ -1026,11 +1075,21 @@ function createHandoffHarness({
     },
     addEventListener(type, handler) {
       if (type === "click") clickHandlers.push(handler);
+      if (type === "pointerdown") documentPointerHandlers.push(handler);
+      if (type === "mousedown") documentMouseDownHandlers.push(handler);
     },
     removeEventListener(type, handler) {
-      if (type !== "click") return;
-      const index = clickHandlers.indexOf(handler);
-      if (index !== -1) clickHandlers.splice(index, 1);
+      const handlers =
+        type === "click"
+          ? clickHandlers
+          : type === "pointerdown"
+            ? documentPointerHandlers
+            : type === "mousedown"
+              ? documentMouseDownHandlers
+              : null;
+      if (!handlers) return;
+      const index = handlers.indexOf(handler);
+      if (index !== -1) handlers.splice(index, 1);
     },
     querySelectorAll(selector) {
       stats.documentQueries += 1;
@@ -1040,9 +1099,12 @@ function createHandoffHarness({
         selector === ".cdk-overlay-pane" ||
         selector === 'mat-action-list[role="menu"]' ||
         selector === '[role="menuitem"]' ||
+        selector === 'button[data-test-id="local-images-files-uploader-button"]' ||
+        selector === 'button[role="menuitem"][aria-label*="Upload files"]' ||
         selector === "button"
       ) {
-        return selector === "button" ? [...uploadTriggers, ...overlayItems] : overlayItems;
+        if (selector === "button") return [...uploadTriggers, ...overlayItems];
+        return overlayItems.filter((item) => item.matches?.(selector) || selector !== "button");
       }
       if (
         selector === 'button[aria-label="Add files"]' ||
@@ -1078,12 +1140,22 @@ function createHandoffHarness({
       addEventListener(type, handler, options) {
         listenerEvents.push({ target: "window", action: "add", type, capture: options === true || Boolean(options?.capture) });
         if (type === "click") windowClickHandlers.push(handler);
+        if (type === "pointerdown") windowPointerHandlers.push(handler);
+        if (type === "mousedown") windowMouseDownHandlers.push(handler);
       },
       removeEventListener(type, handler, options) {
         listenerEvents.push({ target: "window", action: "remove", type, capture: options === true || Boolean(options?.capture) });
-        if (type !== "click") return;
-        const index = windowClickHandlers.indexOf(handler);
-        if (index !== -1) windowClickHandlers.splice(index, 1);
+        const handlers =
+          type === "click"
+            ? windowClickHandlers
+            : type === "pointerdown"
+              ? windowPointerHandlers
+              : type === "mousedown"
+                ? windowMouseDownHandlers
+                : null;
+        if (!handlers) return;
+        const index = handlers.indexOf(handler);
+        if (index !== -1) handlers.splice(index, 1);
       }
     },
     document: documentRoot,
@@ -1222,12 +1294,18 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "collectGeminiUploadMenuButtonsFromRoot"),
       extractFunctionSource(contentSource, "findGeminiUploadMenuButton"),
       extractFunctionSource(contentSource, "createGeminiUploadMenuEvent"),
+      extractFunctionSource(contentSource, "createGeminiFirefoxFilePickerGuard"),
       extractFunctionSource(contentSource, "openGeminiUploadMenuSafely"),
+      extractFunctionSource(contentSource, "isSafeGeminiUploadFilesMenuItem"),
+      extractFunctionSource(contentSource, "collectGeminiUploadFilesMenuItemsFromRoot"),
+      extractFunctionSource(contentSource, "findGeminiUploadFilesMenuItem"),
+      extractFunctionSource(contentSource, "openGeminiUploadFilesMenuItemSafely"),
+      extractFunctionSource(contentSource, "waitForGeminiUploadFilesMenuItem"),
       extractFunctionSource(contentSource, "waitForGeminiFileInput"),
       extractFunctionSource(contentSource, "verifyGeminiFirefoxFileInputBridgeAssignment"),
       extractFunctionSource(contentSource, "tryFirefoxGeminiFileInputBridge"),
       extractFunctionSource(contentSource, "handOffGrokSanitizedFileUpload"),
-      "return { handOffSanitizedLocalFile, handOffGeminiSanitizedFileUpload, tryFirefoxGeminiFileInputBridge, findGeminiUploadMenuButton, openGeminiUploadMenuSafely, waitForGeminiFileInput, handOffGrokSanitizedFileUpload, resolveFileInputForHandoff, attemptPendingGeminiSanitizedFileHandoff, hasPendingGeminiSanitizedFileHandoff, getPendingGeminiSanitizedFileHandoffDebug, hasGeminiSanitizedDownloadFallback, clearPendingGeminiGhostIngressClickInterceptor };"
+      "return { handOffSanitizedLocalFile, handOffGeminiSanitizedFileUpload, tryFirefoxGeminiFileInputBridge, findGeminiUploadMenuButton, openGeminiUploadMenuSafely, findGeminiUploadFilesMenuItem, openGeminiUploadFilesMenuItemSafely, waitForGeminiUploadFilesMenuItem, waitForGeminiFileInput, handOffGrokSanitizedFileUpload, resolveFileInputForHandoff, attemptPendingGeminiSanitizedFileHandoff, hasPendingGeminiSanitizedFileHandoff, getPendingGeminiSanitizedFileHandoffDebug, hasGeminiSanitizedDownloadFallback, clearPendingGeminiGhostIngressClickInterceptor };"
     ].join("\n\n")
   );
 
@@ -1241,6 +1319,10 @@ function createHandoffHarness({
     badges,
     clickHandlers,
     windowClickHandlers,
+    windowPointerHandlers,
+    windowMouseDownHandlers,
+    documentPointerHandlers,
+    documentMouseDownHandlers,
     listenerEvents,
     timeoutCallbacks,
     clearedTimeouts,
@@ -1898,6 +1980,94 @@ async function testGeminiGhostIngressInterceptsEphemeralFileInputClick() {
     harness.listenerEvents.find(
       (entry) => entry.target === "window" && entry.action === "remove" && entry.type === "click" && entry.capture
     )
+  );
+}
+
+async function testFirefoxGeminiDropLocalHandoffAllowsUploadUiAndCapturesHiddenInput() {
+  const rawSecret = "LeakGuardDropApiKey1234567890";
+  const rawFile = {
+    name: "firefox-ghost.env",
+    type: "text/plain",
+    size: 64,
+    text: `API_KEY=${rawSecret}`
+  };
+  const sanitizedFile = {
+    name: "firefox-ghost.env",
+    type: "text/plain",
+    size: 24,
+    text: "API_KEY=[PWM_1]"
+  };
+  let input = null;
+  let hiddenSelectorClick = null;
+  let inputClick = null;
+  let interceptorWasInstalledBeforeUploadClick = false;
+  let harness = null;
+  const uploadTrigger = createUploadTrigger({
+    ariaLabel: "Open upload file menu",
+    onClick: () => {
+      interceptorWasInstalledBeforeUploadClick = harness.windowClickHandlers.length === 1;
+    }
+  });
+  const overlayItem = createOverlayItem({
+    dataTestId: "local-images-files-uploader-button",
+    onClick: () => {
+      const hiddenSelectorTrigger = createHiddenFileSelectorTrigger();
+      hiddenSelectorClick = createClickEvent(hiddenSelectorTrigger);
+      assert.strictEqual(harness.windowClickHandlers.length, 1);
+      harness.windowClickHandlers[0](hiddenSelectorClick.event);
+      input = createFileInput({ name: "Filedata", multiple: true });
+      input.click = () => {
+        throw new Error("Firefox Gemini drop handoff must not call input.click()");
+      };
+      input.showPicker = () => {
+        throw new Error("Firefox Gemini drop handoff must not call input.showPicker()");
+      };
+      inputClick = createClickEvent(input);
+      assert.strictEqual(harness.windowClickHandlers.length, 1);
+      harness.windowClickHandlers[0](inputClick.event);
+    }
+  });
+  harness = createHandoffHarness({
+    userAgent: "Firefox",
+    uploadTriggers: [uploadTrigger],
+    overlayItems: [overlayItem]
+  });
+  const event = {
+    type: "drop",
+    target: {
+      nodeType: 1,
+      tagName: "DIV",
+      dispatchEvent() {
+        throw new Error("Firefox Gemini drop handoff must not replay a synthetic drop");
+      }
+    },
+    dataTransfer: createDataTransfer({ files: [rawFile] })
+  };
+
+  const handedOff = await harness.handOffSanitizedLocalFile(event, null, sanitizedFile, "drop");
+
+  assert.strictEqual(interceptorWasInstalledBeforeUploadClick, true);
+  assert.strictEqual(handedOff, true);
+  assert.deepStrictEqual(uploadTrigger.events, ["click"]);
+  assert.deepStrictEqual(overlayItem.events, ["click"]);
+  assert.strictEqual(hiddenSelectorClick.event.defaultPrevented, false);
+  assert.strictEqual(hiddenSelectorClick.calls.stopImmediatePropagation, 0);
+  assert.strictEqual(inputClick.event.defaultPrevented, true);
+  assert.strictEqual(inputClick.calls.stopImmediatePropagation, 1);
+  assert.strictEqual(input.files[0], sanitizedFile);
+  assert.notStrictEqual(input.files[0], rawFile);
+  assert.strictEqual(JSON.stringify(input.files).includes(rawSecret), false);
+  assert.deepStrictEqual(input.events, ["input", "change"]);
+  assert.strictEqual(harness.fallbackDrops.length, 0);
+  assert.strictEqual(harness.consoleErrors.length, 0);
+  assert.strictEqual(harness.windowClickHandlers.length, 0);
+  assert.ok(
+    !harness.debugEvents.some(
+      (entry) =>
+        entry.payload?.failureReason === "no_file_input_without_opening_picker" ||
+        entry.details?.failureReason === "no_file_input_without_opening_picker"
+    ),
+    "Firefox Gemini drop should allow the guarded upload UI path"
   );
 }
 
@@ -5199,12 +5369,14 @@ async function testFirefoxGeminiFileInputBridgeOpensExactAriaMenuButton() {
     text: `API_KEY=${rawSecret}`
   };
   const fileInputs = [];
-  const uploadTrigger = createUploadTrigger({
-    ariaLabel: "Open upload file menu",
-    className: "upload-card-button open",
+  const overlayItems = [];
+  let harness;
+  let pickerClick;
+  const uploadFilesMenuItem = createOverlayItem({
+    dataTestId: "local-images-files-uploader-button",
     onClick: () => {
       if (!fileInputs.length) {
-        const input = createFileInput({ source: "light-dom", name: "Filedata" });
+        const input = createFileInput({ source: "light-dom", name: "Filedata", multiple: true });
         input.click = () => {
           throw new Error("Firefox Gemini bridge must not click input[type=file]");
         };
@@ -5212,13 +5384,25 @@ async function testFirefoxGeminiFileInputBridgeOpensExactAriaMenuButton() {
           throw new Error("Firefox Gemini bridge must not call showPicker");
         };
         fileInputs.push(input);
+        pickerClick = createClickEvent(input);
+        for (const handler of [...harness.windowClickHandlers, ...harness.clickHandlers]) {
+          handler(pickerClick.event);
+        }
       }
     }
   });
-  const harness = createHandoffHarness({
+  const uploadTrigger = createUploadTrigger({
+    ariaLabel: "Open upload file menu",
+    className: "upload-card-button open",
+    onClick: () => {
+      if (!overlayItems.length) overlayItems.push(uploadFilesMenuItem);
+    }
+  });
+  harness = createHandoffHarness({
     userAgent: "Firefox",
     fileInputs,
-    uploadTriggers: [uploadTrigger]
+    uploadTriggers: [uploadTrigger],
+    overlayItems
   });
   const event = {
     type: "drop",
@@ -5232,14 +5416,22 @@ async function testFirefoxGeminiFileInputBridgeOpensExactAriaMenuButton() {
   );
 
   assert.strictEqual(harness.findGeminiUploadMenuButton(), uploadTrigger);
+  assert.strictEqual(harness.findGeminiUploadFilesMenuItem(), uploadFilesMenuItem);
   assert.strictEqual(result.ok, true);
   assert.strictEqual(result.strategy, "gemini-firefox-file-input-bridge");
   assert.deepStrictEqual(uploadTrigger.events, ["pointerdown", "mousedown", "mouseup", "click"]);
+  assert.deepStrictEqual(uploadFilesMenuItem.events, ["pointerdown", "mousedown", "mouseup", "click"]);
   assert.strictEqual(fileInputs.length, 1);
+  assert.strictEqual(pickerClick.event.defaultPrevented, true);
+  assert.strictEqual(pickerClick.event.immediatePropagationStopped, true);
   assert.strictEqual(fileInputs[0].files[0], sanitizedFile);
   assert.notStrictEqual(fileInputs[0].files[0], rawFile);
   assert.strictEqual(JSON.stringify(fileInputs[0].files).includes(rawSecret), false);
   assert.deepStrictEqual(fileInputs[0].events, ["input", "change"]);
+  assert.strictEqual(harness.windowClickHandlers.length, 0);
+  assert.strictEqual(harness.clickHandlers.length, 0);
+  assert.strictEqual(harness.windowPointerHandlers.length, 0);
+  assert.strictEqual(harness.documentPointerHandlers.length, 0);
 }
 
 async function testFirefoxGeminiFileInputBridgeUsesUploadCardButtonFallback() {
@@ -5250,17 +5442,25 @@ async function testFirefoxGeminiFileInputBridgeUsesUploadCardButtonFallback() {
     text: "API_KEY=[PWM_1]"
   };
   const fileInputs = [];
+  const overlayItems = [];
+  const uploadFilesMenuItem = createOverlayItem({
+    dataTestId: "local-images-files-uploader-button",
+    onClick: () => {
+      fileInputs.push(createFileInput({ source: "light-dom", name: "Filedata", multiple: true }));
+    }
+  });
   const uploadTrigger = createUploadTrigger({
     ariaLabel: "Attach files",
     className: "upload-card-button open",
     onClick: () => {
-      fileInputs.push(createFileInput({ source: "light-dom", name: "Filedata" }));
+      overlayItems.push(uploadFilesMenuItem);
     }
   });
   const harness = createHandoffHarness({
     userAgent: "Firefox",
     fileInputs,
-    uploadTriggers: [uploadTrigger]
+    uploadTriggers: [uploadTrigger],
+    overlayItems
   });
   const event = {
     type: "drop",
@@ -5274,9 +5474,82 @@ async function testFirefoxGeminiFileInputBridgeUsesUploadCardButtonFallback() {
   );
 
   assert.strictEqual(harness.findGeminiUploadMenuButton(), uploadTrigger);
+  assert.strictEqual(harness.findGeminiUploadFilesMenuItem(), uploadFilesMenuItem);
   assert.strictEqual(result.ok, true);
   assert.deepStrictEqual(uploadTrigger.events, ["pointerdown", "mousedown", "mouseup", "click"]);
+  assert.deepStrictEqual(uploadFilesMenuItem.events, ["pointerdown", "mousedown", "mouseup", "click"]);
   assert.strictEqual(fileInputs[0].files[0], sanitizedFile);
+}
+
+async function testFirefoxGeminiFileInputBridgeAllowsHiddenSelectorAndCapturesFiledataInput() {
+  const rawSecret = "LeakGuardDropApiKey1234567890";
+  const sanitizedFile = {
+    name: "hidden-selector.env",
+    type: "text/plain",
+    size: 18,
+    text: "API_KEY=[PWM_1]"
+  };
+  const rawFile = {
+    name: "hidden-selector.env",
+    type: "text/plain",
+    size: 42,
+    text: `API_KEY=${rawSecret}`
+  };
+  const fileInputs = [];
+  const overlayItems = [];
+  let hiddenSelectorClick = null;
+  let inputClick = null;
+  let harness;
+  const uploadFilesMenuItem = createOverlayItem({
+    dataTestId: "local-images-files-uploader-button",
+    onClick: () => {
+      const hiddenSelectorTrigger = createHiddenFileSelectorTrigger();
+      hiddenSelectorClick = createClickEvent(hiddenSelectorTrigger);
+      for (const handler of [...harness.windowClickHandlers, ...harness.clickHandlers]) {
+        handler(hiddenSelectorClick.event);
+      }
+      const input = createFileInput({ source: "light-dom", name: "Filedata", multiple: true });
+      fileInputs.push(input);
+      inputClick = createClickEvent(input);
+      for (const handler of [...harness.windowClickHandlers, ...harness.clickHandlers]) {
+        handler(inputClick.event);
+      }
+    }
+  });
+  const uploadTrigger = createUploadTrigger({
+    ariaLabel: "Open upload file menu",
+    className: "upload-card-button open",
+    onClick: () => {
+      if (!overlayItems.length) overlayItems.push(uploadFilesMenuItem);
+    }
+  });
+  harness = createHandoffHarness({
+    userAgent: "Firefox",
+    fileInputs,
+    uploadTriggers: [uploadTrigger],
+    overlayItems
+  });
+  const event = {
+    type: "drop",
+    target: { nodeType: 1, tagName: "DIV", dispatchEvent: () => true },
+    dataTransfer: createDataTransfer({ files: [rawFile] })
+  };
+
+  const result = await harness.tryFirefoxGeminiFileInputBridge(
+    { sanitizedFile, redactedText: sanitizedFile.text },
+    { event, input: null }
+  );
+
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(hiddenSelectorClick.event.defaultPrevented, false);
+  assert.strictEqual(hiddenSelectorClick.calls.stopImmediatePropagation, 0);
+  assert.strictEqual(inputClick.event.defaultPrevented, true);
+  assert.ok(inputClick.calls.stopImmediatePropagation >= 1);
+  assert.strictEqual(fileInputs[0].name, "Filedata");
+  assert.strictEqual(fileInputs[0].files[0], sanitizedFile);
+  assert.notStrictEqual(fileInputs[0].files[0], rawFile);
+  assert.strictEqual(JSON.stringify(fileInputs[0].files).includes(rawSecret), false);
+  assert.deepStrictEqual(fileInputs[0].events, ["input", "change"]);
 }
 
 async function testFirefoxGeminiFileInputBridgeRejectsUnsafeUploadButtons() {
@@ -5364,13 +5637,17 @@ async function testFirefoxGeminiFileInputBridgeFailsClosedWhenMenuOpensWithoutIn
     size: 18,
     text: "API_KEY=[PWM_1]"
   };
+  const uploadFilesMenuItem = createOverlayItem({
+    dataTestId: "local-images-files-uploader-button"
+  });
   const uploadTrigger = createUploadTrigger({
     ariaLabel: "Open upload file menu",
     className: "upload-card-button open"
   });
   const harness = createHandoffHarness({
     userAgent: "Firefox",
-    uploadTriggers: [uploadTrigger]
+    uploadTriggers: [uploadTrigger],
+    overlayItems: [uploadFilesMenuItem]
   });
   const event = {
     type: "drop",
@@ -5386,6 +5663,7 @@ async function testFirefoxGeminiFileInputBridgeFailsClosedWhenMenuOpensWithoutIn
   assert.strictEqual(result.ok, false);
   assert.strictEqual(result.message, "LeakGuard blocked the raw file drop. Could not locate Gemini upload input. Please use the upload button or retry.");
   assert.deepStrictEqual(uploadTrigger.events, ["pointerdown", "mousedown", "mouseup", "click"]);
+  assert.deepStrictEqual(uploadFilesMenuItem.events, ["pointerdown", "mousedown", "mouseup", "click"]);
 }
 
 async function testChromeGeminiFileInputBridgeRemainsInactive() {
@@ -5503,7 +5781,9 @@ function testFirefoxGeminiFileInputBridgeDoesNotReplayOrOpenPicker() {
   const source = [
     extractFunctionSource(contentSource, "tryFirefoxGeminiFileInputBridge"),
     extractFunctionSource(contentSource, "waitForGeminiFileInput"),
-    extractFunctionSource(contentSource, "openGeminiUploadMenuSafely")
+    extractFunctionSource(contentSource, "openGeminiUploadMenuSafely"),
+    extractFunctionSource(contentSource, "openGeminiUploadFilesMenuItemSafely"),
+    extractFunctionSource(contentSource, "createGeminiFirefoxFilePickerGuard")
   ].join("\n");
   assert.strictEqual(source.includes("new DragEvent"), false);
   assert.strictEqual(source.includes("dispatchSanitizedFileEvent"), false);
@@ -6797,6 +7077,7 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testFirefoxGeminiFileInputBridgeAssignsSanitizedFileOnly();
   await testFirefoxGeminiFileInputBridgeOpensExactAriaMenuButton();
   await testFirefoxGeminiFileInputBridgeUsesUploadCardButtonFallback();
+  await testFirefoxGeminiFileInputBridgeAllowsHiddenSelectorAndCapturesFiledataInput();
   await testFirefoxGeminiFileInputBridgeRejectsUnsafeUploadButtons();
   await testFirefoxGeminiFileInputBridgeDoesNotClickHiddenLocalUploadButtons();
   await testFirefoxGeminiFileInputBridgeFailsClosedWhenMenuOpensWithoutInput();
@@ -6806,6 +7087,7 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testFirefoxGeminiItemsOnlyDropExtractsFileAndUsesFileInputBridge();
   await testGeminiDropGhostIngressAttachesSanitizedFileAfterVisibleUploadFlow();
   await testGeminiGhostIngressInterceptsEphemeralFileInputClick();
+  await testFirefoxGeminiDropLocalHandoffAllowsUploadUiAndCapturesHiddenInput();
   await testGeminiGhostIngressClickInterceptorIgnoresUnrelatedFileInput();
   await testGeminiGhostIngressClickInterceptorRemovedAfterTimeout();
   await testGeminiGhostIngressClickInterceptorRemovedAfterAssignmentFailure();
