@@ -4069,22 +4069,36 @@
     return /\b(?:send|submit|mic|microphone|voice|record|settings|model|close|remove)\b/.test(haystack);
   }
 
+  function isGeminiSourceUploadIcon(candidate, meta = null) {
+    if (!candidate || String(candidate.tagName || "").toUpperCase() !== "MAT-ICON") return false;
+    const details = meta || describeElementForDebug(candidate);
+    const className = details?.className || "";
+    const text = (details?.textSnippet || "").trim().toLowerCase();
+    return /\bupload-icon\b/.test(className) && (text === "add_2" || text === "add");
+  }
+
   function isSafeGeminiUploadMenuButton(candidate) {
-    if (!candidate || String(candidate.tagName || "").toUpperCase() !== "BUTTON") return false;
+    if (!candidate) return false;
     if (isFileInputElement(candidate)) return false;
     if (!isGeminiUploadMenuButtonVisible(candidate) || isUnsafeGeminiUploadMenuButton(candidate)) return false;
     const meta = describeElementForDebug(candidate);
     const label = meta?.ariaLabel || "";
     const className = meta?.className || "";
     if (/\bhidden-local-(?:file-)?upload-button\b/.test(className)) return false;
-    return label === "Open upload file menu" || /\bupload-card-button\b/.test(className);
+    if (label === "Open upload file menu" || /\bupload-card-button\b/.test(className)) return true;
+    return isGeminiSourceUploadIcon(candidate, meta);
   }
 
   function collectGeminiUploadMenuButtonsFromRoot(root, candidates, seen, visitedRoots) {
     if (!root || visitedRoots.has(root)) return;
     visitedRoots.add(root);
 
-    const selectors = ['button[aria-label="Open upload file menu"]', "button.upload-card-button", "button"];
+    const selectors = [
+      'button[aria-label="Open upload file menu"]',
+      "button.upload-card-button",
+      "mat-icon.upload-icon",
+      "button"
+    ];
     for (const selector of selectors) {
       try {
         root.querySelectorAll?.(selector).forEach((candidate) => {
@@ -4123,8 +4137,24 @@
         const className = String(candidate.className || candidate.getAttribute?.("class") || "");
         return /\bupload-card-button\b/.test(className) && isSafeGeminiUploadMenuButton(candidate);
       }) ||
+      candidates.find((candidate) => isGeminiSourceUploadIcon(candidate) && isSafeGeminiUploadMenuButton(candidate)) ||
       null
     );
+  }
+
+  function describeGeminiUploadMenuDiscovery() {
+    const candidates = [];
+    collectGeminiUploadMenuButtonsFromRoot(document, candidates, new WeakSet(), new WeakSet());
+    const selected = findGeminiUploadMenuButton();
+    return {
+      candidateCount: candidates.length,
+      selected: describeElementForDebug(selected, "selected-gemini-upload-menu-button"),
+      candidates: candidates.slice(0, 20).map((candidate) => ({
+        ...describeElementForDebug(candidate, "gemini-upload-menu-candidate"),
+        safeUploadMenuButton: isSafeGeminiUploadMenuButton(candidate),
+        sourceUploadIcon: isGeminiSourceUploadIcon(candidate)
+      }))
+    };
   }
 
   function createGeminiUploadMenuEvent(type) {
@@ -4467,28 +4497,45 @@
 
     const pickerGuard = createGeminiFirefoxFilePickerGuard();
     let waitResult = findGeminiFileInput(context.event, context.input);
+    const bridgeUi = {
+      overlayItemFoundBeforeMenuOpen: false,
+      menuOpenButtonClicked: false,
+      uploadFilesMenuItemClicked: false,
+      fileInputCapturedByGuard: false
+    };
     try {
       if (!waitResult.fileInput) {
-        const menuButton = findGeminiUploadMenuButton();
-        if (menuButton && openGeminiUploadMenuSafely(menuButton)) {
-          debugReveal("file-handoff:gemini-firefox-file-input-bridge-menu-opened", {
-            ...createFirefoxGeminiFileInputBridgeDebug(context, payload),
-            menuButton: describeElementForDebug(menuButton, "gemini-upload-menu-button")
-          });
-          const menuItem = await waitForGeminiUploadFilesMenuItem(3000);
-          if (menuItem && openGeminiUploadFilesMenuItemSafely(menuItem)) {
-            debugReveal("file-handoff:gemini-firefox-file-input-bridge-menu-item-opened", {
+        let menuItem = findGeminiUploadFilesMenuItem();
+        bridgeUi.overlayItemFoundBeforeMenuOpen = Boolean(menuItem);
+        let menuOpened = false;
+        if (!menuItem) {
+          const menuButton = findGeminiUploadMenuButton();
+          if (menuButton && openGeminiUploadMenuSafely(menuButton)) {
+            menuOpened = true;
+            bridgeUi.menuOpenButtonClicked = true;
+            debugReveal("file-handoff:gemini-firefox-file-input-bridge-menu-opened", {
               ...createFirefoxGeminiFileInputBridgeDebug(context, payload),
-              menuItem: describeElementForDebug(menuItem, "gemini-upload-files-menu-item")
+              menuButton: describeElementForDebug(menuButton, "gemini-upload-menu-button")
             });
+            menuItem = await waitForGeminiUploadFilesMenuItem(3000);
           }
+        }
+        if (menuItem && openGeminiUploadFilesMenuItemSafely(menuItem)) {
+          bridgeUi.uploadFilesMenuItemClicked = true;
+          debugReveal("file-handoff:gemini-firefox-file-input-bridge-menu-item-opened", {
+            ...createFirefoxGeminiFileInputBridgeDebug(context, payload),
+            menuOpened,
+            menuItem: describeElementForDebug(menuItem, "gemini-upload-files-menu-item")
+          });
           const guardedInput = pickerGuard.getInput();
+          bridgeUi.fileInputCapturedByGuard = Boolean(guardedInput);
           waitResult = guardedInput
             ? { discovery: { fileInputCount: 1, openShadowRootCount: 0 }, fileInput: guardedInput }
             : await waitForGeminiFileInput(3000, context.event, context.input, details);
         }
       }
       if (!waitResult.fileInput && pickerGuard.getInput()) {
+        bridgeUi.fileInputCapturedByGuard = true;
         waitResult = {
           discovery: waitResult.discovery || { fileInputCount: 1, openShadowRootCount: 0 },
           fileInput: pickerGuard.getInput()
@@ -4511,7 +4558,12 @@
       details.failureReason = "file_input_bridge_input_not_found";
       debugReveal(
         "file-handoff:gemini-firefox-file-input-bridge-input-not-found",
-        createFirefoxGeminiFileInputBridgeDebug(context, payload)
+        {
+          ...createFirefoxGeminiFileInputBridgeDebug(context, payload),
+          bridgeUi,
+          uploadMenu: describeGeminiUploadMenuDiscovery(),
+          overlay: describeGeminiOverlayExposure()
+        }
       );
       return {
         handled: true,
