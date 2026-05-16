@@ -4039,14 +4039,131 @@
     }
   }
 
-  async function waitForGeminiFirefoxFileInputBridgeInput(event, input, details) {
-    let discovery = discoverGeminiFileHandoffElements(event, input);
-    if (discovery.fileInput) {
-      return { discovery, fileInput: discovery.fileInput };
+  function findGeminiFileInput(event = null, input = null) {
+    if (!isGeminiHost()) {
+      return { discovery: {}, fileInput: null };
+    }
+    const discovery = discoverGeminiFileHandoffElements(event || { target: document.body }, input);
+    return { discovery, fileInput: discovery.fileInput || null };
+  }
+
+  function isGeminiUploadMenuButtonVisible(candidate) {
+    if (!candidate || candidate.disabled || candidate.hidden) return false;
+    try {
+      if (candidate.getAttribute?.("aria-hidden") === "true") return false;
+    } catch {
+      // Attribute reads are best-effort on host-controlled nodes.
+    }
+    try {
+      const style = candidate.ownerDocument?.defaultView?.getComputedStyle?.(candidate);
+      if (style && (style.display === "none" || style.visibility === "hidden")) return false;
+    } catch {
+      // Synthetic DOMs may not expose computed styles.
+    }
+    return true;
+  }
+
+  function isUnsafeGeminiUploadMenuButton(candidate) {
+    const meta = describeElementForDebug(candidate);
+    const haystack = `${meta?.ariaLabel || ""} ${meta?.title || ""} ${meta?.textSnippet || ""} ${meta?.className || ""}`.toLowerCase();
+    return /\b(?:send|submit|mic|microphone|voice|record|settings|model|close|remove)\b/.test(haystack);
+  }
+
+  function isSafeGeminiUploadMenuButton(candidate) {
+    if (!candidate || String(candidate.tagName || "").toUpperCase() !== "BUTTON") return false;
+    if (isFileInputElement(candidate)) return false;
+    if (!isGeminiUploadMenuButtonVisible(candidate) || isUnsafeGeminiUploadMenuButton(candidate)) return false;
+    const meta = describeElementForDebug(candidate);
+    const label = meta?.ariaLabel || "";
+    const className = meta?.className || "";
+    if (/\bhidden-local-(?:file-)?upload-button\b/.test(className)) return false;
+    return label === "Open upload file menu" || /\bupload-card-button\b/.test(className);
+  }
+
+  function collectGeminiUploadMenuButtonsFromRoot(root, candidates, seen, visitedRoots) {
+    if (!root || visitedRoots.has(root)) return;
+    visitedRoots.add(root);
+
+    const selectors = ['button[aria-label="Open upload file menu"]', "button.upload-card-button", "button"];
+    for (const selector of selectors) {
+      try {
+        root.querySelectorAll?.(selector).forEach((candidate) => {
+          if (!candidate || seen.has(candidate)) return;
+          seen.add(candidate);
+          candidates.push(candidate);
+        });
+      } catch {
+        // Selector support varies across synthetic and host-controlled roots.
+      }
     }
 
+    let elements = [];
+    try {
+      elements = Array.from(root.querySelectorAll?.("*") || []);
+    } catch {
+      elements = [];
+    }
+    elements.forEach((element) => {
+      if (element?.shadowRoot) {
+        collectGeminiUploadMenuButtonsFromRoot(element.shadowRoot, candidates, seen, visitedRoots);
+      }
+    });
+  }
+
+  function findGeminiUploadMenuButton() {
+    if (!isGeminiHost()) return null;
+    const candidates = [];
+    collectGeminiUploadMenuButtonsFromRoot(document, candidates, new WeakSet(), new WeakSet());
+    return (
+      candidates.find((candidate) => {
+        const label = candidate.getAttribute?.("aria-label") || candidate.ariaLabel || "";
+        return label === "Open upload file menu" && isSafeGeminiUploadMenuButton(candidate);
+      }) ||
+      candidates.find((candidate) => {
+        const className = String(candidate.className || candidate.getAttribute?.("class") || "");
+        return /\bupload-card-button\b/.test(className) && isSafeGeminiUploadMenuButton(candidate);
+      }) ||
+      null
+    );
+  }
+
+  function createGeminiUploadMenuEvent(type) {
+    const init = {
+      bubbles: true,
+      cancelable: true,
+      composed: true
+    };
+    try {
+      if (type === "pointerdown" && typeof PointerEvent === "function") {
+        return new PointerEvent(type, init);
+      }
+      if (typeof MouseEvent === "function") {
+        return new MouseEvent(type, init);
+      }
+    } catch {
+      // Fall back to Event below.
+    }
+    return new Event(type, init);
+  }
+
+  function openGeminiUploadMenuSafely(menuButton) {
+    if (!isSafeGeminiUploadMenuButton(menuButton) || isFileInputElement(menuButton)) return false;
+    try {
+      for (const type of ["pointerdown", "mousedown", "mouseup", "click"]) {
+        menuButton.dispatchEvent(createGeminiUploadMenuEvent(type));
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function waitForGeminiFileInput(timeoutMs = 3000, event = null, input = null, details = null) {
+    let result = findGeminiFileInput(event, input);
+    if (result.fileInput) return result;
+
     if (typeof MutationObserver !== "function") {
-      return { discovery, fileInput: null };
+      return result;
     }
 
     return await new Promise((resolve) => {
@@ -4055,8 +4172,8 @@
       let timeoutId = 0;
       const finish = (reason = "") => {
         if (settled) return;
-        discovery = discoverGeminiFileHandoffElements(event, input);
-        if (!discovery.fileInput && !reason) return;
+        result = findGeminiFileInput(event, input);
+        if (!result.fileInput && !reason) return;
         settled = true;
         if (observer) {
           try {
@@ -4068,27 +4185,28 @@
         if (timeoutId) {
           clearTimeout(timeoutId);
         }
+        const discovery = result.discovery || {};
         if (details) {
           details.fileInputCountBeforeClick = Math.max(
             Number(details.fileInputCountBeforeClick || 0),
-            discovery.fileInputCount
+            Number(discovery.fileInputCount || 0)
           );
-          details.fileInputCountAfterTopTriggerClick = discovery.fileInputCount;
-          details.fileInputCountAfterOverlayItemClick = discovery.fileInputCount;
+          details.fileInputCountAfterTopTriggerClick = Number(discovery.fileInputCount || 0);
+          details.fileInputCountAfterOverlayItemClick = Number(discovery.fileInputCount || 0);
           details.openShadowRootCount = Math.max(
             Number(details.openShadowRootCount || 0),
-            discovery.openShadowRootCount
+            Number(discovery.openShadowRootCount || 0)
           );
-          if (reason && !discovery.fileInput) {
+          if (reason && !result.fileInput) {
             details.failureReason = reason;
           }
         }
-        resolve({ discovery, fileInput: discovery.fileInput || null });
+        resolve(result);
       };
 
       try {
         observer = new MutationObserver(() => finish());
-        observer.observe(document.documentElement || document, {
+        observer.observe(document.body || document.documentElement || document, {
           childList: true,
           subtree: true
         });
@@ -4108,7 +4226,7 @@
         }
       }
 
-      timeoutId = setTimeout(() => finish("file_input_bridge_input_not_found"), GEMINI_UPLOAD_INPUT_WAIT_MS);
+      timeoutId = setTimeout(() => finish("file_input_bridge_input_not_found"), timeoutMs);
     });
   }
 
@@ -4160,11 +4278,17 @@
       };
     }
 
-    const waitResult = await waitForGeminiFirefoxFileInputBridgeInput(
-      context.event,
-      context.input,
-      details
-    );
+    let waitResult = findGeminiFileInput(context.event, context.input);
+    if (!waitResult.fileInput) {
+      const menuButton = findGeminiUploadMenuButton();
+      if (menuButton && openGeminiUploadMenuSafely(menuButton)) {
+        debugReveal("file-handoff:gemini-firefox-file-input-bridge-menu-opened", {
+          ...createFirefoxGeminiFileInputBridgeDebug(context, payload),
+          menuButton: describeElementForDebug(menuButton, "gemini-upload-menu-button")
+        });
+        waitResult = await waitForGeminiFileInput(3000, context.event, context.input, details);
+      }
+    }
     const discovery = waitResult.discovery || {};
     const fileInput = waitResult.fileInput || null;
     details.fileInputCountBeforeClick = Number(discovery.fileInputCount || 0);
