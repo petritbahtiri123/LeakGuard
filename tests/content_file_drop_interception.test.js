@@ -8771,7 +8771,20 @@ async function testFirefoxGeminiTextFallbackPreservesMultilineBlocks() {
     "DATABASE_URL=postgres://admin:[PWM_5]@db.example.com:5432/customerdb"
   ].join("\n");
   const rawText = sanitizedText.replace(/\[PWM_\d+\]/g, rawSecret);
-  const { editor } = createGeminiEditor("");
+  const { editor } = createGeminiEditor("stale raw editor text");
+  const selection = {
+    selectedEditor: null,
+    removeAllRangesCalled: 0,
+    addRangeCalled: 0,
+    removeAllRanges() {
+      this.removeAllRangesCalled += 1;
+      this.selectedEditor = null;
+    },
+    addRange(range) {
+      this.addRangeCalled += 1;
+      this.selectedEditor = range.selectedEditor;
+    }
+  };
   const rawFile = createTextFile({
     name: "01-basic-secrets.env",
     type: "",
@@ -8788,12 +8801,32 @@ async function testFirefoxGeminiTextFallbackPreservesMultilineBlocks() {
       },
       querySelector: () => null,
       querySelectorAll: () => [],
+      createRange: () => ({
+        selectedEditor: null,
+        selectNodeContents(target) {
+          this.selectedEditor = target;
+        }
+      }),
       execCommand(command, _showUi, value) {
         if (command === "insertText") {
-          editor.text = String(value || "");
+          editor.text =
+            selection.selectedEditor === editor
+              ? String(value || "")
+              : `${editor.text}${String(value || "")}`;
           return true;
         }
         return false;
+      }
+    },
+    window: {
+      getSelection: () => selection,
+      setTimeout: (callback) => {
+        callback();
+        return 0;
+      },
+      requestAnimationFrame: (callback) => {
+        callback();
+        return 0;
       }
     },
     findComposer: () => editor,
@@ -8830,7 +8863,10 @@ async function testFirefoxGeminiTextFallbackPreservesMultilineBlocks() {
   assert.strictEqual(event.defaultPrevented, true);
   assert.strictEqual(calls.handoffs.length, 1);
   assert.strictEqual(calls.textFallbacks.length, 0);
+  assert.strictEqual(selection.removeAllRangesCalled, 1);
+  assert.strictEqual(selection.addRangeCalled, 1);
   assert.ok(editor.text.includes(`LeakGuard sanitized file: 01-basic-secrets.env\n\n\`\`\`env\n${sanitizedText}\n\`\`\``));
+  assert.strictEqual(editor.text.includes("stale raw editor text"), false);
   assert.strictEqual(editor.text.includes(rawSecret), false);
   assert.ok(
     calls.debugEvents.some(

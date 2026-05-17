@@ -5793,6 +5793,26 @@
       const selectionBeforeInsert = getSelectionOffsets(editor);
       suppressFollowupInputScan();
       editor.focus();
+      try {
+        const selection = window.getSelection();
+        const range = document.createRange();
+        if (!selection || !range) {
+          return insertGeminiFirefoxMultilineDirectText(editor, normalized, {
+            ...options,
+            originalText: originalTextBeforeInsert,
+            selection: selectionBeforeInsert
+          });
+        }
+        range.selectNodeContents(editor);
+        selection.removeAllRanges();
+        selection.addRange(range);
+      } catch {
+        return insertGeminiFirefoxMultilineDirectText(editor, normalized, {
+          ...options,
+          originalText: originalTextBeforeInsert,
+          selection: selectionBeforeInsert
+        });
+      }
       const inserted = Boolean(document.execCommand?.("insertText", false, normalized));
       if (!inserted) {
         debugReveal("gemini-text:firefox-insert-text-unavailable", {
