@@ -31,6 +31,7 @@
     buildRiskFingerprint,
     setInputText,
     setInputTextDirect,
+    writePlainTextToContentEditablePreservingNewlines,
     forceRewriteInputText
   } = ComposerHelpers;
   const {
@@ -142,6 +143,7 @@
   let typedScanGeneration = 0;
   let activeRiskEditor = null;
   let suppressInputScanUntil = 0;
+  const rewriteFailureModalSuppressions = new Map();
   let statusPanelEl = null;
   let statusPanelCollapsed = false;
   let statusPanelProtectionValueEl = null;
@@ -206,6 +208,7 @@
     "Large file sanitized. Click Attach sanitized file or Gemini Upload files.";
   const GROK_PENDING_SANITIZED_FILE_HANDOFF_MESSAGE =
     "Large file sanitized. Click Attach sanitized file or Grok Upload/Attach.";
+  const REWRITE_FAILURE_SUPPRESS_MS = 6000;
   let lastDiscoveredFileInput = null;
   let fileDragDiscoveryCompleted = false;
   let fileDragDiscoveryScheduled = false;
@@ -2190,26 +2193,36 @@
   }
 
   function normalizeVerificationText(text) {
-    return normalizeEditorInnerText(normalizeComposerText(normalizeVisiblePlaceholders(text))).replace(
-      /[^\S\n]+/g,
-      " "
-    ).replace(
-      / *\n+ */g,
-      "\n"
-    ).replace(
-      /\n+$/g,
-      ""
-    );
+    return normalizeEditorInnerText(normalizeComposerText(normalizeVisiblePlaceholders(text)))
+      .replace(/[^\S\n]+$/gm, "")
+      .replace(/\n{3,}$/g, "\n\n")
+      .replace(/\n+$/g, "");
   }
 
   function normalizeLooseVerificationText(text) {
-    return normalizeVerificationText(text).replace(/\s+/g, " ").trim();
+    return normalizeVerificationText(text)
+      .replace(/[^\S\n]*\n+[^\S\n]*(?=\[(?:PWM|NET|PUB_HOST)_\d+\])/g, " ")
+      .replace(/(\[(?:PWM|NET|PUB_HOST)_\d+\])[^\S\n]*\n+[^\S\n]*/g, "$1 ")
+      .replace(/\n{2,}/g, "\n")
+      .trim();
   }
 
   function listExpectedPlaceholders(text) {
     const normalized = normalizeVisiblePlaceholders(text);
     const matches = normalized.match(new RegExp(PLACEHOLDER_TOKEN_REGEX.source, "g")) || [];
     return [...new Set(matches)];
+  }
+
+  function listPlaceholderTokens(text) {
+    const normalized = normalizeVisiblePlaceholders(text);
+    return normalized.match(new RegExp(PLACEHOLDER_TOKEN_REGEX.source, "g")) || [];
+  }
+
+  function samePlaceholderTokenSet(expectedText, actualText) {
+    const expected = listExpectedPlaceholders(expectedText);
+    const actual = listExpectedPlaceholders(actualText);
+    if (expected.length !== actual.length) return false;
+    return expected.every((placeholder) => actual.includes(placeholder));
   }
 
   function actualContainsExpectedPlaceholders(expectedText, actualText) {
@@ -2220,14 +2233,404 @@
     return placeholders.every((placeholder) => actual.includes(placeholder));
   }
 
+  function countVerificationLineBreaks(text) {
+    const matches = normalizeVerificationText(text).match(/\n/g);
+    return matches ? matches.length : 0;
+  }
+
+  function countVerificationLines(text) {
+    const normalized = normalizeVerificationText(text);
+    return normalized ? normalized.split("\n").length : 0;
+  }
+
+  function lineCollapseTokens(text) {
+    return normalizeVerificationText(text)
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length >= 2)
+      .slice(0, 12);
+  }
+
+  function detectMultilineCollapse(expected, actual) {
+    const expectedBreaks = countVerificationLineBreaks(expected);
+    if (expectedBreaks < 2) return false;
+
+    const actualBreaks = countVerificationLineBreaks(actual);
+    if (actualBreaks >= Math.max(1, Math.floor(expectedBreaks / 2))) {
+      return false;
+    }
+
+    const tokens = lineCollapseTokens(expected);
+    if (tokens.length < 2) return false;
+
+    const normalizedActual = normalizeVerificationText(actual);
+    const compactActual = normalizedActual.replace(/\s+/g, "");
+    const spaceJoinedActual = normalizedActual.replace(/\s+/g, " ").trim();
+    const compactExpected = tokens.join("").replace(/\s+/g, "");
+    const spaceJoinedExpected = tokens.join(" ").replace(/\s+/g, " ").trim();
+
+    if (compactExpected && compactActual.includes(compactExpected)) return true;
+    if (spaceJoinedExpected && spaceJoinedActual.includes(spaceJoinedExpected)) return true;
+
+    let searchOffset = 0;
+    return tokens.every((token) => {
+      const compactToken = token.replace(/\s+/g, "");
+      const index = compactActual.indexOf(compactToken, searchOffset);
+      if (index < 0) return false;
+      searchOffset = index + compactToken.length;
+      return true;
+    });
+  }
+
+  function isReasonablyCloseRewriteLength(expectedText, actualText) {
+    const expectedLength = normalizeVerificationText(expectedText).length;
+    const actualLength = normalizeVerificationText(actualText).length;
+    if (!actualLength && expectedLength) return false;
+    const difference = Math.abs(expectedLength - actualLength);
+    return difference <= Math.max(80, Math.ceil(expectedLength * 0.35));
+  }
+
+  function collectComposerVerificationCandidates(input, initialActualText) {
+    const candidates = [];
+    const seen = new Set();
+    const addCandidate = (source, value) => {
+      if (typeof value !== "string") return;
+      const normalized = normalizeComposerText(value);
+      const key = `${source}:${normalized}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      candidates.push({ source, text: normalized });
+    };
+
+    if (typeof initialActualText === "string") {
+      addCandidate("stable", initialActualText);
+    }
+    addCandidate("getInputText", getInputText(input));
+    addCandidate("innerText", input?.innerText || "");
+    addCandidate("textContent", input?.textContent || "");
+    addCandidate("normalizedInnerText", normalizeEditorInnerText(input?.innerText || ""));
+
+    const baseCandidates = [...candidates];
+    for (const candidate of baseCandidates) {
+      addCandidate(`${candidate.source}:normalized`, normalizeComposerText(candidate.text));
+    }
+
+    return candidates;
+  }
+
+  function isHighConfidenceRewriteFinding(finding) {
+    if (!finding || typeof finding["raw"] !== "string") return false;
+    if (finding.severity === "high") return true;
+    if (Number(finding.score) >= 80) return true;
+    if (finding.confidence === "high") return true;
+    if (Number(finding.confidence) >= 0.85) return true;
+    return false;
+  }
+
+  function collectOriginalRawSecretValues(originalText, findings) {
+    const rawValues = new Set();
+    const addRawValue = (raw) => {
+      const normalized = normalizeComposerText(raw);
+      if (!normalized || PLACEHOLDER_TOKEN_REGEX.test(normalized)) {
+        PLACEHOLDER_TOKEN_REGEX.lastIndex = 0;
+        return;
+      }
+      PLACEHOLDER_TOKEN_REGEX.lastIndex = 0;
+      rawValues.add(normalized);
+    };
+
+    for (const finding of Array.isArray(findings) ? findings : []) {
+      if (isHighConfidenceRewriteFinding(finding)) {
+        addRawValue(finding["raw"]);
+      }
+    }
+
+    if (typeof originalText === "string" && originalText.trim()) {
+      try {
+        const analysis = analyzeText(originalText);
+        for (const finding of analysis.findings || analysis.secretFindings || []) {
+          if (isHighConfidenceRewriteFinding(finding)) {
+            addRawValue(finding["raw"]);
+          }
+        }
+      } catch {
+        // Analysis is fail-closed later if visible candidates still look sensitive.
+      }
+    }
+
+    return [...rawValues];
+  }
+
+  function candidateHasHighConfidenceSecret(candidateText, rawSecretValues) {
+    const normalized = normalizeComposerText(candidateText);
+    if (!normalized.trim()) return false;
+
+    if (rawSecretValues.some((raw) => raw && normalized.includes(raw))) {
+      return true;
+    }
+
+    try {
+      const analysis = analyzeText(normalized);
+      return (analysis.secretFindings || []).some(isHighConfidenceRewriteFinding);
+    } catch {
+      return false;
+    }
+  }
+
+  function summarizeVerificationCandidate(source, text, expectedText) {
+    return {
+      source,
+      length: normalizeComposerText(text).length,
+      lineCount: countVerificationLines(text),
+      placeholderCount: listPlaceholderTokens(text).length,
+      expectedLength: normalizeComposerText(expectedText).length,
+      expectedLineCount: countVerificationLines(expectedText),
+      expectedPlaceholderCount: listPlaceholderTokens(expectedText).length,
+      multilineCollapsed: detectMultilineCollapse(expectedText, text)
+    };
+  }
+
+  function debugRewriteVerification(label, payload) {
+    debugReveal(label, payload || {});
+  }
+
+  function evaluateComposerVerificationCandidates({ candidates, expectedText, originalText, findings, context }) {
+    const expected = normalizeComposerText(expectedText);
+    const normalizedExpected = normalizeVerificationText(expected);
+    const looseExpected = normalizeLooseVerificationText(expected);
+    const expectedPlaceholders = listExpectedPlaceholders(expected);
+    const rawSecretValues = collectOriginalRawSecretValues(originalText, findings);
+    let firstNonEmptyActual = "";
+    let firstCandidate = null;
+    let collapseDetected = false;
+    let placeholderMissing = expectedPlaceholders.length > 0;
+    let rawSecretPresent = false;
+
+    for (const candidate of candidates) {
+      const actual = normalizeComposerText(candidate.text);
+      const summary = summarizeVerificationCandidate(candidate.source, actual, expected);
+      debugRewriteVerification("rewrite:verification-candidate", {
+        context,
+        ...summary,
+        hasRawSecretValues: rawSecretValues.length > 0
+      });
+
+      if (!firstCandidate) {
+        firstCandidate = candidate;
+      }
+      if (!firstNonEmptyActual && actual.trim()) {
+        firstNonEmptyActual = actual;
+      }
+
+      if (candidateHasHighConfidenceSecret(actual, rawSecretValues)) {
+        rawSecretPresent = true;
+        debugRewriteVerification("rewrite:verification-failed-raw-secret-present", {
+          context,
+          source: candidate.source,
+          length: summary.length,
+          lineCount: summary.lineCount,
+          placeholderCount: summary.placeholderCount
+        });
+      }
+    }
+
+    if (rawSecretPresent) {
+      return {
+        ok: false,
+        actual: firstNonEmptyActual || normalizeComposerText(firstCandidate?.text || ""),
+        reason: "raw-secret-present",
+        collapseDetected: false,
+        rawSecretPresent: true,
+        placeholderMissing: false
+      };
+    }
+
+    for (const candidate of candidates) {
+      const actual = normalizeComposerText(candidate.text);
+      const summary = summarizeVerificationCandidate(candidate.source, actual, expected);
+
+      if (!firstCandidate) {
+        firstCandidate = candidate;
+      }
+      if (!firstNonEmptyActual && actual.trim()) {
+        firstNonEmptyActual = actual;
+      }
+
+      if (expectedPlaceholders.length && !actualContainsExpectedPlaceholders(expected, actual)) {
+        debugRewriteVerification("rewrite:verification-failed-placeholder-missing", {
+          context,
+          source: candidate.source,
+          length: summary.length,
+          lineCount: summary.lineCount,
+          expectedPlaceholderCount: expectedPlaceholders.length,
+          actualPlaceholderCount: listExpectedPlaceholders(actual).length
+        });
+        continue;
+      }
+      placeholderMissing = false;
+
+      if (detectMultilineCollapse(expected, actual)) {
+        collapseDetected = true;
+        debugRewriteVerification("rewrite:multiline-collapse-detected", {
+          context,
+          source: candidate.source,
+          expectedLineCount: countVerificationLines(expected),
+          actualLineCount: countVerificationLines(actual),
+          expectedLength: expected.length,
+          actualLength: actual.length
+        });
+        continue;
+      }
+
+      if (actual === expected) {
+        debugRewriteVerification("rewrite:verification-pass-exact", {
+          context,
+          source: candidate.source,
+          length: summary.length,
+          lineCount: summary.lineCount,
+          placeholderCount: summary.placeholderCount
+        });
+        return { ok: true, actual, strategy: "exact", source: candidate.source };
+      }
+
+      const normalizedActual = normalizeVerificationText(actual);
+      if (normalizedActual === normalizedExpected) {
+        debugRewriteVerification("rewrite:verification-pass-normalized", {
+          context,
+          source: candidate.source,
+          length: summary.length,
+          lineCount: summary.lineCount,
+          placeholderCount: summary.placeholderCount
+        });
+        return { ok: true, actual, strategy: "normalized", source: candidate.source };
+      }
+
+      const looseActual = normalizeLooseVerificationText(actual);
+      if (
+        looseActual === looseExpected &&
+        actualContainsExpectedPlaceholders(expected, actual)
+      ) {
+        debugRewriteVerification("rewrite:verification-pass-normalized", {
+          context,
+          source: candidate.source,
+          length: summary.length,
+          lineCount: summary.lineCount,
+          placeholderCount: summary.placeholderCount,
+          wrapperAdjusted: true
+        });
+        return { ok: true, actual, strategy: "normalized-wrapper", source: candidate.source };
+      }
+
+      if (
+        expectedPlaceholders.length &&
+        samePlaceholderTokenSet(expected, actual) &&
+        actual.trim() &&
+        isReasonablyCloseRewriteLength(expected, actual)
+      ) {
+        debugRewriteVerification("rewrite:verification-pass-placeholder-safe", {
+          context,
+          source: candidate.source,
+          length: summary.length,
+          lineCount: summary.lineCount,
+          placeholderCount: summary.placeholderCount
+        });
+        return { ok: true, actual, strategy: "placeholder-safe", source: candidate.source };
+      }
+    }
+
+    return {
+      ok: false,
+      actual: firstNonEmptyActual || normalizeComposerText(firstCandidate?.text || ""),
+      reason: rawSecretPresent
+        ? "raw-secret-present"
+        : placeholderMissing
+          ? "placeholder-missing"
+          : collapseDetected
+            ? "multiline-collapse"
+            : "mismatch",
+      collapseDetected,
+      rawSecretPresent,
+      placeholderMissing
+    };
+  }
+
+  async function verifyComposerRewriteSafe({
+    input,
+    expectedText,
+    originalText,
+    redactedText,
+    findings,
+    context,
+    caretOffset,
+    allowMultilineRetry = true,
+    actualText
+  }) {
+    const expected = normalizeComposerText(redactedText || expectedText);
+    const initialActual =
+      typeof actualText === "string" ? normalizeComposerText(actualText) : await readStableComposerText(input, 2);
+    const firstResult = evaluateComposerVerificationCandidates({
+      candidates: collectComposerVerificationCandidates(input, initialActual),
+      expectedText: expected,
+      originalText,
+      findings,
+      context
+    });
+    if (firstResult.ok || !firstResult.collapseDetected || !allowMultilineRetry || !isContentEditable(input)) {
+      return firstResult;
+    }
+
+    debugRewriteVerification("rewrite:multiline-preserving-retry-start", {
+      context,
+      expectedLength: expected.length,
+      expectedLineCount: countVerificationLines(expected),
+      expectedPlaceholderCount: listPlaceholderTokens(expected).length
+    });
+
+    suppressFollowupInputScan();
+    const retryWritten = writePlainTextToContentEditablePreservingNewlines(input, expected, {
+      caretOffset
+    });
+    const retryActual = await readStableComposerText(input, 2);
+    const retryResult = retryWritten
+      ? evaluateComposerVerificationCandidates({
+          candidates: collectComposerVerificationCandidates(input, retryActual),
+          expectedText: expected,
+          originalText,
+          findings,
+          context
+        })
+      : {
+          ok: false,
+          actual: retryActual,
+          reason: "multiline-retry-write-failed"
+        };
+
+    debugRewriteVerification(
+      retryResult.ok
+        ? "rewrite:multiline-preserving-retry-success"
+        : "rewrite:multiline-preserving-retry-failed",
+      {
+        context,
+        retryWritten,
+        actualLength: normalizeComposerText(retryActual).length,
+        actualLineCount: countVerificationLines(retryActual),
+        expectedLineCount: countVerificationLines(expected),
+        expectedPlaceholderCount: listPlaceholderTokens(expected).length
+      }
+    );
+
+    return retryResult.ok ? { ...retryResult, strategy: `multiline-retry-${retryResult.strategy}` } : retryResult;
+  }
+
   function matchesComposerPlan(plan, actualText) {
-    if (plan.acceptableTexts.includes(actualText)) {
+    const acceptableTexts = Array.isArray(plan.acceptableTexts) ? plan.acceptableTexts : [plan.canonical];
+    if (acceptableTexts.includes(actualText)) {
       return true;
     }
 
     const normalizedActual = normalizeVerificationText(actualText);
     if (
-      plan.acceptableTexts.some(
+      acceptableTexts.some(
         (candidate) =>
           normalizeVerificationText(candidate) === normalizedActual &&
           actualContainsExpectedPlaceholders(candidate, actualText)
@@ -2237,7 +2640,7 @@
     }
 
     const looseActual = normalizeLooseVerificationText(actualText);
-    return plan.acceptableTexts.some(
+    return acceptableTexts.some(
       (candidate) =>
         normalizeLooseVerificationText(candidate) === looseActual &&
         actualContainsExpectedPlaceholders(candidate, actualText)
@@ -3403,7 +3806,62 @@
     return true;
   }
 
+  function pruneRewriteFailureSuppressions(now) {
+    for (const [fingerprint, expiresAt] of rewriteFailureModalSuppressions.entries()) {
+      if (expiresAt <= now) {
+        rewriteFailureModalSuppressions.delete(fingerprint);
+      }
+    }
+  }
+
+  function buildRewriteFailureFingerprint(context, details) {
+    const expected = details?.expected || {};
+    const actual = details?.actual || {};
+    const normalizedInnerText = details?.normalizedInnerText || {};
+    const textContent = details?.textContent || {};
+    return [
+      context || "",
+      expected.length || 0,
+      expected.lineCount || 0,
+      expected.placeholderCount || 0,
+      actual.length || 0,
+      actual.lineCount || 0,
+      actual.placeholderCount || 0,
+      normalizedInnerText.length || 0,
+      normalizedInnerText.lineCount || 0,
+      textContent.length || 0,
+      textContent.lineCount || 0
+    ].join(":");
+  }
+
+  function shouldSuppressRewriteFailureModal(context, details) {
+    const now = Date.now();
+    pruneRewriteFailureSuppressions(now);
+    const fingerprint = buildRewriteFailureFingerprint(context, details);
+    const duplicateUntil = rewriteFailureModalSuppressions.get(fingerprint) || 0;
+    const suppressed = Boolean(modalOpen || duplicateUntil > now);
+
+    if (suppressed) {
+      debugRewriteVerification("rewrite:failure-modal-suppressed-duplicate", {
+        context,
+        modalOpen,
+        duplicate: duplicateUntil > now,
+        ttlMs: Math.max(0, duplicateUntil - now),
+        expected: details?.expected || null,
+        actual: details?.actual || null
+      });
+      return true;
+    }
+
+    rewriteFailureModalSuppressions.set(fingerprint, now + REWRITE_FAILURE_SUPPRESS_MS);
+    return false;
+  }
+
   async function showRewriteFailure(context, details) {
+    if (shouldSuppressRewriteFailureModal(context, details)) {
+      return;
+    }
+
     const message =
       context === "submit"
         ? "LeakGuard blocked send because it could not verify the rewritten composer content safely."
@@ -3619,13 +4077,26 @@
     nudgeChatGptComposerState(input, expected, strategy);
     await waitForChatGptComposerVerification();
     const actual = await readStableComposerText(input, 2);
-    if (writeAccepted && matchesComposerPlan(plan, actual)) {
+    const verification = writeAccepted
+      ? await verifyComposerRewriteSafe({
+          input,
+          expectedText: expected,
+          originalText: options.rawInsertedText || options.restoreText || "",
+          redactedText: expected,
+          findings: options.findings,
+          context: options.context || "chatgpt-sync",
+          caretOffset: options.caretOffset,
+          actualText: actual
+        })
+      : { ok: false, actual };
+    if (writeAccepted && verification.ok) {
       debugChatGptSync("chatgpt-sync:verification-pass", input, expected, actual, {
-        strategy
+        strategy,
+        verificationStrategy: verification.strategy
       });
       return {
         ok: true,
-        actual,
+        actual: verification.actual || actual,
         strategy: `chatgpt-${strategy}`
       };
     }
@@ -3706,8 +4177,23 @@
     debugLogSnapshot("rewrite:primary-rewrite", input, expected, writeText);
 
     let actual = actualAfterPrimary;
-    if (matchesComposerPlan(plan, actual)) {
-      return { ok: true, actual, strategy: "primary-rewrite" };
+    const primaryPlanMatched = matchesComposerPlan(plan, actual);
+    const primaryVerification = await verifyComposerRewriteSafe({
+      input,
+      expectedText: expected,
+      originalText: options.originalText || rawInsertedText || options.restoreText || "",
+      redactedText: expected,
+      findings: options.findings,
+      context: options.context || "composer-rewrite",
+      caretOffset: options.caretOffset,
+      actualText: actual
+    });
+    if (primaryVerification.ok) {
+      return {
+        ok: true,
+        actual: primaryVerification.actual || actual,
+        strategy: primaryPlanMatched ? "primary-rewrite" : `primary-rewrite-${primaryVerification.strategy}`
+      };
     }
 
     forceRewriteInputText(input, writeText, {
@@ -3716,8 +4202,23 @@
     actual = await readStableComposerText(input);
     debugLogSnapshot("rewrite:html-fallback", input, expected, writeText);
 
-    if (matchesComposerPlan(plan, actual)) {
-      return { ok: true, actual, strategy: "html-fallback" };
+    const htmlPlanMatched = matchesComposerPlan(plan, actual);
+    const htmlVerification = await verifyComposerRewriteSafe({
+      input,
+      expectedText: expected,
+      originalText: options.originalText || rawInsertedText || options.restoreText || "",
+      redactedText: expected,
+      findings: options.findings,
+      context: options.context || "composer-rewrite",
+      caretOffset: options.caretOffset,
+      actualText: actual
+    });
+    if (htmlVerification.ok) {
+      return {
+        ok: true,
+        actual: htmlVerification.actual || actual,
+        strategy: htmlPlanMatched ? "html-fallback" : `html-fallback-${htmlVerification.strategy}`
+      };
     }
 
     if (rawInsertedText && actual.includes(rawInsertedText)) {
@@ -3726,8 +4227,25 @@
         actual = await readStableComposerText(input);
         debugLogSnapshot("rewrite:direct-transactional-fallback", input, expected, writeText);
 
-        if (matchesComposerPlan(plan, actual) && !actual.includes(rawInsertedText)) {
-          return { ok: true, actual, strategy: "direct-transactional-fallback" };
+        const directPlanMatched = matchesComposerPlan(plan, actual);
+        const directVerification = await verifyComposerRewriteSafe({
+          input,
+          expectedText: expected,
+          originalText: options.originalText || rawInsertedText || options.restoreText || "",
+          redactedText: expected,
+          findings: options.findings,
+          context: options.context || "composer-rewrite",
+          caretOffset: options.caretOffset,
+          actualText: actual
+        });
+        if (directVerification.ok && !actual.includes(rawInsertedText)) {
+          return {
+            ok: true,
+            actual: directVerification.actual || actual,
+            strategy: directPlanMatched
+              ? "direct-transactional-fallback"
+              : `direct-transactional-fallback-${directVerification.strategy}`
+          };
         }
       }
     }
@@ -3759,6 +4277,8 @@
       );
     const applied = await applyComposerText(input, normalizedRedacted, {
       ...options,
+      originalText: normalizedOriginal,
+      redactedText: normalizedRedacted,
       rawInsertedText: normalizedOriginal
     });
 
@@ -3769,17 +4289,41 @@
     suppressFollowupInputScan();
     if (setInputTextDirect(input, normalizedRedacted, { caretOffset: options.caretOffset })) {
       const actual = await readStableComposerText(input);
+      const verification = await verifyComposerRewriteSafe({
+        input,
+        expectedText: normalizedRedacted,
+        originalText: normalizedOriginal,
+        redactedText: normalizedRedacted,
+        findings: options.findings,
+        context,
+        caretOffset: options.caretOffset,
+        actualText: actual
+      });
       if (
-        matchesComposerPlan(plan, actual) &&
+        verification.ok &&
         !hasRawLeak(actual)
       ) {
-        return { ok: true, actual, strategy: "direct-transactional-rewrite" };
+        return { ok: true, actual: verification.actual || actual, strategy: "direct-transactional-rewrite" };
       }
       if (hasRawLeak(actual)) {
         forceRewriteInputText(input, plan.writeText, { caretOffset: options.caretOffset });
         const forcedActual = await readStableComposerText(input);
-        if (matchesComposerPlan(plan, forcedActual) && !hasRawLeak(forcedActual)) {
-          return { ok: true, actual: forcedActual, strategy: "forced-transactional-rewrite" };
+        const forcedVerification = await verifyComposerRewriteSafe({
+          input,
+          expectedText: normalizedRedacted,
+          originalText: normalizedOriginal,
+          redactedText: normalizedRedacted,
+          findings: options.findings,
+          context,
+          caretOffset: options.caretOffset,
+          actualText: forcedActual
+        });
+        if (forcedVerification.ok && !hasRawLeak(forcedActual)) {
+          return {
+            ok: true,
+            actual: forcedVerification.actual || forcedActual,
+            strategy: "forced-transactional-rewrite"
+          };
         }
         return { ok: false, actual: forcedActual };
       }
@@ -3789,11 +4333,21 @@
     return applied;
   }
 
-  async function ensureExactComposerState(input, expectedText) {
+  async function ensureExactComposerState(input, expectedText, options = {}) {
     const plan = buildComposerWritePlan(input, expectedText);
     const actual = await readStableComposerText(input, 2);
     debugLogSnapshot("pre-submit-check", input, plan.canonical, plan.writeText);
-    return matchesComposerPlan(plan, actual);
+    const verification = await verifyComposerRewriteSafe({
+      input,
+      expectedText: plan.canonical,
+      originalText: options.originalText || "",
+      redactedText: plan.canonical,
+      findings: options.findings,
+      context: options.context || "pre-submit-check",
+      caretOffset: options.caretOffset,
+      actualText: actual
+    });
+    return verification.ok;
   }
 
   function findSendButton(contextEl) {
@@ -5137,6 +5691,11 @@
 
     const assistSnapshot = disableGeminiEditorInputAssist(editor);
     try {
+      if (isContentEditable(editor)) {
+        return writePlainTextToContentEditablePreservingNewlines(editor, normalized, {
+          caretOffset: normalized.length
+        });
+      }
       editor.textContent = normalized;
       placeGeminiEditorCaretAtEnd(editor);
       return true;
@@ -5150,6 +5709,7 @@
   function verifyGeminiFirefoxInsertedText(editor, sanitizedText, rawInsertedText = "") {
     const actual = normalizeComposerText(getInputText(editor));
     if (!actual.trim()) return false;
+    if (detectMultilineCollapse(sanitizedText, actual)) return false;
 
     const placeholders = listExpectedPlaceholders(sanitizedText);
     if (placeholders.length && !placeholders.every((placeholder) => actual.includes(placeholder))) {

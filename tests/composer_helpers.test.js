@@ -8,6 +8,8 @@ const {
   normalizeEditorInnerText,
   serializeContentEditableRoot,
   isContentEditable,
+  getInputText,
+  writePlainTextToContentEditablePreservingNewlines,
   buildRiskFingerprint
 } = globalThis.PWM.ComposerHelpers;
 
@@ -187,13 +189,117 @@ function testLocalFileFallbackHelpersUsePlainEvents() {
     "execCommand fallback should dispatch plain input/change events"
   );
   assert.ok(
-    directSource?.includes("el.textContent = normalized"),
-    "direct contenteditable fallback should use textContent for redacted text only"
+    directSource?.includes("writePlainTextToContentEditablePreservingNewlines"),
+    "direct contenteditable fallback should preserve multiline text with explicit DOM breaks"
   );
   assert.ok(
-    directSource?.includes("dispatchPlainInput(el);"),
+    composerHelperSource.includes('dispatchInput(el, normalized, "insertReplacementText");') &&
+      composerHelperSource.includes('new Event("change", { bubbles: true, composed: true })'),
     "direct fallback should notify host editors without synthetic raw file payloads"
   );
+}
+
+function createWritableContentEditable() {
+  const editor = {
+    tagName: "DIV",
+    isContentEditable: true,
+    childNodes: [],
+    events: [],
+    focused: false,
+    innerText: "",
+    textContent: "",
+    appendChild(node) {
+      node.parentNode = this;
+      this.childNodes.push(node);
+      this.textContent = this.childNodes
+        .map((child) => child.nodeValue || child.textContent || "")
+        .join("");
+      this.innerText = this.childNodes
+        .map((child) => (child.tagName === "BR" ? "\n" : child.nodeValue || child.textContent || ""))
+        .join("");
+      return node;
+    },
+    replaceChildren(...nodes) {
+      this.childNodes = [];
+      this.textContent = "";
+      this.innerText = "";
+      nodes.forEach((node) => this.appendChild(node));
+    },
+    removeChild(node) {
+      const index = this.childNodes.indexOf(node);
+      if (index >= 0) {
+        this.childNodes.splice(index, 1);
+      }
+      return node;
+    },
+    dispatchEvent(event) {
+      this.events.push(event.type);
+      return true;
+    },
+    focus() {
+      this.focused = true;
+    },
+    getAttribute(name) {
+      return name === "contenteditable" ? "true" : null;
+    }
+  };
+  Object.defineProperty(editor, "firstChild", {
+    get() {
+      return this.childNodes[0] || null;
+    }
+  });
+  return editor;
+}
+
+function testPlainTextContentEditableWritePreservesNewlines() {
+  const originalDocument = global.document;
+  const originalWindow = global.window;
+  const originalEvent = global.Event;
+  const originalInputEvent = global.InputEvent;
+  global.document = {
+    createTextNode(value) {
+      return textNode(value);
+    },
+    createElement(tagName) {
+      return tagName.toUpperCase() === "BR" ? brNode() : elementNode(tagName.toUpperCase());
+    }
+  };
+  global.window = {
+    getSelection: () => null
+  };
+  global.Event = class {
+    constructor(type) {
+      this.type = type;
+    }
+  };
+  global.InputEvent = global.Event;
+
+  try {
+    const editor = createWritableContentEditable();
+    const written = writePlainTextToContentEditablePreservingNewlines(
+      editor,
+      "line1\nline2\nline3"
+    );
+
+    assert.strictEqual(written, true);
+    assert.deepStrictEqual(
+      editor.childNodes.map((node) => node.tagName || "#text"),
+      ["#text", "BR", "#text", "BR", "#text"],
+      "multiline contenteditable fallback should insert BR nodes between text lines"
+    );
+    assert.strictEqual(
+      getInputText(editor),
+      "line1\nline2\nline3",
+      "contenteditable fallback text should round-trip through getInputText with line breaks"
+    );
+    assert.ok(editor.events.includes("input"));
+    assert.ok(editor.events.includes("change"));
+  } finally {
+    global.document = originalDocument;
+    global.window = originalWindow;
+    global.Event = originalEvent;
+    global.InputEvent = originalInputEvent;
+  }
 }
 
 function testRiskFingerprintIgnoresNormalComposerTextChanges() {
@@ -364,6 +470,7 @@ function run() {
   testContentEditableRewritePathsSyncHostState();
   testContentEditableAttributeDetectionSupportsGenericEditors();
   testLocalFileFallbackHelpersUsePlainEvents();
+  testPlainTextContentEditableWritePreservesNewlines();
   testRiskFingerprintIgnoresNormalComposerTextChanges();
   testRiskFingerprintChangesWhenFindingsChange();
   testRiskFingerprintDoesNotStoreRawFindingValues();

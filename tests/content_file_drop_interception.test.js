@@ -658,6 +658,29 @@ function createHarness(overrides = {}) {
     }),
     matchesComposerPlan: (plan, actual) =>
       globalThis.PWM.ComposerHelpers.normalizeComposerText(actual) === plan.canonical,
+    detectMultilineCollapse: (expected, actual) => {
+      const expectedBreaks = (globalThis.PWM.ComposerHelpers.normalizeComposerText(expected).match(/\n/g) || []).length;
+      const actualBreaks = (globalThis.PWM.ComposerHelpers.normalizeComposerText(actual).match(/\n/g) || []).length;
+      return expectedBreaks >= 2 && actualBreaks === 0;
+    },
+    writePlainTextToContentEditablePreservingNewlines: (input, text) => {
+      input.text = globalThis.PWM.ComposerHelpers.normalizeComposerText(text);
+      input.textContentWrites = (input.textContentWrites || 0) + 1;
+      input.dispatchEvent?.(new Event("input", { bubbles: true, composed: true }));
+      input.dispatchEvent?.(new Event("change", { bubbles: true, composed: true }));
+      return true;
+    },
+    verifyComposerRewriteSafe: async ({ input, expectedText, actualText }) => {
+      const actual = globalThis.PWM.ComposerHelpers.normalizeComposerText(
+        actualText == null ? dependencies.getInputText(input) : actualText
+      );
+      const expected = globalThis.PWM.ComposerHelpers.normalizeComposerText(expectedText);
+      return {
+        ok: actual === expected || actual.includes(expected) || expected.includes(actual),
+        actual,
+        strategy: "harness"
+      };
+    },
     collectFailureDetails: () => ({}),
     showRewriteFailure: async () => {},
     dataTransferHasFiles,
