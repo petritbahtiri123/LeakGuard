@@ -244,6 +244,86 @@
   border-color: rgba(251, 113, 133, 0.9);
 }
 
+.pwm-file-processing-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.38);
+  color: #f8fafc;
+  font: 14px/1.4 system-ui, sans-serif;
+  pointer-events: auto;
+  backdrop-filter: blur(3px);
+}
+
+.pwm-file-processing-overlay[data-pwm-blocking="false"] {
+  pointer-events: none;
+}
+
+.pwm-file-processing-card {
+  width: min(420px, calc(100vw - 48px));
+  border: 1px solid rgba(34, 211, 238, 0.48);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 18px;
+  background: rgba(15, 23, 42, 0.96);
+  box-shadow: 0 24px 70px rgba(2, 6, 23, 0.38);
+  text-align: left;
+  pointer-events: auto;
+}
+
+.pwm-file-processing-title {
+  margin: 0;
+  color: #67e8f9;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.pwm-file-processing-status {
+  margin: 0;
+  color: #f8fafc;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.pwm-file-processing-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 20px;
+  margin: 2px 0 0;
+  color: #cbd5e1;
+  font-size: 13px;
+}
+
+.pwm-file-processing-progress::before {
+  content: "";
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(103, 232, 249, 0.34);
+  border-top-color: #67e8f9;
+  border-radius: 50%;
+  animation: pwm-file-processing-spin 0.9s linear infinite;
+}
+
+.pwm-file-processing-overlay[data-pwm-state="success"] .pwm-file-processing-card {
+  border-color: rgba(52, 211, 153, 0.76);
+}
+
+.pwm-file-processing-overlay[data-pwm-state="error"] .pwm-file-processing-card {
+  border-color: rgba(251, 113, 133, 0.84);
+}
+
+@keyframes pwm-file-processing-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .pwm-pending-attach-prompt {
   position: fixed;
   right: 18px;

@@ -12,6 +12,12 @@ Use this file as a short handoff log for AI-made changes. Add newest entries fir
 ```
 
 ## Entries
+### 2026-05-17 - Standard file-processing UI
+- Goal: Added a standard local file-processing UI: LeakGuard now shows scan/sanitize/stream-redaction progress before switching to trusted pending attach.
+- Files: `src/content/content.js`, `src/content/overlay.css`, `tests/content_file_drop_interception.test.js`, `tests/productization.test.js`, `docs/CODEX_CHANGELOG.md`
+- Tests: `node --check src/content/content.js` -> pass; `node tests/content_file_drop_interception.test.js` -> pass; `node tests/productization.test.js` -> pass; `node tests/security.test.js` -> pass; `node tests/typed_interception.test.js` -> pass; `npm test` -> pass; `npm run build:all` -> pass
+- Notes: Gemini/Grok pending attach architecture stays intact; ChatGPT, Claude, OpenAI Chat, and X pending attach remain feature-gated off.
+
 ### 2026-05-16 - ChatGPT streamed file-only handoff
 - Goal: Let ChatGPT large streamed drops try sanitized file-input assignment even when the streamed sanitized file is not read back into memory, while still failing closed if no safe file input is available.
 - Files: `src/content/content.js`, `tests/content_file_drop_interception.test.js`, `docs/CODEX_CHANGELOG.md`

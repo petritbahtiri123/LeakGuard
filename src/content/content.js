@@ -152,13 +152,18 @@
   let extensionRuntimeAvailable = true;
   const sanitizedFileInputHandoffs = new WeakSet();
   const sanitizedFileInputHandoffExpires = new WeakMap();
+  const sanitizedFileInputHandoffRecords = new WeakMap();
   const sanitizedFileHandoffFiles = new WeakSet();
   const sanitizedFileHandoffFileExpires = new WeakMap();
   const sanitizedFileHandoffSignatures = new Map();
+  const recentSanitizedFileInputHandoffRecords = [];
   const firefoxFileInputTransactions = new WeakMap();
   const rawFileDropInterceptions = new WeakSet();
   const fileDragEventRoots = new WeakSet();
   const editorRiskState = new WeakMap();
+  let sanitizedFileHandoffSequence = 0;
+  let lastCompletedSanitizedFileInputHandoff = null;
+  let lastCompletedPendingSanitizedFileInputHandoff = null;
   const SANITIZED_FILE_HANDOFF_SUPPRESS_MS = 30000;
   const PROGRAMMATIC_INPUT_SUPPRESS_MS = 500;
   const CHATGPT_LARGE_PASTE_FILE_THRESHOLD = 16 * 1024;
@@ -198,9 +203,9 @@
   const FIREFOX_GEMINI_FILE_INPUT_BRIDGE_FAILURE_MESSAGE =
     "LeakGuard blocked the raw file drop. Could not locate Gemini upload input. Please use the upload button or retry.";
   const GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MESSAGE =
-    "LeakGuard sanitized the file. Click Gemini Upload files to attach the sanitized version.";
+    "Large file sanitized. Click Attach sanitized file or Gemini Upload files.";
   const GROK_PENDING_SANITIZED_FILE_HANDOFF_MESSAGE =
-    "LeakGuard sanitized the large file. Click Grok Upload/Attach to attach the sanitized version.";
+    "Large file sanitized. Click Attach sanitized file or Grok Upload/Attach.";
   let lastDiscoveredFileInput = null;
   let fileDragDiscoveryCompleted = false;
   let fileDragDiscoveryScheduled = false;
@@ -231,7 +236,13 @@
   let dmzOverlayStatusEl = null;
   let dmzOverlayTimer = 0;
   let dmzFallbackStyleEl = null;
+  let fileProcessingOverlayEl = null;
+  let fileProcessingTitleEl = null;
+  let fileProcessingStatusEl = null;
+  let fileProcessingProgressEl = null;
+  let fileProcessingHideTimer = 0;
   let pendingAttachPromptEl = null;
+  let pendingAttachPromptSite = "";
   let syntheticFileListCapabilityCache = null;
   let inputFileAssignmentCapabilityCache = null;
 
@@ -603,10 +614,188 @@
     return Boolean(file && (typeof file === "object" || typeof file === "function"));
   }
 
+  function getSanitizedFileHandoffSiteId() {
+    try {
+      return getCurrentHandoffDriverId() || "";
+    } catch {
+      return "";
+    }
+  }
+
+  function getSanitizedFileHandoffAdapterId(site = "") {
+    try {
+      return getFileHandoffAdapterForLocation()?.id || site || "";
+    } catch {
+      return site || "";
+    }
+  }
+
+  function isPendingSanitizedFileHandoffStage(stage) {
+    return /\b(?:pending|ghost|bridge|prime|primed)\b/i.test(String(stage || ""));
+  }
+
+  function pruneRecentSanitizedFileInputHandoffRecords(now = Date.now()) {
+    for (let index = recentSanitizedFileInputHandoffRecords.length - 1; index >= 0; index -= 1) {
+      const record = recentSanitizedFileInputHandoffRecords[index];
+      if (!record || Number(record.expiresAt || 0) <= now) {
+        recentSanitizedFileInputHandoffRecords.splice(index, 1);
+      }
+    }
+
+    if (
+      lastCompletedSanitizedFileInputHandoff &&
+      Number(lastCompletedSanitizedFileInputHandoff.expiresAt || 0) <= now
+    ) {
+      lastCompletedSanitizedFileInputHandoff = null;
+    }
+    if (
+      lastCompletedPendingSanitizedFileInputHandoff &&
+      Number(lastCompletedPendingSanitizedFileInputHandoff.expiresAt || 0) <= now
+    ) {
+      lastCompletedPendingSanitizedFileInputHandoff = null;
+    }
+  }
+
+  function createSanitizedFileInputHandoffRecord(fileInput, files, options = {}) {
+    if (!isFileInputElement(fileInput)) return null;
+
+    const assignedFiles = Array.from(files || []).filter(Boolean);
+    const now = Date.now();
+    const ttlMs = Math.max(1, Number(options.ttlMs || SANITIZED_FILE_HANDOFF_SUPPRESS_MS));
+    const expiresAt = Number(options.expiresAt || now + ttlMs);
+    const details = options.details || null;
+    const stage = String(options.stage || details?.handoffStage || "");
+    const site = String(options.site || getSanitizedFileHandoffSiteId() || details?.hostname || "");
+    const adapter = String(options.adapter || getSanitizedFileHandoffAdapterId(site) || site || "");
+    const signatures = assignedFiles.map(getFileMetadataSignature).filter(Boolean);
+    const signature = getFileListMetadataSignature(assignedFiles);
+    const pending = Boolean(options.pending || isPendingSanitizedFileHandoffStage(stage));
+    sanitizedFileHandoffSequence += 1;
+
+    return {
+      input: fileInput,
+      timestamp: now,
+      expiresAt,
+      ttlMs,
+      handoffId:
+        options.handoffId ||
+        `${site || adapter || "site"}:${now}:${sanitizedFileHandoffSequence}`,
+      sessionId: String(options.sessionId || details?.sessionHash || ""),
+      site,
+      adapter,
+      stage,
+      pending,
+      signature,
+      signatures,
+      files: assignedFiles.map(describeFileForDebug)
+    };
+  }
+
+  function recordSanitizedFileInputHandoffCompletion(fileInput, files, options = {}) {
+    const record = createSanitizedFileInputHandoffRecord(fileInput, files, options);
+    if (!record) return null;
+
+    pruneRecentSanitizedFileInputHandoffRecords(record.timestamp);
+    sanitizedFileInputHandoffRecords.set(fileInput, record);
+    recentSanitizedFileInputHandoffRecords.push(record);
+    while (recentSanitizedFileInputHandoffRecords.length > 20) {
+      recentSanitizedFileInputHandoffRecords.shift();
+    }
+    lastCompletedSanitizedFileInputHandoff = record;
+    if (record.pending) {
+      lastCompletedPendingSanitizedFileInputHandoff = record;
+    }
+    return record;
+  }
+
+  function deleteSanitizedFileInputHandoffRecord(fileInput) {
+    if (!isFileInputElement(fileInput)) return;
+
+    sanitizedFileInputHandoffRecords.delete(fileInput);
+    for (let index = recentSanitizedFileInputHandoffRecords.length - 1; index >= 0; index -= 1) {
+      if (recentSanitizedFileInputHandoffRecords[index]?.input === fileInput) {
+        recentSanitizedFileInputHandoffRecords.splice(index, 1);
+      }
+    }
+    if (lastCompletedSanitizedFileInputHandoff?.input === fileInput) {
+      lastCompletedSanitizedFileInputHandoff = null;
+    }
+    if (lastCompletedPendingSanitizedFileInputHandoff?.input === fileInput) {
+      lastCompletedPendingSanitizedFileInputHandoff = null;
+    }
+  }
+
+  function getRecentSanitizedFileInputHandoffRecord(fileInput, options = {}) {
+    const now = Date.now();
+    pruneRecentSanitizedFileInputHandoffRecords(now);
+
+    const selectedFiles = Array.from(options.files || []).filter(Boolean);
+    const signature = getFileListMetadataSignature(selectedFiles);
+    const currentSite = getSanitizedFileHandoffSiteId();
+    const inputRecord = isFileInputElement(fileInput)
+      ? sanitizedFileInputHandoffRecords.get(fileInput) || null
+      : null;
+    const recordIsActive = (record) => Boolean(record && Number(record.expiresAt || 0) > now);
+    const recordMatches = (record) => {
+      if (!recordIsActive(record)) return null;
+      const inputMatch = Boolean(isFileInputElement(fileInput) && record.input === fileInput);
+      const signatureMatch = Boolean(
+        signature &&
+          (record.signature === signature ||
+            selectedFiles.every((file) => record.signatures.includes(getFileMetadataSignature(file))))
+      );
+      const sitePendingMatch = Boolean(
+        options.allowSitePending &&
+          record.pending &&
+          currentSite &&
+          record.site === currentSite
+      );
+      if (!inputMatch && !signatureMatch && !sitePendingMatch) return null;
+      return { record, inputMatch, signatureMatch, sitePendingMatch };
+    };
+
+    const inputMatch = recordMatches(inputRecord);
+    if (inputMatch) return inputMatch;
+
+    const pendingMatch = recordMatches(lastCompletedPendingSanitizedFileInputHandoff);
+    if (pendingMatch) return pendingMatch;
+
+    const latestMatch = recordMatches(lastCompletedSanitizedFileInputHandoff);
+    if (latestMatch) return latestMatch;
+
+    for (let index = recentSanitizedFileInputHandoffRecords.length - 1; index >= 0; index -= 1) {
+      const match = recordMatches(recentSanitizedFileInputHandoffRecords[index]);
+      if (match) return match;
+    }
+
+    return null;
+  }
+
+  function createSanitizedHandoffSuppressionDebug(fileInput, suppression, reason = "") {
+    const record = suppression?.record || null;
+    return {
+      reason,
+      input: describeFileInputForDebug(fileInput, "sanitized-file-handoff"),
+      handoffId: record?.handoffId || "",
+      sessionId: record?.sessionId || "",
+      site: record?.site || getSanitizedFileHandoffSiteId(),
+      adapter: record?.adapter || "",
+      stage: record?.stage || "",
+      pending: Boolean(record?.pending),
+      ageMs: record ? Math.max(0, Date.now() - Number(record.timestamp || 0)) : 0,
+      signature: record?.signature || "",
+      files: record?.files || [],
+      inputMatch: Boolean(suppression?.inputMatch),
+      signatureMatch: Boolean(suppression?.signatureMatch),
+      sitePendingMatch: Boolean(suppression?.sitePendingMatch)
+    };
+  }
+
   function deleteSanitizedFileHandoffMark(fileInput, files) {
     if (isFileInputElement(fileInput)) {
       sanitizedFileInputHandoffs.delete(fileInput);
       sanitizedFileInputHandoffExpires.delete(fileInput);
+      deleteSanitizedFileInputHandoffRecord(fileInput);
     }
     for (const file of Array.from(files || [])) {
       if (isWeakSetFileObject(file)) {
@@ -631,6 +820,7 @@
       if (inputExpiresAt && inputExpiresAt <= now && inputExpiresAt <= expiresAt) {
         sanitizedFileInputHandoffs.delete(fileInput);
         sanitizedFileInputHandoffExpires.delete(fileInput);
+        deleteSanitizedFileInputHandoffRecord(fileInput);
         inputExpired = true;
       }
     }
@@ -690,6 +880,11 @@
     const signatures = [];
     sanitizedFileInputHandoffs.add(fileInput);
     sanitizedFileInputHandoffExpires.set(fileInput, expiresAt);
+    const record = recordSanitizedFileInputHandoffCompletion(fileInput, assignedFiles, {
+      ...options,
+      expiresAt,
+      ttlMs
+    });
 
     for (const file of assignedFiles) {
       if (isWeakSetFileObject(file)) {
@@ -706,7 +901,13 @@
     debugReveal("file-input:sanitized-handoff-marked", {
       input: describeFileInputForDebug(fileInput, "sanitized-file-handoff"),
       files: assignedFiles.map(describeFileForDebug),
-      ttlMs
+      ttlMs,
+      handoffId: record?.handoffId || "",
+      sessionId: record?.sessionId || "",
+      signature: record?.signature || "",
+      site: record?.site || "",
+      adapter: record?.adapter || "",
+      stage: record?.stage || ""
     });
 
     setTimeout(() => {
@@ -765,6 +966,7 @@
     if (inputMarked && inputExpiresAt && inputExpiresAt <= now) {
       sanitizedFileInputHandoffs.delete(fileInput);
       sanitizedFileInputHandoffExpires.delete(fileInput);
+      deleteSanitizedFileInputHandoffRecord(fileInput);
       debugReveal("file-input:sanitized-handoff-expired", {
         inputExpired: true,
         signatureCount: 0,
@@ -773,10 +975,15 @@
     }
 
     if (!selectedFiles.length) {
-      return inputActive
+      const recentMatch = getRecentSanitizedFileInputHandoffRecord(fileInput, {
+        files: selectedFiles
+      });
+      return inputActive || recentMatch
         ? {
-            inputMatch: true,
+            record: recentMatch?.record || sanitizedFileInputHandoffRecords.get(fileInput) || null,
+            inputMatch: Boolean(inputActive || recentMatch?.inputMatch),
             signatureMatch: false,
+            sitePendingMatch: Boolean(recentMatch?.sitePendingMatch),
             files: []
           }
         : null;
@@ -786,11 +993,16 @@
       if (inputActive) {
         sanitizedFileInputHandoffs.delete(fileInput);
         sanitizedFileInputHandoffExpires.delete(fileInput);
+        deleteSanitizedFileInputHandoffRecord(fileInput);
       }
       return null;
     }
 
+    const recentMatch = getRecentSanitizedFileInputHandoffRecord(fileInput, {
+      files: selectedFiles
+    });
     return {
+      record: recentMatch?.record || sanitizedFileInputHandoffRecords.get(fileInput) || null,
       inputMatch: inputActive,
       signatureMatch: true,
       files: selectedFiles
@@ -817,8 +1029,27 @@
       input: describeFileInputForDebug(fileInput, "sanitized-file-handoff"),
       files: suppression.files.map(describeFileForDebug),
       browser: isFirefoxRuntime() ? "firefox" : "other",
-      host: location?.hostname || ""
+      host: location?.hostname || "",
+      handoffId: suppression.record?.handoffId || "",
+      sitePendingMatch: Boolean(suppression.sitePendingMatch)
     });
+    if (!suppression.files.length) {
+      const details = createSanitizedHandoffSuppressionDebug(
+        fileInput,
+        suppression,
+        "empty_file_input_event"
+      );
+      debugReveal("file-input:empty-event-after-handoff-suppressed", {
+        ...details,
+        eventType: event?.type || "",
+        browser: isFirefoxRuntime() ? "firefox" : "other"
+      });
+      debugReveal("file-handoff:stale-error-suppressed-after-success", {
+        ...details,
+        eventType: event?.type || "",
+        staleReason: "empty_file_input_event"
+      });
+    }
   }
 
   function shouldSuppressSanitizedFileReprocessing(eventOrInput, files) {
@@ -832,6 +1063,97 @@
       suppressSanitizedFileInputHandoffEvent(eventOrInput, suppression);
     }
     return Boolean(suppression);
+  }
+
+  function isFileUnavailableLocalFileResult(localFile) {
+    return Boolean(
+      localFile?.code === "file_unavailable" ||
+        (
+          !localFile?.code &&
+          /could not read this local file/i.test(String(localFile?.message || ""))
+        )
+    );
+  }
+
+  function getFileUnavailableAfterHandoffSuppression(event, dataTransfer, localFile) {
+    const fileInput = event?.target || null;
+    if (!isFileInputElement(fileInput) || !isFileUnavailableLocalFileResult(localFile)) return null;
+
+    const selectedFiles = Array.from(fileInput.files || []).filter(Boolean);
+    const transferFiles = listLocalTransferFiles(dataTransfer);
+    if (selectedFiles.length || transferFiles.length) return null;
+
+    return getRecentSanitizedFileInputHandoffRecord(fileInput, {
+      files: [],
+      allowSitePending: true
+    });
+  }
+
+  function suppressFileUnavailableAfterHandoff(event, suppression, localFile) {
+    const fileInput = event?.target || null;
+    const details = createSanitizedHandoffSuppressionDebug(
+      fileInput,
+      suppression,
+      localFile?.code || "file_unavailable"
+    );
+    debugReveal("file-input:file-unavailable-after-handoff-suppressed", {
+      ...details,
+      eventType: event?.type || "",
+      code: localFile?.code || "",
+      browser: isFirefoxRuntime() ? "firefox" : "other"
+    });
+    debugReveal("file-handoff:stale-error-suppressed-after-success", {
+      ...details,
+      eventType: event?.type || "",
+      staleReason: localFile?.code || "file_unavailable"
+    });
+    return {
+      handled: true,
+      ok: true,
+      strategy: "file-unavailable-after-sanitized-handoff-suppressed"
+    };
+  }
+
+  function getRecentSanitizedFileHandoffSuccessForSite(site = "", sanitizedFile = null) {
+    const now = Date.now();
+    pruneRecentSanitizedFileInputHandoffRecords(now);
+
+    const expectedSite = String(site || getSanitizedFileHandoffSiteId() || "");
+    const expectedSignature = getFileMetadataSignature(sanitizedFile);
+    const matches = (record) => {
+      if (!record || Number(record.expiresAt || 0) <= now) return false;
+      if (expectedSite && record.site !== expectedSite) return false;
+      if (!expectedSignature) return true;
+      return record.signatures.includes(expectedSignature) || record.signature === expectedSignature;
+    };
+
+    if (matches(lastCompletedSanitizedFileInputHandoff)) return lastCompletedSanitizedFileInputHandoff;
+    if (matches(lastCompletedPendingSanitizedFileInputHandoff)) {
+      return lastCompletedPendingSanitizedFileInputHandoff;
+    }
+    for (let index = recentSanitizedFileInputHandoffRecords.length - 1; index >= 0; index -= 1) {
+      const record = recentSanitizedFileInputHandoffRecords[index];
+      if (matches(record)) return record;
+    }
+    return null;
+  }
+
+  function suppressStaleHandoffErrorAfterSuccess(reason, site = "", sanitizedFile = null, extra = {}) {
+    const record = getRecentSanitizedFileHandoffSuccessForSite(site, sanitizedFile);
+    if (!record) return false;
+    debugReveal("file-handoff:stale-error-suppressed-after-success", {
+      reason,
+      site: record.site || site || "",
+      adapter: record.adapter || "",
+      handoffId: record.handoffId || "",
+      sessionId: record.sessionId || "",
+      stage: record.stage || "",
+      pending: Boolean(record.pending),
+      ageMs: Math.max(0, Date.now() - Number(record.timestamp || 0)),
+      sanitizedFile: describeFileForDebug(sanitizedFile),
+      ...extra
+    });
+    return true;
   }
 
   function isFirefoxProtectedFileInputEvent(event) {
@@ -1234,10 +1556,245 @@
     return showDmzOverlay();
   }
 
+  function getFileProcessingSiteId(site = "") {
+    try {
+      return String(site || getCurrentHandoffDriverId() || "generic");
+    } catch {
+      return String(site || "generic");
+    }
+  }
+
+  function formatFileProcessingProgress(progress) {
+    if (progress === null || progress === undefined || progress === false || progress === "") {
+      return "";
+    }
+    if (typeof progress === "number" && Number.isFinite(progress)) {
+      return `${Math.max(0, Math.min(100, Math.round(progress)))}%`;
+    }
+    if (typeof progress === "string") {
+      return progress.replace(/\s+/g, " ").trim().slice(0, 80);
+    }
+
+    const bytesProcessed = Number(progress?.bytesProcessed ?? progress?.processedBytes ?? 0);
+    const totalBytes = Number(progress?.totalBytes ?? progress?.bytesTotal ?? 0);
+    if (totalBytes > 0 && bytesProcessed >= 0) {
+      const percent = Math.max(0, Math.min(100, Math.round((bytesProcessed / totalBytes) * 100)));
+      return `${percent}%`;
+    }
+
+    const chunks = Number(
+      progress?.chunksProcessed ?? progress?.chunkCount ?? progress?.chunks ?? progress?.chunkIndex ?? 0
+    );
+    if (chunks > 0) {
+      return `${chunks} ${chunks === 1 ? "chunk" : "chunks"}`;
+    }
+
+    return "";
+  }
+
+  function describeFileProcessingProgress(progress) {
+    return {
+      text: formatFileProcessingProgress(progress),
+      bytesProcessed: Number(progress?.bytesProcessed ?? progress?.processedBytes ?? 0) || 0,
+      totalBytes: Number(progress?.totalBytes ?? progress?.bytesTotal ?? 0) || 0,
+      chunks: Number(
+        progress?.chunksProcessed ?? progress?.chunkCount ?? progress?.chunks ?? progress?.chunkIndex ?? 0
+      ) || 0
+    };
+  }
+
+  function showFileProcessingOverlay(options = {}) {
+    const site = getFileProcessingSiteId(options.site);
+    const title = String(options.title || "LeakGuard is processing this file locally.");
+    const status = String(options.status || "Processing file locally...");
+    const progressText = formatFileProcessingProgress(options.progress) || "In progress";
+    const blocking = options.blocking !== false;
+
+    if (fileProcessingHideTimer) {
+      clearTimeout(fileProcessingHideTimer);
+      fileProcessingHideTimer = 0;
+    }
+
+    if (typeof document?.createElement !== "function" || !document.documentElement?.appendChild) {
+      debugReveal("file-ui:processing-shown", {
+        site,
+        rendered: false,
+        blocking,
+        status,
+        progress: describeFileProcessingProgress(options.progress)
+      });
+      return null;
+    }
+
+    if (!fileProcessingOverlayEl?.isConnected) {
+      const overlay = document.createElement("div");
+      overlay.className = "pwm-file-processing-overlay";
+      overlay.setAttribute("role", "status");
+      overlay.setAttribute("aria-live", "polite");
+
+      const card = document.createElement("div");
+      card.className = "pwm-file-processing-card";
+
+      const titleEl = document.createElement("p");
+      titleEl.className = "pwm-file-processing-title";
+
+      const statusEl = document.createElement("p");
+      statusEl.className = "pwm-file-processing-status";
+
+      const progressEl = document.createElement("p");
+      progressEl.className = "pwm-file-processing-progress";
+
+      card.append(titleEl, statusEl, progressEl);
+      overlay.appendChild(card);
+      document.documentElement.appendChild(overlay);
+
+      fileProcessingOverlayEl = overlay;
+      fileProcessingTitleEl = titleEl;
+      fileProcessingStatusEl = statusEl;
+      fileProcessingProgressEl = progressEl;
+    }
+
+    fileProcessingOverlayEl.dataset.pwmSite = site;
+    fileProcessingOverlayEl.dataset.pwmBlocking = blocking ? "true" : "false";
+    fileProcessingOverlayEl.dataset.pwmState = "processing";
+    fileProcessingTitleEl.textContent = title;
+    fileProcessingStatusEl.textContent = status;
+    fileProcessingProgressEl.textContent = progressText;
+
+    debugReveal("file-ui:processing-shown", {
+      site,
+      rendered: true,
+      blocking,
+      status,
+      progress: describeFileProcessingProgress(options.progress)
+    });
+    return fileProcessingOverlayEl;
+  }
+
+  function updateFileProcessingOverlay(options = {}) {
+    const site = getFileProcessingSiteId(options.site || fileProcessingOverlayEl?.dataset?.pwmSite);
+    if (!fileProcessingOverlayEl?.isConnected) {
+      return showFileProcessingOverlay({
+        site,
+        title: options.title || "LeakGuard is processing this file locally.",
+        status: options.status || "Processing file locally...",
+        progress: options.progress,
+        blocking: options.blocking
+      });
+    }
+
+    const status = options.status === undefined ? fileProcessingStatusEl?.textContent || "" : String(options.status);
+    const progressText = formatFileProcessingProgress(options.progress);
+    if (options.status !== undefined && fileProcessingStatusEl) {
+      fileProcessingStatusEl.textContent = status;
+    }
+    if (fileProcessingProgressEl) {
+      fileProcessingProgressEl.textContent = progressText || fileProcessingProgressEl.textContent || "In progress";
+    }
+    if (options.blocking !== undefined) {
+      fileProcessingOverlayEl.dataset.pwmBlocking = options.blocking === false ? "false" : "true";
+    }
+
+    debugReveal("file-ui:processing-updated", {
+      site,
+      status,
+      progress: describeFileProcessingProgress(options.progress)
+    });
+    return fileProcessingOverlayEl;
+  }
+
+  function hideFileProcessingOverlay(reason = "") {
+    if (fileProcessingHideTimer) {
+      clearTimeout(fileProcessingHideTimer);
+      fileProcessingHideTimer = 0;
+    }
+
+    const overlay = fileProcessingOverlayEl;
+    const site = getFileProcessingSiteId(overlay?.dataset?.pwmSite);
+    fileProcessingOverlayEl = null;
+    fileProcessingTitleEl = null;
+    fileProcessingStatusEl = null;
+    fileProcessingProgressEl = null;
+
+    if (overlay?.parentNode) {
+      try {
+        overlay.parentNode.removeChild(overlay);
+      } catch {
+        // Best-effort cleanup only.
+      }
+    }
+
+    debugReveal("file-ui:processing-hidden", {
+      site,
+      reason,
+      rendered: Boolean(overlay)
+    });
+  }
+
+  function showFileProcessingSuccess(status = "Sanitized file attached.", options = {}) {
+    const site = getFileProcessingSiteId(options.site);
+    if (fileProcessingOverlayEl?.isConnected) {
+      updateFileProcessingOverlay({
+        site,
+        status,
+        progress: "Complete",
+        blocking: false
+      });
+      fileProcessingOverlayEl.dataset.pwmState = "success";
+    } else {
+      showFileProcessingOverlay({
+        site,
+        title: "LeakGuard finished local file processing.",
+        status,
+        progress: "Complete",
+        blocking: false
+      });
+      if (fileProcessingOverlayEl) {
+        fileProcessingOverlayEl.dataset.pwmState = "success";
+      }
+    }
+    debugReveal("file-ui:success-shown", {
+      site,
+      status
+    });
+    fileProcessingHideTimer = setTimeout(() => {
+      hideFileProcessingOverlay(options.reason || "success");
+    }, Math.max(0, Number(options.hideAfterMs ?? 1200)));
+  }
+
+  function showFileProcessingError(status = "Raw file upload blocked", options = {}) {
+    const site = getFileProcessingSiteId(options.site);
+    if (fileProcessingOverlayEl?.isConnected) {
+      updateFileProcessingOverlay({
+        site,
+        status,
+        progress: "",
+        blocking: false
+      });
+      fileProcessingOverlayEl.dataset.pwmState = "error";
+    }
+    debugReveal("file-ui:error-shown", {
+      site,
+      status,
+      reason: options.reason || ""
+    });
+  }
+
   function clearPendingSanitizedAttachPrompt(reason = "") {
     const prompt = pendingAttachPromptEl;
     pendingAttachPromptEl = null;
-    if (!prompt) return;
+    const site = prompt?.dataset?.pwmSite || pendingAttachPromptSite || "";
+    pendingAttachPromptSite = "";
+    if (!prompt) {
+      if (site) {
+        debugReveal("file-ui:pending-prompt-cleared", {
+          site,
+          reason,
+          rendered: false
+        });
+      }
+      return;
+    }
     try {
       prompt.dataset.pwmClearReason = reason || "";
     } catch {
@@ -1250,6 +1807,22 @@
         // Best-effort cleanup only.
       }
     }
+    debugReveal("file-ui:pending-prompt-cleared", {
+      site: site || getFileProcessingSiteId(),
+      reason,
+      rendered: true
+    });
+  }
+
+  function getPendingSanitizedAttachPromptMessage(site = "") {
+    const id = String(site || getCurrentHandoffDriverId() || "").toLowerCase();
+    if (id === "gemini") {
+      return "Large file sanitized. Click Attach sanitized file or Gemini Upload files.";
+    }
+    if (id === "grok") {
+      return "Large file sanitized. Click Attach sanitized file or Grok Upload/Attach.";
+    }
+    return "File sanitized. Click Upload/Attach to attach the sanitized version.";
   }
 
   function showPendingSanitizedAttachPrompt(adapter, pending = null) {
@@ -1263,9 +1836,7 @@
       options = {
         site: selectedAdapter?.id || pending.site || getCurrentHandoffDriverId(),
         sanitizedFile: pending.sanitizedFile || null,
-        message:
-          pending.message ||
-          "Large file sanitized. Click Attach sanitized file, or click the site upload button to attach the sanitized version.",
+        message: pending.message || getPendingSanitizedAttachPromptMessage(selectedAdapter?.id || pending.site),
         onAttachClick: () => attachPendingSanitizedFileWithTrustedActivation(selectedAdapter, pending),
         onInsertTextClick: () =>
           insertPendingSanitizedFileText(
@@ -1290,11 +1861,10 @@
     }
     const site = options.site || getCurrentHandoffDriverId();
     const sanitizedFile = options.sanitizedFile || null;
-    const message =
-      options.message ||
-      "Large file sanitized. Click Attach sanitized file, or click the site upload button to attach the sanitized version.";
+    const message = options.message || getPendingSanitizedAttachPromptMessage(site);
 
     clearPendingSanitizedAttachPrompt("replaced");
+    pendingAttachPromptSite = site;
 
     const runAction = async (label, callback) => {
       debugReveal(`pending-attach-prompt-${label}`, {
@@ -1326,6 +1896,11 @@
         site,
         rendered: false,
         adapter: describeFileHandoffAdapter(selectedAdapter),
+        sanitizedFile: describeFileForDebug(sanitizedFile)
+      });
+      debugReveal("file-ui:pending-prompt-shown", {
+        site,
+        rendered: false,
         sanitizedFile: describeFileForDebug(sanitizedFile)
       });
       return null;
@@ -1411,6 +1986,11 @@
       adapter: describeFileHandoffAdapter(selectedAdapter),
       sanitizedFile: describeFileForDebug(sanitizedFile)
     });
+    debugReveal("file-ui:pending-prompt-shown", {
+      site,
+      rendered: true,
+      sanitizedFile: describeFileForDebug(sanitizedFile)
+    });
     return prompt;
   }
 
@@ -1489,6 +2069,11 @@
       file: describeFileForDebug(fileInfo),
       maxBytes: StreamingFileRedactor.LARGE_TEXT_STREAMING_MAX_BYTES || 50 * 1024 * 1024
     });
+    updateFileProcessingOverlay({
+      status: "Stream-redacting large file locally...",
+      progress: "",
+      blocking: true
+    });
     setBadge("Streaming redaction... LeakGuard is sanitizing a large file locally before upload.");
   }
 
@@ -1498,6 +2083,14 @@
     debugReveal("streaming-redaction:progress", {
       bytesProcessed: processed,
       totalBytes: total
+    });
+    const progressText = formatFileProcessingProgress(progress);
+    updateFileProcessingOverlay({
+      status: progressText
+        ? `Stream-redacting locally... ${progressText}`
+        : "Stream-redacting locally...",
+      progress,
+      blocking: true
     });
   }
 
@@ -6176,6 +6769,21 @@
           strategy: "gemini-firefox-pending-sanitized-file-handoff"
         };
       }
+      if (
+        suppressStaleHandoffErrorAfterSuccess(
+          "file_bridge_failure",
+          "gemini",
+          payload.sanitizedFile,
+          { bridgeReason: details.failureReason }
+        )
+      ) {
+        return {
+          handled: true,
+          ok: true,
+          stage: "file",
+          strategy: "gemini-firefox-file-input-bridge-stale-error-suppressed"
+        };
+      }
       return {
         handled: true,
         ok: false,
@@ -6192,6 +6800,21 @@
         ...createFirefoxGeminiFileInputBridgeDebug(context, payload, fileInput),
         reason: details.failureReason
       });
+      if (
+        suppressStaleHandoffErrorAfterSuccess(
+          "file_bridge_failure",
+          "gemini",
+          payload.sanitizedFile,
+          { bridgeReason: details.failureReason }
+        )
+      ) {
+        return {
+          handled: true,
+          ok: true,
+          stage: "file",
+          strategy: "gemini-firefox-file-input-bridge-stale-error-suppressed"
+        };
+      }
       return {
         handled: true,
         ok: false,
@@ -6711,6 +7334,10 @@
       clearPendingSanitizedAttachPrompt("insert-text");
       return true;
     }
+    if (suppressStaleHandoffErrorAfterSuccess("sanitized_text_fallback", site, sanitizedFile)) {
+      clearPendingSanitizedAttachPrompt("stale-text-fallback-suppressed");
+      return true;
+    }
     setBadge("Sanitized text insertion unavailable");
     hideBadgeSoon(4200);
     refreshBadgeFromCurrentInput();
@@ -6734,6 +7361,9 @@
     if (downloaded) {
       clearPendingSanitizedFileHandoff(site, "download");
       clearPendingSanitizedAttachPrompt("download");
+    } else if (suppressStaleHandoffErrorAfterSuccess("sanitized_download_fallback", site, sanitizedFile)) {
+      clearPendingSanitizedAttachPrompt("stale-download-fallback-suppressed");
+      return true;
     }
     return downloaded;
   }
@@ -6832,6 +7462,9 @@
         reason: "pending-user-attach",
         sanitizedFile: describeFileForDebug(sanitizedFile)
       });
+      if (suppressStaleHandoffErrorAfterSuccess("pending_attach_input_not_found", "gemini", sanitizedFile)) {
+        return true;
+      }
       setBadge("LeakGuard is waiting for Gemini upload input.");
       hideBadgeSoon(4200);
       refreshBadgeFromCurrentInput();
@@ -6873,6 +7506,10 @@
       sanitizedFile: describeFileForDebug(sanitizedFile)
     });
     clearPendingGeminiSanitizedFileHandoff("assigned");
+    showFileProcessingSuccess("Sanitized file attached.", {
+      site: "gemini",
+      reason: "pending-attached"
+    });
     setBadge("LeakGuard attached the sanitized file.");
     hideBadgeSoon(3200);
     refreshBadgeFromCurrentInput();
@@ -6985,6 +7622,9 @@
         ...describeGrokPendingInputDiscovery(discovery),
         sanitizedFile: describeFileForDebug(sanitizedFile)
       });
+      if (suppressStaleHandoffErrorAfterSuccess("pending_attach_input_not_found", "grok", sanitizedFile)) {
+        return true;
+      }
       setBadge("LeakGuard is waiting for Grok upload input.");
       hideBadgeSoon(4200);
       refreshBadgeFromCurrentInput();
@@ -7031,6 +7671,10 @@
       sanitizedFile: describeFileForDebug(sanitizedFile)
     });
     clearPendingGrokSanitizedFileHandoff("assigned");
+    showFileProcessingSuccess("Sanitized file attached.", {
+      site: "grok",
+      reason: "pending-attached"
+    });
     setBadge("LeakGuard attached the sanitized file.");
     hideBadgeSoon(3200);
     refreshBadgeFromCurrentInput();
@@ -7249,6 +7893,10 @@
       sanitizedFile: describeFileForDebug(pending.sanitizedFile)
     });
     clearPendingGeminiSanitizedFileHandoff("assigned");
+    showFileProcessingSuccess("Sanitized file attached.", {
+      site: "gemini",
+      reason: "pending-attached"
+    });
     setBadge("LeakGuard attached the sanitized file.");
     hideBadgeSoon(3200);
     refreshBadgeFromCurrentInput();
@@ -7344,12 +7992,9 @@
       event: pendingEvent,
       input,
       sanitizedFile,
-      message:
-        "Large file sanitized. Click Attach sanitized file, or click Gemini Upload files to attach the sanitized version."
+      message: getPendingSanitizedAttachPromptMessage("gemini")
     });
-    setBadge(
-      "Large file sanitized. Click Attach sanitized file, or click Gemini Upload files to attach the sanitized version."
-    );
+    setBadge(getPendingSanitizedAttachPromptMessage("gemini"));
     hideBadgeSoon(6500);
     return true;
   }
@@ -7625,6 +8270,10 @@
       sanitizedFile: describeFileForDebug(pending.sanitizedFile)
     });
     clearPendingGrokSanitizedFileHandoff("assigned");
+    showFileProcessingSuccess("Sanitized file attached.", {
+      site: "grok",
+      reason: "pending-attached"
+    });
     setBadge("LeakGuard attached the sanitized file.");
     hideBadgeSoon(3200);
     refreshBadgeFromCurrentInput();
@@ -7719,12 +8368,9 @@
       event: pendingEvent,
       input,
       sanitizedFile,
-      message:
-        "Large file sanitized. Click Attach sanitized file, or click Grok Upload/Attach to attach the sanitized version."
+      message: getPendingSanitizedAttachPromptMessage("grok")
     });
-    setBadge(
-      "Large file sanitized. Click Attach sanitized file, or click Grok Upload/Attach to attach the sanitized version."
-    );
+    setBadge(getPendingSanitizedAttachPromptMessage("grok"));
     hideBadgeSoon(6500);
     return true;
   }
@@ -8498,7 +9144,7 @@
         return false;
       }
       if (markAsSanitized) {
-        markSanitizedFileHandoff(fileInput, fileInput.files);
+        markSanitizedFileHandoff(fileInput, fileInput.files, { details });
       } else {
         sanitizedFileInputHandoffs.add(fileInput);
       }
@@ -8790,6 +9436,10 @@
         details.openShadowRootCount = Math.max(details.openShadowRootCount, discovery.openShadowRootCount);
         if (!fileInput && reason) {
           details.failureReason = reason;
+          if (suppressStaleHandoffErrorAfterSuccess(reason, "gemini", sanitizedFile)) {
+            resolve({ discovery, fileInput: null, staleSuccess: true });
+            return;
+          }
         }
         resolve({ discovery, fileInput });
       };
@@ -8917,6 +9567,9 @@
       const result = await waitForGeminiGhostIngressFileInput(event, input, details, sanitizedFile);
       discovery = result.discovery;
       fileInput = result.fileInput;
+      if (result.staleSuccess) {
+        return true;
+      }
       details.fileInputCountAfterTopTriggerClick = discovery.fileInputCount;
       details.fileInputCountAfterOverlayItemClick = discovery.fileInputCount;
       details.openShadowRootCount = Math.max(details.openShadowRootCount, discovery.openShadowRootCount);
@@ -9245,6 +9898,11 @@
         if (!event.defaultPrevented) {
           consumeInterceptionEvent(event);
         }
+        showFileProcessingError("Raw file upload blocked", {
+          site: getCurrentHandoffDriverId(),
+          reason: "firefox_unsupported_file_blocked"
+        });
+        hideFileProcessingOverlay("firefox_unsupported_file_blocked");
         setBadge("Raw file upload blocked");
         hideBadgeSoon(4200);
         await showMessageModal("Raw file upload blocked", getUnsupportedFileBlockedMessage(transferPolicy));
@@ -9263,6 +9921,11 @@
       if (!event.defaultPrevented) {
         consumeInterceptionEvent(event);
       }
+      showFileProcessingError("Raw file upload blocked", {
+        site: getCurrentHandoffDriverId(),
+        reason: transferPolicy.reason
+      });
+      hideFileProcessingOverlay(transferPolicy.reason || "transfer_policy_blocked");
       setBadge("Raw file upload blocked");
       hideBadgeSoon(4200);
       await showMessageModal("Raw file upload blocked", transferPolicy.message);
@@ -9285,6 +9948,33 @@
       });
     }
 
+    const processingSite = getCurrentHandoffDriverId();
+    const failProcessing = (reason, status = "Raw file upload blocked") => {
+      showFileProcessingError(status, {
+        site: processingSite,
+        reason
+      });
+      hideFileProcessingOverlay(reason);
+    };
+    const hideProcessing = (reason) => {
+      hideFileProcessingOverlay(reason);
+    };
+    const showProcessingSuccess = (status, reason = "success") => {
+      showFileProcessingSuccess(status, {
+        site: processingSite,
+        reason
+      });
+    };
+
+    showFileProcessingOverlay({
+      site: processingSite,
+      title: "LeakGuard is scanning this file...",
+      status: "Scanning file locally...",
+      progress: "In progress",
+      blocking: true
+    });
+
+    try {
     const localFile = await readLocalTextFileFromDataTransfer(dataTransfer);
     if (context === "file-input") {
       logFileInterception("file scan result", {
@@ -9295,7 +9985,16 @@
         textLength: typeof localFile.text === "string" ? localFile.text.length : 0
       });
     }
+    const unavailableAfterHandoffSuppression =
+      context === "file-input"
+        ? getFileUnavailableAfterHandoffSuppression(event, dataTransfer, localFile)
+        : null;
+    if (unavailableAfterHandoffSuppression) {
+      hideProcessing("suppressed-after-sanitized-handoff");
+      return suppressFileUnavailableAfterHandoff(event, unavailableAfterHandoffSuppression, localFile);
+    }
     if (!localFile.handled) {
+      failProcessing(localFile.code || "file_scan_failed", "Raw file blocked");
       setBadge("Raw file blocked");
       hideBadgeSoon(4200);
       await showMessageModal(
@@ -9321,8 +10020,15 @@
         });
       }
       if (localFile.code === "streaming_required" && localFile.sourceFile) {
+        updateFileProcessingOverlay({
+          site: processingSite,
+          status: "Stream-redacting large file locally...",
+          progress: "",
+          blocking: true
+        });
         const streamResult = await streamRedactLocalTextFile(localFile.sourceFile, localFile.file);
         if (streamResult.action === "blocked") {
+          failProcessing("streaming_file_blocked", streamResult.title || STREAMING_BLOCK_TITLE);
           return blockStreamingLocalFile(
             event,
             streamResult.title || STREAMING_BLOCK_TITLE,
@@ -9331,6 +10037,7 @@
         }
 
         if (streamResult.action !== "redacted" || !streamResult.sanitizedFile) {
+          failProcessing("streaming_file_redaction_failed", "Raw file upload blocked");
           return blockStreamingLocalFile(
             event,
             "Raw file upload blocked",
@@ -9338,6 +10045,12 @@
           );
         }
 
+        updateFileProcessingOverlay({
+          site: processingSite,
+          status: "Preparing sanitized upload...",
+          progress: "Complete",
+          blocking: true
+        });
         const isGeminiDrop = context === "drop" && isGeminiHost();
         const isGrokDrop = context === "drop" && isGrokHost();
         if (isGeminiDrop) {
@@ -9347,6 +10060,7 @@
             "gemini:streaming-pending-user-upload-input"
           );
 
+          hideProcessing("sanitized");
           if (
             queuePendingSanitizedFileHandoff(
               getFileHandoffAdapterById("gemini"),
@@ -9356,7 +10070,7 @@
               details
             )
           ) {
-            setBadge("LeakGuard sanitized the large file. Click Gemini Upload files to attach.");
+            setBadge(getPendingSanitizedAttachPromptMessage("gemini"));
             hideBadgeSoon(6500);
             refreshBadgeFromCurrentInput();
             return {
@@ -9365,6 +10079,10 @@
               strategy: "gemini-streaming-pending-sanitized-file-handoff"
             };
           }
+          showFileProcessingError("Raw file upload blocked", {
+            site: processingSite,
+            reason: "gemini_pending_queue_failed"
+          });
           return blockStreamingLocalFile(
             event,
             "Raw file upload blocked",
@@ -9379,6 +10097,7 @@
             "grok:streaming-pending-user-upload-input"
           );
 
+          hideProcessing("sanitized");
           if (
             queuePendingSanitizedFileHandoff(
               getFileHandoffAdapterById("grok"),
@@ -9388,7 +10107,7 @@
               details
             )
           ) {
-            setBadge("LeakGuard sanitized the large file. Click Grok Upload/Attach to attach.");
+            setBadge(getPendingSanitizedAttachPromptMessage("grok"));
             hideBadgeSoon(6500);
             refreshBadgeFromCurrentInput();
             return {
@@ -9397,6 +10116,10 @@
               strategy: "grok-streaming-pending-sanitized-file-handoff"
             };
           }
+          showFileProcessingError("Raw file upload blocked", {
+            site: processingSite,
+            reason: "grok_pending_queue_failed"
+          });
           return blockStreamingLocalFile(
             event,
             "Raw file upload blocked",
@@ -9429,6 +10152,15 @@
               })();
         if (handoffResult.ok) {
           setDmzOverlayState("Attached sanitized file", "attached");
+          if (handoffResult.stage === "pending") {
+            hideProcessing("pending");
+          } else if (handoffResult.stage === "text") {
+            showProcessingSuccess("Sanitized content inserted.", "inserted");
+          } else if (handoffResult.stage === "download") {
+            showProcessingSuccess("Sanitized file ready.", "download");
+          } else {
+            showProcessingSuccess("Sanitized file attached.", "attached");
+          }
           setBadge("LeakGuard attached a sanitized local file.");
           hideBadgeSoon(3200);
           refreshBadgeFromCurrentInput();
@@ -9439,6 +10171,7 @@
           };
         }
 
+        failProcessing("streaming_sanitized_handoff_failed", "Raw file upload blocked");
         return blockStreamingLocalFile(
           event,
           "Raw file upload blocked",
@@ -9448,11 +10181,13 @@
       }
 
       if (localFile.code === "file_too_large") {
+        failProcessing(localFile.code || "file_too_large", STREAMING_BLOCK_TITLE);
         setBadge(STREAMING_BLOCK_TITLE);
         hideBadgeSoon(4200);
         await showMessageModal(STREAMING_BLOCK_TITLE, localFile.message || STREAMING_BLOCK_MESSAGE);
       } else {
         const firefoxBlockedMessage = getFirefoxRawFileUploadBlockedMessage(context);
+        failProcessing(localFile.code || "file_scan_failed", "Raw file blocked");
         setBadge("Raw file blocked");
         hideBadgeSoon(4200);
         await showMessageModal(
@@ -9473,6 +10208,7 @@
       sizeBytes: localFile.file?.sizeBytes
     });
     if (sizeInfo.zone === "blocked") {
+      failProcessing("local_text_payload_too_large", LOCAL_TEXT_HARD_BLOCK_TITLE);
       await blockLargeLocalTextPayload(event, sizeInfo);
       return true;
     }
@@ -9490,6 +10226,12 @@
         setDmzOverlayState("Redacting...", "redacting");
       }
       analysis = analyzeText(localFile.text);
+      updateFileProcessingOverlay({
+        site: processingSite,
+        status: "Sanitizing file locally...",
+        progress: "",
+        blocking: true
+      });
       result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
       sanitizedFile = createSanitizedTextFile(localFile.file, result.redactedText);
     } catch (error) {
@@ -9504,6 +10246,7 @@
         setDmzOverlayState("Raw file blocked", "failed");
         scheduleDmzOverlayCleanup(3600);
       }
+      failProcessing("local_file_sanitization_failed", "Raw file upload blocked");
       setBadge("Raw file upload blocked");
       hideBadgeSoon(4200);
       await showMessageModal(
@@ -9530,6 +10273,12 @@
     if (context === "drop" && driver.usesDmzOverlay) {
       setDmzOverlayState("Sanitized file ready", "ready");
     }
+    updateFileProcessingOverlay({
+      site: processingSite,
+      status: "Preparing sanitized upload...",
+      progress: "Complete",
+      blocking: true
+    });
 
     const payload = driver.preparePayload(sanitizedFile, result.redactedText, {
       localFile,
@@ -9558,6 +10307,7 @@
         if (optimizedStatus) {
           clearLocalPayloadOptimizationStatus(sizeInfo, "cancelled");
         }
+        hideProcessing("cancelled");
         return {
           handled: true,
           ok: false,
@@ -9573,6 +10323,7 @@
         reason: "sanitized_file_handoff_failed",
         sanitizedFile: describeFileForDebug(sanitizedFile)
       });
+      failProcessing("sanitized_file_handoff_failed", "Raw file upload blocked");
       setBadge("Raw file upload blocked");
       hideBadgeSoon(4200);
       await showMessageModal(
@@ -9601,12 +10352,29 @@
       setBadge("LeakGuard attached a sanitized local file.");
       hideBadgeSoon(3200);
     }
+    if (handoffResult.stage === "pending") {
+      hideProcessing("pending");
+    } else if (handoffResult.stage === "text") {
+      showProcessingSuccess("Sanitized content inserted.", "inserted");
+    } else if (handoffResult.stage === "download") {
+      showProcessingSuccess("Sanitized file ready.", "download");
+    } else {
+      showProcessingSuccess("Sanitized file attached.", "attached");
+    }
     refreshBadgeFromCurrentInput();
     return {
       handled: true,
       ok: true,
       strategy: handoffResult.strategy || "sanitized-file-handoff"
     };
+    } catch (error) {
+      showFileProcessingError("File processing failed", {
+        site: processingSite,
+        reason: "exception"
+      });
+      hideFileProcessingOverlay("exception");
+      throw error;
+    }
   }
 
   async function maybeHandleDrop(event) {

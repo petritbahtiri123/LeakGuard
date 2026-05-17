@@ -168,6 +168,58 @@ function testPendingAttachPromptDoesNotBlockPageClicks() {
   );
 }
 
+function testFileProcessingUiIsGenericAndProgressive() {
+  for (const functionName of [
+    "showFileProcessingOverlay",
+    "updateFileProcessingOverlay",
+    "hideFileProcessingOverlay",
+    "showPendingSanitizedAttachPrompt",
+    "clearPendingSanitizedAttachPrompt"
+  ]) {
+    assert.ok(contentSource.includes(`function ${functionName}`), `expected ${functionName}`);
+  }
+  for (const label of [
+    "file-ui:processing-shown",
+    "file-ui:processing-updated",
+    "file-ui:processing-hidden",
+    "file-ui:pending-prompt-shown",
+    "file-ui:pending-prompt-cleared",
+    "file-ui:success-shown",
+    "file-ui:error-shown"
+  ]) {
+    assert.ok(contentSource.includes(label), `expected ${label}`);
+  }
+  for (const className of [
+    "pwm-file-processing-overlay",
+    "pwm-file-processing-card",
+    "pwm-file-processing-title",
+    "pwm-file-processing-status",
+    "pwm-file-processing-progress",
+    "pwm-pending-attach-prompt",
+    "pwm-pending-attach-card"
+  ]) {
+    assert.ok(overlaySource.includes(`.${className}`), `expected ${className} CSS`);
+  }
+  assert.ok(
+    /\.pwm-file-processing-overlay\s*\{[\s\S]*?position:\s*fixed;[\s\S]*?inset:\s*0;[\s\S]*?pointer-events:\s*auto;/.test(
+      overlaySource
+    ),
+    "processing overlay should be centered and may block while raw file processing is active"
+  );
+  assert.ok(
+    /\.pwm-file-processing-overlay\[data-pwm-blocking="false"\]\s*\{[\s\S]*?pointer-events:\s*none;/.test(
+      overlaySource
+    ),
+    "processing success state should support non-blocking cleanup"
+  );
+  assert.ok(
+    /\.pwm-file-processing-progress::before\s*\{[\s\S]*?animation:\s*pwm-file-processing-spin/.test(
+      overlaySource
+    ),
+    "processing progress should expose a spinner"
+  );
+}
+
 function testDynamicSiteSupportIsDeclaredMinimally(manifest) {
   assert.ok(
     manifest.permissions.includes("scripting") && manifest.permissions.includes("activeTab"),
@@ -223,6 +275,7 @@ async function run() {
   testPanelAndManagementUiAreWired();
   testHydratedPlaceholdersStayVisibleAcrossThemes();
   testPendingAttachPromptDoesNotBlockPageClicks();
+  testFileProcessingUiIsGenericAndProgressive();
   testDynamicSiteSupportIsDeclaredMinimally(manifest);
   testPublishReadinessDocsCoverStorePrivacyAndQa();
   console.log("PASS productization static regressions");
