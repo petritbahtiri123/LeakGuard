@@ -4037,7 +4037,7 @@
       caretOffset: options.caretOffset
     });
     if (!written) return false;
-    dispatchChatGptComposerInputEvent(input, "insertReplacementText", null);
+    dispatchChatGptComposerInputEvent(input, "insertReplacementText", writeText);
     dispatchChatGptComposerChange(input);
     return true;
   }
