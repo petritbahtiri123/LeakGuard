@@ -45,6 +45,7 @@ async function testBrowserIntegrationIsOptionalAndPolicyControlled() {
   const detectorSource = fs.readFileSync(path.join(repoRoot, "src/shared/detector.js"), "utf8");
   const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
   const policySource = fs.readFileSync(path.join(repoRoot, "src/shared/policy.js"), "utf8");
+  const classifierSource = fs.readFileSync(path.join(repoRoot, "src/shared/ai/classifier.js"), "utf8");
   const { buildManifest, getOnnxRuntimeWebAccessibleResources } = await import(
     pathToFileURL(path.join(repoRoot, "scripts/build-extension.mjs")).href
   );
@@ -82,23 +83,55 @@ async function testBrowserIntegrationIsOptionalAndPolicyControlled() {
     "content scripts should be allowed to fetch the packaged feature spec, model, and ONNX WASM runtime"
   );
   assert.ok(
-    fs
-      .readFileSync(path.join(repoRoot, "src/shared/ai/classifier.js"), "utf8")
-      .includes("chrome-extension://invalid"),
+    classifierSource.includes("chrome-extension://invalid"),
     "classifier should reject invalid Chrome runtime URLs before fetching model assets"
   );
   assert.ok(
-    fs
-      .readFileSync(path.join(repoRoot, "src/shared/ai/classifier.js"), "utf8")
-      .includes("runExclusiveInference"),
+    classifierSource.includes("runExclusiveInference"),
     "classifier should serialize ONNX inference calls because the WASM backend rejects overlapping session runs"
   );
+  assert.ok(
+    classifierSource.includes("getOnnxRuntimeWasmPaths") &&
+      classifierSource.includes("ort-wasm-simd-threaded.mjs") &&
+      classifierSource.includes("ort-wasm-simd-threaded.wasm") &&
+      classifierSource.includes("runtime.env.wasm.wasmPaths = getOnnxRuntimeWasmPaths();"),
+    "classifier should configure ONNX Runtime sidecar imports with explicit extension URLs"
+  );
+}
+
+function testOnnxRuntimeSidecarUrlsUseExtensionOrigin() {
+  const previousExt = globalThis.PWM.ext;
+  globalThis.PWM.ext = {
+    runtime: {
+      getURL: (relativePath) => `moz-extension://leakguard-test/${relativePath}`
+    }
+  };
+
+  try {
+    const paths = globalThis.PWM.LeakGuardAiClassifier.getOnnxRuntimeWasmPaths();
+    assert.strictEqual(
+      paths.mjs,
+      "moz-extension://leakguard-test/vendor/onnxruntime/ort-wasm-simd-threaded.mjs"
+    );
+    assert.strictEqual(
+      paths.wasm,
+      "moz-extension://leakguard-test/vendor/onnxruntime/ort-wasm-simd-threaded.wasm"
+    );
+
+    const runtime = { env: { wasm: {} } };
+    globalThis.PWM.LeakGuardAiClassifier.configureOnnxRuntime(runtime);
+    assert.deepStrictEqual(runtime.env.wasm.wasmPaths, paths);
+    assert.strictEqual(runtime.env.wasm.numThreads, 1);
+  } finally {
+    globalThis.PWM.ext = previousExt;
+  }
 }
 
 async function run() {
   await testAiAssistUpgradesOnlyUncertainSpans();
   await testAiAssistDoesNotDowngradeHighConfidenceDeterministicMatches();
   await testBrowserIntegrationIsOptionalAndPolicyControlled();
+  testOnnxRuntimeSidecarUrlsUseExtensionOrigin();
   console.log("PASS local AI assist regressions");
 }
 

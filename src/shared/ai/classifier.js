@@ -4,6 +4,8 @@
 
   const MODEL_PATH = "ai/models/leakguard_secret_classifier.onnx";
   const FEATURE_SPEC_PATH = "ai/models/leakguard_secret_classifier.features.json";
+  const ONNX_RUNTIME_MJS_PATH = "vendor/onnxruntime/ort-wasm-simd-threaded.mjs";
+  const ONNX_RUNTIME_WASM_PATH = "vendor/onnxruntime/ort-wasm-simd-threaded.wasm";
   const LABELS = ["NOT_SECRET", "SECRET", "UNSURE"];
   const SECRET_KEYWORDS = [
     "api_key",
@@ -41,6 +43,19 @@
     const ext = [root.PWM.ext, root.browser, root.chrome].find(extensionUrlIsUsable) || null;
     if (!ext?.runtime?.getURL) return relativePath;
     return ext.runtime.getURL(relativePath);
+  }
+
+  function getOnnxRuntimeWasmPaths() {
+    return {
+      mjs: getExtensionUrl(ONNX_RUNTIME_MJS_PATH),
+      wasm: getExtensionUrl(ONNX_RUNTIME_WASM_PATH)
+    };
+  }
+
+  function configureOnnxRuntime(runtime) {
+    if (!runtime?.env?.wasm) return;
+    runtime.env.wasm.wasmPaths = getOnnxRuntimeWasmPaths();
+    runtime.env.wasm.numThreads = 1;
   }
 
   function logAiWarning(message, error) {
@@ -86,10 +101,7 @@
         if (!runtime?.InferenceSession?.create) {
           throw new Error("ONNX Runtime session API is unavailable");
         }
-        if (runtime.env?.wasm) {
-          runtime.env.wasm.wasmPaths = getExtensionUrl("vendor/onnxruntime/");
-          runtime.env.wasm.numThreads = 1;
-        }
+        configureOnnxRuntime(runtime);
         return runtime.InferenceSession.create(getExtensionUrl(MODEL_PATH), {
           executionProviders: ["wasm"]
         });
@@ -250,6 +262,8 @@
   root.PWM.LeakGuardAiClassifier = {
     classify,
     computeFeatures,
+    configureOnnxRuntime,
+    getOnnxRuntimeWasmPaths,
     loadFeatureSpec,
     loadSession
   };

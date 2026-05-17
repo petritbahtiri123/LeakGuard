@@ -5724,6 +5724,62 @@
     return true;
   }
 
+  function buildGeminiFirefoxMultilineDirectText(editor, sanitizedText, rawInsertedText = "", options = {}) {
+    const originalText =
+      typeof options.originalText === "string"
+        ? normalizeComposerText(options.originalText)
+        : normalizeComposerText(getInputText(editor));
+    const normalized = normalizeComposerText(sanitizedText);
+    const rawText = normalizeComposerText(rawInsertedText);
+    const rawIndex = rawText ? originalText.indexOf(rawText) : -1;
+    if (rawIndex >= 0) {
+      return {
+        text:
+          originalText.slice(0, rawIndex) +
+          normalized +
+          originalText.slice(rawIndex + rawText.length),
+        caretOffset: rawIndex + normalized.length
+      };
+    }
+    const selection = options.selection || getSelectionOffsets(editor);
+    return spliceSelectionText(originalText, selection, normalized);
+  }
+
+  function insertGeminiFirefoxMultilineDirectText(editor, sanitizedText, options) {
+    options = options || {};
+    const normalized = normalizeComposerText(sanitizedText);
+    if (!editor || !isFirefoxRuntime() || !isGeminiHost() || !isContentEditable(editor) || !normalized.includes("\n")) {
+      return false;
+    }
+
+    const next = buildGeminiFirefoxMultilineDirectText(editor, normalized, options.rawInsertedText || "", options);
+    suppressFollowupInputScan();
+    if (!setGeminiEditorTextDirect(editor, next.text)) {
+      debugReveal("gemini-text:firefox-multiline-preserving-retry", {
+        insertedLength: normalized.length,
+        lineCount: normalized.split("\n").length,
+        verified: false,
+        written: false
+      });
+      return false;
+    }
+
+    dispatchGeminiEditorInput(editor, "", {
+      inputType: "insertReplacementText",
+      includeData: false
+    });
+
+    const verified = verifyGeminiFirefoxInsertedText(editor, next.text, options.rawInsertedText || "");
+    debugReveal("gemini-text:firefox-multiline-preserving-retry", {
+      insertedLength: normalized.length,
+      lineCount: normalized.split("\n").length,
+      finalLength: next.text.length,
+      verified,
+      written: true
+    });
+    return verified;
+  }
+
   function insertGeminiFirefoxEditorText(editor, sanitizedText, options) {
     options = options || {};
     const normalized = normalizeComposerText(sanitizedText);
@@ -5733,6 +5789,8 @@
 
     const assistSnapshot = disableGeminiEditorInputAssist(editor);
     try {
+      const originalTextBeforeInsert = normalizeComposerText(getInputText(editor));
+      const selectionBeforeInsert = getSelectionOffsets(editor);
       suppressFollowupInputScan();
       editor.focus();
       const inserted = Boolean(document.execCommand?.("insertText", false, normalized));
@@ -5741,7 +5799,11 @@
           insertedLength: normalized.length,
           lineCount: normalized.split("\n").length
         });
-        return false;
+        return insertGeminiFirefoxMultilineDirectText(editor, normalized, {
+          ...options,
+          originalText: originalTextBeforeInsert,
+          selection: selectionBeforeInsert
+        });
       }
 
       dispatchGeminiEditorInput(editor, normalized, {
@@ -5755,7 +5817,11 @@
         verified
       });
 
-      return verified;
+      return verified || insertGeminiFirefoxMultilineDirectText(editor, normalized, {
+        ...options,
+        originalText: originalTextBeforeInsert,
+        selection: selectionBeforeInsert
+      });
     } catch (error) {
       debugReveal("gemini-text:firefox-insert-text-failed", {
         message: error?.message || String(error || ""),
@@ -5801,6 +5867,10 @@
 
     if (insertGeminiFirefoxEditorText(editor, text, options)) {
       return true;
+    }
+
+    if (isFirefoxRuntime() && isGeminiHost() && isContentEditable(editor) && text.includes("\n")) {
+      return false;
     }
 
     if (text.length >= GEMINI_DIRECT_TEXT_INSERT_THRESHOLD) {

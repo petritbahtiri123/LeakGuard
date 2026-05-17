@@ -101,12 +101,16 @@ async function run() {
     "utf8"
   );
   assert.ok(
-    firefoxOnnxLoader.includes('import("./ort-wasm-simd-threaded.mjs")'),
-    "packaged ONNX loader should import the local WASM sidecar with a fixed target"
+    firefoxOnnxLoader.includes("import(e)"),
+    "packaged ONNX loader should import the runtime-selected extension URL for the WASM sidecar"
   );
   assert.ok(
     !firefoxOnnxLoader.includes("/*@vite-ignore*/e"),
     "packaged ONNX loader should not keep the dynamic import target flagged by AMO lint"
+  );
+  assert.ok(
+    !firefoxOnnxLoader.includes('import("./ort-wasm-simd-threaded.mjs")'),
+    "packaged ONNX loader must not use a page-relative sidecar import in Firefox content scripts"
   );
 
   const consumerDefaults = await policyModule.loadDefaultPolicy({

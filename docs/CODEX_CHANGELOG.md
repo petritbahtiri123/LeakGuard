@@ -12,6 +12,12 @@ Use this file as a short handoff log for AI-made changes. Add newest entries fir
 ```
 
 ## Entries
+### 2026-05-17 - Firefox release hardening for Gemini and AI assist
+- Goal: Fixed Firefox Gemini multiline sanitized paste fallback so line breaks are preserved after native insert collapse; fixed local AI assist ONNX sidecar loading so Firefox content scripts import packaged extension URLs instead of page-relative URLs.
+- Files: `src/content/content.js`, `src/shared/ai/classifier.js`, `scripts/build-extension.mjs`, `tests/content_file_drop_interception.test.js`, `tests/ai_assist.test.js`, `tests/build_targets.test.js`, `README.md`, `docs/RELEASE_QA_CHECKLIST.md`, `docs/CODEX_CHANGELOG.md`
+- Tests: `node tests/content_file_drop_interception.test.js` -> pass; `node tests/composer_helpers.test.js` -> pass; `node tests/typed_interception.test.js` -> pass; `node tests/ai_assist.test.js` -> pass; `node tests/build_targets.test.js` -> pass; `npm test` -> pass; `npm run build:all` -> pass
+- Notes: Gemini/Grok file handoff and streaming redactor behavior stay unchanged; the Firefox Gemini fallback now repairs collapsed native inserts with the newline-preserving contenteditable writer before accepting sanitized text.
+
 ### 2026-05-17 - Standard file-processing UI
 - Goal: Added a standard local file-processing UI: LeakGuard now shows scan/sanitize/stream-redaction progress before switching to trusted pending attach.
 - Files: `src/content/content.js`, `src/content/overlay.css`, `tests/content_file_drop_interception.test.js`, `tests/productization.test.js`, `docs/CODEX_CHANGELOG.md`

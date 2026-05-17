@@ -1020,6 +1020,8 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "restoreGeminiEditorInputAssist"),
       extractFunctionSource(contentSource, "setGeminiEditorTextDirect"),
       extractFunctionSource(contentSource, "verifyGeminiFirefoxInsertedText"),
+      extractFunctionSource(contentSource, "buildGeminiFirefoxMultilineDirectText"),
+      extractFunctionSource(contentSource, "insertGeminiFirefoxMultilineDirectText"),
       extractFunctionSource(contentSource, "insertGeminiFirefoxEditorText"),
       extractFunctionSource(contentSource, "insertLargeGeminiEditorText"),
       extractFunctionSource(contentSource, "insertGeminiEditorText"),
@@ -5159,7 +5161,7 @@ async function testFirefoxGeminiMultilinePasteUsesVerifiedTextInsertion() {
       activeElement: editor,
       execCommand(command, _showUi, value) {
         assert.strictEqual(command, "insertText");
-        editor.text = String(value || "");
+        editor.text = String(value || "").replace(/\n/g, "");
         return true;
       }
     },
@@ -5179,13 +5181,22 @@ async function testFirefoxGeminiMultilinePasteUsesVerifiedTextInsertion() {
   assert.strictEqual(editor.text, sanitizedText);
   assert.strictEqual(editor.text.includes(rawSecret), false);
   assert.strictEqual(calls.textFallbacks.length, 0);
+  assert.ok(editor.textContentWrites >= 1, "collapsed Firefox insert should be repaired with the newline-preserving writer");
   assert.ok(
     calls.debugEvents.some(
       (entry) =>
         entry.label === "gemini-text:firefox-insert-text" &&
+        entry.details?.verified === false
+    ),
+    "expected Firefox Gemini multiline paste to reject the collapsed native insert"
+  );
+  assert.ok(
+    calls.debugEvents.some(
+      (entry) =>
+        entry.label === "gemini-text:firefox-multiline-preserving-retry" &&
         entry.details?.verified === true
     ),
-    "expected Firefox Gemini multiline paste to use verified text insertion"
+    "expected Firefox Gemini multiline paste to repair line breaks with verified DOM insertion"
   );
 }
 
