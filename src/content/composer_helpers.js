@@ -368,6 +368,77 @@
     dispatchInput(el, normalized, "insertReplacementText");
   }
 
+  function clearContentEditableChildren(el) {
+    if (!el) return false;
+    if (typeof el.replaceChildren === "function") {
+      el.replaceChildren();
+      return true;
+    }
+
+    if (typeof el.removeChild === "function" && el.childNodes) {
+      while (el.firstChild || el.childNodes.length) {
+        el.removeChild(el.firstChild || el.childNodes[0]);
+      }
+      return true;
+    }
+
+    try {
+      el.textContent = "";
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function appendPlainTextLineWithBreaks(el, text) {
+    if (typeof document === "undefined" || typeof document.createTextNode !== "function") {
+      return false;
+    }
+
+    const normalized = normalizeComposerText(text);
+    const lines = normalized.split("\n");
+    lines.forEach((line, index) => {
+      if (line) {
+        el.appendChild(document.createTextNode(line));
+      }
+      if (index < lines.length - 1) {
+        el.appendChild(document.createElement("br"));
+      }
+    });
+    if (!lines.length) {
+      el.appendChild(document.createElement("br"));
+    }
+    return true;
+  }
+
+  function writePlainTextToContentEditablePreservingNewlines(el, value, options = {}) {
+    if (!isContentEditable(el)) return false;
+
+    const normalized = normalizeComposerText(value);
+    try {
+      el.focus();
+    } catch {
+      // Focus is a hint; the DOM rewrite below is still the fail-closed path.
+    }
+
+    try {
+      if (!clearContentEditableChildren(el)) return false;
+      if (!appendPlainTextLineWithBreaks(el, normalized)) return false;
+
+      if (Number.isFinite(options.caretOffset)) {
+        placeCaretAtOffset(el, options.caretOffset);
+      } else {
+        placeCaretAtEnd(el);
+      }
+
+      dispatchInput(el, normalized, "insertReplacementText");
+      el.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   function rewriteContentEditableNative(el, value, options = {}) {
     const normalized = normalizeComposerText(value);
     const selection = selectContentEditableContents(el);
@@ -479,17 +550,7 @@
     }
 
     if (isContentEditable(el)) {
-      el.focus();
-      el.textContent = normalized;
-
-      if (Number.isFinite(options.caretOffset)) {
-        placeCaretAtOffset(el, options.caretOffset);
-      } else {
-        placeCaretAtEnd(el);
-      }
-
-      dispatchPlainInput(el);
-      return true;
+      return writePlainTextToContentEditablePreservingNewlines(el, normalized, options);
     }
 
     return false;
@@ -779,6 +840,7 @@
     buildRiskFingerprint,
     textToBlockFragment,
     insertContentEditableTextCommand,
+    writePlainTextToContentEditablePreservingNewlines,
     setInputTextDirect,
     setInputText,
     forceRewriteInputText

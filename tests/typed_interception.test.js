@@ -451,13 +451,13 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   );
   assert.ok(
     contentSource.includes("async function maybeHandleFileInputChange") &&
-      contentSource.includes("event.target.value = \"\"") &&
+      contentSource.includes("clearLocalFileInputSelection(event.target)") &&
       contentSource.includes('"file-input"'),
     "file input changes should be captured, cleared, and routed through local redaction"
   );
   assert.ok(
-    pasteSource.indexOf("dataTransferHasFiles(event.clipboardData)") <
-      pasteSource.indexOf('event.clipboardData?.getData("text/plain")'),
+    pasteSource.indexOf("dataTransferHasFiles(pasteTransfer)") <
+      pasteSource.indexOf("const pasted = getPastedPlainText(event)"),
     "file paste handling should run before ordinary text paste extraction"
   );
   assert.ok(
@@ -512,6 +512,12 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
     "content script should keep the delayed input scan as a fallback safety net"
   );
   assert.ok(
+    /document\.addEventListener\(\s*"input"[\s\S]*maybeHandleFileInputChange\(event\)[\s\S]*true\s*\)/.test(
+      contentSource
+    ),
+    "Firefox file input events should be captured before page handlers and before delayed scanning"
+  );
+  assert.ok(
     contentSource.includes('event.key === "Enter" || event.key === " "'),
     "decision modal should consume Enter and Space so modal confirmation does not leak through to host send handlers"
   );
@@ -529,9 +535,19 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   );
   assert.ok(
     beforeInputSource.includes("consumeInterceptionEvent(event);") &&
+      beforeInputSource.includes("isPasteBeforeInput(event)") &&
+      beforeInputSource.includes("await maybeHandlePaste(event);") &&
       submitSource.includes("consumeInterceptionEvent(event);") &&
       fallbackSendSource.includes("consumeInterceptionEvent(event);"),
-    "beforeinput, submit, and Enter-send interception should all stop immediate propagation to block host races"
+    "beforeinput paste/typing, submit, and Enter-send interception should all stop immediate propagation to block host races"
+  );
+  assert.ok(
+    beforeInputSource.includes("if (isFirefoxRuntime())") &&
+      beforeInputSource.indexOf("consumeInterceptionEvent(event);") <
+        beforeInputSource.indexOf("await analyzeTextWithAiAssist(originalText)") &&
+      beforeInputSource.indexOf("consumeInterceptionEvent(event);") <
+        beforeInputSource.indexOf("await analyzeTextWithAiAssist(next.text)"),
+    "Firefox beforeinput should synchronously consume risky raw text before any async analysis can yield to the page"
   );
   assert.ok(
     contentSource.includes("shouldAutoRedactTypedSecrets"),
@@ -562,14 +578,24 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   );
   assert.ok(
     contentSource.includes("normalizeVerificationText") &&
-      contentSource.includes("matchesComposerPlan"),
+      contentSource.includes("matchesComposerPlan") &&
+      contentSource.includes("verifyComposerRewriteSafe"),
     "composer rewrite verification should allow safe normalized-equivalent editor states"
+  );
+  assert.ok(
+    contentSource.includes("async function rewriteComposerTransactionally") &&
+      contentSource.includes("rawInsertedText") &&
+      contentSource.includes("setInputTextDirect(input, normalizedRedacted") &&
+      contentSource.includes("direct-transactional-rewrite"),
+    "paste rewrites should have a transactional direct fallback that removes raw landed Firefox input"
   );
   assert.ok(
     applyComposerTextSource.includes("const actualAfterPrimary = await readStableComposerText(input);") &&
       applyComposerTextSource.includes("forceRewriteInputText(input, writeText") &&
-      applyComposerTextSource.includes("matchesComposerPlan(plan, actual)"),
-    "contenteditable rewrites should verify stable final text against the expected redacted text"
+      applyComposerTextSource.includes("setInputTextDirect(input, writeText") &&
+      applyComposerTextSource.includes("matchesComposerPlan(plan, actual)") &&
+      applyComposerTextSource.includes("verifyComposerRewriteSafe"),
+    "contenteditable rewrites should verify stable final text and force direct redacted text when raw input remains"
   );
   assert.ok(
     typedRewriteSource.includes("ensureExactComposerState(input, expectedText)") &&
@@ -579,9 +605,27 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   assert.ok(
     fs
       .readFileSync(path.join(repoRoot, "src/content/composer_helpers.js"), "utf8")
-      .includes('normalized.includes("\\n") ? "insertHTML" : "insertText"'),
+      .includes("writePlainTextToContentEditablePreservingNewlines") &&
+      fs
+        .readFileSync(path.join(repoRoot, "src/content/composer_helpers.js"), "utf8")
+        .includes('normalized.includes("\\n") ? "insertHTML" : "insertText"'),
     "multiline contenteditable rewrites should use HTML insertion after clearing host editor state"
   );
+  for (const label of [
+    "rewrite:verification-candidate",
+    "rewrite:verification-pass-exact",
+    "rewrite:verification-pass-normalized",
+    "rewrite:verification-pass-placeholder-safe",
+    "rewrite:verification-failed-raw-secret-present",
+    "rewrite:verification-failed-placeholder-missing",
+    "rewrite:multiline-collapse-detected",
+    "rewrite:multiline-preserving-retry-start",
+    "rewrite:multiline-preserving-retry-success",
+    "rewrite:multiline-preserving-retry-failed",
+    "rewrite:failure-modal-suppressed-duplicate"
+  ]) {
+    assert.ok(contentSource.includes(label), `content script should keep safe debug label ${label}`);
+  }
   assert.ok(
     contentSource.includes("const latestInput = findComposer(input);") &&
       contentSource.includes("const latestText = getInputText(latestInput);"),
@@ -591,6 +635,10 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
     pasteSource.indexOf("consumeInterceptionEvent(event);") <
       pasteSource.indexOf("await analyzeTextWithAiAssist(pasted)"),
     "paste handler should consume sensitive paste events before async AI analysis can let the host insert raw text"
+  );
+  assert.ok(
+    pasteSource.includes("{ rawInsertedText: pasted }"),
+    "paste rewrites should verify that the original pasted text is not left beside redacted content"
   );
   assert.ok(
     contentSource.includes("buildRiskFingerprint") &&
@@ -651,6 +699,284 @@ function testPerplexityStyleRewriteVerificationToleratesWhitespaceNormalization(
   );
 }
 
+function createRewriteVerificationHarness(overrides = {}) {
+  const logs = [];
+  const state = {
+    retryWrites: 0,
+    retrySucceeds: overrides.retrySucceeds !== false
+  };
+  const factory = new Function(
+    "deps",
+    [
+      "const { normalizeVisiblePlaceholders, normalizeComposerText, normalizeEditorInnerText, PLACEHOLDER_TOKEN_REGEX } = deps;",
+      "const getInputText = deps.getInputText;",
+      "const isContentEditable = deps.isContentEditable;",
+      "const readStableComposerText = deps.readStableComposerText;",
+      "const suppressFollowupInputScan = deps.suppressFollowupInputScan;",
+      "const writePlainTextToContentEditablePreservingNewlines = deps.writePlainTextToContentEditablePreservingNewlines;",
+      "const analyzeText = deps.analyzeText;",
+      "function debugReveal(label, payload) { deps.logs.push({ label, payload }); }",
+      extractFunctionSource(contentSource, "normalizeVerificationText"),
+      extractFunctionSource(contentSource, "normalizeLooseVerificationText"),
+      extractFunctionSource(contentSource, "listExpectedPlaceholders"),
+      extractFunctionSource(contentSource, "listPlaceholderTokens"),
+      extractFunctionSource(contentSource, "samePlaceholderTokenSet"),
+      extractFunctionSource(contentSource, "actualContainsExpectedPlaceholders"),
+      extractFunctionSource(contentSource, "countVerificationLineBreaks"),
+      extractFunctionSource(contentSource, "countVerificationLines"),
+      extractFunctionSource(contentSource, "lineCollapseTokens"),
+      extractFunctionSource(contentSource, "detectMultilineCollapse"),
+      extractFunctionSource(contentSource, "isReasonablyCloseRewriteLength"),
+      extractFunctionSource(contentSource, "collectComposerVerificationCandidates"),
+      extractFunctionSource(contentSource, "isHighConfidenceRewriteFinding"),
+      extractFunctionSource(contentSource, "collectOriginalRawSecretValues"),
+      extractFunctionSource(contentSource, "candidateHasHighConfidenceSecret"),
+      extractFunctionSource(contentSource, "summarizeVerificationCandidate"),
+      extractFunctionSource(contentSource, "debugRewriteVerification"),
+      extractFunctionSource(contentSource, "evaluateComposerVerificationCandidates"),
+      extractFunctionSource(contentSource, "verifyComposerRewriteSafe"),
+      "return { verifyComposerRewriteSafe, detectMultilineCollapse, logs: deps.logs, state: deps.state };"
+    ].join("\n\n")
+  );
+  return factory({
+    logs,
+    state,
+    normalizeVisiblePlaceholders,
+    normalizeComposerText: ComposerHelpers.normalizeComposerText,
+    normalizeEditorInnerText: ComposerHelpers.normalizeEditorInnerText,
+    PLACEHOLDER_TOKEN_REGEX,
+    getInputText: (input) => ComposerHelpers.normalizeComposerText(input.text || ""),
+    isContentEditable: (input) => input?.contentEditable === true,
+    readStableComposerText: async (input) => ComposerHelpers.normalizeComposerText(input.text || ""),
+    suppressFollowupInputScan: () => {},
+    writePlainTextToContentEditablePreservingNewlines: (input, text) => {
+      state.retryWrites += 1;
+      if (!state.retrySucceeds) return false;
+      input.text = ComposerHelpers.normalizeComposerText(text);
+      input.innerText = input.text;
+      input.textContent = input.text.replace(/\n/g, "");
+      return true;
+    },
+    analyzeText: (text) => {
+      const rawSecrets = [/RawSecretABCDE12345/g, /OriginalSecretXYZ98765/g];
+      const findings = [];
+      for (const regex of rawSecrets) {
+        for (const match of String(text || "").matchAll(regex)) {
+          findings.push({
+            raw: match[0],
+            severity: "high",
+            score: 90,
+            start: match.index,
+            end: match.index + match[0].length
+          });
+        }
+      }
+      return { findings, secretFindings: findings };
+    }
+  });
+}
+
+function createVerificationInput(text, overrides = {}) {
+  return {
+    contentEditable: overrides.contentEditable !== false,
+    text,
+    innerText: overrides.innerText ?? text,
+    textContent: overrides.textContent ?? text.replace(/\n/g, "")
+  };
+}
+
+async function testGenericRewriteVerificationSafeCases() {
+  const { verifyComposerRewriteSafe } = createRewriteVerificationHarness();
+  const expected = "API_KEY=[PWM_1]\nDB_PASSWORD=[PWM_2]";
+
+  const exact = await verifyComposerRewriteSafe({
+    input: createVerificationInput(expected),
+    expectedText: expected,
+    originalText: "API_KEY=OriginalSecretXYZ98765",
+    findings: [{ raw: "OriginalSecretXYZ98765", severity: "high", score: 90 }],
+    context: "generic-exact"
+  });
+  assert.strictEqual(exact.ok, true, "generic contenteditable exact rewrite should pass");
+
+  const trailing = await verifyComposerRewriteSafe({
+    input: createVerificationInput(`${expected}\n\n`, { textContent: expected.replace(/\n/g, "") }),
+    expectedText: expected,
+    originalText: "API_KEY=OriginalSecretXYZ98765",
+    findings: [{ raw: "OriginalSecretXYZ98765", severity: "high", score: 90 }],
+    context: "generic-trailing"
+  });
+  assert.strictEqual(trailing.ok, true, "trailing editor newlines should not cause false failures");
+
+  const wrapped = await verifyComposerRewriteSafe({
+    input: createVerificationInput("API_KEY=\n[PWM_1]\n", {
+      innerText: "API_KEY=\n[PWM_1]\n",
+      textContent: "API_KEY=[PWM_1]"
+    }),
+    expectedText: "API_KEY=[PWM_1]",
+    originalText: "API_KEY=OriginalSecretXYZ98765",
+    findings: [{ raw: "OriginalSecretXYZ98765", severity: "high", score: 90 }],
+    context: "chatgpt-wrapper"
+  });
+  assert.strictEqual(wrapped.ok, true, "ChatGPT/contenteditable wrapper newline differences should pass safely");
+}
+
+async function testMultilineCollapseRetryAndFailures() {
+  const harness = createRewriteVerificationHarness();
+  const expected = "line1\nline2\nline3 [PWM_1]";
+  assert.strictEqual(
+    harness.detectMultilineCollapse(expected, "line1 line2 line3 [PWM_1]"),
+    true,
+    "Firefox-style one-line collapse should be detected"
+  );
+
+  const input = createVerificationInput("line1 line2 line3 [PWM_1]", {
+    textContent: "line1line2line3 [PWM_1]"
+  });
+  const retried = await harness.verifyComposerRewriteSafe({
+    input,
+    expectedText: expected,
+    originalText: "secret=OriginalSecretXYZ98765",
+    findings: [{ raw: "OriginalSecretXYZ98765", severity: "high", score: 90 }],
+    context: "firefox-collapse"
+  });
+  assert.strictEqual(retried.ok, true, "multiline-preserving retry should verify after rewriting line breaks");
+  assert.strictEqual(harness.state.retryWrites, 1, "collapse should trigger exactly one newline-preserving retry");
+  assert.strictEqual(input.text, expected, "retry should restore the expected logical multiline text");
+  assert.ok(
+    harness.logs.some((entry) => entry.label === "rewrite:multiline-preserving-retry-success"),
+    "successful retry should emit a safe debug label"
+  );
+
+  const failingHarness = createRewriteVerificationHarness({ retrySucceeds: false });
+  const failed = await failingHarness.verifyComposerRewriteSafe({
+    input: createVerificationInput("line1 line2 line3 [PWM_1]"),
+    expectedText: expected,
+    originalText: "secret=OriginalSecretXYZ98765",
+    findings: [{ raw: "OriginalSecretXYZ98765", severity: "high", score: 90 }],
+    context: "firefox-collapse-failed"
+  });
+  assert.strictEqual(
+    failed.ok,
+    false,
+    "expected multiline content collapsed to one line should fail closed when retry fails"
+  );
+}
+
+async function testRewriteVerificationFailClosedCases() {
+  const { verifyComposerRewriteSafe } = createRewriteVerificationHarness();
+  const rawSecret = await verifyComposerRewriteSafe({
+    input: createVerificationInput("API_KEY=RawSecretABCDE12345"),
+    expectedText: "API_KEY=[PWM_1]",
+    originalText: "API_KEY=RawSecretABCDE12345",
+    findings: [{ raw: "RawSecretABCDE12345", severity: "high", score: 90 }],
+    context: "raw-remains"
+  });
+  assert.strictEqual(rawSecret.ok, false, "raw high-confidence secret remaining after rewrite should fail closed");
+  assert.strictEqual(rawSecret.reason, "raw-secret-present");
+
+  const rawInAlternateSurface = await verifyComposerRewriteSafe({
+    input: createVerificationInput("API_KEY=[PWM_1]", {
+      innerText: "API_KEY=RawSecretABCDE12345",
+      textContent: "API_KEY=[PWM_1]"
+    }),
+    expectedText: "API_KEY=[PWM_1]",
+    originalText: "API_KEY=RawSecretABCDE12345",
+    findings: [{ raw: "RawSecretABCDE12345", severity: "high", score: 90 }],
+    context: "raw-in-alternate-surface"
+  });
+  assert.strictEqual(
+    rawInAlternateSurface.ok,
+    false,
+    "raw secret on any visible editor surface should fail even if getInputText is sanitized"
+  );
+
+  const missingPlaceholder = await verifyComposerRewriteSafe({
+    input: createVerificationInput("API_KEY=safe-value"),
+    expectedText: "API_KEY=[PWM_1]",
+    originalText: "API_KEY=OriginalSecretXYZ98765",
+    findings: [{ raw: "OriginalSecretXYZ98765", severity: "high", score: 90 }],
+    context: "placeholder-missing"
+  });
+  assert.strictEqual(missingPlaceholder.ok, false, "missing expected placeholder should fail closed");
+  assert.strictEqual(missingPlaceholder.reason, "placeholder-missing");
+}
+
+async function testRewriteFailureModalSuppression() {
+  const calls = { modals: 0 };
+  const logs = [];
+  const factory = new Function(
+    "deps",
+    [
+      "const rewriteFailureModalSuppressions = new Map();",
+      "const REWRITE_FAILURE_SUPPRESS_MS = 6000;",
+      "let modalOpen = false;",
+      "function debugRewriteVerification(label, payload) { deps.logs.push({ label, payload }); }",
+      "function setBadge() {}",
+      "function hideBadgeSoon() {}",
+      "function logFailureDetails() {}",
+      "async function showMessageModal() { deps.calls.modals += 1; }",
+      extractFunctionSource(contentSource, "pruneRewriteFailureSuppressions"),
+      extractFunctionSource(contentSource, "buildRewriteFailureFingerprint"),
+      extractFunctionSource(contentSource, "shouldSuppressRewriteFailureModal"),
+      extractFunctionSource(contentSource, "showRewriteFailure"),
+      "return { showRewriteFailure, setModalOpen: (value) => { modalOpen = value; } };"
+    ].join("\n\n")
+  );
+  const harness = factory({ calls, logs });
+  const details = {
+    expected: { length: 12, lineCount: 1, placeholderCount: 1 },
+    actual: { length: 10, lineCount: 1, placeholderCount: 0 },
+    normalizedInnerText: { length: 10, lineCount: 1 },
+    textContent: { length: 10, lineCount: 1 }
+  };
+
+  await harness.showRewriteFailure("paste", details);
+  await harness.showRewriteFailure("paste", details);
+  assert.strictEqual(calls.modals, 1, "duplicate rewrite verification failures should show one modal per fingerprint");
+  assert.ok(
+    logs.some((entry) => entry.label === "rewrite:failure-modal-suppressed-duplicate"),
+    "duplicate modal suppression should be visible in safe debug logs"
+  );
+
+  harness.setModalOpen(true);
+  await harness.showRewriteFailure("paste", { ...details, actual: { length: 11, lineCount: 1, placeholderCount: 0 } });
+  assert.strictEqual(calls.modals, 1, "open modal should suppress additional rewrite failure modals");
+}
+
+async function testTransactionalRewriteFallbackRemovesRawDuplicate() {
+  const factory = new Function(
+    "normalizeComposerText",
+    [
+      "const calls = { directWrites: 0 };",
+      "function buildComposerWritePlan(_input, text) { const canonical = normalizeComposerText(text); return { canonical, writeText: canonical }; }",
+      "function matchesComposerPlan(plan, actual) { return normalizeComposerText(actual) === plan.canonical; }",
+      "function suppressFollowupInputScan() {}",
+      "function setInputText(input, text) { input.text = `${input.text}\\n${text}`; }",
+      "function forceRewriteInputText(input, text) { input.text = `${input.text}\\n${text}`; }",
+      "function setInputTextDirect(input, text) { calls.directWrites += 1; input.text = normalizeComposerText(text); return true; }",
+      "async function readStableComposerText(input) { return normalizeComposerText(input.text); }",
+      "async function verifyComposerRewriteSafe({ input, expectedText, actualText }) { const actual = normalizeComposerText(actualText == null ? input.text : actualText); return { ok: actual === normalizeComposerText(expectedText), actual, strategy: 'test' }; }",
+      "function debugLogSnapshot() {}",
+      extractFunctionSource(contentSource, "applyComposerText"),
+      extractFunctionSource(contentSource, "rewriteComposerTransactionally"),
+      "return { rewriteComposerTransactionally, calls };"
+    ].join("\n\n")
+  );
+  const { rewriteComposerTransactionally, calls } = factory(ComposerHelpers.normalizeComposerText);
+  const rawText = "api_key=bbbbbbbbbb";
+  const redactedText = "api_key=[PWM_1]";
+  const input = {
+    text: `${rawText}\n${redactedText}`
+  };
+
+  const result = await rewriteComposerTransactionally(input, rawText, redactedText, "paste");
+
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(input.text, redactedText);
+  assert.strictEqual(input.text.includes(rawText), false);
+  assert.strictEqual(calls.directWrites, 1, "raw+redacted duplicate should force one direct rewrite");
+}
+
 function run() {
   testBeforeInputGuardStaysConservative();
   testTypedAssignmentSecretIsCaughtBeforeCommit();
@@ -673,7 +999,18 @@ function run() {
   testPauseBypassGatesPasteAndSendAfterPolicy();
   testContentScriptBindsBeforeInputAndKeepsFallbackGuard();
   testPerplexityStyleRewriteVerificationToleratesWhitespaceNormalization();
-  console.log("PASS typed beforeinput interception regressions");
+  return Promise.resolve()
+    .then(() => testGenericRewriteVerificationSafeCases())
+    .then(() => testMultilineCollapseRetryAndFailures())
+    .then(() => testRewriteVerificationFailClosedCases())
+    .then(() => testRewriteFailureModalSuppression())
+    .then(() => testTransactionalRewriteFallbackRemovesRawDuplicate())
+    .then(() => {
+      console.log("PASS typed beforeinput interception regressions");
+    });
 }
 
-run();
+run().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

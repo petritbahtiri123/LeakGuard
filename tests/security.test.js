@@ -335,9 +335,11 @@ function testLocalFilePasteDoesNotExposeRawFileContent() {
   );
   assert.ok(
     localFileSource.includes("sanitized_file_handoff_failed") &&
-      localFileSource.includes("applySanitizedTextFallback(event, input, result.redactedText)") &&
+      contentSource.includes("handoffSanitizedPayload") &&
+      contentSource.includes("downloadSanitizedFileFallback") &&
+      contentSource.includes("formatSanitizedFileFallbackText(payload)") &&
       localFileSource.includes("LeakGuard blocked raw file upload. Sanitized file handoff failed"),
-    "local file paste/drop should fail closed when sanitized handoff and safe sanitized text fallback cannot be completed"
+    "local file paste/drop should fail closed only after sanitized attachment, sanitized text fallback, and sanitized download fallback cannot be completed"
   );
   assert.ok(
     contentSource.includes("async function applySanitizedTextFallback") &&

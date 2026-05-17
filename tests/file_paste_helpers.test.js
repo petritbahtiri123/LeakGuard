@@ -11,6 +11,7 @@ const {
   LOCAL_FILE_TEXT_INSERTION_FALLBACK_ENABLED,
   dataTransferHasFiles,
   listDataTransferFiles,
+  dataTransferHasUnavailableFileItems,
   readLocalTextFileFromDataTransfer,
   createSanitizedTextFile
 } = globalThis.PWM.FilePasteHelpers;
@@ -48,7 +49,7 @@ function createDataTransfer(files, options = {}) {
     files: options.omitFiles ? [] : files,
     items: files.map((file) => ({
       kind: options.uppercaseKind ? "FILE" : "file",
-      getAsFile: () => file
+      getAsFile: () => (options.getAsFileReturnsNull ? null : file)
     }))
   };
 }
@@ -69,6 +70,21 @@ async function testSupportedEnvFileDecodesLocally() {
   assert.strictEqual(result.ok, true);
   assert.strictEqual(result.text, text);
   assert.strictEqual(result.file.extension, ".env");
+}
+
+async function testFirefoxStyleEnvFileWithEmptyMimeDecodesLocally() {
+  const text = [
+    "OPENAI_API_KEY=LeakGuardFileApiKey1234567890",
+    "DB_PASSWORD=LeakGuardDbPassword123!"
+  ].join("\r\n");
+  const file = createFile({ name: "01-basic-secrets.env", type: "", text });
+  const result = await readLocalTextFileFromDataTransfer(createDataTransfer([file]));
+
+  assert.strictEqual(result.handled, true);
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.file.extension, ".env");
+  assert.strictEqual(result.file.type, "");
+  assert.strictEqual(result.text, text.replace(/\r\n/g, "\n"));
 }
 
 async function readFileLikeText(fileLike) {
@@ -129,6 +145,38 @@ async function testClipboardItemsFilePathDecodesLocally() {
   assert.strictEqual(result.text, text);
 }
 
+async function testFirefoxItemsOnlyFilePathDecodesLocally() {
+  const text = "OPENAI_API_KEY=LeakGuardFirefoxItemApiKey1234567890";
+  const file = createFile({ name: "items-only.env", type: "text/plain", text });
+  const dataTransfer = createDataTransfer([file], {
+    omitFiles: true
+  });
+  const result = await readLocalTextFileFromDataTransfer(dataTransfer);
+
+  assert.strictEqual(dataTransferHasFiles(dataTransfer), true);
+  assert.deepStrictEqual(listDataTransferFiles(dataTransfer), [file]);
+  assert.strictEqual(dataTransferHasUnavailableFileItems(dataTransfer), false);
+  assert.strictEqual(result.handled, true);
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.text, text);
+}
+
+async function testFirefoxItemsOnlyNullFileFailsClosed() {
+  const file = createFile({ name: "unavailable.env", type: "text/plain", text: "API_KEY=secret" });
+  const dataTransfer = createDataTransfer([file], {
+    omitFiles: true,
+    getAsFileReturnsNull: true
+  });
+  const result = await readLocalTextFileFromDataTransfer(dataTransfer);
+
+  assert.strictEqual(dataTransferHasFiles(dataTransfer), true);
+  assert.deepStrictEqual(listDataTransferFiles(dataTransfer), []);
+  assert.strictEqual(dataTransferHasUnavailableFileItems(dataTransfer), true);
+  assert.strictEqual(result.handled, true);
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.code, "firefox_data_transfer_file_unavailable");
+}
+
 async function testMultipleFilesRejectedWithoutReading() {
   const first = createFile({ name: "one.env", text: "API_KEY=LeakGuardOne1234567890" });
   const second = createFile({ name: "two.env", text: "API_KEY=LeakGuardTwo1234567890" });
@@ -159,12 +207,9 @@ async function testUnsupportedFilesPassThroughAndTextBinaryFilesRejected() {
   assert.strictEqual(binary.ok, false);
   assert.strictEqual(binary.code, "binary_content");
   assertExplicitUnsupportedWarning(binary.message);
-  assert.strictEqual(invalidUtf8.handled, false);
-  assert.strictEqual(invalidUtf8.ok, false);
-  assert.strictEqual(invalidUtf8.code, "invalid_utf8");
-  assertExplicitUnsupportedWarning(invalidUtf8.message);
-  assert.strictEqual(invalidUtf8.message.includes("not valid UTF-8"), false);
-  assert.strictEqual(invalidUtf8.message.includes("did not attach"), false);
+  assert.strictEqual(invalidUtf8.handled, true);
+  assert.strictEqual(invalidUtf8.ok, true);
+  assert.strictEqual(invalidUtf8.text, "\ufffd\ufffd\ufffd");
 }
 
 async function testNoFileTransferIgnored() {
@@ -200,9 +245,12 @@ async function testOptimizedZoneFileStillDecodesAndOversizedFileBlocks() {
 
 (async () => {
   await testSupportedEnvFileDecodesLocally();
+  await testFirefoxStyleEnvFileWithEmptyMimeDecodesLocally();
   await testSanitizedFileProducedForHandoff();
   await testClipboardFilesArrayPathDecodesLocally();
   await testClipboardItemsFilePathDecodesLocally();
+  await testFirefoxItemsOnlyFilePathDecodesLocally();
+  await testFirefoxItemsOnlyNullFileFailsClosed();
   await testMultipleFilesRejectedWithoutReading();
   await testUnsupportedFilesPassThroughAndTextBinaryFilesRejected();
   await testNoFileTransferIgnored();

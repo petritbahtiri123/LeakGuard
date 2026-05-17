@@ -54,6 +54,22 @@ async function run() {
   const firefoxManifest = JSON.parse(
     fs.readFileSync(path.join(repoRoot, "dist/firefox/manifest.json"), "utf8")
   );
+  const firefoxEnterpriseManifest = JSON.parse(
+    fs.readFileSync(path.join(repoRoot, "dist/firefox-enterprise/manifest.json"), "utf8")
+  );
+  const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
+  for (const [target, manifest] of [
+    ["chrome", chromeManifest],
+    ["chrome-enterprise", chromeEnterpriseManifest],
+    ["firefox", firefoxManifest],
+    ["firefox-enterprise", firefoxEnterpriseManifest]
+  ]) {
+    assert.strictEqual(
+      manifest.version,
+      packageJson.version,
+      `${target} manifest should inherit package release version`
+    );
+  }
   const contentScripts = chromeManifest.content_scripts[0].js;
   const fileScannerIndex = contentScripts.indexOf("shared/fileScanner.js");
   const streamingRedactorIndex = contentScripts.indexOf("shared/streamingFileRedactor.js");
@@ -85,12 +101,16 @@ async function run() {
     "utf8"
   );
   assert.ok(
-    firefoxOnnxLoader.includes('import("./ort-wasm-simd-threaded.mjs")'),
-    "packaged ONNX loader should import the local WASM sidecar with a fixed target"
+    firefoxOnnxLoader.includes("import(e)"),
+    "packaged ONNX loader should import the runtime-selected extension URL for the WASM sidecar"
   );
   assert.ok(
     !firefoxOnnxLoader.includes("/*@vite-ignore*/e"),
     "packaged ONNX loader should not keep the dynamic import target flagged by AMO lint"
+  );
+  assert.ok(
+    !firefoxOnnxLoader.includes('import("./ort-wasm-simd-threaded.mjs")'),
+    "packaged ONNX loader must not use a page-relative sidecar import in Firefox content scripts"
   );
 
   const consumerDefaults = await policyModule.loadDefaultPolicy({

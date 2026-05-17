@@ -368,6 +368,8 @@ function createHarness(options = {}) {
       extractFunctionSource(contentSource, "appendFindingRow"),
       extractFunctionSource(contentSource, "showDecisionModal"),
       extractFunctionSource(contentSource, "promptForSensitiveContentDecision"),
+      extractFunctionSource(contentSource, "getPasteTransfer"),
+      extractFunctionSource(contentSource, "getPastedPlainText"),
       extractFunctionSource(contentSource, "maybeHandlePaste"),
       extractFunctionSource(contentSource, "maybeHandleTypedSecrets"),
       "return { maybeHandlePaste, maybeHandleTypedSecrets };"

@@ -12,6 +12,48 @@ Use this file as a short handoff log for AI-made changes. Add newest entries fir
 ```
 
 ## Entries
+### 2026-05-17 - Firefox release hardening for Gemini and AI assist
+- Goal: Fixed Firefox Gemini multiline sanitized paste fallback so line breaks are preserved after native insert collapse; fixed local AI assist ONNX sidecar loading so Firefox content scripts import packaged extension URLs instead of page-relative URLs.
+- Files: `src/content/content.js`, `src/shared/ai/classifier.js`, `scripts/build-extension.mjs`, `tests/content_file_drop_interception.test.js`, `tests/ai_assist.test.js`, `tests/build_targets.test.js`, `README.md`, `docs/RELEASE_QA_CHECKLIST.md`, `docs/CODEX_CHANGELOG.md`
+- Tests: `node tests/content_file_drop_interception.test.js` -> pass; `node tests/composer_helpers.test.js` -> pass; `node tests/typed_interception.test.js` -> pass; `node tests/ai_assist.test.js` -> pass; `node tests/build_targets.test.js` -> pass; `npm test` -> pass; `npm run build:all` -> pass
+- Notes: Gemini/Grok file handoff and streaming redactor behavior stay unchanged; the Firefox Gemini fallback now repairs collapsed native inserts with the newline-preserving contenteditable writer before accepting sanitized text.
+
+### 2026-05-17 - Standard file-processing UI
+- Goal: Added a standard local file-processing UI: LeakGuard now shows scan/sanitize/stream-redaction progress before switching to trusted pending attach.
+- Files: `src/content/content.js`, `src/content/overlay.css`, `tests/content_file_drop_interception.test.js`, `tests/productization.test.js`, `docs/CODEX_CHANGELOG.md`
+- Tests: `node --check src/content/content.js` -> pass; `node tests/content_file_drop_interception.test.js` -> pass; `node tests/productization.test.js` -> pass; `node tests/security.test.js` -> pass; `node tests/typed_interception.test.js` -> pass; `npm test` -> pass; `npm run build:all` -> pass
+- Notes: Gemini/Grok pending attach architecture stays intact; ChatGPT, Claude, OpenAI Chat, and X pending attach remain feature-gated off.
+
+### 2026-05-16 - ChatGPT streamed file-only handoff
+- Goal: Let ChatGPT large streamed drops try sanitized file-input assignment even when the streamed sanitized file is not read back into memory, while still failing closed if no safe file input is available.
+- Files: `src/content/content.js`, `tests/content_file_drop_interception.test.js`, `docs/CODEX_CHANGELOG.md`
+- Tests: `node --check src/content/content.js` -> pass; `node tests/content_file_drop_interception.test.js` -> pass; `node tests/security.test.js` -> pass; `node tests/typed_interception.test.js` -> pass; `npm test` -> pass; `npm run build:all` -> pass
+- Notes: ChatGPT pending attach remains disabled; streamed sanitized files skip automatic text/download fallback so they are not read back unless a future explicit user fallback is added.
+
+### 2026-05-16 - ChatGPT composer sync hardening
+- Goal: Fix ChatGPT composer sync after sanitized rewrites by adding ChatGPT-only safe diagnostics, layered contenteditable/textarea writes, verification, and one retry before fail-closed handling. ChatGPT pending attach remains disabled.
+- Files: `src/content/content.js`, `tests/content_file_drop_interception.test.js`, `docs/RELEASE_QA_CHECKLIST.md`, `docs/CODEX_CHANGELOG.md`
+- Tests: `node --check src/content/content.js` -> pass; `node tests/typed_interception.test.js` -> pass; `node tests/content_file_drop_interception.test.js` -> pass; `node tests/security.test.js` -> pass; `npm test` -> pass; `npm run build:all` -> pass
+- Notes: Gemini/Grok pending attach architecture is unchanged; Firefox ChatGPT live QA may be limited when account Advanced Security blocks login.
+
+### 2026-05-16 - v1.7.0 release hardening
+- Goal: Standardized trusted pending file handoff for AI upload flows. Gemini and Grok now sanitize or stream-redact files locally first, then attach only the sanitized file through trusted user upload flows. Large streamed files avoid automatic text insertion and duplicate reprocessing is suppressed.
+- Files: `src/content/content.js`, `scripts/package-extension.mjs`, `tests/build_targets.test.js`, `tests/content_file_drop_interception.test.js`, `docs/file-handoff-architecture.md`, `docs/CODEX_CHANGELOG.md`
+- Tests: `node --check src/content/content.js` -> pass; `node tests/content_file_drop_interception.test.js` -> pass; `node tests/streaming_file_redactor.test.js` -> pass; `node tests/file_paste_helpers.test.js` -> pass; `node tests/security.test.js` -> pass; `node tests/productization.test.js` -> pass; `node tests/build_targets.test.js` -> pass; `npm test` -> pass; `npm run build:all` -> pass
+- Notes: Pending attach remains enabled only for Gemini/Grok; ChatGPT, Claude, OpenAI Chat, and X keep diagnostic adapters with pending attach feature-gated off.
+
+### 2026-05-16 - v1.7.0 adapter-based file handoff
+- Goal: Standardized trusted pending file handoff across AI sites. LeakGuard now sanitizes or stream-redacts files first, stages only the sanitized file, and attaches it through trusted user upload flows where required by browser/site security.
+- Files: `src/content/content.js`, `tests/content_file_drop_interception.test.js`, `docs/file-handoff-architecture.md`, `docs/CODEX_CHANGELOG.md`
+- Tests: `node tests/content_file_drop_interception.test.js` -> pass
+- Notes: Gemini/Grok keep the proven pending attach path; ChatGPT, Claude, OpenAI Chat, and X now have adapters and diagnostics with pending attach feature-gated off until direct evidence requires it.
+
+### 2026-05-16 - v1.7.0 streaming pending handoff
+- Goal: LeakGuard 1.7.0 adds trusted pending attach for Gemini/Grok large streamed files: files are stream-redacted locally first, then attached only after the user triggers the site's real upload flow.
+- Files: `src/content/content.js`, `src/content/overlay.css`, `tests/content_file_drop_interception.test.js`, `tests/productization.test.js`, `package.json`, `package-lock.json`, `manifests/base.json`, `docs/CODEX_CHANGELOG.md`
+- Tests: `node tests/content_file_drop_interception.test.js` -> pass; `node tests/productization.test.js` -> pass; `node tests/streaming_file_redactor.test.js` -> pass; `node tests/file_paste_helpers.test.js` -> pass; `node tests/security.test.js` -> pass; `node tests/build_targets.test.js` -> pass; `npm test` -> pass; `npm run build:all` -> pass
+- Notes: Streaming drops no longer eagerly read sanitized fallback text before queuing Gemini/Grok pending attach; a compact non-blocking prompt exposes attach, insert-text, download, and cancel controls while pending file-input redispatches are suppressed from duplicate scans.
+
 ### 2026-05-05 - High-contrast placeholder chips
 - Goal: Make hydrated LeakGuard placeholders visible on light and dark AI chat themes, with rotating accent colors instead of a single blue treatment.
 - Files: `src/content/content.js`, `src/content/overlay.css`, `tests/productization.test.js`, `docs/CODEX_CHANGELOG.md`

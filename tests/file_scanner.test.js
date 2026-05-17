@@ -166,6 +166,8 @@ function testUnsupportedExtensionsRejected() {
 
 function testGenericMimeRequiresSupportedExtension() {
   assert.strictEqual(isSupportedTextFile("config.env", ""), true);
+  assert.strictEqual(isSupportedTextFile("private.pem", ""), true);
+  assert.strictEqual(isSupportedTextFile("deploy.key", ""), true);
   assert.strictEqual(isSupportedTextFile("config.env", "application/octet-stream"), true);
   assert.strictEqual(isSupportedTextFile("component.ts", "video/mp2t"), true);
   assert.strictEqual(isSupportedTextFile("config.bin", ""), false);

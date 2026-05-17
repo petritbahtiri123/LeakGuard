@@ -24,6 +24,8 @@
     ".json",
     ".yaml",
     ".yml",
+    ".pem",
+    ".key",
     ".toml",
     ".xml",
     ".csv",

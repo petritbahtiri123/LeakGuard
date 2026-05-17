@@ -42,6 +42,8 @@
     ".json",
     ".yaml",
     ".yml",
+    ".pem",
+    ".key",
     ".toml",
     ".ini",
     ".env",

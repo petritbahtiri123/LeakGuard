@@ -191,7 +191,7 @@ function copyOnnxRuntime(targetRoot) {
 function sanitizeOnnxRuntimeLoader(targetFile) {
   const source = fs.readFileSync(targetFile, "utf8");
   const dynamicImportLoader = "(await import(/*webpackIgnore:true*/ /*@vite-ignore*/e)).default";
-  const fixedImportLoader = '(await import("./ort-wasm-simd-threaded.mjs")).default';
+  const fixedImportLoader = "(await import(e)).default";
   if (!source.includes(dynamicImportLoader)) {
     throw new Error(`ONNX Runtime loader import pattern changed in ${targetFile}.`);
   }

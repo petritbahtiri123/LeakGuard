@@ -48,3 +48,5 @@ Remove the Gemini-specific drop path or feature flag it off, then restore previo
 
 ## Notes
 Gemini behavior can change. Verify current DOM evidence before adding selectors. Prefer capability checks and existing composer helpers over brittle page-specific rewrites.
+
+For v1.7.0 and later, Gemini drag/drop file ingestion should follow the generic adapter-based file handoff rules in `docs/file-handoff-architecture.md`. Keep Gemini's proven pending trusted attach path, duplicate sanitized-file suppression, and no raw drop replay guarantees intact.

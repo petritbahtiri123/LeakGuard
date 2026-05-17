@@ -50,7 +50,7 @@ If you want to support development and upcoming features like:
 👉 You can support here:
 https://ko-fi.com/petritbahtiri
 
-## v1.5.5 Snapshot
+## v1.7.0 Snapshot
 
 - Built-in protection for `chatgpt.com`, `chat.openai.com`, `claude.ai`, `gemini.google.com`, `grok.com`, and `x.com`
 - User-managed protection for additional exact `http://` or `https://` origins
@@ -59,7 +59,11 @@ https://ko-fi.com/petritbahtiri
 - Large supported text-file uploads above 4 MiB and up to 50 MB use streaming/chunked local redaction before sanitized handoff
 - Supported text files above 50 MB are blocked instead of being uploaded raw
 - ChatGPT large paste flows that can become generated `Plain Text` attachments are intercepted and redacted before sanitized text/file handoff
-- Gemini file-to-text fallback uses size-aware insertion, avoids slow `execCommand` paths for medium text, and asks before inserting very large sanitized text into the editor
+- Gemini and Grok large-file handoff uses trusted pending attach prompts so only sanitized files are staged for upload
+- LeakGuard shows local scan, sanitize, stream-redaction, and sanitized-upload preparation progress before switching to pending attach prompts
+- Gemini file-to-text fallback uses size-aware insertion, preserves multiline sanitized text in Firefox, avoids slow `execCommand` paths for medium text, and asks before inserting very large sanitized text into the editor
+- Composer rewrite verification is normalized across supported contenteditable editors while still failing closed if raw high-confidence secrets remain or placeholders are missing
+- Optional local AI assist loads its ONNX Runtime sidecars from packaged extension URLs in Chrome and Firefox
 - If sanitized file handoff fails or the file is unsupported/invalid, LeakGuard blocks raw upload and shows a local message
 - Trust-aware placeholder preservation and reuse for session-known `[PWM_N]`, `[NET_N]`, and `[PUB_HOST_N]` tokens
 - Full-value redaction for sensitive HTTP headers such as `Authorization`, `X-API-Key`, auth token headers, `Cookie`, and `Set-Cookie`
@@ -86,7 +90,7 @@ LeakGuard includes an extension-owned File Scanner page for local text files. It
 
 Supported scanner files for this release: `.txt`, `.md`, `.markdown`, `.env`, `.log`, `.json`, `.yaml`, `.yml`, `.toml`, `.xml`, `.csv`, `.ini`, `.conf`, `.cfg`, `.ps1`, `.sh`, `.bash`, `.zsh`, `.bat`, `.cmd`, `.py`, `.js`, `.jsx`, `.ts`, `.tsx`, `.html`, `.css`, `.scss`, `.java`, `.c`, `.cpp`, `.h`, `.hpp`, `.cs`, `.go`, `.rs`, `.rb`, `.php`, `.sql`, `Dockerfile`, and `Makefile`.
 
-In v1.5.5, supported local UTF-8 text files pasted, dropped, or selected in protected AI composers can also be locally validated, redacted through the same background-owned placeholder flow, and replaced with sanitized in-memory `File`/`Blob` objects where browser and site upload flows accept synthetic file handoff. Files above 4 MiB and up to 50 MB use streaming/chunked local redaction so LeakGuard does not need to read the full raw file into one string before sanitizing it. This is limited to supported text files and does not guarantee support for every editor or upload control. Unsupported files, invalid UTF-8 files, text files above 50 MB, and failed sanitized file handoff are blocked from raw upload with a local message.
+In v1.7.0, supported local UTF-8 text files pasted, dropped, or selected in protected AI composers can also be locally validated, redacted through the same background-owned placeholder flow, and replaced with sanitized in-memory `File`/`Blob` objects where browser and site upload flows accept synthetic file handoff. Files above 4 MiB and up to 50 MB use streaming/chunked local redaction so LeakGuard does not need to read the full raw file into one string before sanitizing it. Gemini and Grok can stage sanitized large files in a trusted pending attach prompt when the site requires a user-triggered upload flow. This is limited to supported text files and does not guarantee support for every editor or upload control. Unsupported files, invalid UTF-8 files, text files above 50 MB, and failed sanitized file handoff are blocked from raw upload with a local message.
 
 File scanner limits:
 
