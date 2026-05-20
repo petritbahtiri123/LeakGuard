@@ -7,18 +7,11 @@ const repoRoot = path.join(__dirname, "..");
 const policyModule = require(path.join(repoRoot, "src/shared/policy.js"));
 
 async function run() {
-  const { buildTarget } = await import(
+  const { BUILD_TARGETS, buildTarget } = await import(
     pathToFileURL(path.join(repoRoot, "scripts/build-extension.mjs")).href
   );
 
-  const targets = [
-    { browser: "chrome", mode: "consumer", folder: "chrome" },
-    { browser: "chrome", mode: "enterprise", folder: "chrome-enterprise" },
-    { browser: "firefox", mode: "consumer", folder: "firefox" },
-    { browser: "firefox", mode: "enterprise", folder: "firefox-enterprise" }
-  ];
-
-  const results = targets.map((target) => buildTarget(target.browser, target.mode));
+  const results = BUILD_TARGETS.map((target) => buildTarget(target.browser, target.mode));
 
   results.forEach((result) => {
     const manifestPath = path.join(result.targetRoot, "manifest.json");

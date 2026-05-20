@@ -12,6 +12,12 @@ Use this file as a short handoff log for AI-made changes. Add newest entries fir
 ```
 
 ## Entries
+### 2026-05-20 - Build target cleanup
+- Goal: Centralized build target metadata for build-all, packaging usage text, and build-target regression coverage without changing extension runtime, redaction, placeholder, secure reveal, file handoff, or pending attach behavior.
+- Files: `scripts/build-extension.mjs`, `scripts/build-all.mjs`, `scripts/package-extension.mjs`, `tests/build_targets.test.js`, `docs/CODEX_CHANGELOG.md`
+- Tests: `node --check src/content/content.js` -> pass; `node tests/content_file_drop_interception.test.js` -> pass; `node tests/typed_interception.test.js` -> pass; `node tests/security.test.js` -> pass; `node tests/detector.test.js` -> pass; `node tests/streaming_file_redactor.test.js` -> pass; `node tests/file_paste_helpers.test.js` -> pass; `node tests/productization.test.js` -> pass; `node tests/build_targets.test.js` -> pass; `npm test` -> pass; `npm run build:all` -> pass
+- Notes: Deferred content-script pending attach/Gemini/Grok consolidation and shared redaction helper extraction as too risky for this cleanup pass; no permissions, public listing copy, provider routing, local-only wording, or generated `dist/` patches were changed.
+
 ### 2026-05-17 - Firefox release hardening for Gemini and AI assist
 - Goal: Fixed Firefox Gemini multiline sanitized paste fallback so line breaks are preserved after native insert collapse; fixed local AI assist ONNX sidecar loading so Firefox content scripts import packaged extension URLs instead of page-relative URLs.
 - Files: `src/content/content.js`, `src/shared/ai/classifier.js`, `scripts/build-extension.mjs`, `tests/content_file_drop_interception.test.js`, `tests/ai_assist.test.js`, `tests/build_targets.test.js`, `README.md`, `docs/RELEASE_QA_CHECKLIST.md`, `docs/CODEX_CHANGELOG.md`

@@ -19,8 +19,14 @@ const onnxRuntimeFiles = [
   "ort-wasm-simd-threaded.wasm"
 ];
 const onnxRuntimeSidecarPattern = /^ort-wasm-simd-threaded\.(?:mjs|wasm)$/;
-const supportedBrowsers = new Set(["chrome", "firefox"]);
-const supportedModes = new Set(["consumer", "enterprise"]);
+const BUILD_TARGETS = Object.freeze([
+  Object.freeze({ browser: "chrome", mode: "consumer", folder: "chrome" }),
+  Object.freeze({ browser: "chrome", mode: "enterprise", folder: "chrome-enterprise" }),
+  Object.freeze({ browser: "firefox", mode: "consumer", folder: "firefox" }),
+  Object.freeze({ browser: "firefox", mode: "enterprise", folder: "firefox-enterprise" })
+]);
+const supportedBrowsers = new Set(BUILD_TARGETS.map((target) => target.browser));
+const supportedModes = new Set(BUILD_TARGETS.map((target) => target.mode));
 
 function pathExists(targetPath) {
   try {
@@ -282,6 +288,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 }
 
 export {
+  BUILD_TARGETS,
   buildManifest,
   buildTarget,
   buildInfoSource,
