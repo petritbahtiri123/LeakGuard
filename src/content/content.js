@@ -39,6 +39,7 @@
     readLocalTextFileFromDataTransfer,
     createSanitizedTextFile
   } = FilePasteHelpers || {};
+  const FileScanner = globalThis.PWM?.FileScanner || {};
   const StreamingFileRedactor = globalThis.PWM?.StreamingFileRedactor || {};
 
   const CHATGPT_COMPOSER_SELECTORS = [
@@ -176,18 +177,21 @@
   const GEMINI_AUTO_INSERT_TEXT_LIMIT = 256 * 1024;
   const GEMINI_LARGE_TEXT_SUPPRESS_MS = 2500;
   const LOCAL_TEXT_FAST_MAX_BYTES =
-    globalThis.PWM?.FileScanner?.LOCAL_TEXT_FAST_MAX_BYTES || 2 * 1024 * 1024;
+    FileScanner.LOCAL_TEXT_FAST_MAX_BYTES || 2 * 1024 * 1024;
   const LOCAL_TEXT_OPTIMIZED_MAX_BYTES =
-    globalThis.PWM?.FileScanner?.LOCAL_TEXT_OPTIMIZED_MAX_BYTES || 4 * 1024 * 1024;
+    FileScanner.LOCAL_TEXT_OPTIMIZED_MAX_BYTES || 4 * 1024 * 1024;
   const LOCAL_TEXT_HARD_BLOCK_BYTES =
-    globalThis.PWM?.FileScanner?.LOCAL_TEXT_HARD_BLOCK_BYTES || 4 * 1024 * 1024;
+    FileScanner.LOCAL_TEXT_HARD_BLOCK_BYTES || 4 * 1024 * 1024;
   const LOCAL_TEXT_HARD_BLOCK_TITLE = "Large payload blocked for browser stability";
   const LOCAL_TEXT_HARD_BLOCK_MESSAGE =
     "This content is over 4 MB. LeakGuard did not process or send it automatically to avoid browser instability. Split the file into smaller parts, or sanitize it separately before upload.";
   const STREAMING_BLOCK_TITLE =
-    StreamingFileRedactor.STREAMING_BLOCK_TITLE || "File too large for local redaction";
+    StreamingFileRedactor.STREAMING_BLOCK_TITLE ||
+    FileScanner.LARGE_TEXT_STREAMING_BLOCK_TITLE ||
+    "File too large for local redaction";
   const STREAMING_BLOCK_MESSAGE =
     StreamingFileRedactor.STREAMING_BLOCK_MESSAGE ||
+    FileScanner.LARGE_TEXT_STREAMING_BLOCK_MESSAGE ||
     "This file is over 50 MB. LeakGuard blocked the upload because it cannot safely sanitize it yet.";
   const FILE_DRAG_SESSION_RESET_MS = 5000;
   const GEMINI_UPLOAD_INPUT_WAIT_MS = 450;
@@ -1820,10 +1824,10 @@
   function getPendingSanitizedAttachPromptMessage(site = "") {
     const id = String(site || getCurrentHandoffDriverId() || "").toLowerCase();
     if (id === "gemini") {
-      return "Large file sanitized. Click Attach sanitized file or Gemini Upload files.";
+      return GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MESSAGE;
     }
     if (id === "grok") {
-      return "Large file sanitized. Click Attach sanitized file or Grok Upload/Attach.";
+      return GROK_PENDING_SANITIZED_FILE_HANDOFF_MESSAGE;
     }
     return "File sanitized. Click Upload/Attach to attach the sanitized version.";
   }
@@ -8346,7 +8350,12 @@
       try {
         pendingGeminiSanitizedFileObserver.disconnect();
       } catch {
-        // Best-effort cleanup only.
+        debugReveal("file-handoff:pending-cleanup-failed", {
+          site: "gemini",
+          phase: "observer-disconnect",
+          reason,
+          hadPending: true
+        });
       }
       pendingGeminiSanitizedFileObserver = null;
     }
@@ -8360,7 +8369,12 @@
       try {
         document.removeEventListener("click", pendingGeminiSanitizedFileClickHandler, true);
       } catch {
-        // Best-effort cleanup only.
+        debugReveal("file-handoff:pending-cleanup-failed", {
+          site: "gemini",
+          phase: "click-listener-remove",
+          reason,
+          hadPending: true
+        });
       }
       pendingGeminiSanitizedFileClickHandler = null;
     }
@@ -8681,7 +8695,12 @@
       try {
         pendingGrokSanitizedFileObserver.disconnect();
       } catch {
-        // Best-effort cleanup only.
+        debugReveal("file-handoff:pending-cleanup-failed", {
+          site: "grok",
+          phase: "observer-disconnect",
+          reason,
+          hadPending: true
+        });
       }
       pendingGrokSanitizedFileObserver = null;
     }
@@ -8695,7 +8714,12 @@
       try {
         document.removeEventListener("click", pendingGrokSanitizedFileClickHandler, true);
       } catch {
-        // Best-effort cleanup only.
+        debugReveal("file-handoff:pending-cleanup-failed", {
+          site: "grok",
+          phase: "click-listener-remove",
+          reason,
+          hadPending: true
+        });
       }
       pendingGrokSanitizedFileClickHandler = null;
     }
@@ -9956,7 +9980,12 @@
     try {
       cleanup(reason);
     } catch {
-      // Best-effort cleanup only.
+      debugReveal("file-handoff:ghost-ingress-cleanup-failed", {
+        site: "gemini",
+        phase: "click-interceptor-cleanup",
+        reason,
+        hadCleanup: true
+      });
     }
   }
 

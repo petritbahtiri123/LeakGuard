@@ -1410,6 +1410,7 @@ function createHandoffHarness({
   uploadTriggers = [],
   hiddenTriggers = [],
   overlayItems = [],
+  documentRemoveEventListenerThrows = false,
   sendRuntimeMessage = async (message) => ({ ok: true, downloadId: 77 })
 } = {}) {
   const debugEvents = [];
@@ -1573,6 +1574,9 @@ function createHandoffHarness({
       if (type === "mousedown") documentMouseDownHandlers.push(handler);
     },
     removeEventListener(type, handler) {
+      if (documentRemoveEventListenerThrows) {
+        throw new Error("remove listener failed");
+      }
       const handlers =
         type === "click"
           ? clickHandlers
@@ -1908,7 +1912,7 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "handOffPrimedGeminiFirefoxUploadTarget"),
       extractFunctionSource(contentSource, "tryFirefoxGeminiFileInputBridge"),
       extractFunctionSource(contentSource, "handOffGrokSanitizedFileUpload"),
-      "return { handOffSanitizedLocalFile, handOffGeminiSanitizedFileUpload, primeGeminiFirefoxUploadTarget, handOffPrimedGeminiFirefoxUploadTarget, tryFirefoxGeminiFileInputBridge, findGeminiUploadMenuButton, openGeminiUploadMenuSafely, findGeminiUploadFilesMenuItem, openGeminiUploadFilesMenuItemSafely, waitForGeminiUploadFilesMenuItem, waitForGeminiFileInput, handOffGrokSanitizedFileUpload, resolveFileInputForHandoff, attemptPendingGeminiSanitizedFileHandoff, hasPendingGeminiSanitizedFileHandoff, getPendingGeminiSanitizedFileHandoffDebug, queuePendingGrokSanitizedFileHandoff, attemptPendingGrokSanitizedFileHandoff, hasPendingGrokSanitizedFileHandoff, getPendingGrokSanitizedFileHandoffDebug, hasGeminiSanitizedDownloadFallback, clearPendingGeminiGhostIngressClickInterceptor };"
+      "return { handOffSanitizedLocalFile, handOffGeminiSanitizedFileUpload, primeGeminiFirefoxUploadTarget, handOffPrimedGeminiFirefoxUploadTarget, tryFirefoxGeminiFileInputBridge, findGeminiUploadMenuButton, openGeminiUploadMenuSafely, findGeminiUploadFilesMenuItem, openGeminiUploadFilesMenuItemSafely, waitForGeminiUploadFilesMenuItem, waitForGeminiFileInput, handOffGrokSanitizedFileUpload, resolveFileInputForHandoff, getFileHandoffAdapterById, getFileHandoffAdapterForLocation, isFileHandoffAdapterPendingAttachEnabled, queuePendingSanitizedFileHandoff, attemptPendingSanitizedFileHandoff, clearPendingSanitizedFileHandoff, cancelPendingSanitizedFileAttach, attemptPendingGeminiSanitizedFileHandoff, hasPendingGeminiSanitizedFileHandoff, getPendingGeminiSanitizedFileHandoffDebug, queuePendingGeminiSanitizedFileHandoff, queuePendingGrokSanitizedFileHandoff, attemptPendingGrokSanitizedFileHandoff, hasPendingGrokSanitizedFileHandoff, getPendingGrokSanitizedFileHandoffDebug, hasGeminiSanitizedDownloadFallback, clearPendingGeminiGhostIngressClickInterceptor };"
     ].join("\n\n")
   );
 
@@ -3503,6 +3507,168 @@ async function testGrokPendingAttachPromptButtonAssignsSanitizedFile() {
   ]) {
     assert.ok(harness.debugEvents.some((entry) => entry.label === label), `expected ${label}`);
   }
+}
+
+async function testPendingAttachGateBehaviorForAdapters() {
+  const sanitizedFile = {
+    name: "gated.env",
+    type: "text/plain",
+    size: 18,
+    text: "API_KEY=[PWM_1]"
+  };
+  const event = {
+    type: "drop",
+    target: { nodeType: 1, tagName: "DIV", dispatchEvent: () => true },
+    dataTransfer: createDataTransfer()
+  };
+
+  for (const [hostname, adapterId, expectedEnabled] of [
+    ["gemini.google.com", "gemini", true],
+    ["grok.com", "grok", true],
+    ["chatgpt.com", "chatgpt", false],
+    ["claude.ai", "claude", false],
+    ["chat.openai.com", "openai", false],
+    ["x.com", "x", false]
+  ]) {
+    const harness = createHandoffHarness({ hostname });
+    const adapter = harness.getFileHandoffAdapterForLocation({ hostname });
+
+    assert.ok(adapter, `expected ${adapterId} adapter`);
+    assert.strictEqual(adapter.id, adapterId);
+    assert.strictEqual(harness.isFileHandoffAdapterPendingAttachEnabled(adapter), expectedEnabled);
+
+    const queued = harness.queuePendingSanitizedFileHandoff(adapter, event, null, sanitizedFile, {
+      handoffStage: `${adapterId}:pending-gate-test`
+    });
+
+    assert.strictEqual(queued, expectedEnabled, `${adapterId} pending queue gate changed`);
+    if (adapterId === "gemini") {
+      assert.strictEqual(harness.hasPendingGeminiSanitizedFileHandoff(sanitizedFile), true);
+      harness.clearPendingSanitizedFileHandoff("gemini", "test-cleanup");
+    } else if (adapterId === "grok") {
+      assert.strictEqual(harness.hasPendingGrokSanitizedFileHandoff(sanitizedFile), true);
+      harness.clearPendingSanitizedFileHandoff("grok", "test-cleanup");
+    } else {
+      assert.ok(
+        harness.debugEvents.some(
+          (entry) =>
+            entry.label === "file-handoff:pending-queue-skipped" &&
+            entry.payload.site === adapterId &&
+            entry.payload.reason === "pending_attach_disabled"
+        ),
+        `expected disabled pending queue diagnostic for ${adapterId}`
+      );
+    }
+  }
+
+  const unsupportedHarness = createHandoffHarness({ hostname: "protected.example" });
+  assert.strictEqual(
+    unsupportedHarness.getFileHandoffAdapterForLocation({ hostname: "protected.example" }),
+    null
+  );
+  assert.strictEqual(
+    unsupportedHarness.queuePendingSanitizedFileHandoff(null, event, null, sanitizedFile, {}),
+    false,
+    "unsupported sites must not queue pending attach"
+  );
+}
+
+async function testPendingAttachPromptCancelClearsGeminiAndGrokState() {
+  for (const [hostname, site, queueName, hasName] of [
+    [
+      "gemini.google.com",
+      "gemini",
+      "queuePendingGeminiSanitizedFileHandoff",
+      "hasPendingGeminiSanitizedFileHandoff"
+    ],
+    ["grok.com", "grok", "queuePendingGrokSanitizedFileHandoff", "hasPendingGrokSanitizedFileHandoff"]
+  ]) {
+    const sanitizedFile = {
+      name: `${site}-cancel.env`,
+      type: "text/plain",
+      size: 18,
+      text: "API_KEY=[PWM_1]"
+    };
+    const harness = createHandoffHarness({ hostname });
+    const event = {
+      type: "drop",
+      target: { nodeType: 1, tagName: "DIV", dispatchEvent: () => true },
+      dataTransfer: createDataTransfer()
+    };
+
+    assert.strictEqual(harness[queueName](event, null, sanitizedFile, {}), true);
+    assert.strictEqual(harness[hasName](sanitizedFile), true);
+    assert.strictEqual(harness.promptNodes.length, 1);
+
+    const cancelButton = findButtonByText(harness.promptNodes[0], "Cancel");
+    assert.ok(cancelButton, `expected ${site} cancel button`);
+    cancelButton.dispatchEvent(createClickEvent(cancelButton).event);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.strictEqual(harness[hasName](sanitizedFile), false);
+    assert.strictEqual(harness.promptNodes[0].isConnected, false);
+    assert.ok(
+      harness.debugEvents.some(
+        (entry) => entry.label === `file-handoff:${site}-pending-cleared` && entry.payload.reason === "cancelled"
+      ),
+      `expected ${site} pending cleanup after cancel`
+    );
+    assert.ok(
+      harness.debugEvents.some(
+        (entry) =>
+          entry.label === "file-ui:pending-prompt-cleared" &&
+          entry.payload.site === site &&
+          entry.payload.reason === "cancelled"
+      ),
+      `expected ${site} prompt cleanup after cancel`
+    );
+  }
+}
+
+async function testPendingCleanupErrorsClearStateAndLogMetadataOnly() {
+  const sanitizedFile = {
+    name: "cleanup-error.env",
+    type: "text/plain",
+    size: 18,
+    text: "API_KEY=[PWM_1]"
+  };
+  const harness = createHandoffHarness({
+    hostname: "gemini.google.com",
+    documentRemoveEventListenerThrows: true
+  });
+  const event = {
+    type: "drop",
+    target: { nodeType: 1, tagName: "DIV", dispatchEvent: () => true },
+    dataTransfer: createDataTransfer()
+  };
+
+  assert.strictEqual(harness.queuePendingGeminiSanitizedFileHandoff(event, null, sanitizedFile, {}), true);
+  const observer = harness.observers.find((entry) => !entry.disconnected);
+  assert.ok(observer, "expected pending observer");
+  observer.disconnect = () => {
+    throw new Error("observer cleanup failed");
+  };
+
+  harness.cancelPendingSanitizedFileAttach("gemini");
+
+  assert.strictEqual(harness.hasPendingGeminiSanitizedFileHandoff(sanitizedFile), false);
+  const cleanupDiagnostics = harness.debugEvents.filter(
+    (entry) => entry.label === "file-handoff:pending-cleanup-failed"
+  );
+  assert.ok(
+    cleanupDiagnostics.some(
+      (entry) => entry.payload.site === "gemini" && entry.payload.phase === "observer-disconnect"
+    ),
+    "expected metadata-only observer cleanup diagnostic"
+  );
+  assert.ok(
+    cleanupDiagnostics.some(
+      (entry) => entry.payload.site === "gemini" && entry.payload.phase === "click-listener-remove"
+    ),
+    "expected metadata-only listener cleanup diagnostic"
+  );
+  assert.strictEqual(JSON.stringify(cleanupDiagnostics).includes("[PWM_1]"), false);
+  assert.strictEqual(JSON.stringify(cleanupDiagnostics).includes("API_KEY"), false);
 }
 
 function testFileHandoffAdapterRegistryCoversSupportedSites() {
@@ -10240,6 +10406,9 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testGeminiPendingAttachPromptButtonCompletesTrustedAttach();
   await testGrokPendingUploadClickThenFileInputAssignsSanitizedFile();
   await testGrokPendingAttachPromptButtonAssignsSanitizedFile();
+  await testPendingAttachGateBehaviorForAdapters();
+  await testPendingAttachPromptCancelClearsGeminiAndGrokState();
+  await testPendingCleanupErrorsClearStateAndLogMetadataOnly();
   testFileHandoffAdapterRegistryCoversSupportedSites();
   testGenericFileHandoffHelpersAndDiagnosticsExist();
   testFileProcessingOverlayCssExists();
