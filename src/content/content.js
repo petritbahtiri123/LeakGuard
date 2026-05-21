@@ -39,6 +39,7 @@
     readLocalTextFileFromDataTransfer,
     createSanitizedTextFile
   } = FilePasteHelpers || {};
+  const FileScanner = globalThis.PWM?.FileScanner || {};
   const StreamingFileRedactor = globalThis.PWM?.StreamingFileRedactor || {};
 
   const CHATGPT_COMPOSER_SELECTORS = [
@@ -176,18 +177,21 @@
   const GEMINI_AUTO_INSERT_TEXT_LIMIT = 256 * 1024;
   const GEMINI_LARGE_TEXT_SUPPRESS_MS = 2500;
   const LOCAL_TEXT_FAST_MAX_BYTES =
-    globalThis.PWM?.FileScanner?.LOCAL_TEXT_FAST_MAX_BYTES || 2 * 1024 * 1024;
+    FileScanner.LOCAL_TEXT_FAST_MAX_BYTES || 2 * 1024 * 1024;
   const LOCAL_TEXT_OPTIMIZED_MAX_BYTES =
-    globalThis.PWM?.FileScanner?.LOCAL_TEXT_OPTIMIZED_MAX_BYTES || 4 * 1024 * 1024;
+    FileScanner.LOCAL_TEXT_OPTIMIZED_MAX_BYTES || 4 * 1024 * 1024;
   const LOCAL_TEXT_HARD_BLOCK_BYTES =
-    globalThis.PWM?.FileScanner?.LOCAL_TEXT_HARD_BLOCK_BYTES || 4 * 1024 * 1024;
+    FileScanner.LOCAL_TEXT_HARD_BLOCK_BYTES || 4 * 1024 * 1024;
   const LOCAL_TEXT_HARD_BLOCK_TITLE = "Large payload blocked for browser stability";
   const LOCAL_TEXT_HARD_BLOCK_MESSAGE =
     "This content is over 4 MB. LeakGuard did not process or send it automatically to avoid browser instability. Split the file into smaller parts, or sanitize it separately before upload.";
   const STREAMING_BLOCK_TITLE =
-    StreamingFileRedactor.STREAMING_BLOCK_TITLE || "File too large for local redaction";
+    StreamingFileRedactor.STREAMING_BLOCK_TITLE ||
+    FileScanner.LARGE_TEXT_STREAMING_BLOCK_TITLE ||
+    "File too large for local redaction";
   const STREAMING_BLOCK_MESSAGE =
     StreamingFileRedactor.STREAMING_BLOCK_MESSAGE ||
+    FileScanner.LARGE_TEXT_STREAMING_BLOCK_MESSAGE ||
     "This file is over 50 MB. LeakGuard blocked the upload because it cannot safely sanitize it yet.";
   const FILE_DRAG_SESSION_RESET_MS = 5000;
   const GEMINI_UPLOAD_INPUT_WAIT_MS = 450;
@@ -1820,10 +1824,10 @@
   function getPendingSanitizedAttachPromptMessage(site = "") {
     const id = String(site || getCurrentHandoffDriverId() || "").toLowerCase();
     if (id === "gemini") {
-      return "Large file sanitized. Click Attach sanitized file or Gemini Upload files.";
+      return GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MESSAGE;
     }
     if (id === "grok") {
-      return "Large file sanitized. Click Attach sanitized file or Grok Upload/Attach.";
+      return GROK_PENDING_SANITIZED_FILE_HANDOFF_MESSAGE;
     }
     return "File sanitized. Click Upload/Attach to attach the sanitized version.";
   }
@@ -6518,6 +6522,14 @@
     return /\b(?:send|submit|mic|microphone|voice|record|settings|model|close|remove)\b/.test(haystack);
   }
 
+  function hasGeminiUploadMenuIntent(meta) {
+    const label = String(meta?.ariaLabel || "").trim();
+    if (label === "Open upload file menu") return true;
+    if (/^upload\s*(?:&|and)\s*tools$/i.test(label)) return true;
+    const haystack = `${label} ${meta?.title || ""} ${meta?.textSnippet || ""}`.toLowerCase();
+    return /\b(?:upload|attach)\b/.test(haystack) && /\b(?:file|files|menu)\b/.test(haystack);
+  }
+
   function isGeminiSourceUploadIcon(candidate, meta = null) {
     if (!candidate || String(candidate.tagName || "").toUpperCase() !== "MAT-ICON") return false;
     const details = meta || describeElementForDebug(candidate);
@@ -6534,7 +6546,8 @@
     const label = meta?.ariaLabel || "";
     const className = meta?.className || "";
     if (/\bhidden-local-(?:file-)?upload-button\b/.test(className)) return false;
-    if (label === "Open upload file menu" || /\bupload-card-button\b/.test(className)) return true;
+    if (label === "Open upload file menu" || /^upload\s*(?:&|and)\s*tools$/i.test(label)) return true;
+    if (/\bupload-card-button\b/.test(className) && hasGeminiUploadMenuIntent(meta)) return true;
     return isGeminiSourceUploadIcon(candidate, meta);
   }
 
@@ -6581,6 +6594,10 @@
       candidates.find((candidate) => {
         const label = candidate.getAttribute?.("aria-label") || candidate.ariaLabel || "";
         return label === "Open upload file menu" && isSafeGeminiUploadMenuButton(candidate);
+      }) ||
+      candidates.find((candidate) => {
+        const label = candidate.getAttribute?.("aria-label") || candidate.ariaLabel || "";
+        return /^upload\s*(?:&|and)\s*tools$/i.test(label) && isSafeGeminiUploadMenuButton(candidate);
       }) ||
       candidates.find((candidate) => {
         const className = String(candidate.className || candidate.getAttribute?.("class") || "");
@@ -7386,7 +7403,9 @@
 
     if (!fileInput) {
       details.failureReason = "file_input_bridge_input_not_found";
+      const safeUploadOpenerDiscovered = isAllowedGeminiUploadMenuOpener(discovery.uploadTrigger);
       const uploadFlowWasReached =
+        safeUploadOpenerDiscovered ||
         bridgeUi.overlayItemFoundBeforeMenuOpen ||
         bridgeUi.menuOpenButtonClicked ||
         bridgeUi.uploadFilesMenuItemClicked;
@@ -7405,6 +7424,7 @@
         {
           ...createFirefoxGeminiFileInputBridgeDebug(context, payload),
           bridgeUi,
+          safeUploadOpenerDiscovered,
           uploadFlowWasReached,
           queuedPending,
           uploadMenu: describeGeminiUploadMenuDiscovery(),
@@ -7669,6 +7689,34 @@
       return { ok: false, stage: "failed", reason: "unsafe_sanitized_payload" };
     }
 
+    const firefoxGeminiDropInput =
+      driver.id === "gemini" && isFirefoxRuntime() && context?.context === "drop"
+        ? findGeminiFileInput(context.event, context.input).fileInput
+        : null;
+    if (
+      driver.id === "gemini" &&
+      isFirefoxRuntime() &&
+      context?.context === "drop" &&
+      !firefoxGeminiDropInput &&
+      payload?.sanitizedFile &&
+      isFileHandoffAdapterPendingAttachEnabled(adapter)
+    ) {
+      const pendingDetails = createSanitizedFileHandoffDetails(
+        context.event,
+        payload.sanitizedFile,
+        `${adapter.id}:firefox-drop-pending-attach`
+      );
+      if (queuePendingSanitizedFileHandoff(adapter, context.event, context.input, payload.sanitizedFile, pendingDetails)) {
+        debugReveal("file-handoff:firefox-gemini-drop-pending-queued", {
+          adapter: describeFileHandoffAdapter(adapter),
+          context: context?.context || "",
+          sanitizedFile: describeFileForDebug(payload.sanitizedFile)
+        });
+        hideDmzOverlay();
+        return { ok: true, stage: "pending", strategy: `${adapter.id}-pending-sanitized-file-handoff` };
+      }
+    }
+
     debugReveal("file-handoff:direct-attempt-start", {
       site: driver.id,
       adapter: describeFileHandoffAdapter(adapter),
@@ -7709,6 +7757,22 @@
       return { ok: true, stage: "file", strategy: firefoxGeminiBridgeResult.strategy };
     }
     if (firefoxGeminiBridgeResult.handled) {
+      if (
+        firefoxGeminiBridgeResult.reason === "gemini_firefox_file_input_not_found" &&
+        context?.context === "drop" &&
+        payload?.sanitizedFile &&
+        isFileHandoffAdapterPendingAttachEnabled(adapter)
+      ) {
+        const pendingDetails = createSanitizedFileHandoffDetails(
+          context.event,
+          payload.sanitizedFile,
+          `${adapter.id}:pending-after-firefox-bridge-miss`
+        );
+        if (queuePendingSanitizedFileHandoff(adapter, context.event, context.input, payload.sanitizedFile, pendingDetails)) {
+          hideDmzOverlay();
+          return { ok: true, stage: "pending", strategy: `${adapter.id}-pending-sanitized-file-handoff` };
+        }
+      }
       setDmzOverlayState("Raw file blocked", "failed");
       return firefoxGeminiBridgeResult;
     }
@@ -8346,7 +8410,12 @@
       try {
         pendingGeminiSanitizedFileObserver.disconnect();
       } catch {
-        // Best-effort cleanup only.
+        debugReveal("file-handoff:pending-cleanup-failed", {
+          site: "gemini",
+          phase: "observer-disconnect",
+          reason,
+          hadPending: true
+        });
       }
       pendingGeminiSanitizedFileObserver = null;
     }
@@ -8360,7 +8429,12 @@
       try {
         document.removeEventListener("click", pendingGeminiSanitizedFileClickHandler, true);
       } catch {
-        // Best-effort cleanup only.
+        debugReveal("file-handoff:pending-cleanup-failed", {
+          site: "gemini",
+          phase: "click-listener-remove",
+          reason,
+          hadPending: true
+        });
       }
       pendingGeminiSanitizedFileClickHandler = null;
     }
@@ -8681,7 +8755,12 @@
       try {
         pendingGrokSanitizedFileObserver.disconnect();
       } catch {
-        // Best-effort cleanup only.
+        debugReveal("file-handoff:pending-cleanup-failed", {
+          site: "grok",
+          phase: "observer-disconnect",
+          reason,
+          hadPending: true
+        });
       }
       pendingGrokSanitizedFileObserver = null;
     }
@@ -8695,7 +8774,12 @@
       try {
         document.removeEventListener("click", pendingGrokSanitizedFileClickHandler, true);
       } catch {
-        // Best-effort cleanup only.
+        debugReveal("file-handoff:pending-cleanup-failed", {
+          site: "grok",
+          phase: "click-listener-remove",
+          reason,
+          hadPending: true
+        });
       }
       pendingGrokSanitizedFileClickHandler = null;
     }
@@ -9272,6 +9356,7 @@
         const label = trigger.getAttribute?.("aria-label") || trigger.ariaLabel || "";
         return label === "Open upload file menu" && !trigger.disabled;
       })?.trigger ||
+      uploadTriggers.find(({ trigger }) => isSafeGeminiUploadMenuButton(trigger))?.trigger ||
       uploadTriggers.find(({ trigger }) => !trigger.disabled)?.trigger ||
       null;
 
@@ -9912,13 +9997,16 @@
   }
 
   function isAllowedGeminiUploadMenuOpener(candidate) {
-    if (!candidate || candidate.disabled || isForbiddenGeminiUploadButton(candidate)) return false;
-    const label = candidate.getAttribute?.("aria-label") || candidate.ariaLabel || "";
-    return label === "Open upload file menu";
+    if (!candidate || isForbiddenGeminiUploadButton(candidate)) return false;
+    if (!isGeminiUploadMenuButtonVisible(candidate)) return false;
+    if (hasGeminiUploadMenuIntent(describeElementForDebug(candidate)) && !isUnsafeGeminiUploadMenuButton(candidate)) {
+      return true;
+    }
+    return isSafeGeminiUploadMenuButton(candidate);
   }
 
   function clickElementSafely(candidate) {
-    if (!candidate || candidate.disabled || isForbiddenGeminiUploadButton(candidate)) return false;
+    if (!candidate || isForbiddenGeminiUploadButton(candidate) || !isGeminiUploadMenuButtonVisible(candidate)) return false;
     try {
       candidate.click?.();
       return true;
@@ -9956,7 +10044,12 @@
     try {
       cleanup(reason);
     } catch {
-      // Best-effort cleanup only.
+      debugReveal("file-handoff:ghost-ingress-cleanup-failed", {
+        site: "gemini",
+        phase: "click-interceptor-cleanup",
+        reason,
+        hadCleanup: true
+      });
     }
   }
 
@@ -10967,6 +11060,31 @@
 
       if (optimizedStatus) {
         clearLocalPayloadOptimizationStatus(sizeInfo, "failed");
+      }
+      const pendingAdapter = getFileHandoffAdapterForLocation();
+      if (
+        context === "drop" &&
+        sanitizedFile &&
+        isFileHandoffAdapterPendingAttachEnabled(pendingAdapter) &&
+        queuePendingSanitizedFileHandoff(
+          pendingAdapter,
+          event,
+          input,
+          sanitizedFile,
+          createSanitizedFileHandoffDetails(
+            event,
+            sanitizedFile,
+            `${pendingAdapter.id}:pending-after-handoff-failure`
+          )
+        )
+      ) {
+        hideProcessing("pending");
+        hideDmzOverlay();
+        return {
+          handled: true,
+          ok: true,
+          strategy: `${pendingAdapter.id}-pending-sanitized-file-handoff`
+        };
       }
       debugReveal("file-handoff:fail-closed", {
         context,

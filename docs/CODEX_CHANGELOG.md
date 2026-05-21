@@ -12,6 +12,24 @@ Use this file as a short handoff log for AI-made changes. Add newest entries fir
 ```
 
 ## Entries
+### 2026-05-21 - Gemini Upload & tools handoff
+- Goal: Treated Gemini's new `Upload & tools` button as a safe upload menu opener only when upload intent is explicit, and routed Firefox/Gemini drops with no exposed file input directly to the trusted pending attach overlay hook.
+- Files: `src/content/content.js`, `tests/content_file_drop_interception.test.js`, `docs/CODEX_CHANGELOG.md`
+- Tests: `node --check src/content/content.js` -> pass; `node tests/content_file_drop_interception.test.js` -> pass; `node tests/file_paste_helpers.test.js` -> pass; `node tests/security.test.js` -> pass; `node tests/typed_interception.test.js` -> pass; `npm test` -> pass; `npm run build:all` -> pass
+- Notes: Added direct coverage for the Firefox/Gemini ghost-ingress, bridge input-miss, terminal handoff-failure, hook-first no-input drop, and PR80 opener-safety paths. Normal Gemini upload openers must be visible; hidden file selector triggers remain activated only through `activateGeminiHiddenFileSelectorTriggerSafely`. No placeholder, redaction, IP, permission, manifest, or Firefox package metadata changes. Generic tools-only buttons remain rejected.
+
+### 2026-05-20 - Behavior-neutral file handoff hardening
+- Goal: Implemented the first safe cleanup pass from `docs/code-quality-audit.md`: reused existing file limit/message exports where safe, added focused pending attach gate/cancel/cleanup coverage, and added metadata-only debug labels for pending cleanup failures without changing runtime behavior.
+- Files: `src/content/content.js`, `src/content/file_paste_helpers.js`, `tests/content_file_drop_interception.test.js`, `docs/CODEX_CHANGELOG.md`
+- Tests: `node --check src/content/content.js` -> pass; `node tests/content_file_drop_interception.test.js` -> pass; `node tests/typed_interception.test.js` -> pass; `node tests/security.test.js` -> pass; `node tests/detector.test.js` -> pass; `node tests/streaming_file_redactor.test.js` -> pass; `node tests/file_paste_helpers.test.js` -> pass; `node tests/productization.test.js` -> pass; `node tests/build_targets.test.js` -> pass; `npm test` -> pass; `npm run build:all` -> pass
+- Notes: Behavior-neutral hardening only. Pending attach remains enabled only for Gemini/Grok; ChatGPT, Claude, OpenAI Chat, and X stay gated off. Pending attach consolidation, shared redaction helper extraction, and candidate dead-code deletion remain deferred.
+
+### 2026-05-20 - Build target cleanup
+- Goal: Centralized build target metadata for build-all, packaging usage text, and build-target regression coverage without changing extension runtime, redaction, placeholder, secure reveal, file handoff, or pending attach behavior.
+- Files: `scripts/build-extension.mjs`, `scripts/build-all.mjs`, `scripts/package-extension.mjs`, `tests/build_targets.test.js`, `docs/CODEX_CHANGELOG.md`
+- Tests: `node --check src/content/content.js` -> pass; `node tests/content_file_drop_interception.test.js` -> pass; `node tests/typed_interception.test.js` -> pass; `node tests/security.test.js` -> pass; `node tests/detector.test.js` -> pass; `node tests/streaming_file_redactor.test.js` -> pass; `node tests/file_paste_helpers.test.js` -> pass; `node tests/productization.test.js` -> pass; `node tests/build_targets.test.js` -> pass; `npm test` -> pass; `npm run build:all` -> pass
+- Notes: Deferred content-script pending attach/Gemini/Grok consolidation and shared redaction helper extraction as too risky for this cleanup pass; no permissions, public listing copy, provider routing, local-only wording, or generated `dist/` patches were changed.
+
 ### 2026-05-17 - Firefox release hardening for Gemini and AI assist
 - Goal: Fixed Firefox Gemini multiline sanitized paste fallback so line breaks are preserved after native insert collapse; fixed local AI assist ONNX sidecar loading so Firefox content scripts import packaged extension URLs instead of page-relative URLs.
 - Files: `src/content/content.js`, `src/shared/ai/classifier.js`, `scripts/build-extension.mjs`, `tests/content_file_drop_interception.test.js`, `tests/ai_assist.test.js`, `tests/build_targets.test.js`, `README.md`, `docs/RELEASE_QA_CHECKLIST.md`, `docs/CODEX_CHANGELOG.md`

@@ -4,6 +4,7 @@ import fs from "fs";
 import path from "path";
 import yazl from "yazl";
 import { fileURLToPath } from "url";
+import { BUILD_TARGETS } from "./build-extension.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -14,7 +15,8 @@ const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json
 const version = process.argv[3] || packageJson.version;
 
 if (!target) {
-  console.error("Usage: node scripts/package-extension.mjs <chrome|firefox|chrome-enterprise|firefox-enterprise> [version]");
+  const targetList = BUILD_TARGETS.map((buildTarget) => buildTarget.folder).join("|");
+  console.error(`Usage: node scripts/package-extension.mjs <${targetList}> [version]`);
   process.exit(1);
 }
 

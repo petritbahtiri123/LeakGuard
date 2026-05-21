@@ -12,6 +12,10 @@
   const LOCAL_FILE_UNSUPPORTED_WARNING =
     "LeakGuard did not scan or redact this file. Unsupported file types such as PDF, DOCX, images, archives, executables, and binary files are not protected in this release. Normal upload may continue through the site.";
 
+  function getFileScanner() {
+    return root.PWM.FileScanner || {};
+  }
+
   function dataTransferHasFiles(dataTransfer) {
     if (!dataTransfer) return false;
 
@@ -72,7 +76,7 @@
         message:
           validation?.code === "invalid_utf8"
             ? validation?.message || LOCAL_FILE_READ_MESSAGE
-            : LOCAL_FILE_UNSUPPORTED_WARNING
+            : getFileScanner().UNSUPPORTED_COMPOSER_FILE_MESSAGE || LOCAL_FILE_UNSUPPORTED_WARNING
       };
     }
 
@@ -85,7 +89,7 @@
   }
 
   async function readLocalTextFileFromDataTransfer(dataTransfer) {
-    const FileScanner = root.PWM.FileScanner || {};
+    const FileScanner = getFileScanner();
 
     if (!dataTransferHasFiles(dataTransfer)) {
       return { handled: false, ok: false };
