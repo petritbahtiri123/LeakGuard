@@ -9998,6 +9998,7 @@
 
   function isAllowedGeminiUploadMenuOpener(candidate) {
     if (!candidate || isForbiddenGeminiUploadButton(candidate)) return false;
+    if (!isGeminiUploadMenuButtonVisible(candidate)) return false;
     if (hasGeminiUploadMenuIntent(describeElementForDebug(candidate)) && !isUnsafeGeminiUploadMenuButton(candidate)) {
       return true;
     }
@@ -10005,7 +10006,7 @@
   }
 
   function clickElementSafely(candidate) {
-    if (!candidate || candidate.disabled || isForbiddenGeminiUploadButton(candidate)) return false;
+    if (!candidate || isForbiddenGeminiUploadButton(candidate) || !isGeminiUploadMenuButtonVisible(candidate)) return false;
     try {
       candidate.click?.();
       return true;

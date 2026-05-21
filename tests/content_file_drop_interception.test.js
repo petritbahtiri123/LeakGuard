@@ -1916,7 +1916,7 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "handOffPrimedGeminiFirefoxUploadTarget"),
       extractFunctionSource(contentSource, "tryFirefoxGeminiFileInputBridge"),
       extractFunctionSource(contentSource, "handOffGrokSanitizedFileUpload"),
-      "return { handOffSanitizedLocalFile, handOffGeminiSanitizedFileUpload, primeGeminiFirefoxUploadTarget, handOffPrimedGeminiFirefoxUploadTarget, tryFirefoxGeminiFileInputBridge, findGeminiUploadMenuButton, openGeminiUploadMenuSafely, findGeminiUploadFilesMenuItem, openGeminiUploadFilesMenuItemSafely, waitForGeminiUploadFilesMenuItem, waitForGeminiFileInput, handOffGrokSanitizedFileUpload, resolveFileInputForHandoff, getFileHandoffAdapterById, getFileHandoffAdapterForLocation, isFileHandoffAdapterPendingAttachEnabled, queuePendingSanitizedFileHandoff, attemptPendingSanitizedFileHandoff, clearPendingSanitizedFileHandoff, cancelPendingSanitizedFileAttach, attemptPendingGeminiSanitizedFileHandoff, hasPendingGeminiSanitizedFileHandoff, getPendingGeminiSanitizedFileHandoffDebug, queuePendingGeminiSanitizedFileHandoff, queuePendingGrokSanitizedFileHandoff, attemptPendingGrokSanitizedFileHandoff, hasPendingGrokSanitizedFileHandoff, getPendingGrokSanitizedFileHandoffDebug, hasGeminiSanitizedDownloadFallback, clearPendingGeminiGhostIngressClickInterceptor };"
+      "return { handOffSanitizedLocalFile, handOffGeminiSanitizedFileUpload, primeGeminiFirefoxUploadTarget, handOffPrimedGeminiFirefoxUploadTarget, tryFirefoxGeminiFileInputBridge, findGeminiUploadMenuButton, openGeminiUploadMenuSafely, findGeminiUploadFilesMenuItem, openGeminiUploadFilesMenuItemSafely, waitForGeminiUploadFilesMenuItem, waitForGeminiFileInput, handOffGrokSanitizedFileUpload, resolveFileInputForHandoff, getFileHandoffAdapterById, getFileHandoffAdapterForLocation, isFileHandoffAdapterPendingAttachEnabled, queuePendingSanitizedFileHandoff, attemptPendingSanitizedFileHandoff, clearPendingSanitizedFileHandoff, cancelPendingSanitizedFileAttach, attemptPendingGeminiSanitizedFileHandoff, hasPendingGeminiSanitizedFileHandoff, getPendingGeminiSanitizedFileHandoffDebug, queuePendingGeminiSanitizedFileHandoff, queuePendingGrokSanitizedFileHandoff, attemptPendingGrokSanitizedFileHandoff, hasPendingGrokSanitizedFileHandoff, getPendingGrokSanitizedFileHandoffDebug, hasGeminiSanitizedDownloadFallback, clearPendingGeminiGhostIngressClickInterceptor, isAllowedGeminiUploadMenuOpener, clickElementSafely, activateGeminiHiddenFileSelectorTriggerSafely };"
     ].join("\n\n")
   );
 
@@ -4817,7 +4817,6 @@ async function testGeminiUploadToolsOverlayMissDoesNotReportUnsafeTrigger() {
       "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-badge mat-unthemed _mat-animation-noopable",
     onClick: () => {}
   });
-  uploadTrigger.hidden = true;
   const harness = createHandoffHarness({
     userAgent: "Firefox",
     fileInputs: [],
@@ -4856,6 +4855,41 @@ async function testGeminiUploadToolsOverlayMissDoesNotReportUnsafeTrigger() {
   assert.strictEqual(queued.payload.failureReason, "ghost_ingress_timeout");
   assert.notStrictEqual(queued.payload.failureReason, "unsafe_upload_trigger");
   assert.strictEqual(JSON.stringify(harness.debugEvents).includes(rawSecret), false);
+}
+
+function testGeminiHiddenUploadToolsRejectedAsNormalMenuOpener() {
+  const uploadTrigger = createUploadTrigger({
+    ariaLabel: "Upload & tools",
+    className: "mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-badge",
+    onClick: () => {
+      throw new Error("hidden Upload & tools must not be clicked as a normal menu opener");
+    }
+  });
+  uploadTrigger.hidden = true;
+  const harness = createHandoffHarness({
+    userAgent: "Firefox",
+    uploadTriggers: [uploadTrigger]
+  });
+
+  assert.strictEqual(harness.isAllowedGeminiUploadMenuOpener(uploadTrigger), false);
+  assert.strictEqual(harness.findGeminiUploadMenuButton(), null);
+  assert.strictEqual(harness.openGeminiUploadMenuSafely(uploadTrigger), false);
+  assert.strictEqual(harness.clickElementSafely(uploadTrigger), false);
+  assert.deepStrictEqual(uploadTrigger.events, []);
+}
+
+function testGeminiHiddenSelectorOnlyUsesDedicatedActivator() {
+  const hiddenTrigger = createHiddenFileSelectorTrigger();
+  const harness = createHandoffHarness({
+    userAgent: "Firefox",
+    hiddenTriggers: [hiddenTrigger]
+  });
+
+  assert.strictEqual(harness.isAllowedGeminiUploadMenuOpener(hiddenTrigger), false);
+  assert.strictEqual(harness.clickElementSafely(hiddenTrigger), false);
+  assert.deepStrictEqual(hiddenTrigger.events, []);
+  assert.strictEqual(harness.activateGeminiHiddenFileSelectorTriggerSafely(hiddenTrigger), true);
+  assert.deepStrictEqual(hiddenTrigger.events, ["pointerdown", "mousedown", "mouseup", "click"]);
 }
 
 async function testGeminiUploadMenuDirectInputStillWorks() {
@@ -8765,7 +8799,7 @@ async function testFirefoxGeminiFileInputBridgeRejectsUnsafeUploadButtons() {
     size: 18,
     text: "API_KEY=[PWM_1]"
   };
-  for (const label of ["Send", "Remove file", "Microphone", "Settings", "Model", "Close", "Tools"]) {
+  for (const label of ["Send", "Remove file", "Mic", "Microphone", "Settings", "Model", "Close", "Tools"]) {
     const uploadTrigger = createUploadTrigger({
       ariaLabel: label,
       className: "upload-card-button open",
@@ -10665,6 +10699,8 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testGeminiNonDropUploadFlowMayClickWhenInputAppearsAfterClick();
   await testGeminiUploadOverlayFailureLogsMetadataOnly();
   await testGeminiUploadToolsOverlayMissDoesNotReportUnsafeTrigger();
+  testGeminiHiddenUploadToolsRejectedAsNormalMenuOpener();
+  testGeminiHiddenSelectorOnlyUsesDedicatedActivator();
   await testGeminiUploadMenuDirectInputStillWorks();
   await testGeminiUploadButtonHandoffDispatchesInputAndChange();
   await testGeminiLargeFileInputWithoutComposerUsesStreamingSanitizedHandoff();
