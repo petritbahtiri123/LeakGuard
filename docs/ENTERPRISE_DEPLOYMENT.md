@@ -14,6 +14,7 @@ LeakGuard can enforce destination `allow`, `redact`, and `block` rules, disable 
 - `allowUserAddedSites` controls whether users can add or re-enable extra protected sites.
 - `allowSiteRemoval` now gates deletion of user-managed protected sites.
 - `auditMode` stores bounded metadata-only events without raw secrets or full prompts.
+- `auditRetentionDays` controls automatic purge of metadata-only audit events.
 - `strictPolicyLoad` can fail closed for sensitive actions if enterprise policy cannot be loaded safely.
 
 Current enterprise defaults in this repo intentionally keep local testing flexibility:
@@ -65,6 +66,7 @@ For enterprise builds, prefer managed storage values for at least:
 - `allowUserAddedSites`
 - `allowSiteRemoval`
 - `auditMode`
+- `auditRetentionDays`
 - `strictPolicyLoad`
 
 Suggested starting point:
@@ -85,6 +87,7 @@ Suggested starting point:
   "allowUserAddedSites": false,
   "allowSiteRemoval": true,
   "auditMode": "metadata-only",
+  "auditRetentionDays": 30,
   "strictPolicyLoad": true
 }
 ```

@@ -81,7 +81,7 @@ Productivity
 
 ### `storage`
 
-Used to store normalized protected-site rules and session-scoped prompt placeholder maps locally in the browser. File Scanner and local file paste/drop contents are not stored in extension storage.
+Used to store normalized protected-site rules and session-scoped prompt placeholder maps locally in the browser. Private placeholder maps use browser session storage when available and ephemeral extension memory otherwise. File Scanner and local file paste/drop contents are not stored in extension storage.
 
 ### `scripting`
 

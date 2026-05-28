@@ -30,11 +30,14 @@
   const handledDrops = new WeakSet();
   const boundRoots = new WeakSet();
   const listenerOptions = { capture: true, passive: false };
+  const guardAbortController = typeof AbortController === "function" ? new AbortController() : null;
+  const fallbackListenerRecords = [];
   let dropHandler = null;
   let dragHandler = null;
   let dragEndHandler = null;
   let filePolicyResolver = null;
   let fileDragActive = false;
+  let disposed = false;
   const TEXT_EXTENSIONS = new Set([
     ".txt",
     ".md",
@@ -260,15 +263,57 @@
   }
 
   function bind(rootTarget) {
-    if (!rootTarget || typeof rootTarget.addEventListener !== "function" || boundRoots.has(rootTarget)) {
+    if (
+      disposed ||
+      !rootTarget ||
+      typeof rootTarget.addEventListener !== "function" ||
+      boundRoots.has(rootTarget)
+    ) {
       return;
     }
 
     boundRoots.add(rootTarget);
-    rootTarget.addEventListener("dragenter", preventFileDrag, listenerOptions);
-    rootTarget.addEventListener("dragover", preventFileDrag, listenerOptions);
-    rootTarget.addEventListener("drop", consumeFileDrop, listenerOptions);
-    rootTarget.addEventListener("dragend", handleDragEnd, listenerOptions);
+    addGuardListener(rootTarget, "dragenter", preventFileDrag);
+    addGuardListener(rootTarget, "dragover", preventFileDrag);
+    addGuardListener(rootTarget, "drop", consumeFileDrop);
+    addGuardListener(rootTarget, "dragend", handleDragEnd);
+  }
+
+  function addGuardListener(rootTarget, type, listener) {
+    const options = guardAbortController
+      ? { ...listenerOptions, signal: guardAbortController.signal }
+      : listenerOptions;
+
+    rootTarget.addEventListener(type, listener, options);
+    if (!guardAbortController && typeof rootTarget.removeEventListener === "function") {
+      fallbackListenerRecords.push({ rootTarget, type, listener, options });
+    }
+  }
+
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    fileDragActive = false;
+    dropHandler = null;
+    dragHandler = null;
+    dragEndHandler = null;
+    filePolicyResolver = null;
+
+    if (guardAbortController) {
+      guardAbortController.abort();
+    } else {
+      while (fallbackListenerRecords.length) {
+        const record = fallbackListenerRecords.pop();
+        record.rootTarget.removeEventListener(record.type, record.listener, record.options);
+      }
+    }
+
+    if (markerRoot[initMarker]?.api === api) {
+      delete markerRoot[initMarker];
+    }
+    if (root.__PWM_FILE_DRAG_GUARD__ === api) {
+      delete root.__PWM_FILE_DRAG_GUARD__;
+    }
   }
 
   bind(window);
@@ -302,7 +347,8 @@
     setFilePolicyResolver(handler) {
       filePolicyResolver = typeof handler === "function" ? handler : null;
     },
-    bind
+    bind,
+    dispose
   };
   initState.api = api;
   root.__PWM_FILE_DRAG_GUARD__ = api;

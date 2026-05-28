@@ -58,6 +58,9 @@ const CONTENT_SCRIPT_FILES = [
 const CONTENT_STYLE_FILES = ["content/overlay.css"];
 const AUDIT_EVENTS_STORAGE_KEY = "pwm:auditEvents";
 const MAX_AUDIT_EVENTS = 250;
+const DEFAULT_AUDIT_RETENTION_DAYS = 30;
+const MIN_AUDIT_RETENTION_DAYS = 1;
+const MAX_AUDIT_RETENTION_DAYS = 365;
 const DESTINATION_POLICY_BLOCK_MESSAGE =
   "LeakGuard blocked this action because this destination is not approved by enterprise policy.";
 const PROTECTED_SITE_REMOVAL_BLOCK_MESSAGE =
@@ -107,9 +110,22 @@ function parseAuditUrl(url) {
   }
 }
 
-function trimAuditEvents(events) {
+function normalizeAuditRetentionDays(policySummary) {
+  const rawDays = Number(policySummary?.auditRetentionDays || DEFAULT_AUDIT_RETENTION_DAYS);
+  const finiteDays = Number.isFinite(rawDays) ? rawDays : DEFAULT_AUDIT_RETENTION_DAYS;
+  return Math.max(MIN_AUDIT_RETENTION_DAYS, Math.min(MAX_AUDIT_RETENTION_DAYS, finiteDays));
+}
+
+function trimAuditEvents(events, policySummary) {
   const normalizedEvents = Array.isArray(events) ? events.filter(Boolean) : [];
-  return normalizedEvents.slice(-MAX_AUDIT_EVENTS);
+  const retentionMs = normalizeAuditRetentionDays(policySummary) * 24 * 60 * 60 * 1000;
+  const cutoff = Date.now() - retentionMs;
+  return normalizedEvents
+    .filter((event) => {
+      const timestamp = Date.parse(event?.timestamp || "");
+      return Number.isFinite(timestamp) && timestamp >= cutoff;
+    })
+    .slice(-MAX_AUDIT_EVENTS);
 }
 
 function buildAuditEventEntry({ action, reason, url, findings, policySummary }) {
@@ -149,7 +165,7 @@ async function recordAuditEvent({ action, reason, url, findings, policySummary }
   const existingEvents = Array.isArray(stored[AUDIT_EVENTS_STORAGE_KEY])
     ? stored[AUDIT_EVENTS_STORAGE_KEY]
     : [];
-  const events = trimAuditEvents([...existingEvents, entry]);
+  const events = trimAuditEvents([...existingEvents, entry], summary);
 
   await ext.storage.local.set({
     [AUDIT_EVENTS_STORAGE_KEY]: events

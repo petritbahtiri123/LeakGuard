@@ -12,6 +12,7 @@ const backgroundSource = fs.readFileSync(
   path.join(repoRoot, "src/background/core.js"),
   "utf8"
 );
+const platformSource = fs.readFileSync(path.join(repoRoot, "src/compat/platform.js"), "utf8");
 const filePasteHelperSource = fs.readFileSync(
   path.join(repoRoot, "src/content/file_paste_helpers.js"),
   "utf8"
@@ -203,6 +204,60 @@ function testSafeRevealUiExists() {
   assert.ok(
     popupSource.includes("secretValueEl.textContent = response.raw"),
     "raw secret rendering should be confined to the extension-owned popup UI"
+  );
+}
+
+async function testSessionStorageFallbackIsEphemeralOnly() {
+  let localGetCalls = 0;
+  let localSetCalls = 0;
+  let localRemoveCalls = 0;
+  const sandbox = {
+    navigator: { userAgent: "TestBrowser" },
+    chrome: {
+      storage: {
+        local: {
+          async get() {
+            localGetCalls += 1;
+            return {};
+          },
+          async set() {
+            localSetCalls += 1;
+          },
+          async remove() {
+            localRemoveCalls += 1;
+          }
+        }
+      }
+    }
+  };
+  sandbox.globalThis = sandbox;
+
+  vm.runInNewContext(platformSource, sandbox, {
+    filename: "platform.js"
+  });
+
+  const sessionArea = sandbox.PWM.getSessionStorageArea();
+  await sessionArea.set({
+    privateState: {
+      raw: "SessionOnlySecret123",
+      placeholder: "[PWM_1]"
+    }
+  });
+  const loaded = await sessionArea.get("privateState");
+  loaded.privateState.raw = "mutated";
+  const loadedAgain = await sessionArea.get("privateState");
+  await sessionArea.remove("privateState");
+  const removed = await sessionArea.get("privateState");
+
+  assert.strictEqual(sandbox.PWM.supportsStorageSession, false);
+  assert.strictEqual(sandbox.PWM.usingEphemeralSessionStorage, true);
+  assert.strictEqual(loadedAgain.privateState.raw, "SessionOnlySecret123");
+  assert.deepStrictEqual(Object.keys(removed), []);
+  assert.strictEqual(localGetCalls + localSetCalls + localRemoveCalls, 0);
+  assertNotIncludes(
+    platformSource,
+    "ext.storage.local",
+    "session storage fallback must not persist private placeholder/reveal state in storage.local"
   );
 }
 
@@ -594,6 +649,7 @@ async function run() {
 
   testUnsafeContentRevealPathRemoved();
   testSafeRevealUiExists();
+  await testSessionStorageFallbackIsEphemeralOnly();
   testAuditMetadataObjectsExcludeRawSecrets();
   await testSecureRevealRemainsBoundedToRequestSessionAndExtensionUi();
   testPlaceholderLabelsDoNotExposeRawValues();

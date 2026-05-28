@@ -73,7 +73,7 @@ https://ko-fi.com/petritbahtiri
 - Popup-based site management for add, enable, disable, and remove flows
 - In-page top-center status menu on protected pages
 - Popup-only secure reveal for placeholders
-- Session-scoped placeholder state in `chrome.storage.session`
+- Session-scoped placeholder state in `chrome.storage.session`, or ephemeral extension memory when session storage is unavailable
 - No cloud processing, telemetry, or backend service
 
 ## How LeakGuard Works
@@ -81,7 +81,7 @@ https://ko-fi.com/petritbahtiri
 1. On a protected site, LeakGuard watches supported chat composers for paste, typing, send, and supported local text-file paste/drop/file-select events.
 2. If it finds likely secrets or sensitive public IPv4 hosts/CIDRs, it shows an `Allow once` or `Redact` decision flow.
 3. If you choose `Redact`, it rewrites the composer with stable placeholders such as `[PWM_1]`, `[PUB_HOST_1]`, and `[NET_1]`.
-4. Private raw-to-placeholder mappings stay in the background service worker and `chrome.storage.session` for the active browser session only.
+4. Private raw-to-placeholder mappings stay in the background service worker and `chrome.storage.session` for the active browser session only; on browsers without session storage, LeakGuard uses ephemeral extension memory instead of `storage.local`.
 5. Clicking a revealable placeholder stages a secure reveal inside the LeakGuard popup. Raw values are not written back into the page DOM.
 
 ## Local File Scanner

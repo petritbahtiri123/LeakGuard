@@ -30,7 +30,7 @@ For protected AI composers, larger supported text files may be redacted with str
 LeakGuard stores only the following extension data:
 
 - normalized user-managed protected-site rules in extension `storage.local`
-- session-scoped placeholder mappings and reveal state in `chrome.storage.session`
+- session-scoped placeholder mappings and reveal state in `chrome.storage.session`, or ephemeral extension memory when session storage is unavailable
 
 LeakGuard does not intentionally persist raw prompts, selected file contents, raw secrets, or raw public IPv4 values in long-term extension storage. File Scanner scan results stay in memory on the scanner page until you clear the scan or close the page. Protected composer file redaction uses in-memory text, chunks, and sanitized `File`/`Blob` objects only as needed for local redaction and handoff.
 
@@ -84,7 +84,7 @@ PDF, DOCX, image, archive, executable, and binary-file redaction are not enabled
 
 ## Data Retention
 
-Session-scoped placeholder mappings are kept in browser session storage and are cleared when the relevant session state is removed. User-managed protected-site rules remain until you remove or disable them.
+Session-scoped placeholder mappings are kept in browser session storage when available and are cleared when the relevant session state is removed. On browsers without session storage, LeakGuard uses ephemeral extension memory for private placeholder and reveal state rather than persisting that state in `storage.local`. User-managed protected-site rules remain until you remove or disable them. Enterprise metadata-only audit events are bounded and purged according to the configured retention window.
 
 ## Contact
 

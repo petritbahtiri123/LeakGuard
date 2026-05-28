@@ -46,7 +46,12 @@
     },
     "auditMode": {
       "type": "string",
-      "enum": ["off", "metadata-only", "full"]
+      "enum": ["off", "metadata-only"]
+    },
+    "auditRetentionDays": {
+      "type": "number",
+      "minimum": 1,
+      "maximum": 365
     },
     "strictPolicyLoad": {
       "type": "boolean"

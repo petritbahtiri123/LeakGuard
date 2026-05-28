@@ -6,12 +6,75 @@ const { pathToFileURL } = require("url");
 const repoRoot = path.join(__dirname, "..");
 const policyModule = require(path.join(repoRoot, "src/shared/policy.js"));
 
+function walkFiles(rootDir) {
+  const entries = fs.readdirSync(rootDir, { withFileTypes: true });
+  const files = [];
+
+  for (const entry of entries) {
+    const fullPath = path.join(rootDir, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...walkFiles(fullPath));
+    } else if (entry.isFile()) {
+      files.push(fullPath);
+    }
+  }
+
+  return files;
+}
+
+function assertReleaseArtifactsAreSanitized(results) {
+  const sourceContent = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
+  assert.ok(
+    sourceContent.includes("debugReveal") && sourceContent.includes("pwm:debug"),
+    "developer source diagnostics should remain available outside release builds"
+  );
+
+  for (const result of results) {
+    const files = walkFiles(result.targetRoot);
+    const mapFiles = files.filter(
+      (file) => file.endsWith(".map") || path.basename(file).toLowerCase().includes(".map.")
+    );
+    assert.deepStrictEqual(mapFiles, [], `${result.target} release should not ship sourcemaps`);
+
+    for (const file of files.filter((entry) => /\.(?:js|json|html|css)$/i.test(entry))) {
+      const relativePath = path.relative(result.targetRoot, file).split(path.sep).join("/");
+      const source = fs.readFileSync(file, "utf8");
+      assert.strictEqual(
+        source.includes("sourceMappingURL"),
+        false,
+        `${result.target}:${relativePath} should not contain sourceMappingURL`
+      );
+    }
+
+    const contentSource = fs.readFileSync(
+      path.join(result.targetRoot, "content/content.js"),
+      "utf8"
+    );
+    for (const banned of [
+      "pwm:debug",
+      "debugReveal",
+      "debugLogSnapshot",
+      "console.group(",
+      "console.groupCollapsed(",
+      "console.groupEnd(",
+      "console.log("
+    ]) {
+      assert.strictEqual(
+        contentSource.includes(banned),
+        false,
+        `${result.target} release content script should not contain ${banned}`
+      );
+    }
+  }
+}
+
 async function run() {
   const { BUILD_TARGETS, buildTarget } = await import(
     pathToFileURL(path.join(repoRoot, "scripts/build-extension.mjs")).href
   );
 
   const results = BUILD_TARGETS.map((target) => buildTarget(target.browser, target.mode));
+  assertReleaseArtifactsAreSanitized(results);
 
   results.forEach((result) => {
     const manifestPath = path.join(result.targetRoot, "manifest.json");
@@ -131,6 +194,11 @@ async function run() {
     enterpriseDefaults.blockHttpSecrets,
     true,
     "enterprise build should block HTTP secrets by default"
+  );
+  assert.strictEqual(
+    enterpriseDefaults.auditRetentionDays,
+    30,
+    "enterprise build should default to bounded audit retention"
   );
 
   console.log("PASS multi-target build regressions");

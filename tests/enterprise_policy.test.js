@@ -123,6 +123,41 @@ function testProtectionPauseDefaultsAndUiHooksExist() {
   );
 }
 
+function testAuditPolicyIsMetadataOnlyAndRetentionBounded() {
+  const normalized = policyModule.normalizePolicyInput(
+    {
+      auditMode: "full",
+      auditRetentionDays: 14
+    },
+    {
+      buildInfo: {
+        browser: "chrome",
+        mode: "enterprise",
+        enterprise: true
+      },
+      basePolicy: policyModule.DEFAULT_ENTERPRISE_POLICY
+    }
+  );
+  const invalidRetention = policyModule.normalizePolicyInput(
+    {
+      auditRetentionDays: 366
+    },
+    {
+      buildInfo: {
+        browser: "chrome",
+        mode: "enterprise",
+        enterprise: true
+      },
+      basePolicy: policyModule.DEFAULT_ENTERPRISE_POLICY
+    }
+  );
+
+  assert.strictEqual(normalized.ok, true);
+  assert.strictEqual(normalized.value.auditMode, "metadata-only");
+  assert.strictEqual(normalized.value.auditRetentionDays, 14);
+  assert.strictEqual(invalidRetention.ok, false, "audit retention should stay bounded");
+}
+
 function createStorageArea(store) {
   return {
     async get(key) {
@@ -168,7 +203,8 @@ function createBackgroundSandbox({
   allowSiteRemoval = true,
   allowUserAddedSites = true,
   managedProtectedSites = [],
-  auditMode = "metadata-only"
+  auditMode = "metadata-only",
+  auditRetentionDays = 30
 } = {}) {
   const storageState = {};
   const localStorageArea = createStorageArea(storageState);
@@ -241,6 +277,7 @@ function createBackgroundSandbox({
     }),
     getPolicySummary: async () => ({
       auditMode,
+      auditRetentionDays,
       enterpriseMode: true
     }),
     evaluateDestinationPolicy: policyModule.evaluateDestinationPolicy,
@@ -353,6 +390,7 @@ async function testAuditEventsStayMetadataOnlyAndBounded() {
       ],
       policySummary: {
         auditMode: "metadata-only",
+        auditRetentionDays: 30,
         enterpriseMode: true
       }
     });
@@ -374,6 +412,60 @@ async function testAuditEventsStayMetadataOnlyAndBounded() {
   );
   assert.strictEqual(events[0].urlOrigin, "https://example.com");
   assert.strictEqual(events[0].siteHost, "example.com");
+}
+
+async function testAuditRetentionPurgesOldMetadata() {
+  const { sandbox, storageState } = createBackgroundSandbox({
+    allowSiteRemoval: true,
+    auditMode: "metadata-only",
+    auditRetentionDays: 7
+  });
+  const oldTimestamp = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
+  const recentTimestamp = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+  storageState["pwm:auditEvents"] = [
+    {
+      timestamp: oldTimestamp,
+      action: "blocked",
+      reason: "destination_not_approved",
+      urlOrigin: "https://old.example",
+      siteHost: "old.example",
+      findingCount: 1,
+      findingTypes: ["password"],
+      policyMode: "enterprise"
+    },
+    {
+      timestamp: recentTimestamp,
+      action: "redacted",
+      reason: "redacted",
+      urlOrigin: "https://recent.example",
+      siteHost: "recent.example",
+      findingCount: 1,
+      findingTypes: ["api_key"],
+      policyMode: "enterprise"
+    }
+  ];
+
+  await sandbox.recordAuditEvent({
+    action: "blocked",
+    reason: "destination_not_approved",
+    url: "https://current.example/path?token=RawSecretShouldNotPersist123",
+    findings: [{ type: "PASSWORD", raw: "RawSecretShouldNotPersist123" }],
+    policySummary: {
+      auditMode: "metadata-only",
+      auditRetentionDays: 7,
+      enterpriseMode: true
+    }
+  });
+
+  const events = storageState["pwm:auditEvents"];
+  const serialized = JSON.stringify(events);
+  assert.deepStrictEqual(
+    events.map((event) => event.siteHost),
+    ["recent.example", "current.example"],
+    "audit retention should purge metadata older than the configured window"
+  );
+  assert.strictEqual(serialized.includes("RawSecretShouldNotPersist123"), false);
+  assert.strictEqual(serialized.includes("/path?token="), false);
 }
 
 async function withFreshPolicyModule(chromeStub, callback) {
@@ -464,6 +556,8 @@ function testPolicySchemaAndUiSurfaceNewFields() {
   assert.strictEqual(managedPolicySchema.properties.protectionPauseRequiresUserAction.type, "boolean");
   assert.strictEqual(managedPolicySchema.properties.allowSiteRemoval.type, "boolean");
   assert.strictEqual(managedPolicySchema.properties.managedProtectedSites.type, "array");
+  assert.strictEqual(managedPolicySchema.properties.auditRetentionDays.type, "number");
+  assert.deepStrictEqual(managedPolicySchema.properties.auditMode.enum, ["off", "metadata-only"]);
   assert.deepStrictEqual(
     managedPolicySchema.properties.defaultDestinationAction.enum,
     ["allow", "redact", "block"]
@@ -508,11 +602,13 @@ async function run() {
   testApprovedDestinationsBlockUnapprovedHostsInEnterpriseMode();
   testDestinationPoliciesSupportAllowRedactAndBlock();
   testProtectionPauseDefaultsAndUiHooksExist();
+  testAuditPolicyIsMetadataOnlyAndRetentionBounded();
   await testAllowSiteRemovalTrueAllowsDeletion();
   await testAllowSiteRemovalFalseBlocksDeletion();
   await testManagedProtectedSitesRegisterWithoutUserSiteToggle();
   await testManagedProtectedSitesCannotBeToggledOrDeleted();
   await testAuditEventsStayMetadataOnlyAndBounded();
+  await testAuditRetentionPurgesOldMetadata();
   await testMalformedStrictEnterprisePolicyFailsClosed();
   testPolicySchemaAndUiSurfaceNewFields();
   console.log("PASS enterprise policy enforcement regressions");
