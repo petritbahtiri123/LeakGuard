@@ -62,6 +62,7 @@ For the full documentation inventory, quality status, and cleanup backlog, see [
 
 ## Architecture And Internal Design
 
+- [IMPLEMENTATION_ROADMAP.md](IMPLEMENTATION_ROADMAP.md) - ordered implementation plan for the open deep-research and code-quality findings.
 - [file-handoff-architecture.md](file-handoff-architecture.md) - sanitized text-file upload handoff architecture and adapter rules.
 - [FILE_SCANNER_PLAN.md](FILE_SCANNER_PLAN.md) - file scanner architecture and implementation plan; useful for historical context and future scanner phases.
 - [deep-research-report.md](deep-research-report.md) - internal repository review, roadmap, and risk notes.

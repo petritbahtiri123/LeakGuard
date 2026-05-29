@@ -36,7 +36,7 @@ Inventory scope for this pass:
 | [SECURITY_REVIEW.md](../SECURITY_REVIEW.md) | Technical security review and residual risks around reveal, storage, DOM, logs, and CSP. | Good / keep, but should be refreshed after major security changes. |
 | [BROWSER_COMPAT.md](../BROWSER_COMPAT.md) | Chrome/Firefox compatibility notes and fallback behavior. | Needs update. This cleanup aligned session fallback wording with the current ephemeral-memory implementation. |
 | [BROWSER_COMPATIBILITY_MATRIX.md](BROWSER_COMPATIBILITY_MATRIX.md) | User/release-facing browser target matrix, known Chrome/Firefox differences, and compatibility review checklist. | Good / keep. Added in the roadmap follow-up pass. |
-| [deep-research-report.md](deep-research-report.md) | Internal review of privacy posture, packaging, release risks, testing, and future hardening. | Needs update. Useful evidence record, but citation artifacts and date-sensitive claims require periodic review. |
+| [deep-research-report.md](deep-research-report.md) | Internal review of privacy posture, packaging, release risks, testing, and future hardening. | Good / keep after refresh. Recheck after major architecture, release, or browser-support changes. |
 
 ### Enterprise and admin docs
 
@@ -56,6 +56,7 @@ Inventory scope for this pass:
 | [AI_ASSIST.md](AI_ASSIST.md) | Browser-facing local AI assist design, smoke tests, and training flow. | Good / keep after this cleanup aligned the training command/count. |
 | [ai/README.md](../ai/README.md) | Local AI training, evaluation, and ONNX export workflow. | Needs update. This cleanup corrected the generator command and routed browser threshold details to `docs/AI_ASSIST.md`. |
 | [code-quality-audit.md](code-quality-audit.md) | Internal code quality findings and suggested PR sequence. | Good / keep as an internal planning note. |
+| [IMPLEMENTATION_ROADMAP.md](IMPLEMENTATION_ROADMAP.md) | Ordered implementation roadmap for deep-research, documentation, release, and code-quality hardening work. | Good / keep. Added after refreshing `deep-research-report.md`. |
 
 ### Testing and QA docs
 
@@ -106,6 +107,7 @@ Inventory scope for this pass:
 - `docs/PLACEHOLDERS_AND_REVEAL.md`
 - `docs/FILE_UPLOAD_SCANNING_GUIDE.md`
 - `docs/TROUBLESHOOTING.md`
+- `docs/IMPLEMENTATION_ROADMAP.md`
 - `docs/REPO_MAP.md`
 - `docs/BUG_PLAYBOOK.md`
 - `docs/BUILD_TARGETS.md`
@@ -139,7 +141,7 @@ Inventory scope for this pass:
 - `CONTRIBUTING.md` - needs a fuller pass for current module names and modern setup details; this pass added the docs link-check command.
 - `docs/AI_ASSIST.md` and `ai/README.md` - keep in sync when AI pipeline scripts, counts, or thresholds change.
 - `docs/FILE_SCANNER_PLAN.md` - now has a dedicated user-facing companion in `docs/FILE_UPLOAD_SCANNING_GUIDE.md`; later work can archive historical planning sections.
-- `docs/deep-research-report.md` - refresh or archive citation-heavy/date-sensitive findings after the next major architecture review.
+- `docs/deep-research-report.md` - refreshed on 2026-05-29; recheck after the next major architecture, release, or browser-support change.
 
 ### Duplicated / consolidate later
 
@@ -164,7 +166,7 @@ Inventory scope for this pass:
 ### Still missing / should be created later
 
 - Full enterprise deployment examples rechecked against current Chrome, Edge, and Firefox policy documentation immediately before publication.
-- Formal threat model that replaces or refreshes the citation-heavy `docs/deep-research-report.md`.
+- Formal threat model that complements the refreshed `docs/deep-research-report.md`.
 - Architecture diagrams for redaction, placeholder state, secure reveal, and file handoff.
 - Canonical known-limitations page if `docs/NON_GOALS.md` becomes too broad for user-facing limitations.
 - Browser smoke CI for Chrome, Firefox, Firefox ESR, and Edge if the repo starts claiming release-tested Edge support.
@@ -173,7 +175,7 @@ Inventory scope for this pass:
 
 - `docs/Prompt_Templates.md` - legacy duplicate now redirects to `docs/CODEX_PROMPT_TEMPLATES.md`.
 - Historical planning sections inside `docs/FILE_SCANNER_PLAN.md` - keep for now, but split or archive once a stable file-scanner user guide exists.
-- Date-sensitive findings in `docs/deep-research-report.md` - keep as internal evidence until a refreshed architecture/threat-model document replaces it.
+- Older date-sensitive findings in `docs/deep-research-report.md` history - keep as internal evidence until a formal threat model supersedes them.
 
 ## Cleanup Decisions Made In This PR
 
@@ -193,6 +195,8 @@ Inventory scope for this pass:
 - Added release/admin guides for browser compatibility, managed policy schema, versioning, Firefox AMO submission, and store assets.
 - Routed the new guides from [docs/README.md](README.md), the root [README](../README.md), and relevant existing docs.
 - Added [scripts/check-doc-links.mjs](../scripts/check-doc-links.mjs) and exposed it as `npm run docs:check-links`.
+- Refreshed [deep-research-report.md](deep-research-report.md) to remove stale citation artifacts and mark completed versus open hardening items.
+- Added [IMPLEMENTATION_ROADMAP.md](IMPLEMENTATION_ROADMAP.md) as the ordered implementation plan for remaining deep-research/code-quality work.
 - Kept runtime behavior untouched and did not modify generated artifacts.
 
 ## Remaining Documentation Roadmap
