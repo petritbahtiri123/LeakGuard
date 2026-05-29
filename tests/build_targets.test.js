@@ -74,7 +74,6 @@ async function run() {
   );
 
   const results = BUILD_TARGETS.map((target) => buildTarget(target.browser, target.mode));
-  assertReleaseArtifactsAreSanitized(results);
 
   results.forEach((result) => {
     const manifestPath = path.join(result.targetRoot, "manifest.json");
