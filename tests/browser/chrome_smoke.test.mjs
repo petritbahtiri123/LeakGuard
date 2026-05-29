@@ -731,11 +731,30 @@ async function runSecureRevealSmoke(connection, page, extensionId, rawSecret, pl
   assert.match(afterShow.status, /Visible only inside this LeakGuard popup/);
 }
 
+const JS_CODE_ESCAPE_MAP = {
+  "<": "\\u003C",
+  ">": "\\u003E",
+  "/": "\\u002F",
+  "\\": "\\\\",
+  "\b": "\\b",
+  "\f": "\\f",
+  "\n": "\\n",
+  "\r": "\\r",
+  "\t": "\\t",
+  "\0": "\\0",
+  "\u2028": "\\u2028",
+  "\u2029": "\\u2029"
+};
+
+function escapeForJsCode(str) {
+  return str.replace(/[<>/\\\b\f\n\r\t\0\u2028\u2029]/g, (ch) => JS_CODE_ESCAPE_MAP[ch]);
+}
+
 async function grantOptionalHostPermission(connection, extensionSessionId, originPattern) {
   const granted = await evaluate(
     connection,
     extensionSessionId,
-    `new Promise((resolve) => chrome.permissions.request({ origins: [${JSON.stringify(originPattern)}] }, resolve))`,
+    `new Promise((resolve) => chrome.permissions.request({ origins: [${escapeForJsCode(JSON.stringify(originPattern))}] }, resolve))`,
     { awaitPromise: true, userGesture: true }
   );
   assert.equal(granted, true, `Expected Chrome to grant optional host permission ${originPattern}`);
