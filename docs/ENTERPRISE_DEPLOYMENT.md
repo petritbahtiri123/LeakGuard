@@ -103,7 +103,7 @@ When you are ready to hard-lock protected-site deletion in production, set `allo
 LeakGuard still does not provide:
 
 - Request-body or network-level inspection outside the extension's page interception flow
-- File upload or drag-and-drop payload inspection
+- Unsupported binary/document/image/archive upload inspection, or guaranteed coverage for every editor and upload control outside the supported local text-file paths
 - Screenshot or screen-sharing protection
 - Full SIEM export plumbing
 - Absolute prevention outside managed browser policy

@@ -11,7 +11,7 @@ It watches supported composers for typed or pasted content, detects likely secre
 
 LeakGuard does not use a backend service, cloud processing, telemetry, or remote model calls. It is designed for practical risk reduction, not perfect privacy or full enterprise DLP.
 
-> Local-only. No backend. No telemetry. Secure reveal stays inside extension-owned UI..
+> Local-only. No backend. No telemetry. Secure reveal stays inside extension-owned UI.
 
 ## What LeakGuard Is
 
@@ -33,7 +33,7 @@ LeakGuard does not use a backend service, cloud processing, telemetry, or remote
 
 See [docs/NON_GOALS.md](docs/NON_GOALS.md) for the maintained non-goals list.
 
-## ❤️ Support LeakGuard
+## Support LeakGuard
 
 LeakGuard is a privacy-first AI protection tool that helps prevent accidental data leaks when using ChatGPT, Gemini, and other AI platforms.
 
@@ -42,12 +42,13 @@ Everything runs locally:
 - No tracking
 - No data collection
 
-If you want to support development and upcoming features like:
-- File scanning (env, logs, configs)
-- PDF & DOCX detection
-- Image OCR redaction
+If you want to support development and future work such as:
+- broader file-format detection research
+- PDF and DOCX text extraction review
+- image OCR redaction research
+- deeper Chrome and Firefox QA
 
-👉 You can support here:
+Support here:
 https://ko-fi.com/petritbahtiri
 
 ## v1.7.0 Snapshot
@@ -295,16 +296,16 @@ The manual smoke block contains synthetic secrets, passwords, tokens, connection
 
 ## Documentation
 
+Start with [docs/README.md](docs/README.md) for the full documentation index. The current documentation inventory, cleanup status, and future roadmap live in [docs/DOCUMENTATION_ROADMAP.md](docs/DOCUMENTATION_ROADMAP.md).
+
+Common entry points:
+
+- [docs/PRIVACY_POLICY.md](docs/PRIVACY_POLICY.md)
 - [SECURITY_REVIEW.md](SECURITY_REVIEW.md)
 - [BROWSER_COMPAT.md](BROWSER_COMPAT.md)
-- [docs/BUILD_TARGETS.md](docs/BUILD_TARGETS.md)
 - [docs/ENTERPRISE_DEPLOYMENT.md](docs/ENTERPRISE_DEPLOYMENT.md)
 - [docs/AI_ASSIST.md](docs/AI_ASSIST.md)
-- [docs/NON_GOALS.md](docs/NON_GOALS.md)
-- [docs/CHROME_WEB_STORE_LISTING.md](docs/CHROME_WEB_STORE_LISTING.md)
-- [docs/PRIVACY_POLICY.md](docs/PRIVACY_POLICY.md)
 - [docs/RELEASE_QA_CHECKLIST.md](docs/RELEASE_QA_CHECKLIST.md)
-- [tests/manual_detection_paste_block.txt](tests/manual_detection_paste_block.txt)
 
 ## Non-Goals
 

@@ -23,7 +23,7 @@ Run commands from this directory:
 
 ```bash
 python -m pip install -r requirements.txt
-python scripts/generate_initial_dataset.py --count 10000
+python scripts/generate_dataset.py --count 10000
 python scripts/train_classifier.py
 python scripts/evaluate_model.py
 python scripts/export_onnx.py
@@ -79,10 +79,6 @@ models/leakguard_secret_classifier.onnx
 
 ## Safety Rule
 
-The AI classifier can only upgrade a match's risk. It must never override or downgrade a high-confidence deterministic match. The browser integration only calls AI for uncertain deterministic spans, then applies:
-
-- `confidence >= 0.85`: treat as secret
-- `0.60 <= confidence < 0.85`: warn the user
-- `< 0.60`: let the deterministic result stand
+The AI classifier can only upgrade a match's risk. It must never override or downgrade a high-confidence deterministic match. Browser integration and policy behavior are documented in [docs/AI_ASSIST.md](../docs/AI_ASSIST.md).
 
 All processing stays local. The ONNX model is loaded in the extension with packaged `onnxruntime-web` browser assets.
