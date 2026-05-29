@@ -34,5 +34,8 @@ jobs:
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
 
+      - name: Check documentation links
+        run: npm run docs:check-links
+
       - name: Run tests
         run: npm test
