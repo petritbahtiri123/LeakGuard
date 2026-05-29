@@ -19,21 +19,23 @@ Goal: make LeakGuard more reliable, auditable, and release-ready while preservin
 
 Purpose: make the current state repeatable before changing architecture.
 
+Status: Done (2026-05-29).
+
 Tasks:
 
-- Run and document `npm run docs:check-links`.
-- Run focused static/security checks before release-facing changes:
-  - `node tests/security.test.js`
-  - `node tests/build_targets.test.js`
-  - `node tests/productization.test.js`
-- Keep `npm test` as the final source-change gate.
-- Add CI execution for `npm run docs:check-links`.
+- [x] Run and document `npm run docs:check-links`.
+- [x] Run focused static/security checks before release-facing changes:
+  - [x] `node tests/security.test.js`
+  - [x] `node tests/build_targets.test.js`
+  - [x] `node tests/productization.test.js`
+- [x] Keep `npm test` as the final source-change gate.
+- [x] Add CI execution for `npm run docs:check-links`.
 
 Acceptance criteria:
 
-- Docs link check runs in CI.
-- Existing security/build artifact tests stay green.
-- No generated artifacts are changed by docs-only work.
+- [x] Docs link check runs in CI.
+- [x] Existing security/build artifact tests stay green.
+- [x] No generated artifacts are changed by docs-only work.
 
 Suggested PR: `ci: add documentation link check`
 
@@ -41,27 +43,31 @@ Suggested PR: `ci: add documentation link check`
 
 Purpose: prove the extension actually behaves in browsers, not only through static/unit tests.
 
+Status: In progress (Chrome smoke CI gate added 2026-05-29).
+
 Tasks:
 
-- Add a minimal smoke harness for Chrome stable.
-- Add Firefox stable smoke coverage after Chrome is stable.
-- Add Edge smoke coverage before making stronger Edge support claims.
-- Smoke the following flows:
-  - install/load built target
-  - popup opens
-  - built-in protected site reports active protection
-  - user-managed exact-origin site can be added and disabled
-  - synthetic secret redacts to `[PWM_N]`
-  - secure reveal stays in popup
-  - supported text-file scanner flow
-  - one supported text-file composer flow where feasible
-  - one unsupported file warning
+- [x] Add a minimal smoke harness for Chrome stable.
+- [ ] Add Firefox stable smoke coverage after Chrome is stable.
+- [ ] Add Edge smoke coverage before making stronger Edge support claims.
+- [x] Smoke the following flows in Chrome:
+  - [x] install/load built target
+  - [x] popup opens
+  - [x] built-in protected site reports active protection
+  - [x] user-managed exact-origin site can be added and disabled
+  - [x] synthetic secret redacts to `[PWM_N]`
+  - [x] secure reveal stays in popup
+  - [x] supported text-file scanner flow
+  - [x] one supported text-file composer flow where feasible
+  - [x] one unsupported file warning
+- [ ] Repeat or adapt the smoke flow for Firefox.
+- [ ] Repeat or adapt the smoke flow for Edge.
 
 Acceptance criteria:
 
-- CI runs at least Chrome smoke before high-risk refactors.
-- Firefox smoke is tracked separately if site login or browser constraints block full coverage.
-- Edge wording remains conservative until Edge smoke passes.
+- [x] CI runs at least Chrome smoke before high-risk refactors.
+- [x] Firefox smoke is tracked separately if site login or browser constraints block full coverage.
+- [x] Edge wording remains conservative until Edge smoke passes.
 
 Suggested PRs:
 
@@ -126,17 +132,19 @@ Order matters. Do not start with broad extraction.
 
 ### 4A - Add Missing Behavioral Tests
 
+Status: Done (2026-05-29).
+
 Tasks:
 
-- Add tests proving non-Gemini/Grok pending attach remains disabled.
-- Add pending prompt cancel/expiry cleanup tests.
-- Add exception cleanup tests around local file insert handling.
-- Add tests for duplicate suppression around sanitized file handoff.
+- [x] Add tests proving non-Gemini/Grok pending attach remains disabled.
+- [x] Add pending prompt cancel/expiry cleanup tests.
+- [x] Add exception cleanup tests around local file insert handling.
+- [x] Add tests for duplicate suppression around sanitized file handoff.
 
 Acceptance criteria:
 
-- `node tests/content_file_drop_interception.test.js` covers gate refusal, cancel cleanup, expiry cleanup, and exception cleanup.
-- No production behavior changes in this subphase unless tests expose a bug.
+- [x] `node tests/content_file_drop_interception.test.js` covers gate refusal, cancel cleanup, expiry cleanup, exception cleanup, and duplicate sanitized handoff suppression.
+- [x] No production behavior changes in this subphase unless tests expose a bug.
 
 ### 4B - Centralize File Constants And Messages
 

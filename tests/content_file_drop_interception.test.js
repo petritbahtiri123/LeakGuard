@@ -3155,6 +3155,8 @@ async function testGeminiPendingHandoffExpiresAndCleansUp() {
   assert.strictEqual(harness.hasPendingGeminiSanitizedFileHandoff(sanitizedFile), true);
   assert.strictEqual(harness.clickHandlers.length, 1);
   assert.ok(harness.observers.length >= 1);
+  assert.strictEqual(harness.promptNodes.length, 1);
+  assert.strictEqual(harness.promptNodes[0].isConnected, true);
 
   expiryTimer.callback();
 
@@ -3162,11 +3164,75 @@ async function testGeminiPendingHandoffExpiresAndCleansUp() {
   assert.strictEqual(harness.clickHandlers.length, 0);
   assert.ok(harness.clearedTimeouts.includes(expiryTimer.id));
   assert.ok(harness.observers.some((observer) => observer.disconnected));
+  assert.strictEqual(harness.promptNodes[0].isConnected, false);
   assert.ok(
     harness.debugEvents.some(
       (entry) => entry.label === "file-handoff:gemini-pending-cleared" && entry.payload.reason === "expired"
     )
   );
+  assert.ok(
+    harness.debugEvents.some(
+      (entry) =>
+        entry.label === "file-ui:pending-prompt-cleared" &&
+        entry.payload.site === "gemini" &&
+        entry.payload.reason === "expired"
+    )
+  );
+}
+
+async function testGrokPendingHandoffExpiresAndCleansUp() {
+  const sanitizedFile = {
+    name: "expires-grok.env",
+    type: "text/plain",
+    size: 18,
+    text: "API_KEY=[PWM_1]"
+  };
+  const harness = createHandoffHarness({
+    hostname: "grok.com",
+    userAgent: "Firefox",
+    uploadTriggers: [
+      createUploadTrigger({
+        ariaLabel: "Attach files"
+      })
+    ]
+  });
+  const event = {
+    type: "drop",
+    target: { nodeType: 1, tagName: "DIV", dispatchEvent: () => true },
+    dataTransfer: createDataTransfer()
+  };
+
+  assert.strictEqual(harness.queuePendingGrokSanitizedFileHandoff(event, null, sanitizedFile, {}), true);
+  const expiryTimer = harness.timeoutCallbacks.find((entry) => entry.delay === 60000);
+  assert.ok(expiryTimer, "expected Grok pending handoff expiry timer");
+  assert.strictEqual(harness.hasPendingGrokSanitizedFileHandoff(sanitizedFile), true);
+  assert.strictEqual(harness.clickHandlers.length, 1);
+  assert.ok(harness.observers.length >= 1);
+  assert.strictEqual(harness.promptNodes.length, 1);
+  assert.strictEqual(harness.promptNodes[0].isConnected, true);
+
+  expiryTimer.callback();
+
+  assert.strictEqual(harness.hasPendingGrokSanitizedFileHandoff(sanitizedFile), false);
+  assert.strictEqual(harness.clickHandlers.length, 0);
+  assert.ok(harness.clearedTimeouts.includes(expiryTimer.id));
+  assert.ok(harness.observers.some((observer) => observer.disconnected));
+  assert.strictEqual(harness.promptNodes[0].isConnected, false);
+  assert.ok(
+    harness.debugEvents.some(
+      (entry) => entry.label === "file-handoff:grok-pending-cleared" && entry.payload.reason === "expired"
+    )
+  );
+  assert.ok(
+    harness.debugEvents.some(
+      (entry) =>
+        entry.label === "file-ui:pending-prompt-cleared" &&
+        entry.payload.site === "grok" &&
+        entry.payload.reason === "expired"
+    )
+  );
+  assert.strictEqual(JSON.stringify(harness.debugEvents).includes("API_KEY"), false);
+  assert.strictEqual(JSON.stringify(harness.debugEvents).includes("[PWM_1]"), false);
 }
 
 async function testGeminiPendingHandoffReplacementClearsOldState() {
@@ -3562,6 +3628,14 @@ async function testPendingAttachGateBehaviorForAdapters() {
         ),
         `expected disabled pending queue diagnostic for ${adapterId}`
       );
+      assert.strictEqual(harness.promptNodes.length, 0, `${adapterId} must not render pending prompt`);
+      assert.strictEqual(harness.timeoutCallbacks.some((entry) => entry.delay === 60000), false);
+      assert.strictEqual(harness.clickHandlers.length, 0, `${adapterId} must not install pending click handler`);
+      assert.strictEqual(
+        harness.debugEvents.some((entry) => entry.label === "file-handoff:pending-prompt-shown"),
+        false,
+        `${adapterId} must not show pending prompt diagnostics`
+      );
     }
   }
 
@@ -3575,6 +3649,9 @@ async function testPendingAttachGateBehaviorForAdapters() {
     false,
     "unsupported sites must not queue pending attach"
   );
+  assert.strictEqual(unsupportedHarness.promptNodes.length, 0);
+  assert.strictEqual(unsupportedHarness.timeoutCallbacks.length, 0);
+  assert.strictEqual(unsupportedHarness.clickHandlers.length, 0);
 }
 
 async function testPendingAttachPromptCancelClearsGeminiAndGrokState() {
@@ -3818,6 +3895,99 @@ async function testSanitizedFileInputRedispatchDoesNotRescanSanitizedFile() {
   );
 }
 
+async function testSanitizedHandoffSignatureSuppressesDifferentInputRedispatch() {
+  const sanitizedFile = {
+    name: "same-signature.env",
+    type: "text/plain",
+    size: 18,
+    lastModified: 121,
+    text: "API_KEY=[PWM_1]"
+  };
+  const sameSignatureFile = {
+    name: sanitizedFile.name,
+    type: sanitizedFile.type,
+    size: sanitizedFile.size,
+    lastModified: sanitizedFile.lastModified,
+    text: sanitizedFile.text
+  };
+  const sourceInput = createFileInput();
+  const redispatchInput = createFileInput();
+  redispatchInput.files = [sameSignatureFile];
+  const { maybeHandleFileInputChange, handOffSanitizedFileInput, calls } = createHarness({
+    readLocalTextFileFromDataTransfer: () => {
+      throw new Error("same-signature sanitized redispatch must not be scanned again");
+    },
+    findComposer: () => {
+      throw new Error("same-signature sanitized redispatch must not reach composer discovery");
+    }
+  });
+
+  assert.strictEqual(handOffSanitizedFileInput(sourceInput, { files: [sanitizedFile] }, { dispatchInput: true }), true);
+  const result = await maybeHandleFileInputChange(createEvent({ type: "change", target: redispatchInput }).event);
+
+  assert.strictEqual(result?.ok, true);
+  assert.strictEqual(result?.strategy, "sanitized-file-handoff-suppressed");
+  assert.strictEqual(calls.reads.length, 0);
+  assert.strictEqual(calls.redactions.length, 0);
+  assert.strictEqual(calls.handoffs.length, 0);
+  assert.ok(
+    calls.debugEvents.some((entry) => entry.label === "file-input:sanitized-handoff-signature-match"),
+    "expected sanitized redispatch to be suppressed by file metadata signature"
+  );
+  assert.ok(calls.debugEvents.some((entry) => entry.label === "file-input:sanitized-handoff-suppressed"));
+  assert.strictEqual(JSON.stringify(calls.debugEvents).includes("API_KEY"), false);
+  assert.strictEqual(JSON.stringify(calls.debugEvents).includes("[PWM_1]"), false);
+}
+
+async function testSanitizedHandoffMixedRawFileDoesNotSuppressScan() {
+  const rawSecret = "LeakGuardFileApiKey1234567890";
+  const sanitizedFile = {
+    name: "mixed-sanitized.env",
+    type: "text/plain",
+    size: 18,
+    lastModified: 212,
+    text: "API_KEY=[PWM_1]"
+  };
+  const rawFile = createTextFile({
+    name: "mixed-raw.env",
+    type: "text/plain",
+    text: `API_KEY=${rawSecret}`
+  });
+  rawFile.lastModified = 213;
+  const fileInput = createFileInput();
+  const composer = { tagName: "TEXTAREA", text: "", selection: { start: 0, end: 0 } };
+  const { maybeHandleFileInputChange, handOffSanitizedFileInput, calls } = createHarness({
+    findComposer: () => composer,
+    readLocalTextFileFromDataTransfer: async (transfer) => {
+      calls.reads.push(transfer);
+      return {
+        handled: true,
+        ok: true,
+        text: `API_KEY=${rawSecret}`,
+        file: {
+          name: rawFile.name,
+          type: rawFile.type,
+          sizeBytes: rawFile.size,
+          lastModified: rawFile.lastModified
+        }
+      };
+    }
+  });
+
+  assert.strictEqual(handOffSanitizedFileInput(fileInput, { files: [sanitizedFile] }, { dispatchInput: true }), true);
+  fileInput.files = [sanitizedFile, rawFile];
+
+  await maybeHandleFileInputChange(createEvent({ type: "change", target: fileInput }).event);
+
+  assert.strictEqual(calls.reads.length, 1);
+  assert.strictEqual(calls.redactions.length, 1);
+  assert.strictEqual(calls.handoffs.length, 1);
+  assert.strictEqual(calls.handoffs[0].sanitizedFile.text.includes(rawSecret), false);
+  assert.ok(calls.handoffs[0].sanitizedFile.text.includes("[PWM_1]"));
+  assert.ok(!calls.debugEvents.some((entry) => entry.label === "file-input:sanitized-handoff-suppressed"));
+  assert.strictEqual(JSON.stringify(calls.debugEvents).includes(rawSecret), false);
+}
+
 async function testSmallFileInputShowsProcessingUiThenDirectAttachSuccess() {
   const rawSecret = "LeakGuardFileApiKey1234567890";
   const rawFile = createTextFile({
@@ -3934,6 +4104,47 @@ async function testFileProcessingUiClearsAfterException() {
   assert.ok(labels.includes("file-ui:processing-shown"), "expected processing UI to show");
   assert.ok(labels.includes("file-ui:error-shown"), "expected processing error UI");
   assert.ok(labels.includes("file-ui:processing-hidden"), "expected processing UI cleanup");
+}
+
+async function testLocalFileDropProcessingUiClearsAfterException() {
+  const rawFile = createTextFile({
+    name: "throws-drop.env",
+    type: "text/plain",
+    text: "API_KEY=LeakGuardDropApiKey1234567890"
+  });
+  const composer = {
+    tagName: "TEXTAREA",
+    text: "",
+    selection: { start: 0, end: 0 }
+  };
+  const { maybeHandleDrop, calls } = createHarness({
+    location: { hostname: "chatgpt.com" },
+    findComposer: () => composer,
+    readLocalTextFileFromDataTransfer: async () => {
+      throw new Error("drop scan exploded");
+    }
+  });
+  const { event } = createEvent({
+    dataTransfer: {
+      types: ["Files"],
+      files: [rawFile],
+      items: [],
+      dropEffect: "none"
+    },
+    target: composer
+  });
+
+  await assert.rejects(() => maybeHandleDrop(event), /drop scan exploded/);
+
+  const labels = calls.debugEvents.map((entry) => entry.label);
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.ok(labels.includes("file-ui:processing-shown"), "expected drop processing UI to show");
+  assert.ok(labels.includes("file-ui:error-shown"), "expected drop processing error UI");
+  assert.ok(labels.includes("file-ui:processing-hidden"), "expected drop processing UI cleanup");
+  assert.strictEqual(calls.handoffs.length, 0);
+  assert.strictEqual(calls.textFallbacks.length, 0);
+  assert.strictEqual(calls.clearedDragSessions, 1);
+  assert.strictEqual(JSON.stringify(calls.debugEvents).includes("LeakGuardDropApiKey1234567890"), false);
 }
 
 async function testPendingAttachCompletedSuppressesLaterEmptyFileUnavailableEvent() {
@@ -10665,6 +10876,7 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testGeminiPendingDropLogsExposureDiagnosticsWithoutRawContent();
   await testGeminiPendingHandoffStoresSanitizedFileOnly();
   await testGeminiPendingHandoffExpiresAndCleansUp();
+  await testGrokPendingHandoffExpiresAndCleansUp();
   await testGeminiPendingHandoffReplacementClearsOldState();
   await testGeminiPendingClickObserverDoesNotClickUploadUi();
   await testGeminiPendingUploadClickThenFiledataInputAssignsSanitizedFile();
@@ -10680,9 +10892,12 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   testPendingAttachPromptCssIsNonBlocking();
   testUnprovenAdaptersKeepPendingAttachFeatureGated();
   await testSanitizedFileInputRedispatchDoesNotRescanSanitizedFile();
+  await testSanitizedHandoffSignatureSuppressesDifferentInputRedispatch();
+  await testSanitizedHandoffMixedRawFileDoesNotSuppressScan();
   await testSmallFileInputShowsProcessingUiThenDirectAttachSuccess();
   await testUnsupportedFileReadFailureHidesProcessingUi();
   await testFileProcessingUiClearsAfterException();
+  await testLocalFileDropProcessingUiClearsAfterException();
   await testPendingAttachCompletedSuppressesLaterEmptyFileUnavailableEvent();
   await testChatGptUploadButtonAttachSuppressesLaterEmptyFileInputEvent();
   await testChatGptFiftyMiBStreamingAttachSuppressesLaterEmptyEvent();
