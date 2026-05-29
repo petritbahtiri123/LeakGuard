@@ -1,5 +1,7 @@
 # Browser Compatibility
 
+For the user-facing support matrix and release compatibility checklist, see [docs/BROWSER_COMPATIBILITY_MATRIX.md](docs/BROWSER_COMPATIBILITY_MATRIX.md).
+
 LeakGuard now builds from one shared source tree into separate unpacked browser targets:
 
 - `dist/chrome`

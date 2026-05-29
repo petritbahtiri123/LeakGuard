@@ -97,6 +97,8 @@ Used only when the user explicitly enables protection for an additional site. Le
 
 ## Screenshot Plan
 
+Track final capture requirements in [STORE_ASSETS_CHECKLIST.md](STORE_ASSETS_CHECKLIST.md).
+
 Use real extension screenshots with production copy. Avoid showing raw real credentials.
 
 1. Popup home view on a supported site showing `Protect This Site` or active protection state.

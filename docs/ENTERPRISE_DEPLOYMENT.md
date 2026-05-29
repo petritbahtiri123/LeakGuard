@@ -55,6 +55,8 @@ Operational note:
 
 ## Managed Policy Expectations For This Repo
 
+For the full field-by-field schema guide, examples, and validation commands, see [MANAGED_POLICY_SCHEMA.md](MANAGED_POLICY_SCHEMA.md).
+
 For enterprise builds, prefer managed storage values for at least:
 
 - `destinationPolicies`

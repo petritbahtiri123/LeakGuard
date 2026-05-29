@@ -12,9 +12,14 @@ For the full documentation inventory, quality status, and cleanup backlog, see [
 
 ## Installation And Usage
 
+- [INSTALL_GUIDE.md](INSTALL_GUIDE.md) - local build and load steps for Chrome, Edge-compatible Chromium, and Firefox.
 - [Root README - Build And Load](../README.md#build-and-load) - quickest local build and browser loading path.
 - [Root README - Extension UI](../README.md#extension-ui) - popup, protected-sites management, File Scanner, and secure reveal overview.
 - [Root README - Local File Scanner](../README.md#local-file-scanner) - supported text-file scanning and protected composer file handling at a user-facing level.
+- [PROTECTED_SITES_GUIDE.md](PROTECTED_SITES_GUIDE.md) - built-in sites, user-managed exact-origin rules, and permission behavior.
+- [PLACEHOLDERS_AND_REVEAL.md](PLACEHOLDERS_AND_REVEAL.md) - placeholder stability, session scope, trusted placeholder pass-through, and popup-only secure reveal.
+- [FILE_UPLOAD_SCANNING_GUIDE.md](FILE_UPLOAD_SCANNING_GUIDE.md) - File Scanner and protected composer file upload behavior, supported text files, limits, and unsupported formats.
+- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - common popup, protected-site, reveal, upload, Firefox, and enterprise-policy issues.
 
 ## Privacy And Security Model
 
@@ -26,6 +31,7 @@ For the full documentation inventory, quality status, and cleanup backlog, see [
 ## Enterprise Deployment
 
 - [ENTERPRISE_DEPLOYMENT.md](ENTERPRISE_DEPLOYMENT.md) - Chrome and Edge managed deployment guidance, policy expectations, audit-mode notes, and limitations.
+- [MANAGED_POLICY_SCHEMA.md](MANAGED_POLICY_SCHEMA.md) - admin-facing map of managed policy fields, defaults, examples, and validation commands.
 - [BUILD_TARGETS.md](BUILD_TARGETS.md) - consumer and enterprise build targets, manifest overlays, and managed-policy loading model.
 
 ## Developer Setup
@@ -42,10 +48,14 @@ For the full documentation inventory, quality status, and cleanup backlog, see [
 - [qa/cross-site-manual-checklist.md](qa/cross-site-manual-checklist.md) - detailed Chrome/Firefox cross-site manual QA matrix.
 - [tests/manual_detection_paste_block.txt](../tests/manual_detection_paste_block.txt) - synthetic paste block for manual redaction smoke testing.
 - [code-quality-audit.md](code-quality-audit.md) - internal code quality findings and follow-up plan.
+- `npm run docs:check-links` - local markdown link checker for repository docs.
 
 ## Release And Store Publishing
 
 - [CHROME_WEB_STORE_LISTING.md](CHROME_WEB_STORE_LISTING.md) - Chrome Web Store copy, permission justifications, screenshot plan, and reviewer notes.
+- [FIREFOX_AMO_CHECKLIST.md](FIREFOX_AMO_CHECKLIST.md) - Firefox Add-ons listing and submission checklist.
+- [STORE_ASSETS_CHECKLIST.md](STORE_ASSETS_CHECKLIST.md) - screenshot, copy, and submission asset checklist.
+- [VERSIONING_POLICY.md](VERSIONING_POLICY.md) - version bump, release-note, QA, and artifact expectations.
 - [PRIVACY_POLICY.md](PRIVACY_POLICY.md) - required review before store submission; replace contact placeholders before publishing.
 - [RELEASE_QA_CHECKLIST.md](RELEASE_QA_CHECKLIST.md) - packaging and submission safety checklist.
 - [codex-playbooks/firefox-addon-submission.md](codex-playbooks/firefox-addon-submission.md) - operational playbook for Firefox Add-ons submission issues.
@@ -56,6 +66,7 @@ For the full documentation inventory, quality status, and cleanup backlog, see [
 - [FILE_SCANNER_PLAN.md](FILE_SCANNER_PLAN.md) - file scanner architecture and implementation plan; useful for historical context and future scanner phases.
 - [deep-research-report.md](deep-research-report.md) - internal repository review, roadmap, and risk notes.
 - [BROWSER_COMPAT.md](../BROWSER_COMPAT.md) - Chrome/Firefox compatibility notes and fallback behavior.
+- [BROWSER_COMPATIBILITY_MATRIX.md](BROWSER_COMPATIBILITY_MATRIX.md) - browser support matrix, target folders, and compatibility review checklist.
 
 ## Codex And Agent Workflow
 

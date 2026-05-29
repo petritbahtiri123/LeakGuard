@@ -213,6 +213,8 @@ npm run build:firefox-enterprise
 
 Open a built-in protected site or any normal website you want to add from the popup, then click the LeakGuard toolbar icon to verify the popup renders and current-site state loads correctly.
 
+Detailed install and first-smoke steps live in [docs/INSTALL_GUIDE.md](docs/INSTALL_GUIDE.md).
+
 ## Enterprise Deployment
 
 LeakGuard's enterprise runtime can now:
@@ -300,12 +302,18 @@ Start with [docs/README.md](docs/README.md) for the full documentation index. Th
 
 Common entry points:
 
+- [docs/INSTALL_GUIDE.md](docs/INSTALL_GUIDE.md)
+- [docs/PROTECTED_SITES_GUIDE.md](docs/PROTECTED_SITES_GUIDE.md)
+- [docs/PLACEHOLDERS_AND_REVEAL.md](docs/PLACEHOLDERS_AND_REVEAL.md)
+- [docs/FILE_UPLOAD_SCANNING_GUIDE.md](docs/FILE_UPLOAD_SCANNING_GUIDE.md)
 - [docs/PRIVACY_POLICY.md](docs/PRIVACY_POLICY.md)
 - [SECURITY_REVIEW.md](SECURITY_REVIEW.md)
-- [BROWSER_COMPAT.md](BROWSER_COMPAT.md)
+- [docs/BROWSER_COMPATIBILITY_MATRIX.md](docs/BROWSER_COMPATIBILITY_MATRIX.md)
 - [docs/ENTERPRISE_DEPLOYMENT.md](docs/ENTERPRISE_DEPLOYMENT.md)
+- [docs/MANAGED_POLICY_SCHEMA.md](docs/MANAGED_POLICY_SCHEMA.md)
 - [docs/AI_ASSIST.md](docs/AI_ASSIST.md)
 - [docs/RELEASE_QA_CHECKLIST.md](docs/RELEASE_QA_CHECKLIST.md)
+- [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
 
 ## Non-Goals
 

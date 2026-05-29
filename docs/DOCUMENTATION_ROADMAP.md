@@ -18,9 +18,14 @@ Inventory scope for this pass:
 | --- | --- | --- |
 | [README.md](../README.md) | Primary project overview, v1.7.0 snapshot, supported sites, security model, build/load basics, and navigation. | Good / keep, but should stay high-level and avoid absorbing detailed guides. |
 | [docs/README.md](README.md) | Central documentation index grouped by audience and use case. | Good / keep. Added in this cleanup. |
+| [INSTALL_GUIDE.md](INSTALL_GUIDE.md) | Local build, browser load, and first-smoke guide for Chrome, Edge-compatible Chromium, and Firefox. | Good / keep. Added in the roadmap follow-up pass. |
+| [PROTECTED_SITES_GUIDE.md](PROTECTED_SITES_GUIDE.md) | Built-in protected sites, user-managed exact-origin rules, optional permission behavior, and enterprise-managed site notes. | Good / keep. Added in the roadmap follow-up pass. |
+| [PLACEHOLDERS_AND_REVEAL.md](PLACEHOLDERS_AND_REVEAL.md) | Placeholder stability, session scope, trusted-placeholder pass-through, file-scanner placeholder isolation, and popup-only secure reveal. | Good / keep. Added in the roadmap follow-up pass. |
+| [FILE_UPLOAD_SCANNING_GUIDE.md](FILE_UPLOAD_SCANNING_GUIDE.md) | User-facing File Scanner and protected composer file handling guide with supported text files, size limits, and unsupported-format boundaries. | Good / keep. Added in the roadmap follow-up pass. |
+| [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Common popup, protected-site, reveal, rewrite, upload, Firefox, and enterprise-policy troubleshooting. | Good / keep. Added in the roadmap follow-up pass. |
 | [NON_GOALS.md](NON_GOALS.md) | Maintained non-goals and unsupported surfaces. | Good / keep. Use when adjusting product claims. |
 | [DETECTION_ENHANCEMENTS.md](DETECTION_ENHANCEMENTS.md) | Current redaction hardening notes for placeholders, prose disclosures, headers, and known-secret reuse. | Good / keep, but review release timeline details during future releases. |
-| [FILE_SCANNER_PLAN.md](FILE_SCANNER_PLAN.md) | File Scanner architecture and future scanner phases. | Needs update. It has a launch status section, but much of the lower roadmap is historical implementation planning rather than user guidance. |
+| [FILE_SCANNER_PLAN.md](FILE_SCANNER_PLAN.md) | File Scanner architecture and future scanner phases. | Historical / keep for architecture context. User-facing behavior now lives in `FILE_UPLOAD_SCANNING_GUIDE.md`. |
 
 ### Privacy and security docs
 
@@ -30,6 +35,7 @@ Inventory scope for this pass:
 | [SECURITY.md](../SECURITY.md) | Vulnerability reporting policy. | Good / keep. |
 | [SECURITY_REVIEW.md](../SECURITY_REVIEW.md) | Technical security review and residual risks around reveal, storage, DOM, logs, and CSP. | Good / keep, but should be refreshed after major security changes. |
 | [BROWSER_COMPAT.md](../BROWSER_COMPAT.md) | Chrome/Firefox compatibility notes and fallback behavior. | Needs update. This cleanup aligned session fallback wording with the current ephemeral-memory implementation. |
+| [BROWSER_COMPATIBILITY_MATRIX.md](BROWSER_COMPATIBILITY_MATRIX.md) | User/release-facing browser target matrix, known Chrome/Firefox differences, and compatibility review checklist. | Good / keep. Added in the roadmap follow-up pass. |
 | [deep-research-report.md](deep-research-report.md) | Internal review of privacy posture, packaging, release risks, testing, and future hardening. | Needs update. Useful evidence record, but citation artifacts and date-sensitive claims require periodic review. |
 
 ### Enterprise and admin docs
@@ -37,6 +43,7 @@ Inventory scope for this pass:
 | Document | Purpose | Current status |
 | --- | --- | --- |
 | [ENTERPRISE_DEPLOYMENT.md](ENTERPRISE_DEPLOYMENT.md) | Managed deployment guidance for Chrome/Edge, policy expectations, audit mode, and limitations. | Needs update before enterprise publication. This cleanup corrected stale file-upload limitation wording. |
+| [MANAGED_POLICY_SCHEMA.md](MANAGED_POLICY_SCHEMA.md) | Admin-facing managed policy field guide with defaults, examples, destination policy behavior, and validation commands. | Good / keep. Added in the roadmap follow-up pass. |
 | [BUILD_TARGETS.md](BUILD_TARGETS.md) | Consumer/enterprise build targets, manifest overlays, and managed-policy loading. | Good / keep. |
 
 ### Developer and contributor docs
@@ -57,12 +64,16 @@ Inventory scope for this pass:
 | [RELEASE_QA_CHECKLIST.md](RELEASE_QA_CHECKLIST.md) | Release-gating manual QA across packaging, protected sites, scanner, file handling, and store assets. | Good / keep. Long but purposeful. |
 | [qa/cross-site-manual-checklist.md](qa/cross-site-manual-checklist.md) | Detailed manual matrix for Chrome/Firefox and supported AI sites. | Good / keep. |
 | [tests/manual_detection_paste_block.txt](../tests/manual_detection_paste_block.txt) | Synthetic redaction smoke fixture. | Good / keep as a QA artifact rather than prose docs. |
+| [scripts/check-doc-links.mjs](../scripts/check-doc-links.mjs) | Lightweight local markdown link checker for repository docs. | Good / keep. Added in the roadmap follow-up pass and exposed as `npm run docs:check-links`. |
 
 ### Release and store docs
 
 | Document | Purpose | Current status |
 | --- | --- | --- |
 | [CHROME_WEB_STORE_LISTING.md](CHROME_WEB_STORE_LISTING.md) | Chrome listing copy, permission justifications, screenshots, and reviewer notes. | Needs product/store review before submission. Wording is conservative and local-only. |
+| [FIREFOX_AMO_CHECKLIST.md](FIREFOX_AMO_CHECKLIST.md) | Firefox Add-ons listing and submission checklist for manifest, data declaration, source package, reviewer notes, and QA. | Good / keep. Added in the roadmap follow-up pass. |
+| [STORE_ASSETS_CHECKLIST.md](STORE_ASSETS_CHECKLIST.md) | Screenshot, copy, image hygiene, and submission-asset checklist for store review. | Good / keep. Added in the roadmap follow-up pass. |
+| [VERSIONING_POLICY.md](VERSIONING_POLICY.md) | Version bump, release-note, QA, and artifact expectations. | Good / keep. Added in the roadmap follow-up pass. |
 | [codex-playbooks/firefox-addon-submission.md](codex-playbooks/firefox-addon-submission.md) | Operational playbook for AMO manifest, source zip, and data declaration issues. | Good / keep as an internal playbook; not a full public AMO checklist. |
 
 ### Codex and agent workflow docs
@@ -90,9 +101,19 @@ Inventory scope for this pass:
 
 - `docs/README.md`
 - `docs/NON_GOALS.md`
+- `docs/INSTALL_GUIDE.md`
+- `docs/PROTECTED_SITES_GUIDE.md`
+- `docs/PLACEHOLDERS_AND_REVEAL.md`
+- `docs/FILE_UPLOAD_SCANNING_GUIDE.md`
+- `docs/TROUBLESHOOTING.md`
 - `docs/REPO_MAP.md`
 - `docs/BUG_PLAYBOOK.md`
 - `docs/BUILD_TARGETS.md`
+- `docs/BROWSER_COMPATIBILITY_MATRIX.md`
+- `docs/MANAGED_POLICY_SCHEMA.md`
+- `docs/FIREFOX_AMO_CHECKLIST.md`
+- `docs/STORE_ASSETS_CHECKLIST.md`
+- `docs/VERSIONING_POLICY.md`
 - `docs/RELEASE_QA_CHECKLIST.md`
 - `docs/qa/cross-site-manual-checklist.md`
 - `docs/file-handoff-architecture.md`
@@ -114,10 +135,10 @@ Inventory scope for this pass:
 - `docs/PRIVACY_POLICY.md` - needs support/privacy contact replacement and human/legal review.
 - `docs/CHROME_WEB_STORE_LISTING.md` - needs final store/product review and final screenshots.
 - `docs/ENTERPRISE_DEPLOYMENT.md` - needs admin review against current browser policy docs before publication.
-- `BROWSER_COMPAT.md` - should be refreshed after each browser-specific release hardening pass.
-- `CONTRIBUTING.md` - needs a fuller pass for current module names, modern setup details, and links to the new docs index.
+- `BROWSER_COMPAT.md` - should be refreshed after each browser-specific release hardening pass; the user/release matrix now lives in `docs/BROWSER_COMPATIBILITY_MATRIX.md`.
+- `CONTRIBUTING.md` - needs a fuller pass for current module names and modern setup details; this pass added the docs link-check command.
 - `docs/AI_ASSIST.md` and `ai/README.md` - keep in sync when AI pipeline scripts, counts, or thresholds change.
-- `docs/FILE_SCANNER_PLAN.md` - split current user behavior from historical design plan when a dedicated file-scanner user guide is created.
+- `docs/FILE_SCANNER_PLAN.md` - now has a dedicated user-facing companion in `docs/FILE_UPLOAD_SCANNING_GUIDE.md`; later work can archive historical planning sections.
 - `docs/deep-research-report.md` - refresh or archive citation-heavy/date-sensitive findings after the next major architecture review.
 
 ### Duplicated / consolidate later
@@ -126,20 +147,27 @@ Inventory scope for this pass:
 - README, privacy policy, Chrome listing, and release checklist all repeat local-only/file-handling claims. They serve different audiences, so they should remain separate but must be checked together before release.
 - File Scanner behavior appears in README, privacy policy, Chrome listing, release QA, `FILE_SCANNER_PLAN.md`, and `file-handoff-architecture.md`. Keep audience-specific docs, but create a shorter canonical user guide later.
 
-### Missing / should be created
+### Created in the roadmap follow-up pass
 
-- Dedicated install guide for Chrome and Firefox users.
+- Dedicated local install guide for Chrome, Edge-compatible Chromium, and Firefox users.
 - Protected-sites behavior guide.
 - Placeholder, secure reveal, and placeholder reuse guide.
 - File upload/scanning user guide that distinguishes scanner page, composer paste/drop/select flows, unsupported files, and size limits.
-- Chrome vs Firefox release notes and compatibility matrix.
+- Chrome vs Firefox compatibility matrix.
 - Managed policy schema guide that maps `config/managed_policy_schema.json` to admin-facing examples.
-- Full enterprise deployment guide with tested Chrome/Edge/Firefox policy examples.
 - Release versioning policy.
 - Firefox AMO listing/submission checklist, separate from the internal playbook.
 - Screenshot/store assets checklist.
-- Troubleshooting guide for common popup, protected-site, upload, and reveal issues.
-- Documentation lint/link checker if the repo keeps growing docs.
+- Troubleshooting guide for common popup, protected-site, upload, reveal, Firefox, and enterprise-policy issues.
+- Lightweight markdown link checker exposed as `npm run docs:check-links`.
+
+### Still missing / should be created later
+
+- Full enterprise deployment examples rechecked against current Chrome, Edge, and Firefox policy documentation immediately before publication.
+- Formal threat model that replaces or refreshes the citation-heavy `docs/deep-research-report.md`.
+- Architecture diagrams for redaction, placeholder state, secure reveal, and file handoff.
+- Canonical known-limitations page if `docs/NON_GOALS.md` becomes too broad for user-facing limitations.
+- Browser smoke CI for Chrome, Firefox, Firefox ESR, and Edge if the repo starts claiming release-tested Edge support.
 
 ### Deprecated / candidate for archive
 
@@ -159,28 +187,36 @@ Inventory scope for this pass:
 - Corrected AI training generator references in [docs/AI_ASSIST.md](AI_ASSIST.md) and [ai/README.md](../ai/README.md).
 - Fixed obvious `CONTRIBUTING.md` encoding artifacts and stale module names without changing its broader structure.
 
+## Roadmap Follow-Up Decisions
+
+- Added user guides for install, protected sites, placeholders/reveal, file upload scanning, and troubleshooting.
+- Added release/admin guides for browser compatibility, managed policy schema, versioning, Firefox AMO submission, and store assets.
+- Routed the new guides from [docs/README.md](README.md), the root [README](../README.md), and relevant existing docs.
+- Added [scripts/check-doc-links.mjs](../scripts/check-doc-links.mjs) and exposed it as `npm run docs:check-links`.
+- Kept runtime behavior untouched and did not modify generated artifacts.
+
 ## Remaining Documentation Roadmap
 
 ### Phase 1 - Foundation cleanup
 
-- Fix broken links.
-- Create/refresh docs index.
-- Align README with current features.
-- Remove obvious duplication.
+- Fix broken links. Current follow-up pass added `npm run docs:check-links` and verified local markdown links.
+- Create/refresh docs index. Current follow-up pass refreshed `docs/README.md`.
+- Align README with current features. Current follow-up pass kept README high-level and routed detail to audience-specific guides.
+- Remove obvious duplication. Current follow-up pass moved detailed user/admin guidance into dedicated docs and linked from central entry points.
 - Decide whether `docs/INDEX.md` is also needed, or whether `docs/README.md` is sufficient.
-- Add a lightweight markdown link checker if this repo keeps accumulating docs.
+- Add a lightweight markdown link checker. Completed with `scripts/check-doc-links.mjs`.
 
 ### Phase 2 - Product/user documentation
 
-- Create a clear install guide.
-- Explain protected-sites behavior, built-in sites, and user-managed exact-origin rules.
-- Explain placeholder/reveal behavior, including session scope and unknown-placeholder handling.
-- Explain file upload scanning behavior, including scanner page vs composer paste/drop/select flows.
-- Add Chrome vs Firefox user notes for loading, permissions, and known limitations.
+- Create a clear install guide. Completed with `docs/INSTALL_GUIDE.md`.
+- Explain protected-sites behavior, built-in sites, and user-managed exact-origin rules. Completed with `docs/PROTECTED_SITES_GUIDE.md`.
+- Explain placeholder/reveal behavior, including session scope and unknown-placeholder handling. Completed with `docs/PLACEHOLDERS_AND_REVEAL.md`.
+- Explain file upload scanning behavior, including scanner page vs composer paste/drop/select flows. Completed with `docs/FILE_UPLOAD_SCANNING_GUIDE.md`.
+- Add Chrome vs Firefox user notes for loading, permissions, and known limitations. Completed with `docs/BROWSER_COMPATIBILITY_MATRIX.md`.
 
 ### Phase 3 - Enterprise/admin documentation
 
-- Create a managed policy schema guide.
+- Create a managed policy schema guide. Completed with `docs/MANAGED_POLICY_SCHEMA.md`.
 - Create a deployment guide with browser policy examples and tested assumptions.
 - Explain audit/session retention behavior in admin-facing terms.
 - Add privacy/security admin notes that stay conservative and avoid compliance overclaims.
@@ -197,10 +233,10 @@ Inventory scope for this pass:
 ### Phase 5 - Release/store documentation
 
 - Maintain a Chrome Web Store checklist.
-- Create a Firefox AMO checklist.
-- Define versioning policy.
+- Create a Firefox AMO checklist. Completed with `docs/FIREFOX_AMO_CHECKLIST.md`.
+- Define versioning policy. Completed with `docs/VERSIONING_POLICY.md`.
 - Maintain release QA checklist.
-- Create screenshots/store assets checklist.
+- Create screenshots/store assets checklist. Completed with `docs/STORE_ASSETS_CHECKLIST.md`.
 - Keep privacy/store wording aligned and conservative across README, privacy policy, Chrome listing, AMO listing, and release QA.
 
 ### Phase 6 - Long-term documentation hardening
@@ -208,9 +244,9 @@ Inventory scope for this pass:
 - Create a formal threat model.
 - Add architecture diagrams for redaction, placeholder state, secure reveal, and file handoff.
 - Maintain known limitations in one canonical place and cross-link from public docs.
-- Create a compatibility matrix for browser/version/site/file-flow support.
-- Create a troubleshooting guide.
-- Add documentation lint/link checker if not already present.
+- Create a compatibility matrix for browser/version/site/file-flow support. Initial browser-target matrix completed with `docs/BROWSER_COMPATIBILITY_MATRIX.md`; site/file-flow coverage still belongs in release QA.
+- Create a troubleshooting guide. Completed with `docs/TROUBLESHOOTING.md`.
+- Add documentation lint/link checker if not already present. Completed with `npm run docs:check-links`.
 
 ## Risk Notes
 

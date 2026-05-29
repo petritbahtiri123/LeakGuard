@@ -7,6 +7,7 @@
     "icons:export": "node scripts/export-icons.mjs",
     "validate:codex-memory": "node scripts/validate-codex-memory.mjs",
     "prepare:build": "node scripts/prepare-build.mjs",
+    "docs:check-links": "node scripts/check-doc-links.mjs",
     "test": "npm run prepare:build && node scripts/run-tests.mjs",
     "bench:redaction:profile": "node -e \"process.env.LEAKGUARD_BENCH_PROFILE='1'; process.env.LEAKGUARD_BENCH_ITERATIONS=process.env.LEAKGUARD_BENCH_ITERATIONS||'12'; import('./tests/performance/redaction-benchmark.mjs')\"",
     "build": "npm run build:all",

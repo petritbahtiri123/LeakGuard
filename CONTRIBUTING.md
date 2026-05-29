@@ -183,6 +183,12 @@ Profile mode sets `LEAKGUARD_BENCH_PROFILE=1` and prints a second table with ave
 
 Set `LEAKGUARD_BENCH_ITERATIONS=<number>` to increase or reduce benchmark iterations during local investigation. Keep thresholds conservative enough for normal developer machines and CI; the benchmark is intended to catch major redaction slowdowns, not to replace profiling.
 
+For documentation-only changes, run the focused markdown link check:
+
+```bash
+npm run docs:check-links
+```
+
 ### Manual Testing
 
 Use the smoke test file to verify detection end-to-end:

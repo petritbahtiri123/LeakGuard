@@ -133,6 +133,8 @@
 ## Store Submission Assets
 
 - Capture final screenshots for popup home, popup management, in-page panel, decision modal, and popup reveal.
+- Confirm [STORE_ASSETS_CHECKLIST.md](STORE_ASSETS_CHECKLIST.md) is complete for the target store.
 - Replace any temporary support or privacy contact placeholders in the privacy policy.
 - Review the Chrome Web Store copy in `docs/CHROME_WEB_STORE_LISTING.md`.
+- Review the Firefox AMO submission notes in `docs/FIREFOX_AMO_CHECKLIST.md` if publishing a Firefox package.
 - Review release-facing wording for Firefox Add-ons suitability: local-only processing, no telemetry, no cloud processing, no remote model calls, and no perfect-protection claims.
