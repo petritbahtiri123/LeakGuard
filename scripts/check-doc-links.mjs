@@ -35,7 +35,7 @@ function slugifyHeading(text) {
     .trim()
     .toLowerCase()
     .replace(/`([^`]+)`/g, "$1")
-    .replace(/<[^>]+>/g, "")
+    .replace(/[<>]/g, "")
     .replace(/&amp;/g, "and")
     .replace(/[^\p{Letter}\p{Number}\s-]/gu, "")
     .replace(/\s+/g, "-");
