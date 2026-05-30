@@ -1,0 +1,54 @@
+name: Release Artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  release-artifacts:
+    name: Build release artifacts
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Check documentation links
+        run: npm run docs:check-links
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build packages and checksums
+        run: npm run release:artifacts
+
+      - name: Upload release packages and checksums
+        uses: actions/upload-artifact@v4
+        with:
+          name: leakguard-release-artifacts
+          path: |
+            artifacts/release/*.zip
+            artifacts/release/SHA256SUMS
+            artifacts/release/release-checksums.json
+          if-no-files-found: error
+          retention-days: 30

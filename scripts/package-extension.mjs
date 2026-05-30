@@ -10,9 +10,29 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "..");
 
-const target = process.argv[2];
+function getArg(name, fallback) {
+  const index = process.argv.indexOf(name);
+  if (index === -1) return fallback;
+  return process.argv[index + 1] || fallback;
+}
+
+function positionalArgs() {
+  const values = [];
+  for (let index = 2; index < process.argv.length; index += 1) {
+    const arg = process.argv[index];
+    if (arg.startsWith("--")) {
+      index += 1;
+      continue;
+    }
+    values.push(arg);
+  }
+  return values;
+}
+
+const positionals = positionalArgs();
+const target = positionals[0];
 const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
-const version = process.argv[3] || packageJson.version;
+const version = positionals[1] || packageJson.version;
 
 if (!target) {
   const targetList = BUILD_TARGETS.map((buildTarget) => buildTarget.folder).join("|");
@@ -21,7 +41,7 @@ if (!target) {
 }
 
 const sourceRoot = path.join(repoRoot, "dist", target);
-const releaseRoot = path.join(repoRoot, "release");
+const releaseRoot = path.resolve(repoRoot, getArg("--release-dir", "release"));
 const zipPath = path.join(releaseRoot, `leakguard-${target}-v${version}.zip`);
 
 const excludeNames = new Set([

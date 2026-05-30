@@ -89,7 +89,7 @@ Tasks:
 - [x] Add a license report for direct and transitive npm dependencies.
 - [x] Generate an SBOM in CI.
 - [x] Add a repository secret scan job using synthetic-safe configuration.
-- [ ] Produce package checksums for generated release artifacts.
+- [x] Produce package checksums for generated release artifacts.
 - [x] Add a release provenance checklist covering source commit, build command, artifact hash, CI reports, QA signoff, and residual risks.
 - [ ] Record source commit, build command, package hash, and QA signoff in release notes for each actual release.
 
@@ -97,7 +97,7 @@ Acceptance criteria:
 
 - [x] `npm audit --omit=dev --audit-level=high` remains in CI.
 - [x] OSV, SBOM, license, and secret-scan outputs are available in CI artifacts.
-- [ ] New package archives are published through tagged release artifacts or a release workflow, not routine source diffs.
+- [x] New package archives are published through tagged release artifacts or a release workflow, not routine source diffs.
 
 Suggested PRs:
 
