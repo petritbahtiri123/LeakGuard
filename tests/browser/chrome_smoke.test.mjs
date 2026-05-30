@@ -13,6 +13,7 @@ const repoRoot = path.resolve(__dirname, "../..");
 const extensionDir = path.join(repoRoot, "dist", "chrome");
 const smokeTimeoutMs = Number(process.env.LEAKGUARD_CHROME_SMOKE_TIMEOUT_MS || 60000);
 const cdpCommandTimeoutMs = Number(process.env.LEAKGUARD_CHROME_SMOKE_CDP_TIMEOUT_MS || 30000);
+const smokeTimingWarningMs = Number(process.env.LEAKGUARD_SMOKE_TIMING_WARN_MS || 5000);
 
 function assertBuiltExtensionExists(sourceExtensionDir = extensionDir, buildCommand = "npm run build:chrome") {
   const manifestPath = path.join(sourceExtensionDir, "manifest.json");
@@ -551,6 +552,11 @@ async function waitForEval(connection, sessionId, expression, label) {
 function recordSmokeTiming(browserName, metric, elapsedMs) {
   const roundedMs = Number(elapsedMs.toFixed(1));
   console.log(`${browserName} smoke metric: ${metric}=${roundedMs}ms`);
+  if (roundedMs > smokeTimingWarningMs) {
+    console.warn(
+      `${browserName} smoke timing warning: ${metric}=${roundedMs}ms exceeds warning budget ${smokeTimingWarningMs}ms`
+    );
+  }
 
   const outputPath =
     process.env.LEAKGUARD_SMOKE_TIMINGS_FILE ||
@@ -559,7 +565,9 @@ function recordSmokeTiming(browserName, metric, elapsedMs) {
     generatedAt: new Date().toISOString(),
     browser: browserName.toLowerCase(),
     metric,
-    ms: roundedMs
+    ms: roundedMs,
+    warningMs: smokeTimingWarningMs,
+    warningExceeded: roundedMs > smokeTimingWarningMs
   };
   try {
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });

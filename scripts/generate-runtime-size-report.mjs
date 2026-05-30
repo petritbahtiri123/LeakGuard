@@ -8,6 +8,14 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "..");
 const buildTargets = ["chrome", "chrome-enterprise", "firefox", "firefox-enterprise"];
+const KiB = 1024;
+const MiB = 1024 * KiB;
+const warningBudgets = {
+  targetTotalBytes: 20 * MiB,
+  onnxRuntimeBytes: 16 * MiB,
+  onnxModelBytes: 512 * KiB,
+  largestFileBytes: 14 * MiB
+};
 
 function getArg(name, fallback) {
   const index = process.argv.indexOf(name);
@@ -59,6 +67,40 @@ function summarizeFiles(rootDir, filter = () => true) {
   };
 }
 
+function collectBudgetWarnings(entry) {
+  const warnings = [];
+  if (entry.total.bytes > warningBudgets.targetTotalBytes) {
+    warnings.push(
+      `${entry.target} total size ${formatBytes(entry.total.bytes)} exceeds warning budget ${formatBytes(
+        warningBudgets.targetTotalBytes
+      )}`
+    );
+  }
+  if (entry.onnxRuntime.bytes > warningBudgets.onnxRuntimeBytes) {
+    warnings.push(
+      `${entry.target} ONNX Runtime size ${formatBytes(
+        entry.onnxRuntime.bytes
+      )} exceeds warning budget ${formatBytes(warningBudgets.onnxRuntimeBytes)}`
+    );
+  }
+  if (entry.onnxModel.bytes > warningBudgets.onnxModelBytes) {
+    warnings.push(
+      `${entry.target} ONNX model size ${formatBytes(entry.onnxModel.bytes)} exceeds warning budget ${formatBytes(
+        warningBudgets.onnxModelBytes
+      )}`
+    );
+  }
+  const largestFile = entry.total.largestFiles[0];
+  if (largestFile && largestFile.bytes > warningBudgets.largestFileBytes) {
+    warnings.push(
+      `${entry.target} largest file ${largestFile.path} is ${formatBytes(
+        largestFile.bytes
+      )}, exceeding warning budget ${formatBytes(warningBudgets.largestFileBytes)}`
+    );
+  }
+  return warnings;
+}
+
 const outputDir = path.resolve(repoRoot, getArg("--output-dir", "artifacts/runtime-budgets"));
 const distRoot = path.join(repoRoot, "dist");
 
@@ -81,25 +123,42 @@ const targets = buildTargets.map((target) => {
   const onnxModel = summarizeFiles(targetRoot, (file) =>
     path.relative(targetRoot, file).split(path.sep).join("/").startsWith("ai/models/")
   );
-  return {
+  const entry = {
     target,
     total,
     onnxRuntime,
     onnxModel
   };
+  return {
+    ...entry,
+    warnings: collectBudgetWarnings(entry)
+  };
 });
+
+const warnings = targets.flatMap((entry) => entry.warnings);
 
 const report = {
   generatedAt: new Date().toISOString(),
   source: "dist/",
-  thresholds: "reporting-only",
+  thresholds: {
+    mode: "warning-only",
+    budgets: warningBudgets
+  },
+  warnings,
   targets
 };
 
 const markdown = [
   "# Runtime Size Report",
   "",
-  "Reporting-only baseline. No CI threshold is enforced by this report.",
+  "Warning-only budgets. CI does not fail on these thresholds yet.",
+  "",
+  "| Budget | Warning Threshold |",
+  "| --- | ---: |",
+  `| Target total | ${formatBytes(warningBudgets.targetTotalBytes)} |`,
+  `| ONNX Runtime assets | ${formatBytes(warningBudgets.onnxRuntimeBytes)} |`,
+  `| ONNX model assets | ${formatBytes(warningBudgets.onnxModelBytes)} |`,
+  `| Largest single file | ${formatBytes(warningBudgets.largestFileBytes)} |`,
   "",
   "| Target | Total | Files | ONNX Runtime | ONNX Model |",
   "| --- | ---: | ---: | ---: | ---: |",
@@ -109,6 +168,10 @@ const markdown = [
         entry.onnxRuntime.bytes
       )} | ${formatBytes(entry.onnxModel.bytes)} |`
   ),
+  "",
+  "## Budget Warnings",
+  "",
+  ...(warnings.length ? warnings.map((warning) => `- ${warning}`) : ["No warning-only budget thresholds exceeded."]),
   "",
   "## Largest Files",
   "",
@@ -127,3 +190,10 @@ fs.writeFileSync(path.join(outputDir, "runtime-size-report.json"), `${JSON.strin
 fs.writeFileSync(path.join(outputDir, "runtime-size-report.md"), `${markdown}\n`);
 
 console.log(`Wrote runtime size report to ${path.relative(repoRoot, outputDir)}`);
+if (warnings.length) {
+  for (const warning of warnings) {
+    console.warn(`Runtime size warning: ${warning}`);
+  }
+} else {
+  console.log("Runtime size warning check: no warning-only thresholds exceeded");
+}
