@@ -19,8 +19,14 @@ const {
   LOCAL_TEXT_FAST_MAX_BYTES,
   LOCAL_TEXT_OPTIMIZED_MAX_BYTES,
   LOCAL_TEXT_HARD_BLOCK_BYTES,
+  LOCAL_TEXT_HARD_BLOCK_TITLE,
+  LOCAL_TEXT_HARD_BLOCK_MESSAGE,
   LARGE_TEXT_STREAMING_MAX_BYTES,
+  LARGE_TEXT_STREAMING_BLOCK_TITLE,
+  LARGE_TEXT_STREAMING_BLOCK_MESSAGE,
+  LOCAL_FILE_STREAMING_REQUIRED_MESSAGE,
   MAX_TEXT_FILE_SIZE_BYTES,
+  UNSUPPORTED_COMPOSER_FILE_MESSAGE,
   getFileExtension,
   isSupportedTextFile,
   validateFileForTextScan,
@@ -210,6 +216,12 @@ function testOversizedFileRejectedBeforeScanning() {
   assert.strictEqual(LOCAL_TEXT_HARD_BLOCK_BYTES, 4 * 1024 * 1024);
   assert.strictEqual(LARGE_TEXT_STREAMING_MAX_BYTES, 50 * 1024 * 1024);
   assert.strictEqual(MAX_TEXT_FILE_SIZE_BYTES, LARGE_TEXT_STREAMING_MAX_BYTES);
+  assert.strictEqual(LOCAL_TEXT_HARD_BLOCK_TITLE, "Large payload blocked for browser stability");
+  assert.ok(LOCAL_TEXT_HARD_BLOCK_MESSAGE.includes("over 4 MB"));
+  assert.strictEqual(LARGE_TEXT_STREAMING_BLOCK_TITLE, "File too large for local redaction");
+  assert.ok(LARGE_TEXT_STREAMING_BLOCK_MESSAGE.includes("over 50 MB"));
+  assert.ok(LOCAL_FILE_STREAMING_REQUIRED_MESSAGE.includes("stream-redact"));
+  assertExplicitComposerUnsupportedWarning(UNSUPPORTED_COMPOSER_FILE_MESSAGE, "composer unsupported source");
 
   const optimizedZone = validateFileForTextScan({
     fileName: "optimized.log",

@@ -155,20 +155,22 @@ Acceptance criteria:
 
 ### 4B - Centralize File Constants And Messages
 
+Status: Done (2026-05-30).
+
 Tasks:
 
-- Centralize duplicated file-size constants and user-facing unsupported/too-large messages.
-- Keep `FileScanner` and `StreamingFileRedactor` as the source of truth where practical.
-- Preserve emergency fallbacks only for dependency-missing paths.
+- [x] Centralize duplicated file-size constants and user-facing unsupported/too-large messages.
+- [x] Keep `FileScanner` and `StreamingFileRedactor` as the source of truth where practical.
+- [x] Preserve emergency fallbacks only for dependency-missing paths.
 
 Acceptance criteria:
 
-- No threshold drift across scanner, paste/drop helpers, streaming redactor, and content script.
-- Focused file tests pass:
-  - `node tests/file_scanner.test.js`
-  - `node tests/file_paste_helpers.test.js`
-  - `node tests/streaming_file_redactor.test.js`
-  - `node tests/content_file_drop_interception.test.js`
+- [x] No threshold drift across scanner, paste/drop helpers, streaming redactor, and content script.
+- [x] Focused file tests pass:
+  - [x] `node tests/file_scanner.test.js`
+  - [x] `node tests/file_paste_helpers.test.js`
+  - [x] `node tests/streaming_file_redactor.test.js`
+  - [x] `node tests/content_file_drop_interception.test.js`
 
 ### 4C - Extract Shared Known-Secret Reuse
 

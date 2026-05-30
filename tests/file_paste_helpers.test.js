@@ -8,6 +8,8 @@ require(path.join(repoRoot, "src/content/file_paste_helpers.js"));
 
 const {
   LOCAL_FILE_MULTI_MESSAGE,
+  LOCAL_FILE_STREAMING_REQUIRED_MESSAGE,
+  LOCAL_FILE_UNSUPPORTED_WARNING,
   LOCAL_FILE_TEXT_INSERTION_FALLBACK_ENABLED,
   dataTransferHasFiles,
   listDataTransferFiles,
@@ -15,6 +17,7 @@ const {
   readLocalTextFileFromDataTransfer,
   createSanitizedTextFile
 } = globalThis.PWM.FilePasteHelpers;
+const FileScanner = globalThis.PWM.FileScanner;
 
 function assertExplicitUnsupportedWarning(message) {
   const text = String(message || "").toLowerCase();
@@ -224,6 +227,12 @@ async function testNoFileTransferIgnored() {
 }
 
 async function testOptimizedZoneFileStillDecodesAndOversizedFileBlocks() {
+  assert.strictEqual(
+    LOCAL_FILE_STREAMING_REQUIRED_MESSAGE,
+    FileScanner.LOCAL_FILE_STREAMING_REQUIRED_MESSAGE
+  );
+  assert.strictEqual(LOCAL_FILE_UNSUPPORTED_WARNING, FileScanner.UNSUPPORTED_COMPOSER_FILE_MESSAGE);
+
   const optimizedText = "x".repeat(2 * 1024 * 1024 + 1024);
   const optimized = await readLocalTextFileFromDataTransfer(
     createDataTransfer([createFile({ name: "optimized.log", text: optimizedText })])

@@ -1,13 +1,17 @@
 (function () {
   const root = typeof globalThis !== "undefined" ? globalThis : window;
   root.PWM = root.PWM || {};
+  const FileScanner = root.PWM.FileScanner || {};
 
   const STREAMING_CHUNK_SIZE_BYTES = 512 * 1024;
   const STREAMING_OVERLAP_CHARS = 16 * 1024;
   const STREAMING_MAX_BUFFER_CHARS = 2 * 1024 * 1024;
-  const LARGE_TEXT_STREAMING_MAX_BYTES = 50 * 1024 * 1024;
-  const STREAMING_BLOCK_TITLE = "File too large for local redaction";
+  const LARGE_TEXT_STREAMING_MAX_BYTES =
+    Number(FileScanner.LARGE_TEXT_STREAMING_MAX_BYTES) || 50 * 1024 * 1024;
+  const STREAMING_BLOCK_TITLE =
+    FileScanner.LARGE_TEXT_STREAMING_BLOCK_TITLE || "File too large for local redaction";
   const STREAMING_BLOCK_MESSAGE =
+    FileScanner.LARGE_TEXT_STREAMING_BLOCK_MESSAGE ||
     "This file is over 50 MB. LeakGuard blocked the upload because it cannot safely sanitize it yet.";
   const STREAMING_INVALID_UTF8_MESSAGE =
     "This file is not valid UTF-8 text. LeakGuard blocked the raw upload because it cannot safely sanitize this encoding yet.";

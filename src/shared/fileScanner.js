@@ -7,9 +7,14 @@
   const LOCAL_TEXT_HARD_BLOCK_BYTES = 4 * 1024 * 1024;
   const LARGE_TEXT_STREAMING_MAX_BYTES = 50 * 1024 * 1024;
   const MAX_TEXT_FILE_SIZE_BYTES = LARGE_TEXT_STREAMING_MAX_BYTES;
+  const LOCAL_TEXT_HARD_BLOCK_TITLE = "Large payload blocked for browser stability";
+  const LOCAL_TEXT_HARD_BLOCK_MESSAGE =
+    "This content is over 4 MB. LeakGuard did not process or send it automatically to avoid browser instability. Split the file into smaller parts, or sanitize it separately before upload.";
   const LARGE_TEXT_STREAMING_BLOCK_TITLE = "File too large for local redaction";
   const LARGE_TEXT_STREAMING_BLOCK_MESSAGE =
     "This file is over 50 MB. LeakGuard blocked the upload because it cannot safely sanitize it yet.";
+  const LOCAL_FILE_STREAMING_REQUIRED_MESSAGE =
+    "LeakGuard will stream-redact this large text file locally before upload.";
   const REDACTED_PREVIEW_LIMIT = 4000;
   const UNSUPPORTED_TEXT_RELEASE_MESSAGE =
     "This release scans text files only. Unsupported formats such as PDFs, DOCX files, images, archives, executables, and binary files are not scanned or redacted.";
@@ -477,9 +482,12 @@
     LOCAL_TEXT_FAST_MAX_BYTES,
     LOCAL_TEXT_OPTIMIZED_MAX_BYTES,
     LOCAL_TEXT_HARD_BLOCK_BYTES,
+    LOCAL_TEXT_HARD_BLOCK_TITLE,
+    LOCAL_TEXT_HARD_BLOCK_MESSAGE,
     LARGE_TEXT_STREAMING_MAX_BYTES,
     LARGE_TEXT_STREAMING_BLOCK_TITLE,
     LARGE_TEXT_STREAMING_BLOCK_MESSAGE,
+    LOCAL_FILE_STREAMING_REQUIRED_MESSAGE,
     MAX_TEXT_FILE_SIZE_BYTES,
     SUPPORTED_TEXT_EXTENSIONS,
     SUPPORTED_TEXT_BASENAMES,

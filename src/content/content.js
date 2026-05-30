@@ -182,9 +182,15 @@
     FileScanner.LOCAL_TEXT_OPTIMIZED_MAX_BYTES || 4 * 1024 * 1024;
   const LOCAL_TEXT_HARD_BLOCK_BYTES =
     FileScanner.LOCAL_TEXT_HARD_BLOCK_BYTES || 4 * 1024 * 1024;
-  const LOCAL_TEXT_HARD_BLOCK_TITLE = "Large payload blocked for browser stability";
+  const LOCAL_TEXT_HARD_BLOCK_TITLE =
+    FileScanner.LOCAL_TEXT_HARD_BLOCK_TITLE || "Large payload blocked for browser stability";
   const LOCAL_TEXT_HARD_BLOCK_MESSAGE =
+    FileScanner.LOCAL_TEXT_HARD_BLOCK_MESSAGE ||
     "This content is over 4 MB. LeakGuard did not process or send it automatically to avoid browser instability. Split the file into smaller parts, or sanitize it separately before upload.";
+  const LARGE_TEXT_STREAMING_MAX_BYTES =
+    StreamingFileRedactor.LARGE_TEXT_STREAMING_MAX_BYTES ||
+    FileScanner.LARGE_TEXT_STREAMING_MAX_BYTES ||
+    50 * 1024 * 1024;
   const STREAMING_BLOCK_TITLE =
     StreamingFileRedactor.STREAMING_BLOCK_TITLE ||
     FileScanner.LARGE_TEXT_STREAMING_BLOCK_TITLE ||
@@ -193,6 +199,14 @@
     StreamingFileRedactor.STREAMING_BLOCK_MESSAGE ||
     FileScanner.LARGE_TEXT_STREAMING_BLOCK_MESSAGE ||
     "This file is over 50 MB. LeakGuard blocked the upload because it cannot safely sanitize it yet.";
+  const LOCAL_FILE_STREAMING_REQUIRED_MESSAGE =
+    FileScanner.LOCAL_FILE_STREAMING_REQUIRED_MESSAGE ||
+    FilePasteHelpers?.LOCAL_FILE_STREAMING_REQUIRED_MESSAGE ||
+    "LeakGuard will stream-redact this large text file locally before upload.";
+  const LOCAL_FILE_UNSUPPORTED_WARNING =
+    FileScanner.UNSUPPORTED_COMPOSER_FILE_MESSAGE ||
+    FilePasteHelpers?.LOCAL_FILE_UNSUPPORTED_WARNING ||
+    "LeakGuard did not scan or redact this file. Unsupported file types such as PDF, DOCX, images, archives, executables, and binary files are not protected in this release. Normal upload may continue through the site.";
   const FILE_DRAG_SESSION_RESET_MS = 5000;
   const GEMINI_UPLOAD_INPUT_WAIT_MS = 450;
   const GEMINI_GHOST_INGRESS_TIMEOUT_MS = 2200;
@@ -1375,8 +1389,7 @@
     return {
       kind: "unknown",
       action: "allow",
-      message:
-        "LeakGuard did not scan or redact this file. Unsupported file types such as PDF, DOCX, images, archives, executables, and binary files are not protected in this release. Normal upload may continue through the site."
+      message: LOCAL_FILE_UNSUPPORTED_WARNING
     };
   }
 
@@ -1398,7 +1411,7 @@
       classifications,
       message:
         classifications.find((classification) => classification.message)?.message ||
-        "LeakGuard did not scan or redact this file. Unsupported file types such as PDF, DOCX, images, archives, executables, and binary files are not protected in this release. Normal upload may continue through the site."
+        LOCAL_FILE_UNSUPPORTED_WARNING
     };
   }
 
@@ -2074,7 +2087,7 @@
   function showStreamingRedactionStatus(fileInfo) {
     debugReveal("streaming-redaction:started", {
       file: describeFileForDebug(fileInfo),
-      maxBytes: StreamingFileRedactor.LARGE_TEXT_STREAMING_MAX_BYTES || 50 * 1024 * 1024
+      maxBytes: LARGE_TEXT_STREAMING_MAX_BYTES
     });
     updateFileProcessingOverlay({
       status: "Stream-redacting large file locally...",
@@ -6177,12 +6190,11 @@
     if (!isSupportedGeminiTextFile(file) || typeof file?.text !== "function") {
       return {
         ok: false,
-        message:
-          "LeakGuard did not scan or redact this file. Unsupported file types such as PDF, DOCX, images, archives, executables, and binary files are not protected in this release. Normal upload may continue through the site."
+        message: LOCAL_FILE_UNSUPPORTED_WARNING
       };
     }
 
-    if (Number(file?.size || 0) > (StreamingFileRedactor.LARGE_TEXT_STREAMING_MAX_BYTES || 50 * 1024 * 1024)) {
+    if (Number(file?.size || 0) > LARGE_TEXT_STREAMING_MAX_BYTES) {
       return {
         ok: false,
         code: "file_too_large",
@@ -6200,7 +6212,7 @@
           type: file?.type || "text/plain",
           sizeBytes: Number(file?.size || 0)
         },
-        message: "LeakGuard will stream-redact this large text file locally before upload."
+        message: LOCAL_FILE_STREAMING_REQUIRED_MESSAGE
       };
     }
 
