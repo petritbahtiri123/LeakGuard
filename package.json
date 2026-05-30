@@ -10,6 +10,7 @@
     "docs:check-links": "node scripts/check-doc-links.mjs",
     "report:licenses": "node scripts/generate-license-report.mjs",
     "report:osv": "node scripts/generate-osv-report.mjs",
+    "report:sizes": "node scripts/generate-runtime-size-report.mjs",
     "scan:repo-secrets": "node scripts/repository-secret-scan.mjs",
     "test": "npm run prepare:build && node scripts/run-tests.mjs",
     "smoke:chrome": "npm run build:chrome && node tests/browser/chrome_smoke.test.mjs",

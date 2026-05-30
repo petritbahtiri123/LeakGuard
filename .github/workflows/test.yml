@@ -73,6 +73,18 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Generate runtime size report
+        run: npm run report:sizes -- --output-dir artifacts/runtime-budgets
+
+      - name: Upload runtime size report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-size-report
+          path: artifacts/runtime-budgets/
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Run Chrome extension smoke
         run: xvfb-run -a npm run smoke:chrome
 

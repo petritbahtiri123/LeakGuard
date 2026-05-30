@@ -109,19 +109,21 @@ Suggested PRs:
 
 Purpose: keep the extension fast enough for document-start injection and large-file redaction.
 
+Status: In progress (reporting-only runtime size artifacts added 2026-05-30).
+
 Tasks:
 
-- Record built target sizes.
-- Record ONNX Runtime asset sizes.
-- Track content-script init time in smoke tests where practical.
-- Keep `tests/performance/redaction-benchmark.mjs` as the redaction baseline.
-- Add thresholds for obvious regressions after initial baselines are collected.
+- [x] Record built target sizes.
+- [x] Record ONNX Runtime asset sizes.
+- [ ] Track content-script init time in smoke tests where practical.
+- [x] Keep `tests/performance/redaction-benchmark.mjs` as the redaction baseline.
+- [ ] Add thresholds for obvious regressions after initial baselines are collected.
 
 Acceptance criteria:
 
-- CI reports bundle and runtime asset size.
-- Redaction benchmark output remains visible.
-- Regressions beyond agreed thresholds fail or warn before release.
+- [x] CI reports bundle and runtime asset size.
+- [x] Redaction benchmark output remains visible.
+- [ ] Regressions beyond agreed thresholds fail or warn before release.
 
 Suggested PRs:
 
