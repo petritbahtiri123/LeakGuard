@@ -37,6 +37,25 @@ jobs:
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
 
+      - name: Generate supply-chain reports
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/supply-chain
+          npm sbom --sbom-format cyclonedx --json > artifacts/supply-chain/sbom.cdx.json
+          npm run report:licenses -- --output-dir artifacts/supply-chain
+          npm run report:osv -- --output-dir artifacts/supply-chain
+          npm run scan:repo-secrets -- --output-dir artifacts/supply-chain
+
+      - name: Upload supply-chain reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: supply-chain-reports
+          path: artifacts/supply-chain/
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Check documentation links
         run: npm run docs:check-links
 

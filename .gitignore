@@ -3,6 +3,7 @@
 /node_modules
 /build
 /tmp
+/artifacts
 
 # Python / AI local env
 /ai/venv
