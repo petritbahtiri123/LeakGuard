@@ -93,3 +93,12 @@ jobs:
 
       - name: Run Edge extension smoke
         run: xvfb-run -a npm run smoke:edge
+
+      - name: Upload browser smoke timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-smoke-timings
+          path: artifacts/runtime-budgets/smoke-timings.jsonl
+          if-no-files-found: warn
+          retention-days: 14

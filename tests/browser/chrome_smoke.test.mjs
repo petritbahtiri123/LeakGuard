@@ -548,6 +548,27 @@ async function waitForEval(connection, sessionId, expression, label) {
   );
 }
 
+function recordSmokeTiming(browserName, metric, elapsedMs) {
+  const roundedMs = Number(elapsedMs.toFixed(1));
+  console.log(`${browserName} smoke metric: ${metric}=${roundedMs}ms`);
+
+  const outputPath =
+    process.env.LEAKGUARD_SMOKE_TIMINGS_FILE ||
+    path.join(repoRoot, "artifacts", "runtime-budgets", "smoke-timings.jsonl");
+  const payload = {
+    generatedAt: new Date().toISOString(),
+    browser: browserName.toLowerCase(),
+    metric,
+    ms: roundedMs
+  };
+  try {
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+    fs.appendFileSync(outputPath, `${JSON.stringify(payload)}\n`);
+  } catch (error) {
+    console.warn(`${browserName} smoke timing warning: ${error.message}`);
+  }
+}
+
 function normalizePathForCompare(value) {
   return path.resolve(String(value || "")).toLowerCase();
 }
@@ -632,8 +653,9 @@ async function runPopupSmoke(connection, extensionId) {
   return popup;
 }
 
-async function runBuiltInContentSmoke(connection, chatGptOrigin) {
+async function runBuiltInContentSmoke(connection, chatGptOrigin, browserName = "Chrome") {
   const page = await createPage(connection);
+  const startedAt = Date.now();
   await navigate(connection, page.sessionId, `${chatGptOrigin}/`);
   await waitForEval(
     connection,
@@ -641,6 +663,7 @@ async function runBuiltInContentSmoke(connection, chatGptOrigin) {
     "Boolean(document.querySelector('.pwm-panel'))",
     "built-in protected site status panel"
   );
+  recordSmokeTiming(browserName, "protected_site_panel_ready_ms", Date.now() - startedAt);
 
   const panel = await evaluate(connection, page.sessionId, `(() => {
     const rows = Array.from(document.querySelectorAll('.pwm-panel-row')).map((row) => row.innerText);
@@ -965,7 +988,7 @@ async function runChromiumSmoke(options = {}) {
     console.log(`${browserName} smoke: popup`);
     const popup = await runPopupSmoke(connection, extensionId);
     console.log(`${browserName} smoke: built-in protected site`);
-    const builtInPage = await runBuiltInContentSmoke(connection, httpsServer.origin);
+    const builtInPage = await runBuiltInContentSmoke(connection, httpsServer.origin, browserName);
     console.log(`${browserName} smoke: composer redaction`);
     const { rawSecret, placeholder } = await runComposerRedactionSmoke(connection, builtInPage);
     console.log(`${browserName} smoke: secure reveal`);

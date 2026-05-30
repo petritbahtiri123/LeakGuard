@@ -93,6 +93,27 @@ async function waitFor(condition, label, timeoutMs = smokeTimeoutMs) {
   throw new Error(`Timed out waiting for ${label}.${suffix}`);
 }
 
+function recordSmokeTiming(metric, elapsedMs) {
+  const roundedMs = Number(elapsedMs.toFixed(1));
+  console.log(`Firefox smoke metric: ${metric}=${roundedMs}ms`);
+
+  const outputPath =
+    process.env.LEAKGUARD_SMOKE_TIMINGS_FILE ||
+    path.join(repoRoot, "artifacts", "runtime-budgets", "smoke-timings.jsonl");
+  const payload = {
+    generatedAt: new Date().toISOString(),
+    browser: "firefox",
+    metric,
+    ms: roundedMs
+  };
+  try {
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+    fs.appendFileSync(outputPath, `${JSON.stringify(payload)}\n`);
+  } catch (error) {
+    console.warn(`Firefox smoke timing warning: ${error.message}`);
+  }
+}
+
 function createHarnessPage() {
   return `<!doctype html>
 <html lang="en">
@@ -502,11 +523,13 @@ async function runFirefoxSmoke() {
     const extensionId = await webdriver.installAddon(xpiPath);
     console.log(`Firefox smoke: temporary extension loaded (${extensionId || "installed"})`);
     console.log("Firefox smoke: built-in protected site");
+    const panelStartedAt = Date.now();
     await webdriver.navigate(`${httpsServer.origin}/`);
     await waitFor(
       () => webdriver.execute("return Boolean(document.querySelector('.pwm-panel'));"),
       "built-in protected site status panel"
     );
+    recordSmokeTiming("protected_site_panel_ready_ms", Date.now() - panelStartedAt);
 
     const panel = await webdriver.execute(`return {
       text: document.querySelector('.pwm-panel')?.innerText || '',
