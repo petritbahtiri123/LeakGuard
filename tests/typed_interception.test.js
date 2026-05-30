@@ -550,6 +550,13 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
     "Firefox beforeinput should synchronously consume risky raw text before any async analysis can yield to the page"
   );
   assert.ok(
+    beforeInputSource.includes("event?.isTrusted === false") &&
+      beforeInputSource.includes("isProgrammaticInputScanSuppressed()") &&
+      beforeInputSource.indexOf("event?.isTrusted === false") <
+        beforeInputSource.indexOf("shouldInterceptBeforeInput(event)"),
+    "programmatic ChatGPT rewrite events should not be re-intercepted as typed user input"
+  );
+  assert.ok(
     contentSource.includes("shouldAutoRedactTypedSecrets"),
     "content script should distinguish high-confidence typed secrets from warning-only detections"
   );

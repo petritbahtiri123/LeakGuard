@@ -4469,6 +4469,8 @@
       return;
     }
 
+    if (event?.isTrusted === false && isProgrammaticInputScanSuppressed()) return;
+
     if (!extensionRuntimeAvailable || modalOpen || !shouldInterceptBeforeInput(event)) return;
 
     const input = findComposer(event.target);
