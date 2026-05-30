@@ -303,7 +303,20 @@ async function startHttpsChatGptServer(tempDir) {
     close: () => new Promise((resolve) => server.close(resolve))
   };
 }
+function prepareSmokeExtension(tempDir) {
+  const smokeExtensionDir = path.join(tempDir, "extension");
+  fs.cpSync(extensionDir, smokeExtensionDir, { recursive: true });
 
+  const manifestPath = path.join(smokeExtensionDir, "manifest.json");
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+
+  manifest.host_permissions = Array.from(
+    new Set([...(manifest.host_permissions || []), "http://127.0.0.1/*"])
+  );
+
+  fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  return smokeExtensionDir;
+}
 class CdpPipeConnection {
   constructor(input, output) {
     this.input = input;
@@ -533,13 +546,13 @@ function normalizePathForCompare(value) {
   return path.resolve(String(value || "")).toLowerCase();
 }
 
-function findExtensionIdInProfile(profileDir) {
+function findExtensionIdInProfile(profileDir, expectedExtensionDir = extensionDir) {
   const preferencesPath = path.join(profileDir, "Default", "Preferences");
   if (!fs.existsSync(preferencesPath)) return "";
   try {
     const preferences = JSON.parse(fs.readFileSync(preferencesPath, "utf8"));
     const settings = preferences?.extensions?.settings || {};
-    const expectedPath = normalizePathForCompare(extensionDir);
+    const expectedPath = normalizePathForCompare(expectedExtensionDir);
     for (const [id, setting] of Object.entries(settings)) {
       const manifestName = setting?.manifest?.name || "";
       const extensionPath = setting?.path || "";
@@ -553,7 +566,7 @@ function findExtensionIdInProfile(profileDir) {
   return "";
 }
 
-async function getExtensionId(connection, profileDir) {
+async function getExtensionId(connection, profileDir, expectedExtensionDir = extensionDir) {
   let lastTargets = [];
   const target = await waitFor(async () => {
     const { targetInfos } = await connection.send("Target.getTargets");
@@ -564,7 +577,7 @@ async function getExtensionId(connection, profileDir) {
         /^chrome-extension:\/\/[^/]+\/background\/service_worker\.js$/.test(info.url)
     );
     if (serviceWorker) return serviceWorker;
-    const idFromProfile = findExtensionIdInProfile(profileDir);
+    const idFromProfile = findExtensionIdInProfile(profileDir, expectedExtensionDir);
     return idFromProfile ? { url: `chrome-extension://${idFromProfile}/background/service_worker.js` } : null;
   }, "LeakGuard extension service worker").catch((error) => {
     const targetSummary = lastTargets
@@ -576,17 +589,17 @@ async function getExtensionId(connection, profileDir) {
   return new URL(target.url).hostname;
 }
 
-async function loadExtension(connection, profileDir) {
+async function loadExtension(connection, profileDir, extensionPath = extensionDir) {
   try {
     const response = await connection.send("Extensions.loadUnpacked", {
-      path: extensionDir,
+      path: extensionPath,
       enableInIncognito: false
     });
     if (response.id) return response.id;
   } catch (error) {
     console.warn(`Chrome smoke: CDP extension load warning: ${error.message}`);
   }
-  return await getExtensionId(connection, profileDir);
+  return await getExtensionId(connection, profileDir, extensionPath);
 }
 
 async function extensionMessage(connection, sessionId, message) {
@@ -750,19 +763,35 @@ function escapeForJsCode(str) {
   return str.replace(/[<>/\\\b\f\n\r\t\0\u2028\u2029]/g, (ch) => JS_CODE_ESCAPE_MAP[ch]);
 }
 
-async function grantOptionalHostPermission(connection, extensionSessionId, originPattern) {
-  const granted = await evaluate(
+async function ensureSmokeHostPermission(connection, extensionSessionId, originPattern) {
+  if (process.env.LEAKGUARD_CHROME_SMOKE_INTERACTIVE_PERMISSIONS === "1") {
+    const granted = await evaluate(
+      connection,
+      extensionSessionId,
+      `new Promise((resolve) => chrome.permissions.request({ origins: [${escapeForJsCode(JSON.stringify(originPattern))}] }, resolve))`,
+      { awaitPromise: true, userGesture: true }
+    );
+    assert.equal(granted, true, `Expected Chrome to grant optional host permission ${originPattern}`);
+    return;
+  }
+
+  const hasPermission = await evaluate(
     connection,
     extensionSessionId,
-    `new Promise((resolve) => chrome.permissions.request({ origins: [${escapeForJsCode(JSON.stringify(originPattern))}] }, resolve))`,
-    { awaitPromise: true, userGesture: true }
+    `new Promise((resolve) => chrome.permissions.contains({ origins: [${escapeForJsCode(JSON.stringify(originPattern))}] }, resolve))`,
+    { awaitPromise: true }
   );
-  assert.equal(granted, true, `Expected Chrome to grant optional host permission ${originPattern}`);
+
+  assert.equal(
+    hasPermission,
+    true,
+    `Expected smoke-test manifest copy to pregrant ${originPattern}`
+  );
 }
 
 async function runUserManagedSiteSmoke(connection, extensionSessionId, userOrigin) {
   const matchPattern = "http://127.0.0.1/*";
-  await grantOptionalHostPermission(connection, extensionSessionId, matchPattern);
+  await ensureSmokeHostPermission(connection, extensionSessionId, matchPattern);
 
   const addResponse = await extensionMessage(connection, extensionSessionId, {
     type: "PWM_ADD_PROTECTED_SITE",
@@ -893,7 +922,8 @@ async function main() {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "leakguard-chrome-smoke-"));
   const profileDir = path.join(tempDir, "profile");
   fs.mkdirSync(profileDir, { recursive: true });
-
+  const smokeExtensionDir = prepareSmokeExtension(tempDir);
+  
   let httpServer = null;
   let httpsServer = null;
   let chrome = null;
@@ -903,16 +933,16 @@ async function main() {
     httpServer = await startHttpServer();
     httpsServer = await startHttpsChatGptServer(tempDir);
 
-    chrome = await launchChrome({
-      extensionPath: extensionDir,
-      profileDir
-    });
+chrome = await launchChrome({
+  extensionPath: smokeExtensionDir,
+  profileDir
+});
 
     connection = new CdpPipeConnection(chrome.child.stdio[3], chrome.child.stdio[4]);
     await connection.connect();
     await connection.send("Target.setDiscoverTargets", { discover: true });
 
-    const extensionId = await loadExtension(connection, profileDir);
+    const extensionId = await loadExtension(connection, profileDir, smokeExtensionDir);
     console.log(`Chrome smoke: extension loaded (${extensionId})`);
     console.log("Chrome smoke: popup");
     const popup = await runPopupSmoke(connection, extensionId);

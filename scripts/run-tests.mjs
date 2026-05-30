@@ -30,10 +30,20 @@ const testFiles = [
   "tests/build_targets.test.js"
 ];
 
+// Set environment variables to disable Chrome extension permission prompts in headless mode
+const env = {
+  ...process.env,
+  // Disable interactive prompts and permission dialogs
+  CHROME_HEADLESS: "1",
+  // Suppress DBus errors from headless Chrome
+  NO_SANDBOX: "1"
+};
+
 for (const file of testFiles) {
   const result = spawnSync(process.execPath, [file], {
     cwd: process.cwd(),
-    stdio: "inherit"
+    stdio: "inherit",
+    env
   });
 
   if (result.error) {
