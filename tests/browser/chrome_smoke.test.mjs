@@ -6,7 +6,7 @@ import http from "node:http";
 import https from "node:https";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "../..");
@@ -14,11 +14,11 @@ const extensionDir = path.join(repoRoot, "dist", "chrome");
 const smokeTimeoutMs = Number(process.env.LEAKGUARD_CHROME_SMOKE_TIMEOUT_MS || 60000);
 const cdpCommandTimeoutMs = Number(process.env.LEAKGUARD_CHROME_SMOKE_CDP_TIMEOUT_MS || 30000);
 
-function assertBuiltExtensionExists() {
-  const manifestPath = path.join(extensionDir, "manifest.json");
+function assertBuiltExtensionExists(sourceExtensionDir = extensionDir, buildCommand = "npm run build:chrome") {
+  const manifestPath = path.join(sourceExtensionDir, "manifest.json");
   assert.ok(
     fs.existsSync(manifestPath),
-    `Expected ${manifestPath}. Run npm run build:chrome before the smoke test.`
+    `Expected ${manifestPath}. Run ${buildCommand} before the smoke test.`
   );
 }
 
@@ -101,10 +101,10 @@ function createHarnessPage(title) {
   <body>
     <main>
       <h1>${title}</h1>
-      <form id="chat-form">
+      <div id="chat-form" role="form">
         <textarea id="prompt-textarea" data-testid="prompt-textarea" placeholder="Message"></textarea>
-        <button id="send-button" type="submit">Send</button>
-      </form>
+        <button id="send-button" type="button">Send</button>
+      </div>
       <section id="echo-zone"></section>
     </main>
   </body>
@@ -303,9 +303,9 @@ async function startHttpsChatGptServer(tempDir) {
     close: () => new Promise((resolve) => server.close(resolve))
   };
 }
-function prepareSmokeExtension(tempDir) {
+function prepareSmokeExtension(tempDir, sourceExtensionDir = extensionDir) {
   const smokeExtensionDir = path.join(tempDir, "extension");
-  fs.cpSync(extensionDir, smokeExtensionDir, { recursive: true });
+  fs.cpSync(sourceExtensionDir, smokeExtensionDir, { recursive: true });
 
   const manifestPath = path.join(smokeExtensionDir, "manifest.json");
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
@@ -395,9 +395,15 @@ class CdpPipeConnection {
   }
 }
 
-async function launchChrome({ extensionPath, profileDir }) {
-  const chrome = findChromeExecutable();
-  assert.ok(chrome, "Chrome stable or Chromium was not found. Set CHROME_BIN to run this smoke test.");
+async function launchChrome({
+  extensionPath,
+  profileDir,
+  browserName = "Chrome",
+  browserExecutable = findChromeExecutable(),
+  headlessEnvName = "LEAKGUARD_CHROME_HEADLESS",
+  missingMessage = "Chrome stable or Chromium was not found. Set CHROME_BIN to run this smoke test."
+}) {
+  assert.ok(browserExecutable, missingMessage);
 
   const args = [
     "--remote-debugging-pipe",
@@ -417,14 +423,14 @@ async function launchChrome({ extensionPath, profileDir }) {
     "--window-position=-2400,-2400",
     "about:blank"
   ];
-  if (process.env.LEAKGUARD_CHROME_HEADLESS === "1") {
+  if (process.env[headlessEnvName] === "1") {
     args.push("--headless=new");
   }
   if (process.platform === "linux") {
     args.push("--no-sandbox");
   }
 
-  const child = spawn(chrome, args.map(quoteForArg), {
+  const child = spawn(browserExecutable, args.map(quoteForArg), {
     stdio: ["ignore", "pipe", "pipe", "pipe", "pipe"]
   });
   let stderr = "";
@@ -433,7 +439,7 @@ async function launchChrome({ extensionPath, profileDir }) {
   });
   child.on("exit", (code, signal) => {
     if (code && code !== 0) {
-      stderr += `\nChrome exited with code ${code} signal ${signal || ""}`;
+      stderr += `\n${browserName} exited with code ${code} signal ${signal || ""}`;
     }
   });
 
@@ -589,7 +595,7 @@ async function getExtensionId(connection, profileDir, expectedExtensionDir = ext
   return new URL(target.url).hostname;
 }
 
-async function loadExtension(connection, profileDir, extensionPath = extensionDir) {
+async function loadExtension(connection, profileDir, extensionPath = extensionDir, browserName = "Chrome") {
   try {
     const response = await connection.send("Extensions.loadUnpacked", {
       path: extensionPath,
@@ -597,7 +603,7 @@ async function loadExtension(connection, profileDir, extensionPath = extensionDi
     });
     if (response.id) return response.id;
   } catch (error) {
-    console.warn(`Chrome smoke: CDP extension load warning: ${error.message}`);
+    console.warn(`${browserName} smoke: CDP extension load warning: ${error.message}`);
   }
   return await getExtensionId(connection, profileDir, extensionPath);
 }
@@ -916,14 +922,22 @@ async function runScannerSmoke(connection, extensionId, tempDir) {
   assert.match(unsupported.status, /Unsupported (?:file types|formats)/);
 }
 
-async function main() {
-  assertBuiltExtensionExists();
+async function runChromiumSmoke(options = {}) {
+  const {
+    browserName = "Chrome",
+    sourceExtensionDir = extensionDir,
+    buildCommand = "npm run build:chrome",
+    findBrowserExecutable = findChromeExecutable,
+    headlessEnvName = "LEAKGUARD_CHROME_HEADLESS",
+    missingMessage = "Chrome stable or Chromium was not found. Set CHROME_BIN to run this smoke test."
+  } = options;
+  assertBuiltExtensionExists(sourceExtensionDir, buildCommand);
 
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "leakguard-chrome-smoke-"));
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `leakguard-${browserName.toLowerCase()}-smoke-`));
   const profileDir = path.join(tempDir, "profile");
   fs.mkdirSync(profileDir, { recursive: true });
-  const smokeExtensionDir = prepareSmokeExtension(tempDir);
-  
+  const smokeExtensionDir = prepareSmokeExtension(tempDir, sourceExtensionDir);
+
   let httpServer = null;
   let httpsServer = null;
   let chrome = null;
@@ -933,31 +947,35 @@ async function main() {
     httpServer = await startHttpServer();
     httpsServer = await startHttpsChatGptServer(tempDir);
 
-chrome = await launchChrome({
-  extensionPath: smokeExtensionDir,
-  profileDir
-});
+    chrome = await launchChrome({
+      extensionPath: smokeExtensionDir,
+      profileDir,
+      browserName,
+      browserExecutable: findBrowserExecutable(),
+      headlessEnvName,
+      missingMessage
+    });
 
     connection = new CdpPipeConnection(chrome.child.stdio[3], chrome.child.stdio[4]);
     await connection.connect();
     await connection.send("Target.setDiscoverTargets", { discover: true });
 
-    const extensionId = await loadExtension(connection, profileDir, smokeExtensionDir);
-    console.log(`Chrome smoke: extension loaded (${extensionId})`);
-    console.log("Chrome smoke: popup");
+    const extensionId = await loadExtension(connection, profileDir, smokeExtensionDir, browserName);
+    console.log(`${browserName} smoke: extension loaded (${extensionId})`);
+    console.log(`${browserName} smoke: popup`);
     const popup = await runPopupSmoke(connection, extensionId);
-    console.log("Chrome smoke: built-in protected site");
+    console.log(`${browserName} smoke: built-in protected site`);
     const builtInPage = await runBuiltInContentSmoke(connection, httpsServer.origin);
-    console.log("Chrome smoke: composer redaction");
+    console.log(`${browserName} smoke: composer redaction`);
     const { rawSecret, placeholder } = await runComposerRedactionSmoke(connection, builtInPage);
-    console.log("Chrome smoke: secure reveal");
+    console.log(`${browserName} smoke: secure reveal`);
     await runSecureRevealSmoke(connection, builtInPage, extensionId, rawSecret, placeholder);
-    console.log("Chrome smoke: user-managed protected site");
+    console.log(`${browserName} smoke: user-managed protected site`);
     await runUserManagedSiteSmoke(connection, popup.sessionId, httpServer.origin);
-    console.log("Chrome smoke: file scanner");
+    console.log(`${browserName} smoke: file scanner`);
     await runScannerSmoke(connection, extensionId, tempDir);
 
-    console.log("PASS chrome extension smoke");
+    console.log(`PASS ${browserName.toLowerCase()} extension smoke`);
   } catch (error) {
     if (chrome?.stderr?.()) {
       console.error(chrome.stderr());
@@ -976,12 +994,19 @@ chrome = await launchChrome({
     try {
       fs.rmSync(tempDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
     } catch (error) {
-      console.warn(`Chrome smoke cleanup warning: ${error.message}`);
+      console.warn(`${browserName} smoke cleanup warning: ${error.message}`);
     }
   }
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  runChromiumSmoke().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+}
+
+export {
+  findExecutable,
+  runChromiumSmoke
+};

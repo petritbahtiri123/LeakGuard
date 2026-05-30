@@ -13,6 +13,8 @@
     "scan:repo-secrets": "node scripts/repository-secret-scan.mjs",
     "test": "npm run prepare:build && node scripts/run-tests.mjs",
     "smoke:chrome": "npm run build:chrome && node tests/browser/chrome_smoke.test.mjs",
+    "smoke:edge": "npm run build:chrome && node tests/browser/edge_smoke.test.mjs",
+    "smoke:firefox": "npm run build:firefox && node tests/browser/firefox_smoke.test.mjs",
     "bench:redaction:profile": "node -e \"process.env.LEAKGUARD_BENCH_PROFILE='1'; process.env.LEAKGUARD_BENCH_ITERATIONS=process.env.LEAKGUARD_BENCH_ITERATIONS||'12'; import('./tests/performance/redaction-benchmark.mjs')\"",
     "build": "npm run build:all",
     "prebuild:chrome": "npm run prepare:build",

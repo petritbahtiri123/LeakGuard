@@ -31,6 +31,17 @@ jobs:
       - name: Setup Chrome
         uses: browser-actions/setup-chrome@v2
 
+      - name: Setup Firefox
+        uses: browser-actions/setup-firefox@v1
+
+      - name: Setup geckodriver
+        uses: browser-actions/setup-geckodriver@latest
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Edge
+        uses: browser-actions/setup-edge@v1
+
       - name: Install dependencies
         run: npm ci
 
@@ -64,3 +75,9 @@ jobs:
 
       - name: Run Chrome extension smoke
         run: xvfb-run -a npm run smoke:chrome
+
+      - name: Run Firefox extension smoke
+        run: xvfb-run -a npm run smoke:firefox
+
+      - name: Run Edge extension smoke
+        run: xvfb-run -a npm run smoke:edge

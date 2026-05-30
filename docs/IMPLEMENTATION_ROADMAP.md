@@ -43,13 +43,13 @@ Suggested PR: `ci: add documentation link check`
 
 Purpose: prove the extension actually behaves in browsers, not only through static/unit tests.
 
-Status: In progress (Chrome smoke CI gate added 2026-05-29).
+Status: Complete for the current CI gate slice (Chrome, Firefox, and Edge smoke CI gates added by 2026-05-30).
 
 Tasks:
 
 - [x] Add a minimal smoke harness for Chrome stable.
-- [ ] Add Firefox stable smoke coverage after Chrome is stable.
-- [ ] Add Edge smoke coverage before making stronger Edge support claims.
+- [x] Add Firefox stable smoke coverage after Chrome is stable.
+- [x] Add Edge smoke coverage before making stronger Edge support claims.
 - [x] Smoke the following flows in Chrome:
   - [x] install/load built target
   - [x] popup opens
@@ -60,8 +60,10 @@ Tasks:
   - [x] supported text-file scanner flow
   - [x] one supported text-file composer flow where feasible
   - [x] one unsupported file warning
-- [ ] Repeat or adapt the smoke flow for Firefox.
-- [ ] Repeat or adapt the smoke flow for Edge.
+- [x] Repeat or adapt the smoke flow for Firefox.
+  - Firefox uses an adapted WebDriver/XPI smoke covering temporary add-on load, built-in protected-site activation, and typed composer redaction.
+  - Popup, secure reveal, and scanner browser breadth remain covered by Chrome/Edge until Firefox extension-page smoke is expanded.
+- [x] Repeat or adapt the smoke flow for Edge.
 
 Acceptance criteria:
 
