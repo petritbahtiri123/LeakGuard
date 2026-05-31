@@ -8,6 +8,14 @@ const fileHandoffStateSource = fs.readFileSync(
   path.join(repoRoot, "src/content/file_handoff_state.js"),
   "utf8"
 );
+const fileHandoffPendingSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/file_handoff_pending.js"),
+  "utf8"
+);
+const fileHandoffFlowSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/file_handoff_flow.js"),
+  "utf8"
+);
 const backgroundSource = fs.readFileSync(path.join(repoRoot, "src/background/core.js"), "utf8");
 const overlayCssSource = fs.readFileSync(path.join(repoRoot, "src/content/overlay.css"), "utf8");
 
@@ -215,11 +223,7 @@ function fileHandoffAdapterHarnessSource() {
     extractFunctionSource(contentSource, "activateAdapterUploadElementSafely"),
     extractFunctionSource(contentSource, "waitForGenericAdapterFileInput"),
     extractFunctionSource(contentSource, "attachGenericPendingWithTrustedActivation"),
-    extractFunctionSource(contentSource, "normalizeFileHandoffAdapter"),
-    extractFunctionSource(contentSource, "queuePendingSanitizedFileHandoff"),
-    extractFunctionSource(contentSource, "attemptPendingSanitizedFileHandoff"),
-    extractFunctionSource(contentSource, "clearPendingSanitizedFileHandoff"),
-    extractFunctionSource(contentSource, "attachPendingSanitizedFileWithTrustedActivation")
+    extractFunctionSource(contentSource, "normalizeFileHandoffAdapter")
   ];
 }
 
@@ -260,6 +264,148 @@ function fileHandoffStateHarnessSource() {
         PROGRAMMATIC_INPUT_SUPPRESS_MS,
         SANITIZED_FILE_HANDOFF_SUPPRESS_MS
       }
+    });`
+  ];
+}
+
+function fileHandoffPendingHarnessSource() {
+  return [
+    extractFunctionSource(fileHandoffPendingSource, "createFileHandoffPending"),
+    `const {
+      createPendingAttachEvent,
+      queuePendingSanitizedFileHandoff,
+      attemptPendingSanitizedFileHandoff,
+      clearPendingSanitizedFileHandoff,
+      attachPendingSanitizedFileWithTrustedActivation,
+      insertPendingSanitizedFileText,
+      downloadPendingSanitizedFile,
+      cancelPendingSanitizedFileAttach
+    } = createFileHandoffPending({
+      attemptPendingGeminiSanitizedFileHandoff,
+      attemptPendingGrokSanitizedFileHandoff,
+      clearPendingGeminiSanitizedFileHandoff,
+      clearPendingGrokSanitizedFileHandoff,
+      clearPendingSanitizedAttachPrompt,
+      createSanitizedFileHandoffDetails,
+      debugFileHandoffAdapterSelected,
+      describeFileForDebug,
+      describeFileHandoffAdapter,
+      downloadSanitizedFileFallback:
+        (...args) =>
+          typeof downloadSanitizedFileFallback === "function"
+            ? downloadSanitizedFileFallback(...args)
+            : false,
+      emitDebug: debugReveal,
+      getCurrentHandoffDriver:
+        (...args) =>
+          typeof getCurrentHandoffDriver === "function" ? getCurrentHandoffDriver(...args) : null,
+      hideBadgeSoon,
+      isFileHandoffAdapterPendingAttachEnabled,
+      normalizeFileHandoffAdapter,
+      normalizeTarget,
+      queuePendingGeminiSanitizedFileHandoff,
+      queuePendingGrokSanitizedFileHandoff,
+      readSanitizedFileTextForFallback:
+        typeof readSanitizedFileTextForFallback === "function"
+          ? readSanitizedFileTextForFallback
+          : async () => "",
+      refreshBadgeFromCurrentInput,
+      setBadge,
+      suppressStaleHandoffErrorAfterSuccess
+    });`
+  ];
+}
+
+function fileHandoffFlowHarnessSource() {
+  return [
+    extractFunctionSource(fileHandoffFlowSource, "createFileHandoffFlow"),
+    `const {
+      isFileOnlySanitizedPayload,
+      isSafeSanitizedPayload,
+      tryRealFileInputSanitizedFileAttach,
+      insertSanitizedPayloadText,
+      downloadSanitizedFileFallback,
+      getCurrentHandoffDriver,
+      handoffSanitizedPayload
+    } = createFileHandoffFlow({
+      applySanitizedTextFallback:
+        typeof applySanitizedTextFallback === "function"
+          ? applySanitizedTextFallback
+          : async () => false,
+      buildSanitizedDownloadFileName:
+        typeof buildSanitizedDownloadFileName === "function"
+          ? buildSanitizedDownloadFileName
+          : () => "sanitized-file.txt",
+      createSanitizedDataTransferForHandoff:
+        typeof createSanitizedDataTransferForHandoff === "function"
+          ? createSanitizedDataTransferForHandoff
+          : () => null,
+      createSanitizedFileHandoffDetails:
+        typeof createSanitizedFileHandoffDetails === "function"
+          ? createSanitizedFileHandoffDetails
+          : () => ({}),
+      createSanitizedPayload:
+        typeof createSanitizedPayload === "function" ? createSanitizedPayload : () => null,
+      debugFileHandoffAdapterSelected,
+      describeFileForDebug,
+      describeFileHandoffAdapter,
+      documentRef: document,
+      downloadGeminiSanitizedFileFallback:
+        typeof downloadGeminiSanitizedFileFallback === "function"
+          ? downloadGeminiSanitizedFileFallback
+          : async () => false,
+      emitDebug: debugReveal,
+      findGeminiFileInput:
+        typeof findGeminiFileInput === "function" ? findGeminiFileInput : () => ({ fileInput: null }),
+      formatSanitizedFileFallbackText:
+        typeof formatSanitizedFileFallbackText === "function"
+          ? formatSanitizedFileFallbackText
+          : () => "",
+      getCurrentHandoffDriverId,
+      getFileHandoffAdapterById,
+      getFileHandoffAdapterForLocation,
+      handOffGrokSanitizedFileUpload:
+        typeof handOffGrokSanitizedFileUpload === "function"
+          ? handOffGrokSanitizedFileUpload
+          : async () => false,
+      handOffSanitizedFileInput:
+        typeof handOffSanitizedFileInput === "function" ? handOffSanitizedFileInput : () => false,
+      hideBadgeSoon: typeof hideBadgeSoon === "function" ? hideBadgeSoon : () => {},
+      hideDmzOverlay: typeof hideDmzOverlay === "function" ? hideDmzOverlay : () => {},
+      insertGeminiSanitizedText:
+        typeof insertGeminiSanitizedText === "function"
+          ? insertGeminiSanitizedText
+          : async () => false,
+      isFileHandoffAdapterPendingAttachEnabled,
+      isFirefoxRuntime,
+      isGeminiHost,
+      isProtectedFileDropDriver,
+      locationRef: location,
+      logSanitizedFileHandoffFailure,
+      queuePendingSanitizedFileHandoff,
+      readSanitizedFileTextForFallback,
+      refreshBadgeFromCurrentInput:
+        typeof refreshBadgeFromCurrentInput === "function" ? refreshBadgeFromCurrentInput : () => {},
+      resolveFileInputForHandoff:
+        typeof resolveFileInputForHandoff === "function" ? resolveFileInputForHandoff : () => null,
+      scheduleDmzOverlayCleanup:
+        typeof scheduleDmzOverlayCleanup === "function" ? scheduleDmzOverlayCleanup : () => {},
+      sendRuntimeMessage:
+        typeof sendRuntimeMessage === "function" ? sendRuntimeMessage : async () => null,
+      setBadge: typeof setBadge === "function" ? setBadge : () => {},
+      setDmzOverlayState: typeof setDmzOverlayState === "function" ? setDmzOverlayState : () => {},
+      shouldUseFirefoxTextFallbackForFileHandoff:
+        typeof shouldUseFirefoxTextFallbackForFileHandoff === "function"
+          ? shouldUseFirefoxTextFallbackForFileHandoff
+          : () => false,
+      tryFirefoxGeminiFileInputBridge:
+        typeof tryFirefoxGeminiFileInputBridge === "function"
+          ? tryFirefoxGeminiFileInputBridge
+          : async () => ({ handled: false, ok: false }),
+      tryGeminiSanitizedFileAttach:
+        typeof tryGeminiSanitizedFileAttach === "function"
+          ? tryGeminiSanitizedFileAttach
+          : async () => false
     });`
   ];
 }
@@ -951,6 +1097,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "shouldQueueFirefoxGeminiPendingSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "getFirefoxRawFileUploadBlockedMessage"),
       ...fileHandoffStateHarnessSource(),
+      ...fileHandoffPendingHarnessSource(),
       extractFunctionSource(contentSource, "isPasteBeforeInput"),
       extractFunctionSource(contentSource, "getPasteTransfer"),
       extractFunctionSource(contentSource, "getPastedPlainText"),
@@ -1058,10 +1205,6 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "describeUploadTriggerForDebug"),
       extractFunctionSource(contentSource, "sanitizeDownloadFileNameSegment"),
       extractFunctionSource(contentSource, "logSanitizedFileHandoffFailure"),
-      extractFunctionSource(contentSource, "createPendingAttachEvent"),
-      extractFunctionSource(contentSource, "insertPendingSanitizedFileText"),
-      extractFunctionSource(contentSource, "downloadPendingSanitizedFile"),
-      extractFunctionSource(contentSource, "cancelPendingSanitizedFileAttach"),
       extractFunctionSource(contentSource, "performPendingGeminiUserAttach"),
       extractFunctionSource(contentSource, "findGrokUploadButton"),
       extractFunctionSource(contentSource, "openGrokUploadButtonSafely"),
@@ -1087,8 +1230,6 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "getPendingGrokSanitizedFileHandoffDebug"),
       extractFunctionSource(contentSource, "originalFileMetadataFromLocalFile"),
       extractFunctionSource(contentSource, "createSanitizedPayload"),
-      extractFunctionSource(contentSource, "isFileOnlySanitizedPayload"),
-      extractFunctionSource(contentSource, "isSafeSanitizedPayload"),
       extractFunctionSource(contentSource, "createGeminiSanitizedPayload"),
       extractFunctionSource(contentSource, "fallbackLanguageFromFileName"),
       extractFunctionSource(contentSource, "geminiFallbackLanguageFromFileName"),
@@ -1139,15 +1280,11 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "primeGeminiFirefoxUploadTarget"),
       extractFunctionSource(contentSource, "handOffPrimedGeminiFirefoxUploadTarget"),
       extractFunctionSource(contentSource, "tryFirefoxGeminiFileInputBridge"),
-      extractFunctionSource(contentSource, "tryRealFileInputSanitizedFileAttach"),
-      extractFunctionSource(contentSource, "insertSanitizedPayloadText"),
       extractFunctionSource(contentSource, "buildSanitizedDownloadFileName"),
-      extractFunctionSource(contentSource, "downloadSanitizedFileFallback"),
-      extractFunctionSource(contentSource, "getCurrentHandoffDriver"),
-      extractFunctionSource(contentSource, "handoffSanitizedPayload"),
       extractFunctionSource(contentSource, "applyGeminiSanitizedTextFallback"),
       extractFunctionSource(contentSource, "applySanitizedTextFallback"),
       extractFunctionSource(contentSource, "readSanitizedFileTextForFallback"),
+      ...fileHandoffFlowHarnessSource(),
       extractFunctionSource(contentSource, "isForbiddenGeminiUploadButton"),
       extractFunctionSource(contentSource, "isAllowedGeminiUploadMenuOpener"),
       extractFunctionSource(contentSource, "insertGeminiLocalFileText"),
@@ -1772,6 +1909,7 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "isExpectedFirefoxGeminiNoPickerMiss"),
       extractFunctionSource(contentSource, "shouldQueueFirefoxGeminiPendingSanitizedFileHandoff"),
       ...fileHandoffStateHarnessSource(),
+      ...fileHandoffPendingHarnessSource(),
       extractFunctionSource(contentSource, "isSanitizedFileHandoffEvent"),
       extractFunctionSource(contentSource, "markSanitizedFileHandoffEvent"),
       extractFunctionSource(contentSource, "listLocalTransferFiles"),
@@ -1797,14 +1935,11 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "originalFileMetadataFromEvent"),
       extractFunctionSource(contentSource, "createSanitizedFileHandoffDetails"),
       extractFunctionSource(contentSource, "sanitizeDownloadFileNameSegment"),
+      extractFunctionSource(contentSource, "buildSanitizedDownloadFileName"),
       extractFunctionSource(contentSource, "buildGeminiSanitizedDownloadFileName"),
       extractFunctionSource(contentSource, "downloadGeminiSanitizedFileFallback"),
       extractFunctionSource(contentSource, "hasGeminiSanitizedDownloadFallback"),
       extractFunctionSource(contentSource, "logSanitizedFileHandoffFailure"),
-      extractFunctionSource(contentSource, "createPendingAttachEvent"),
-      extractFunctionSource(contentSource, "insertPendingSanitizedFileText"),
-      extractFunctionSource(contentSource, "downloadPendingSanitizedFile"),
-      extractFunctionSource(contentSource, "cancelPendingSanitizedFileAttach"),
       extractFunctionSource(contentSource, "performPendingGeminiUserAttach"),
       extractFunctionSource(contentSource, "findGrokUploadButton"),
       extractFunctionSource(contentSource, "openGrokUploadButtonSafely"),
@@ -1891,6 +2026,7 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "handOffPrimedGeminiFirefoxUploadTarget"),
       extractFunctionSource(contentSource, "tryFirefoxGeminiFileInputBridge"),
       extractFunctionSource(contentSource, "handOffGrokSanitizedFileUpload"),
+      ...fileHandoffFlowHarnessSource(),
       "return { handOffSanitizedLocalFile, handOffGeminiSanitizedFileUpload, primeGeminiFirefoxUploadTarget, handOffPrimedGeminiFirefoxUploadTarget, tryFirefoxGeminiFileInputBridge, findGeminiUploadMenuButton, openGeminiUploadMenuSafely, findGeminiUploadFilesMenuItem, openGeminiUploadFilesMenuItemSafely, waitForGeminiUploadFilesMenuItem, waitForGeminiFileInput, handOffGrokSanitizedFileUpload, resolveFileInputForHandoff, getFileHandoffAdapterById, getFileHandoffAdapterForLocation, isFileHandoffAdapterPendingAttachEnabled, queuePendingSanitizedFileHandoff, attemptPendingSanitizedFileHandoff, clearPendingSanitizedFileHandoff, cancelPendingSanitizedFileAttach, attemptPendingGeminiSanitizedFileHandoff, hasPendingGeminiSanitizedFileHandoff, getPendingGeminiSanitizedFileHandoffDebug, queuePendingGeminiSanitizedFileHandoff, queuePendingGrokSanitizedFileHandoff, attemptPendingGrokSanitizedFileHandoff, hasPendingGrokSanitizedFileHandoff, getPendingGrokSanitizedFileHandoffDebug, hasGeminiSanitizedDownloadFallback, clearPendingGeminiGhostIngressClickInterceptor, isAllowedGeminiUploadMenuOpener, clickElementSafely, activateGeminiHiddenFileSelectorTriggerSafely };"
     ].join("\n\n")
   );
@@ -3749,7 +3885,7 @@ function testFileHandoffAdapterRegistryCoversSupportedSites() {
 }
 
 function testGenericFileHandoffHelpersAndDiagnosticsExist() {
-  const contentBundleSource = `${contentSource}\n${fileHandoffStateSource}`;
+  const contentBundleSource = `${contentSource}\n${fileHandoffStateSource}\n${fileHandoffPendingSource}\n${fileHandoffFlowSource}`;
   for (const functionName of [
     "getFileHandoffAdapterForLocation",
     "showFileProcessingOverlay",
@@ -7755,7 +7891,7 @@ async function testChatGptOutOfSyncFallbackRetriesAndVerifies() {
 }
 
 function testChatGptPendingAttachRemainsDisabled() {
-  const queueSource = extractFunctionSource(contentSource, "queuePendingSanitizedFileHandoff");
+  const queueSource = extractFunctionSource(fileHandoffPendingSource, "queuePendingSanitizedFileHandoff");
   assert.ok(
     contentSource.includes("chatgpt: false") &&
       contentSource.includes("pendingAttachEnabled: FILE_HANDOFF_PENDING_ATTACH_ENABLED.chatgpt"),

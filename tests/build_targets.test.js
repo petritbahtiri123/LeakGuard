@@ -46,7 +46,12 @@ function assertReleaseArtifactsAreSanitized(results) {
       );
     }
 
-    for (const relativeContentScript of ["content/content.js", "content/file_handoff_state.js"]) {
+    for (const relativeContentScript of [
+      "content/content.js",
+      "content/file_handoff_state.js",
+      "content/file_handoff_pending.js",
+      "content/file_handoff_flow.js"
+    ]) {
       const contentSource = fs.readFileSync(path.join(result.targetRoot, relativeContentScript), "utf8");
       for (const banned of [
         "pwm:debug",
@@ -132,6 +137,8 @@ async function run() {
   const streamingRedactorIndex = contentScripts.indexOf("shared/streamingFileRedactor.js");
   const filePasteHelperIndex = contentScripts.indexOf("content/file_paste_helpers.js");
   const fileHandoffStateIndex = contentScripts.indexOf("content/file_handoff_state.js");
+  const fileHandoffPendingIndex = contentScripts.indexOf("content/file_handoff_pending.js");
+  const fileHandoffFlowIndex = contentScripts.indexOf("content/file_handoff_flow.js");
   const contentIndex = contentScripts.indexOf("content/content.js");
 
   assert.ok(knownSecretReuseIndex > -1, "content scripts should include known-secret reuse helpers");
@@ -143,12 +150,16 @@ async function run() {
   assert.ok(streamingRedactorIndex > -1, "content scripts should include streaming file redactor helpers");
   assert.ok(filePasteHelperIndex > -1, "content scripts should include local file paste helpers");
   assert.ok(fileHandoffStateIndex > -1, "content scripts should include file handoff state helpers");
+  assert.ok(fileHandoffPendingIndex > -1, "content scripts should include file handoff pending helpers");
+  assert.ok(fileHandoffFlowIndex > -1, "content scripts should include file handoff flow helpers");
   assert.ok(
     fileScannerIndex < streamingRedactorIndex &&
       streamingRedactorIndex < filePasteHelperIndex &&
       filePasteHelperIndex < fileHandoffStateIndex &&
-      fileHandoffStateIndex < contentIndex,
-    "file scanner, streaming redactor, file paste helper, file handoff state, and content script injection order should stay aligned"
+      fileHandoffStateIndex < fileHandoffPendingIndex &&
+      fileHandoffPendingIndex < fileHandoffFlowIndex &&
+      fileHandoffFlowIndex < contentIndex,
+    "file scanner, streaming redactor, file paste helper, file handoff state, file handoff pending, file handoff flow, and content script injection order should stay aligned"
   );
   assert.strictEqual(
     chromeEnterpriseManifest.storage?.managed_schema,

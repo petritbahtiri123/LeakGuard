@@ -15,7 +15,9 @@
     evaluateDestinationPolicy,
     ComposerHelpers,
     FilePasteHelpers,
-    createFileHandoffState
+    createFileHandoffState,
+    createFileHandoffPending,
+    createFileHandoffFlow
   } = globalThis.PWM;
   const {
     normalizeComposerText,
@@ -292,6 +294,89 @@
     shouldSuppressFirefoxFileInputEvent,
     clearLocalFileInputSelection
   } = fileHandoffState;
+  const fileHandoffPending = createFileHandoffPending({
+    attemptPendingGeminiSanitizedFileHandoff,
+    attemptPendingGrokSanitizedFileHandoff,
+    clearPendingGeminiSanitizedFileHandoff,
+    clearPendingGrokSanitizedFileHandoff,
+    clearPendingSanitizedAttachPrompt,
+    createSanitizedFileHandoffDetails,
+    debugFileHandoffAdapterSelected,
+    describeFileForDebug,
+    describeFileHandoffAdapter,
+    downloadSanitizedFileFallback: (...args) => downloadSanitizedFileFallback(...args),
+    emitDebug: debugReveal,
+    getCurrentHandoffDriver: (...args) => getCurrentHandoffDriver(...args),
+    hideBadgeSoon,
+    isFileHandoffAdapterPendingAttachEnabled,
+    normalizeFileHandoffAdapter,
+    normalizeTarget,
+    queuePendingGeminiSanitizedFileHandoff,
+    queuePendingGrokSanitizedFileHandoff,
+    readSanitizedFileTextForFallback,
+    refreshBadgeFromCurrentInput,
+    setBadge,
+    suppressStaleHandoffErrorAfterSuccess
+  });
+  const {
+    createPendingAttachEvent,
+    queuePendingSanitizedFileHandoff,
+    attemptPendingSanitizedFileHandoff,
+    clearPendingSanitizedFileHandoff,
+    attachPendingSanitizedFileWithTrustedActivation,
+    insertPendingSanitizedFileText,
+    downloadPendingSanitizedFile,
+    cancelPendingSanitizedFileAttach
+  } = fileHandoffPending;
+  const fileHandoffFlow = createFileHandoffFlow({
+    applySanitizedTextFallback,
+    buildSanitizedDownloadFileName,
+    createSanitizedDataTransferForHandoff,
+    createSanitizedFileHandoffDetails,
+    createSanitizedPayload,
+    debugFileHandoffAdapterSelected,
+    describeFileForDebug,
+    describeFileHandoffAdapter,
+    documentRef: document,
+    downloadGeminiSanitizedFileFallback,
+    emitDebug: debugReveal,
+    findGeminiFileInput,
+    formatSanitizedFileFallbackText,
+    getCurrentHandoffDriverId,
+    getFileHandoffAdapterById,
+    getFileHandoffAdapterForLocation,
+    handOffGrokSanitizedFileUpload,
+    handOffSanitizedFileInput,
+    hideBadgeSoon,
+    hideDmzOverlay,
+    insertGeminiSanitizedText,
+    isFileHandoffAdapterPendingAttachEnabled,
+    isFirefoxRuntime,
+    isGeminiHost,
+    isProtectedFileDropDriver,
+    locationRef: location,
+    logSanitizedFileHandoffFailure,
+    queuePendingSanitizedFileHandoff,
+    readSanitizedFileTextForFallback,
+    refreshBadgeFromCurrentInput,
+    resolveFileInputForHandoff,
+    scheduleDmzOverlayCleanup,
+    sendRuntimeMessage,
+    setBadge,
+    setDmzOverlayState,
+    shouldUseFirefoxTextFallbackForFileHandoff,
+    tryFirefoxGeminiFileInputBridge,
+    tryGeminiSanitizedFileAttach
+  });
+  const {
+    isFileOnlySanitizedPayload,
+    isSafeSanitizedPayload,
+    tryRealFileInputSanitizedFileAttach,
+    insertSanitizedPayloadText,
+    downloadSanitizedFileFallback,
+    getCurrentHandoffDriver,
+    handoffSanitizedPayload
+  } = fileHandoffFlow;
 
   function isExtensionContextInvalidatedError(error) {
     const message = String(error?.message || error || "");
@@ -6928,298 +7013,10 @@
     };
   }
 
-  function isFileOnlySanitizedPayload(payload) {
-    return Boolean(payload?.allowFileOnlyHandoff && !String(payload?.redactedText || "").trim());
-  }
-
-  function isSafeSanitizedPayload(payload) {
-    return Boolean(
-      payload &&
-        payload.sanitizedFile &&
-        typeof payload.redactedText === "string" &&
-        (payload.redactedText.length > 0 || payload.allowFileOnlyHandoff === true)
-    );
-  }
-
-  function tryRealFileInputSanitizedFileAttach(payload, event, input, driverId) {
-    if (!payload?.sanitizedFile) return false;
-    if (shouldUseFirefoxTextFallbackForFileHandoff()) return false;
-    const details = createSanitizedFileHandoffDetails(event, payload.sanitizedFile, `${driverId}:file-input`);
-    const transfer = createSanitizedDataTransferForHandoff(payload.sanitizedFile, details);
-    if (!transfer) {
-      details.failureReason = "data_transfer_failed";
-      logSanitizedFileHandoffFailure(details);
-      return false;
-    }
-
-    const adapter = getFileHandoffAdapterById(driverId);
-    const fileInput =
-      adapter?.resolveFileInput?.(event, input, adapter) || resolveFileInputForHandoff(event, input);
-    details.fileInputCountBeforeClick = fileInput ? 1 : 0;
-    details.fileInputCountAfterTopTriggerClick = fileInput ? 1 : 0;
-    details.fileInputCountAfterOverlayItemClick = fileInput ? 1 : 0;
-    if (!fileInput) {
-      details.failureReason = "no_safe_file_input";
-      return false;
-    }
-
-    const assigned = handOffSanitizedFileInput(fileInput, transfer, {
-      dispatchInput: true,
-      details
-    });
-    if (!assigned) {
-      logSanitizedFileHandoffFailure(details);
-    }
-    return assigned;
-  }
-
-  async function insertSanitizedPayloadText(payload, event, input, context = null) {
-    if (!String(payload?.redactedText || "").trim()) return false;
-    if (!input && context?.composerResolved && !isFirefoxRuntime()) return false;
-    if (isGeminiHost()) {
-      return insertGeminiSanitizedText(payload, event, input);
-    }
-    return applySanitizedTextFallback(event, input, formatSanitizedFileFallbackText(payload), {
-      rawInsertedText: payload.rawText || ""
-    });
-  }
-
   function buildSanitizedDownloadFileName(sanitizedFile) {
     const originalName = sanitizeDownloadFileNameSegment(sanitizedFile?.name || "sanitized-file.txt");
     const timestamp = new Date().toISOString().replace(/[:.]/g, "").replace(/\d{3}Z$/, "Z");
     return `LeakGuard/redacted/${timestamp}-${originalName}`;
-  }
-
-  async function downloadSanitizedFileFallback(event, input, payload, driverId, details = null) {
-    if (isGeminiHost()) {
-      return downloadGeminiSanitizedFileFallback(event, input, payload?.sanitizedFile, details);
-    }
-    if (!payload?.sanitizedFile) return false;
-
-    let redactedText = "";
-    try {
-      redactedText = await readSanitizedFileTextForFallback(payload.sanitizedFile);
-    } catch (error) {
-      if (details) {
-        details.failureReason = "sanitized_download_read_failed";
-        details.errorMessage = error?.message || String(error);
-        details.errorStack = error?.stack || "";
-      }
-      return false;
-    }
-
-    try {
-      const response = await sendRuntimeMessage({
-        type: "PWM_DOWNLOAD_SANITIZED_FILE",
-        fileName: buildSanitizedDownloadFileName(payload.sanitizedFile),
-        mimeType: payload.sanitizedFile.type || "text/plain",
-        redactedText
-      });
-      if (!response?.ok) {
-        if (details) {
-          details.failureReason = "sanitized_download_failed";
-          details.errorMessage = response?.error || "Background download request failed.";
-        }
-        return false;
-      }
-      debugReveal("file-handoff:sanitized-download", {
-        driver: driverId,
-        sanitizedFile: describeFileForDebug(payload.sanitizedFile),
-        downloadId: response.downloadId ?? null
-      });
-      setDmzOverlayState("Sanitized download ready", "fallback");
-      scheduleDmzOverlayCleanup(3600);
-      setBadge("Sanitized download ready");
-      hideBadgeSoon(6500);
-      refreshBadgeFromCurrentInput();
-      return true;
-    } catch (error) {
-      if (details) {
-        details.failureReason = "sanitized_download_failed";
-        details.errorMessage = error?.message || String(error);
-        details.errorStack = error?.stack || "";
-      }
-      return false;
-    }
-  }
-
-  function getCurrentHandoffDriver() {
-    const id = getCurrentHandoffDriverId();
-    return {
-      id,
-      usesDmzOverlay: isProtectedFileDropDriver(id),
-      canHandle: () => true,
-      preparePayload: (sanitizedFile, redactedText, metadata) =>
-        createSanitizedPayload(
-          sanitizedFile,
-          redactedText,
-          metadata?.localFile,
-          metadata?.analysis,
-          metadata?.result
-        ),
-      tryAttachSanitizedFile: async (payload, context) => {
-        if (id === "gemini") return tryGeminiSanitizedFileAttach(payload, context.event, context.input);
-        if (id === "grok") return handOffGrokSanitizedFileUpload(context.event, context.input, payload.sanitizedFile);
-        if (id === "chatgpt" || id === "claude" || id === "openai" || id === "x" || id === "generic") {
-          return tryRealFileInputSanitizedFileAttach(payload, context.event, context.input, id);
-        }
-        return false;
-      },
-      insertSanitizedText: (payload, context) => insertSanitizedPayloadText(payload, context.event, context.input, context),
-      emergencyDownload: (payload, context) =>
-        downloadSanitizedFileFallback(
-          context.event,
-          context.input,
-          payload,
-          id,
-          createSanitizedFileHandoffDetails(context.event, payload?.sanitizedFile, `${id}:emergency-download`)
-        ),
-      handoff: async (payload, context) => handoffSanitizedPayload(payload, context)
-    };
-  }
-
-  async function handoffSanitizedPayload(payload, context) {
-    const driver = context?.driver || getCurrentHandoffDriver();
-    const adapter = context?.adapter || driver.adapter || getFileHandoffAdapterForLocation();
-    debugFileHandoffAdapterSelected(adapter, "handoff");
-    if (!driver?.canHandle?.(location, document)) {
-      return { ok: false, stage: "driver-unavailable" };
-    }
-    if (!isSafeSanitizedPayload(payload)) {
-      setDmzOverlayState("Raw file blocked", "failed");
-      return { ok: false, stage: "failed", reason: "unsafe_sanitized_payload" };
-    }
-
-    const firefoxGeminiDropInput =
-      driver.id === "gemini" && isFirefoxRuntime() && context?.context === "drop"
-        ? findGeminiFileInput(context.event, context.input).fileInput
-        : null;
-    if (
-      driver.id === "gemini" &&
-      isFirefoxRuntime() &&
-      context?.context === "drop" &&
-      !firefoxGeminiDropInput &&
-      payload?.sanitizedFile &&
-      isFileHandoffAdapterPendingAttachEnabled(adapter)
-    ) {
-      const pendingDetails = createSanitizedFileHandoffDetails(
-        context.event,
-        payload.sanitizedFile,
-        `${adapter.id}:firefox-drop-pending-attach`
-      );
-      if (queuePendingSanitizedFileHandoff(adapter, context.event, context.input, payload.sanitizedFile, pendingDetails)) {
-        debugReveal("file-handoff:firefox-gemini-drop-pending-queued", {
-          adapter: describeFileHandoffAdapter(adapter),
-          context: context?.context || "",
-          sanitizedFile: describeFileForDebug(payload.sanitizedFile)
-        });
-        hideDmzOverlay();
-        return { ok: true, stage: "pending", strategy: `${adapter.id}-pending-sanitized-file-handoff` };
-      }
-    }
-
-    debugReveal("file-handoff:direct-attempt-start", {
-      site: driver.id,
-      adapter: describeFileHandoffAdapter(adapter),
-      context: context?.context || "",
-      sanitizedFile: describeFileForDebug(payload.sanitizedFile)
-    });
-    if (await driver.tryAttachSanitizedFile(payload, context)) {
-      debugReveal("file-handoff:direct-attempt-success", {
-        site: driver.id,
-        adapter: describeFileHandoffAdapter(adapter),
-        context: context?.context || "",
-        sanitizedFile: describeFileForDebug(payload.sanitizedFile)
-      });
-      setDmzOverlayState("Attached sanitized file", "attached");
-      return { ok: true, stage: "file", strategy: `${driver.id}-sanitized-file-handoff` };
-    }
-    debugReveal("file-handoff:direct-attempt-failed", {
-      site: driver.id,
-      adapter: describeFileHandoffAdapter(adapter),
-      context: context?.context || "",
-      sanitizedFile: describeFileForDebug(payload.sanitizedFile)
-    });
-
-    const firefoxGeminiBridgeResult =
-      driver.id === "gemini"
-        ? await tryFirefoxGeminiFileInputBridge(payload, context)
-        : { handled: false, ok: false };
-    if (firefoxGeminiBridgeResult.ok) {
-      if (firefoxGeminiBridgeResult.stage === "text") {
-        setDmzOverlayState("Inserted sanitized content", "inserted");
-        return { ok: true, stage: "text", strategy: firefoxGeminiBridgeResult.strategy };
-      }
-      if (firefoxGeminiBridgeResult.stage === "pending") {
-        hideDmzOverlay();
-        return { ok: true, stage: "pending", strategy: firefoxGeminiBridgeResult.strategy };
-      }
-      setDmzOverlayState("Attached sanitized file", "attached");
-      return { ok: true, stage: "file", strategy: firefoxGeminiBridgeResult.strategy };
-    }
-    if (firefoxGeminiBridgeResult.handled) {
-      if (
-        firefoxGeminiBridgeResult.reason === "gemini_firefox_file_input_not_found" &&
-        context?.context === "drop" &&
-        payload?.sanitizedFile &&
-        isFileHandoffAdapterPendingAttachEnabled(adapter)
-      ) {
-        const pendingDetails = createSanitizedFileHandoffDetails(
-          context.event,
-          payload.sanitizedFile,
-          `${adapter.id}:pending-after-firefox-bridge-miss`
-        );
-        if (queuePendingSanitizedFileHandoff(adapter, context.event, context.input, payload.sanitizedFile, pendingDetails)) {
-          hideDmzOverlay();
-          return { ok: true, stage: "pending", strategy: `${adapter.id}-pending-sanitized-file-handoff` };
-        }
-      }
-      setDmzOverlayState("Raw file blocked", "failed");
-      return firefoxGeminiBridgeResult;
-    }
-
-    if (
-      context?.context === "drop" &&
-      payload?.sanitizedFile &&
-      isFileHandoffAdapterPendingAttachEnabled(adapter)
-    ) {
-      const pendingDetails = createSanitizedFileHandoffDetails(
-        context.event,
-        payload.sanitizedFile,
-        `${adapter.id}:pending-after-direct-failure`
-      );
-      if (queuePendingSanitizedFileHandoff(adapter, context.event, context.input, payload.sanitizedFile, pendingDetails)) {
-        hideDmzOverlay();
-        return { ok: true, stage: "pending", strategy: `${adapter.id}-pending-sanitized-file-handoff` };
-      }
-    }
-
-    const fileOnlyPayload = isFileOnlySanitizedPayload(payload);
-    if (!fileOnlyPayload) {
-      const textInserted = await driver.insertSanitizedText(payload, context);
-      if (textInserted === true) {
-        setDmzOverlayState("Inserted sanitized content", "inserted");
-        return { ok: true, stage: "text", strategy: `${driver.id}-sanitized-text-fallback` };
-      }
-      if (textInserted === "cancelled") {
-        return { ok: false, stage: "text", reason: "sanitized_text_cancelled" };
-      }
-
-      if (await driver.emergencyDownload(payload, context)) {
-        return { ok: true, stage: "download", strategy: `${driver.id}-sanitized-download-fallback` };
-      }
-    } else {
-      debugReveal("file-handoff:file-only-fallback-skipped", {
-        site: driver.id,
-        adapter: describeFileHandoffAdapter(adapter),
-        context: context?.context || "",
-        sanitizedFile: describeFileForDebug(payload.sanitizedFile),
-        reason: "streamed_sanitized_file_not_read_back"
-      });
-    }
-
-    setDmzOverlayState("Raw file blocked", "failed");
-    return { ok: false, stage: "failed", reason: "sanitized_payload_handoff_failed" };
   }
 
   function createSanitizedFileHandoffDetails(event, sanitizedFile, stage) {
@@ -7344,151 +7141,10 @@
     }
   }
 
-  function createPendingAttachEvent(event, type) {
-    return {
-      type,
-      target: normalizeTarget(event?.target) || null
-    };
-  }
-
   function normalizeFileHandoffAdapter(adapter) {
     if (!adapter) return getFileHandoffAdapterForLocation();
     if (typeof adapter === "string") return getFileHandoffAdapterById(adapter);
     return adapter;
-  }
-
-  function queuePendingSanitizedFileHandoff(adapter, event, input, sanitizedFile, details = null) {
-    const selectedAdapter = normalizeFileHandoffAdapter(adapter);
-    debugFileHandoffAdapterSelected(selectedAdapter, "pending-queue");
-    if (!selectedAdapter || !sanitizedFile) return false;
-    if (!isFileHandoffAdapterPendingAttachEnabled(selectedAdapter)) {
-      debugReveal("file-handoff:pending-queue-skipped", {
-        site: selectedAdapter.id || "",
-        reason: "pending_attach_disabled",
-        adapter: describeFileHandoffAdapter(selectedAdapter),
-        sanitizedFile: describeFileForDebug(sanitizedFile)
-      });
-      return false;
-    }
-
-    let queued = false;
-    if (selectedAdapter.id === "gemini") {
-      queued = queuePendingGeminiSanitizedFileHandoff(event, input, sanitizedFile, details);
-    } else if (selectedAdapter.id === "grok") {
-      queued = queuePendingGrokSanitizedFileHandoff(event, input, sanitizedFile, details);
-    }
-
-    if (queued) {
-      debugReveal("file-handoff:pending-queued", {
-        site: selectedAdapter.id,
-        adapter: describeFileHandoffAdapter(selectedAdapter),
-        sanitizedFile: describeFileForDebug(sanitizedFile)
-      });
-    }
-    return queued;
-  }
-
-  function attemptPendingSanitizedFileHandoff(adapter, reason = "") {
-    const selectedAdapter = normalizeFileHandoffAdapter(adapter);
-    if (!selectedAdapter) return false;
-    if (selectedAdapter.id === "gemini") return attemptPendingGeminiSanitizedFileHandoff(reason);
-    if (selectedAdapter.id === "grok") return attemptPendingGrokSanitizedFileHandoff(reason);
-    return false;
-  }
-
-  function clearPendingSanitizedFileHandoff(adapter, reason = "") {
-    if (adapter == null) {
-      clearPendingGeminiSanitizedFileHandoff(reason);
-      clearPendingGrokSanitizedFileHandoff(reason);
-      return;
-    }
-    const selectedAdapter = normalizeFileHandoffAdapter(adapter);
-    if (!selectedAdapter) return;
-    if (selectedAdapter.id === "gemini") {
-      clearPendingGeminiSanitizedFileHandoff(reason);
-    } else if (selectedAdapter.id === "grok") {
-      clearPendingGrokSanitizedFileHandoff(reason);
-    }
-  }
-
-  async function attachPendingSanitizedFileWithTrustedActivation(adapter, pending) {
-    const selectedAdapter = normalizeFileHandoffAdapter(adapter);
-    if (!selectedAdapter || !pending?.sanitizedFile) return false;
-    if (!isFileHandoffAdapterPendingAttachEnabled(selectedAdapter)) {
-      debugReveal("file-handoff:pending-user-attach-skipped", {
-        site: selectedAdapter.id || "",
-        reason: "pending_attach_disabled",
-        adapter: describeFileHandoffAdapter(selectedAdapter),
-        sanitizedFile: describeFileForDebug(pending.sanitizedFile)
-      });
-      return false;
-    }
-    if (typeof selectedAdapter.attachWithTrustedActivation !== "function") return false;
-    return await selectedAdapter.attachWithTrustedActivation(pending, selectedAdapter);
-  }
-
-  async function insertPendingSanitizedFileText(site, event, input, sanitizedFile) {
-    if (!sanitizedFile) return false;
-
-    const redactedText = await readSanitizedFileTextForFallback(sanitizedFile);
-    const driver = getCurrentHandoffDriver();
-    const payload = driver.preparePayload(sanitizedFile, redactedText, {
-      localFile: sanitizedFile,
-      analysis: null,
-      result: null
-    });
-    const inserted = await driver.insertSanitizedText(payload, {
-      event,
-      input,
-      context: "pending-attach-text-fallback",
-      driver,
-      composerResolved: true
-    });
-    if (inserted === true) {
-      clearPendingSanitizedFileHandoff(site, "insert-text");
-      clearPendingSanitizedAttachPrompt("insert-text");
-      return true;
-    }
-    if (suppressStaleHandoffErrorAfterSuccess("sanitized_text_fallback", site, sanitizedFile)) {
-      clearPendingSanitizedAttachPrompt("stale-text-fallback-suppressed");
-      return true;
-    }
-    setBadge("Sanitized text insertion unavailable");
-    hideBadgeSoon(4200);
-    refreshBadgeFromCurrentInput();
-    return false;
-  }
-
-  async function downloadPendingSanitizedFile(site, event, input, sanitizedFile) {
-    if (!sanitizedFile) return false;
-    const driver = getCurrentHandoffDriver();
-    const payload = driver.preparePayload(sanitizedFile, "", {
-      localFile: sanitizedFile,
-      analysis: null,
-      result: null
-    });
-    const details = createSanitizedFileHandoffDetails(
-      event,
-      sanitizedFile,
-      `${site || driver.id}:pending-attach-download`
-    );
-    const downloaded = await downloadSanitizedFileFallback(event, input, payload, driver.id, details);
-    if (downloaded) {
-      clearPendingSanitizedFileHandoff(site, "download");
-      clearPendingSanitizedAttachPrompt("download");
-    } else if (suppressStaleHandoffErrorAfterSuccess("sanitized_download_fallback", site, sanitizedFile)) {
-      clearPendingSanitizedAttachPrompt("stale-download-fallback-suppressed");
-      return true;
-    }
-    return downloaded;
-  }
-
-  function cancelPendingSanitizedFileAttach(site) {
-    clearPendingSanitizedFileHandoff(site, "cancelled");
-    clearPendingSanitizedAttachPrompt("cancelled");
-    setBadge("Sanitized file attach cancelled");
-    hideBadgeSoon(3200);
-    refreshBadgeFromCurrentInput();
   }
 
   async function performPendingGeminiUserAttach(event, input, sanitizedFile) {

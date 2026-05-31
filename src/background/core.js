@@ -55,6 +55,8 @@ const CONTENT_SCRIPT_FILES = [
   "content/composer_helpers.js",
   "content/file_paste_helpers.js",
   "content/file_handoff_state.js",
+  "content/file_handoff_pending.js",
+  "content/file_handoff_flow.js",
   "content/content.js"
 ];
 const CONTENT_STYLE_FILES = ["content/overlay.css"];
