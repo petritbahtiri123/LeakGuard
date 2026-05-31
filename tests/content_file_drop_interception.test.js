@@ -316,12 +316,14 @@ function fileHandoffPendingHarnessSource() {
   ];
 }
 
-function fileHandoffFlowHarnessSource() {
+function fileHandoffFlowHarnessSource(options = {}) {
+  const includeLegacyLocalFile = options.includeLegacyLocalFile !== false;
   return [
     extractFunctionSource(fileHandoffFlowSource, "createFileHandoffFlow"),
     `const {
       isFileOnlySanitizedPayload,
       isSafeSanitizedPayload,
+      ${includeLegacyLocalFile ? "handOffSanitizedLocalFile," : ""}
       tryRealFileInputSanitizedFileAttach,
       insertSanitizedPayloadText,
       downloadSanitizedFileFallback,
@@ -336,6 +338,8 @@ function fileHandoffFlowHarnessSource() {
         typeof buildSanitizedDownloadFileName === "function"
           ? buildSanitizedDownloadFileName
           : () => "sanitized-file.txt",
+      createSanitizedDataTransfer:
+        typeof createSanitizedDataTransfer === "function" ? createSanitizedDataTransfer : () => null,
       createSanitizedDataTransferForHandoff:
         typeof createSanitizedDataTransferForHandoff === "function"
           ? createSanitizedDataTransferForHandoff
@@ -350,6 +354,8 @@ function fileHandoffFlowHarnessSource() {
       describeFileForDebug,
       describeFileHandoffAdapter,
       documentRef: document,
+      dispatchSanitizedFileEvent:
+        typeof dispatchSanitizedFileEvent === "function" ? dispatchSanitizedFileEvent : () => false,
       downloadGeminiSanitizedFileFallback:
         typeof downloadGeminiSanitizedFileFallback === "function"
           ? downloadGeminiSanitizedFileFallback
@@ -364,6 +370,10 @@ function fileHandoffFlowHarnessSource() {
       getCurrentHandoffDriverId,
       getFileHandoffAdapterById,
       getFileHandoffAdapterForLocation,
+      handOffGeminiSanitizedFileUpload:
+        typeof handOffGeminiSanitizedFileUpload === "function"
+          ? handOffGeminiSanitizedFileUpload
+          : async () => false,
       handOffGrokSanitizedFileUpload:
         typeof handOffGrokSanitizedFileUpload === "function"
           ? handOffGrokSanitizedFileUpload
@@ -379,6 +389,7 @@ function fileHandoffFlowHarnessSource() {
       isFileHandoffAdapterPendingAttachEnabled,
       isFirefoxRuntime,
       isGeminiHost,
+      isGrokHost,
       isProtectedFileDropDriver,
       locationRef: location,
       logSanitizedFileHandoffFailure,
@@ -1284,7 +1295,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "applyGeminiSanitizedTextFallback"),
       extractFunctionSource(contentSource, "applySanitizedTextFallback"),
       extractFunctionSource(contentSource, "readSanitizedFileTextForFallback"),
-      ...fileHandoffFlowHarnessSource(),
+      ...fileHandoffFlowHarnessSource({ includeLegacyLocalFile: false }),
       extractFunctionSource(contentSource, "isForbiddenGeminiUploadButton"),
       extractFunctionSource(contentSource, "isAllowedGeminiUploadMenuOpener"),
       extractFunctionSource(contentSource, "insertGeminiLocalFileText"),
@@ -1988,7 +1999,6 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "clearPendingGeminiGhostIngressClickInterceptor"),
       extractFunctionSource(contentSource, "createGeminiGhostIngressClickInterceptor"),
       extractFunctionSource(contentSource, "waitForGeminiGhostIngressFileInput"),
-      extractFunctionSource(contentSource, "handOffSanitizedLocalFile"),
       extractFunctionSource(contentSource, "handOffGeminiSanitizedFileUpload"),
       extractFunctionSource(contentSource, "listFirefoxGeminiBridgeSanitizedFiles"),
       extractFunctionSource(contentSource, "createFirefoxGeminiFileInputBridgeDebug"),

@@ -40,6 +40,8 @@ The Firefox listing should match LeakGuard's local-only model:
 
 If AMO asks about selected local files, describe local text-file processing in the browser and avoid claiming unsupported formats are protected.
 
+Do not publish the privacy/support contact fields until [PRIVACY_POLICY.md](PRIVACY_POLICY.md) and [STORE_ASSETS_CHECKLIST.md](STORE_ASSETS_CHECKLIST.md) have real project contacts. No correct support or privacy contact is currently discoverable in this repository.
+
 ## Source Package Notes
 
 A reviewer-oriented source package should include enough to reproduce the submitted Firefox package:
@@ -58,6 +60,7 @@ Avoid unnecessary generated or vendored duplication if AMO requirements allow it
 - LeakGuard processes protected composer text locally in the browser.
 - Supported local UTF-8 text files are scanned and redacted locally.
 - Unsupported binary, document, image, archive, executable, and OCR flows are not scanned or redacted in this release.
+- Unsupported files are not represented as scanned, sanitized, or protected; behavior can be warning-only pass-through or blocking when the browser/site path cannot be safely continued.
 - Secure reveal is restricted to extension-owned UI.
 - Raw secrets are not intentionally persisted in long-term extension storage.
 - Optional host access is requested only when a user adds a protected site.
@@ -82,7 +85,7 @@ Then manually check:
 - `Allow once` works when policy allows it
 - secure reveal stays in the popup
 - File Scanner handles one supported text file
-- unsupported files show honest text-only messaging
+- unsupported files show honest text-only messaging and are not marked scanned, sanitized, or protected
 
 For full release coverage, complete [RELEASE_QA_CHECKLIST.md](RELEASE_QA_CHECKLIST.md).
 
@@ -95,4 +98,4 @@ Firefox listing copy should stay aligned with:
 - [NON_GOALS.md](NON_GOALS.md)
 - [BROWSER_COMPATIBILITY_MATRIX.md](BROWSER_COMPATIBILITY_MATRIX.md)
 
-Do not claim full DLP, perfect detection, compliance certification, PDF/DOCX/image support, or support for every editor/upload path.
+Do not claim full DLP, perfect detection, compliance certification, PDF/DOCX/image support, remote verification, or support for every editor/upload path.

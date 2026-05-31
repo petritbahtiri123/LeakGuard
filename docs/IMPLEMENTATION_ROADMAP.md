@@ -1,6 +1,6 @@
 # LeakGuard Implementation Roadmap
 
-Updated: 2026-05-29
+Updated: 2026-05-31
 
 This roadmap turns the open items from [deep-research-report.md](deep-research-report.md), [DOCUMENTATION_ROADMAP.md](DOCUMENTATION_ROADMAP.md), and [code-quality-audit.md](code-quality-audit.md) into an implementation sequence.
 
@@ -81,7 +81,7 @@ Suggested PRs:
 
 Purpose: make release confidence inspectable.
 
-Status: In progress (reporting-only CI artifacts and provenance checklist added 2026-05-30).
+Status: In progress. Reporting-only CI artifacts and provenance checklist are present; actual per-release notes remain pending until a human release is cut.
 
 Tasks:
 
@@ -90,8 +90,8 @@ Tasks:
 - [x] Generate an SBOM in CI.
 - [x] Add a repository secret scan job using synthetic-safe configuration.
 - [x] Produce package checksums for generated release artifacts.
-- [x] Add a release provenance checklist covering source commit, build command, artifact hash, CI reports, QA signoff, and residual risks.
-- [ ] Record source commit, build command, package hash, and QA signoff in release notes for each actual release.
+- [x] Add a release provenance checklist covering source commit, build command, package/artifact hash, SBOM artifact, dependency scan result, CI reports, QA signoff, and residual risks.
+- [ ] Record source commit, build command, package/artifact hash, SBOM artifact, dependency scan result, QA signoff, and residual risks in release notes for each actual release.
 
 Acceptance criteria:
 
@@ -190,11 +190,13 @@ Acceptance criteria:
 
 ### 4D - Extract File Handoff Submodules
 
+Status: Done (2026-05-31).
+
 Tasks:
 
-- Split file-handoff state, pending attach lifecycle, and fallback sequencing out of `content.js` only after 4A-4C.
-- Keep provider-specific selectors and gates intact.
-- Preserve fail-closed order:
+- [x] Split file-handoff state, pending attach lifecycle, and fallback sequencing out of `content.js` only after 4A-4C.
+- [x] Keep provider-specific selectors and gates intact.
+- [x] Preserve fail-closed order:
   1. direct sanitized file handoff
   2. tested pending attach
   3. sanitized text fallback
@@ -203,8 +205,8 @@ Tasks:
 
 Acceptance criteria:
 
-- `content.js` becomes smaller without weakening fail-closed behavior.
-- Browser smoke and focused file-flow tests pass.
+- [x] `content.js` becomes smaller without weakening fail-closed behavior.
+- [x] Browser smoke and focused file-flow tests pass.
 
 Suggested PR sequence:
 
@@ -217,20 +219,26 @@ Suggested PR sequence:
 
 Purpose: make public/admin claims safe to publish.
 
+Status: Engineering checklist pass complete for current docs; human contacts, screenshots, legal/product review, and date-sensitive browser-policy rechecks remain pending before publication.
+
 Tasks:
 
-- Replace privacy/support contact placeholders.
-- Recheck enterprise docs against current Chrome, Edge, and Firefox policy documentation before publication.
-- Complete [STORE_ASSETS_CHECKLIST.md](STORE_ASSETS_CHECKLIST.md).
-- Complete [FIREFOX_AMO_CHECKLIST.md](FIREFOX_AMO_CHECKLIST.md).
-- Capture fresh screenshots with synthetic data only.
-- Review README, privacy policy, Chrome listing, Firefox notes, and release QA together.
+- [x] Add explicit TODO checklist items for missing privacy/support contacts when no correct project contact is locally discoverable.
+- [ ] Replace privacy/support contact TODOs with real project contacts before publication.
+- [ ] Recheck enterprise docs against current Chrome, Edge, and Firefox policy documentation before publication.
+- [x] Update [STORE_ASSETS_CHECKLIST.md](STORE_ASSETS_CHECKLIST.md) to reflect current local-only behavior, unsupported-format limits, Edge wording constraints, enterprise boundaries, and contact TODOs.
+- [ ] Complete [STORE_ASSETS_CHECKLIST.md](STORE_ASSETS_CHECKLIST.md) with final screenshots, contacts, release QA, package version, and claim review.
+- [x] Update [FIREFOX_AMO_CHECKLIST.md](FIREFOX_AMO_CHECKLIST.md) to reflect current unsupported-file behavior, local-only data declaration, AMO reviewer notes, and contact TODO dependency.
+- [ ] Complete [FIREFOX_AMO_CHECKLIST.md](FIREFOX_AMO_CHECKLIST.md) for an actual Firefox package submission.
+- [ ] Capture fresh screenshots with synthetic data only.
+- [x] Perform an engineering unsafe-claim review across README, privacy policy, Chrome listing, Firefox notes, enterprise docs, and release QA.
+- [ ] Record human legal/product review before publication.
 
 Acceptance criteria:
 
-- No public document claims full DLP, perfect protection, compliance certification, unsupported file support, or remote verification.
-- Store docs and screenshots match actual release behavior.
-- Human legal/product review is recorded before publication.
+- [x] No reviewed public document claims full DLP, perfect protection, compliance certification, unsupported file support, or remote verification.
+- [ ] Store docs and screenshots match actual release behavior for the target release.
+- [ ] Human legal/product review is recorded before publication.
 
 Suggested PRs:
 
@@ -241,9 +249,11 @@ Suggested PRs:
 
 Purpose: turn scattered security notes into a maintained engineering reference.
 
+Status: Done for the current implementation reference (2026-05-31).
+
 Tasks:
 
-- Create a formal threat model covering:
+- [x] Create a formal threat model covering:
   - assets
   - trust boundaries
   - hostile page assumptions
@@ -252,7 +262,7 @@ Tasks:
   - file handoff trust boundaries
   - AI assist boundaries
   - enterprise audit metadata boundaries
-- Add architecture diagrams for:
+- [x] Add architecture diagrams for:
   - prompt redaction
   - placeholder/session state
   - secure reveal
@@ -261,9 +271,9 @@ Tasks:
 
 Acceptance criteria:
 
-- Threat model links to `SECURITY_REVIEW.md`, `NON_GOALS.md`, and this roadmap.
-- Diagrams describe actual current behavior, not aspirational behavior.
-- Security tests map to key threat-model invariants.
+- [x] Threat model links to `SECURITY_REVIEW.md`, `NON_GOALS.md`, and this roadmap.
+- [x] Diagrams describe actual current behavior, not aspirational behavior.
+- [x] Security tests map to key threat-model invariants.
 
 Suggested PR:
 

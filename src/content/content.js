@@ -331,6 +331,7 @@
   const fileHandoffFlow = createFileHandoffFlow({
     applySanitizedTextFallback,
     buildSanitizedDownloadFileName,
+    createSanitizedDataTransfer,
     createSanitizedDataTransferForHandoff,
     createSanitizedFileHandoffDetails,
     createSanitizedPayload,
@@ -338,6 +339,7 @@
     describeFileForDebug,
     describeFileHandoffAdapter,
     documentRef: document,
+    dispatchSanitizedFileEvent,
     downloadGeminiSanitizedFileFallback,
     emitDebug: debugReveal,
     findGeminiFileInput,
@@ -345,6 +347,7 @@
     getCurrentHandoffDriverId,
     getFileHandoffAdapterById,
     getFileHandoffAdapterForLocation,
+    handOffGeminiSanitizedFileUpload,
     handOffGrokSanitizedFileUpload,
     handOffSanitizedFileInput,
     hideBadgeSoon,
@@ -353,6 +356,7 @@
     isFileHandoffAdapterPendingAttachEnabled,
     isFirefoxRuntime,
     isGeminiHost,
+    isGrokHost,
     isProtectedFileDropDriver,
     locationRef: location,
     logSanitizedFileHandoffFailure,
@@ -371,6 +375,7 @@
   const {
     isFileOnlySanitizedPayload,
     isSafeSanitizedPayload,
+    handOffSanitizedLocalFile,
     tryRealFileInputSanitizedFileAttach,
     insertSanitizedPayloadText,
     downloadSanitizedFileFallback,
@@ -8992,60 +8997,6 @@
       }
       return false;
     }
-  }
-
-  async function handOffSanitizedLocalFile(event, input, sanitizedFile, context) {
-    if (shouldUseFirefoxTextFallbackForFileHandoff()) {
-      debugReveal("file-handoff:firefox-text-fallback-required", {
-        context,
-        sanitizedFile: describeFileForDebug(sanitizedFile)
-      });
-      return false;
-    }
-
-    const target = event?.target || input;
-    if (context === "drop") {
-      if (isGeminiHost()) {
-        return handOffGeminiSanitizedFileUpload(event, input, sanitizedFile, {
-          allowUploadUiClick: isFirefoxRuntime()
-        });
-      }
-
-      if (isGrokHost()) {
-        return handOffGrokSanitizedFileUpload(event, input, sanitizedFile);
-      }
-    }
-
-    const transfer = createSanitizedDataTransfer(sanitizedFile);
-    if (!transfer) {
-      debugReveal("file-handoff:data-transfer-create-failed", {
-        context,
-        sanitizedFile: describeFileForDebug(sanitizedFile)
-      });
-      return false;
-    }
-
-    if (context === "file-input") {
-      return handOffSanitizedFileInput(event?.target, transfer, {
-        dispatchInput: true
-      });
-    }
-
-    if (context === "drop") {
-
-      try {
-        transfer.dropEffect = "copy";
-      } catch {
-        // Some synthetic DataTransfer objects expose dropEffect as read-only.
-      }
-      return dispatchSanitizedFileEvent(target, "drop", transfer);
-    }
-
-    if (context === "paste") {
-      return dispatchSanitizedFileEvent(target, "paste", transfer);
-    }
-
-    return false;
   }
 
   function isForbiddenGeminiUploadButton(candidate) {

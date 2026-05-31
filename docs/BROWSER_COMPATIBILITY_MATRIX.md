@@ -1,6 +1,6 @@
 # Browser Compatibility Matrix
 
-LeakGuard currently has first-class build targets for Chrome and Firefox. Edge can load the Chrome target for manual testing because it is Chromium-based, but this repository does not yet maintain a separate Edge build or smoke CI target.
+LeakGuard currently has first-class build targets for Chrome and Firefox. Edge can load the Chrome target because it is Chromium-based, and this repository has a basic Edge smoke gate that runs the Chrome build in Edge. It still does not maintain a separate Edge build or store target.
 
 ## Build Targets
 
@@ -8,7 +8,7 @@ LeakGuard currently has first-class build targets for Chrome and Firefox. Edge c
 | --- | --- | --- | --- |
 | Chrome / Chromium | `dist/chrome` | `dist/chrome-enterprise` | Chrome manifest overlay requires Chrome 120 or later. |
 | Firefox | `dist/firefox` | `dist/firefox-enterprise` | Firefox overlay uses a background script shape and Gecko metadata. |
-| Edge | use `dist/chrome` | use `dist/chrome-enterprise` | Treat as Chromium-compatible until release QA proves the exact version. |
+| Edge | use `dist/chrome` | use `dist/chrome-enterprise` | Basic smoke coverage uses the Chrome target. Treat release claims as version-specific until release QA proves the exact Edge version. |
 | Safari | none | none | Not supported by this repository today. |
 
 ## Shared Behavior

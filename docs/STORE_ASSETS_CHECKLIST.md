@@ -13,9 +13,18 @@ Do not use real credentials, private prompts, private customer data, or private 
 - Permission justifications
 - Privacy policy URL or submitted policy text
 - Support contact
+- Privacy contact
 - Known limitations or launch-scope notes where the store allows them
 
 Chrome copy starts in [CHROME_WEB_STORE_LISTING.md](CHROME_WEB_STORE_LISTING.md). Firefox-specific submission notes live in [FIREFOX_AMO_CHECKLIST.md](FIREFOX_AMO_CHECKLIST.md).
+
+Current contact status:
+
+- [ ] TODO before submission: fill in the project support contact.
+- [ ] TODO before submission: fill in the project privacy contact.
+- [ ] TODO before submission: confirm the private security reporting path.
+
+No correct support or privacy contact was locally discoverable in the repository. Do not invent one in store copy.
 
 ## Screenshots
 
@@ -66,11 +75,21 @@ Check store-facing copy and screenshots against:
 - [FIREFOX_AMO_CHECKLIST.md](FIREFOX_AMO_CHECKLIST.md)
 - [RELEASE_QA_CHECKLIST.md](RELEASE_QA_CHECKLIST.md)
 
+Current behavior boundaries that store assets must preserve:
+
+- LeakGuard is local-only and uses no backend secret processing, telemetry, cloud scanning, remote model calls, or remote verification.
+- LeakGuard is risk reduction, not full DLP, perfect protection, guaranteed detection, compliance certification, credential lifecycle management, or repository-history scanning.
+- File support is limited to supported UTF-8 text files. PDF, DOCX, images, archives, executables, OCR, screenshots, and binary files are not scanned or redacted in this release.
+- Supported text-file upload paths must be described as browser/site dependent. Do not claim support for every editor, upload flow, browser, or synthetic file handoff path.
+- Edge should be described as Chromium-compatible using the Chrome target unless a release-specific Edge QA record supports stronger wording.
+- Enterprise policy should be described as in-extension policy support, not browser-level force install, removal prevention, SIEM integration, or compliance certification.
+
 ## Submission Blockers
 
 Do not submit until:
 
-- privacy/support contact placeholders are replaced
+- privacy/support contact TODOs are replaced with real project contacts
+- privacy policy contact TODOs are completed
 - final screenshots exist
 - release QA is complete
 - package version matches release notes

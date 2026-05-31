@@ -77,6 +77,7 @@ Release notes should separate:
 - enterprise/admin notes
 - known limitations
 - test and QA summary
+- release provenance and residual risks
 
 Keep claims conservative. Say LeakGuard reduces accidental leak risk; do not claim perfect protection, guaranteed detection, or compliance certification.
 
@@ -88,7 +89,10 @@ Release artifacts should be tied back to:
 - version number
 - build command
 - browser target
-- package hash, when available
+- package or artifact hash
+- SBOM artifact
+- dependency scan result, including `npm audit --omit=dev --audit-level=high` and OSV status
 - manual QA signoff
+- residual risks
 
 Avoid committing generated `dist/` output or new package archives unless the release process explicitly requires it.

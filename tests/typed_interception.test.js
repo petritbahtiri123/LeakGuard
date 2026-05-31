@@ -35,6 +35,10 @@ const {
 } = ComposerHelpers;
 
 const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
+const fileHandoffFlowSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/file_handoff_flow.js"),
+  "utf8"
+);
 
 function extractFunctionSource(source, name) {
   const match = source.match(new RegExp(`(?:async\\s+)?function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n  \\}`));
@@ -472,17 +476,17 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
     "local file handoff should consume first, use background redaction, and avoid independent scanner managers"
   );
   assert.ok(
-    contentSource.includes("function handOffSanitizedLocalFile") &&
+    fileHandoffFlowSource.includes("function handOffSanitizedLocalFile") &&
       contentSource.includes("fileInput.files = transfer.files") &&
       contentSource.includes("function handOffSanitizedFileInput") &&
-      contentSource.includes("resolveFileInputForHandoff(event, input)") &&
+      fileHandoffFlowSource.includes("resolveFileInputForHandoff(event, input)") &&
       contentSource.includes("isGeminiHost()") &&
       contentSource.includes("isGrokHost()") &&
       contentSource.includes("function handOffGeminiSanitizedFileUpload") &&
       contentSource.includes("function handOffGrokSanitizedFileUpload") &&
       contentSource.includes("file-handoff:fail-closed") &&
-      contentSource.includes('dispatchSanitizedFileEvent(target, "drop", transfer)') &&
-      contentSource.includes('dispatchSanitizedFileEvent(target, "paste", transfer)'),
+      fileHandoffFlowSource.includes('dispatchSanitizedFileEvent(target, "drop", transfer)') &&
+      fileHandoffFlowSource.includes('dispatchSanitizedFileEvent(target, "paste", transfer)'),
     "local file handling should hand off sanitized files through native site upload adapters and fail closed when required handoff fails"
   );
   assert.ok(

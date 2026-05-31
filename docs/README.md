@@ -24,6 +24,7 @@ For the full documentation inventory, quality status, and cleanup backlog, see [
 ## Privacy And Security Model
 
 - [PRIVACY_POLICY.md](PRIVACY_POLICY.md) - user-facing privacy policy draft with local-only processing, storage, secure reveal, and limitations.
+- [THREAT_MODEL.md](THREAT_MODEL.md) - formal engineering threat model with trust boundaries, diagrams, residual risks, and security test mapping.
 - [SECURITY.md](../SECURITY.md) - vulnerability reporting policy.
 - [SECURITY_REVIEW.md](../SECURITY_REVIEW.md) - technical security review and current residual risks.
 - [NON_GOALS.md](NON_GOALS.md) - explicit boundaries against perfect privacy, full DLP, cloud scanning, and credential lifecycle claims.
@@ -55,14 +56,16 @@ For the full documentation inventory, quality status, and cleanup backlog, see [
 - [CHROME_WEB_STORE_LISTING.md](CHROME_WEB_STORE_LISTING.md) - Chrome Web Store copy, permission justifications, screenshot plan, and reviewer notes.
 - [FIREFOX_AMO_CHECKLIST.md](FIREFOX_AMO_CHECKLIST.md) - Firefox Add-ons listing and submission checklist.
 - [STORE_ASSETS_CHECKLIST.md](STORE_ASSETS_CHECKLIST.md) - screenshot, copy, and submission asset checklist.
+- [RELEASE_PROVENANCE_CHECKLIST.md](RELEASE_PROVENANCE_CHECKLIST.md) - source commit, build command, artifact hash, SBOM, dependency scan, QA signoff, and residual-risk record checklist.
 - [VERSIONING_POLICY.md](VERSIONING_POLICY.md) - version bump, release-note, QA, and artifact expectations.
-- [PRIVACY_POLICY.md](PRIVACY_POLICY.md) - required review before store submission; replace contact placeholders before publishing.
+- [PRIVACY_POLICY.md](PRIVACY_POLICY.md) - required review before store submission; complete contact TODOs before publishing.
 - [RELEASE_QA_CHECKLIST.md](RELEASE_QA_CHECKLIST.md) - packaging and submission safety checklist.
 - [codex-playbooks/firefox-addon-submission.md](codex-playbooks/firefox-addon-submission.md) - operational playbook for Firefox Add-ons submission issues.
 
 ## Architecture And Internal Design
 
 - [IMPLEMENTATION_ROADMAP.md](IMPLEMENTATION_ROADMAP.md) - ordered implementation plan for the open deep-research and code-quality findings.
+- [THREAT_MODEL.md](THREAT_MODEL.md) - current security architecture reference and Mermaid diagrams.
 - [file-handoff-architecture.md](file-handoff-architecture.md) - sanitized text-file upload handoff architecture and adapter rules.
 - [FILE_SCANNER_PLAN.md](FILE_SCANNER_PLAN.md) - file scanner architecture and implementation plan; useful for historical context and future scanner phases.
 - [deep-research-report.md](deep-research-report.md) - internal repository review, roadmap, and risk notes.

@@ -7,6 +7,7 @@
     const {
       applySanitizedTextFallback = async () => false,
       buildSanitizedDownloadFileName = () => "sanitized-file.txt",
+      createSanitizedDataTransfer = () => null,
       createSanitizedDataTransferForHandoff = () => null,
       createSanitizedFileHandoffDetails = () => ({}),
       createSanitizedPayload = () => null,
@@ -14,6 +15,7 @@
       describeFileForDebug = () => null,
       describeFileHandoffAdapter = () => null,
       documentRef = typeof document !== "undefined" ? document : null,
+      dispatchSanitizedFileEvent = () => false,
       downloadGeminiSanitizedFileFallback = async () => false,
       emitDebug = noop,
       findGeminiFileInput = () => ({ fileInput: null }),
@@ -21,6 +23,7 @@
       getCurrentHandoffDriverId = () => "",
       getFileHandoffAdapterById = () => null,
       getFileHandoffAdapterForLocation = () => null,
+      handOffGeminiSanitizedFileUpload = async () => false,
       handOffGrokSanitizedFileUpload = async () => false,
       handOffSanitizedFileInput = () => false,
       hideBadgeSoon = noop,
@@ -29,6 +32,7 @@
       isFileHandoffAdapterPendingAttachEnabled = () => false,
       isFirefoxRuntime = () => false,
       isGeminiHost = () => false,
+      isGrokHost = () => false,
       isProtectedFileDropDriver = () => false,
       locationRef = typeof location !== "undefined" ? location : null,
       logSanitizedFileHandoffFailure = noop,
@@ -56,6 +60,60 @@
           typeof payload.redactedText === "string" &&
           (payload.redactedText.length > 0 || payload.allowFileOnlyHandoff === true)
       );
+    }
+
+    async function handOffSanitizedLocalFile(event, input, sanitizedFile, context) {
+      if (shouldUseFirefoxTextFallbackForFileHandoff()) {
+        emitDebug("file-handoff:firefox-text-fallback-required", {
+          context,
+          sanitizedFile: describeFileForDebug(sanitizedFile)
+        });
+        return false;
+      }
+
+      const target = event?.target || input;
+      if (context === "drop") {
+        if (isGeminiHost()) {
+          return handOffGeminiSanitizedFileUpload(event, input, sanitizedFile, {
+            allowUploadUiClick: isFirefoxRuntime()
+          });
+        }
+
+        if (isGrokHost()) {
+          return handOffGrokSanitizedFileUpload(event, input, sanitizedFile);
+        }
+      }
+
+      const transfer = createSanitizedDataTransfer(sanitizedFile);
+      if (!transfer) {
+        emitDebug("file-handoff:data-transfer-create-failed", {
+          context,
+          sanitizedFile: describeFileForDebug(sanitizedFile)
+        });
+        return false;
+      }
+
+      if (context === "file-input") {
+        return handOffSanitizedFileInput(event?.target, transfer, {
+          dispatchInput: true
+        });
+      }
+
+      if (context === "drop") {
+
+        try {
+          transfer.dropEffect = "copy";
+        } catch {
+          // Some synthetic DataTransfer objects expose dropEffect as read-only.
+        }
+        return dispatchSanitizedFileEvent(target, "drop", transfer);
+      }
+
+      if (context === "paste") {
+        return dispatchSanitizedFileEvent(target, "paste", transfer);
+      }
+
+      return false;
     }
 
     function tryRealFileInputSanitizedFileAttach(payload, event, input, driverId) {
@@ -336,6 +394,7 @@
     return {
       isFileOnlySanitizedPayload,
       isSafeSanitizedPayload,
+      handOffSanitizedLocalFile,
       tryRealFileInputSanitizedFileAttach,
       insertSanitizedPayloadText,
       downloadSanitizedFileFallback,

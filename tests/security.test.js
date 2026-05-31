@@ -385,7 +385,7 @@ function testLocalFilePasteDoesNotExposeRawFileContent() {
   assert.ok(
     localFileSource.includes("createSanitizedTextFile(localFile.file, result.redactedText)") &&
       localFileSource.includes("handOffSanitizedLocalFile(event, input, sanitizedFile, context)") &&
-      contentSource.includes("function handOffSanitizedLocalFile") &&
+      fileHandoffFlowSource.includes("function handOffSanitizedLocalFile") &&
       contentSource.includes("fileInput.files = transfer.files") &&
       contentSource.includes("function handOffGeminiSanitizedFileUpload") &&
       contentSource.includes("function handOffGrokSanitizedFileUpload") &&

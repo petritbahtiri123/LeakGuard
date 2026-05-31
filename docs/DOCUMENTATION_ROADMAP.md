@@ -31,7 +31,8 @@ Inventory scope for this pass:
 
 | Document | Purpose | Current status |
 | --- | --- | --- |
-| [PRIVACY_POLICY.md](PRIVACY_POLICY.md) | User-facing privacy policy draft for local-only processing, storage, file handling, secure reveal, and limitations. | Needs human/legal review before publishing. Contact placeholder still needs replacement. |
+| [PRIVACY_POLICY.md](PRIVACY_POLICY.md) | User-facing privacy policy draft for local-only processing, storage, file handling, secure reveal, and limitations. | Needs human/legal review before publishing. Contact TODOs still need real project contacts. |
+| [THREAT_MODEL.md](THREAT_MODEL.md) | Formal engineering threat model with assets, trust boundaries, architecture diagrams, residual risks, and security test mapping. | Good / keep. Added in the implementation roadmap completion pass. |
 | [SECURITY.md](../SECURITY.md) | Vulnerability reporting policy. | Good / keep. |
 | [SECURITY_REVIEW.md](../SECURITY_REVIEW.md) | Technical security review and residual risks around reveal, storage, DOM, logs, and CSP. | Good / keep, but should be refreshed after major security changes. |
 | [BROWSER_COMPAT.md](../BROWSER_COMPAT.md) | Chrome/Firefox compatibility notes and fallback behavior. | Needs update. This cleanup aligned session fallback wording with the current ephemeral-memory implementation. |
@@ -74,6 +75,7 @@ Inventory scope for this pass:
 | [CHROME_WEB_STORE_LISTING.md](CHROME_WEB_STORE_LISTING.md) | Chrome listing copy, permission justifications, screenshots, and reviewer notes. | Needs product/store review before submission. Wording is conservative and local-only. |
 | [FIREFOX_AMO_CHECKLIST.md](FIREFOX_AMO_CHECKLIST.md) | Firefox Add-ons listing and submission checklist for manifest, data declaration, source package, reviewer notes, and QA. | Good / keep. Added in the roadmap follow-up pass. |
 | [STORE_ASSETS_CHECKLIST.md](STORE_ASSETS_CHECKLIST.md) | Screenshot, copy, image hygiene, and submission-asset checklist for store review. | Good / keep. Added in the roadmap follow-up pass. |
+| [RELEASE_PROVENANCE_CHECKLIST.md](RELEASE_PROVENANCE_CHECKLIST.md) | Release-record checklist for source commit, build command, artifact hashes, SBOM, dependency scans, QA signoff, and residual risks. | Good / keep. Updated in the implementation roadmap completion pass. |
 | [VERSIONING_POLICY.md](VERSIONING_POLICY.md) | Version bump, release-note, QA, and artifact expectations. | Good / keep. Added in the roadmap follow-up pass. |
 | [codex-playbooks/firefox-addon-submission.md](codex-playbooks/firefox-addon-submission.md) | Operational playbook for AMO manifest, source zip, and data declaration issues. | Good / keep as an internal playbook; not a full public AMO checklist. |
 
@@ -108,6 +110,7 @@ Inventory scope for this pass:
 - `docs/FILE_UPLOAD_SCANNING_GUIDE.md`
 - `docs/TROUBLESHOOTING.md`
 - `docs/IMPLEMENTATION_ROADMAP.md`
+- `docs/THREAT_MODEL.md`
 - `docs/REPO_MAP.md`
 - `docs/BUG_PLAYBOOK.md`
 - `docs/BUILD_TARGETS.md`
@@ -115,6 +118,7 @@ Inventory scope for this pass:
 - `docs/MANAGED_POLICY_SCHEMA.md`
 - `docs/FIREFOX_AMO_CHECKLIST.md`
 - `docs/STORE_ASSETS_CHECKLIST.md`
+- `docs/RELEASE_PROVENANCE_CHECKLIST.md`
 - `docs/VERSIONING_POLICY.md`
 - `docs/RELEASE_QA_CHECKLIST.md`
 - `docs/qa/cross-site-manual-checklist.md`
@@ -134,7 +138,7 @@ Inventory scope for this pass:
 ### Needs update
 
 - `README.md` - should remain high-level; future work should avoid adding every feature detail here.
-- `docs/PRIVACY_POLICY.md` - needs support/privacy contact replacement and human/legal review.
+- `docs/PRIVACY_POLICY.md` - needs real support/privacy contact details and human/legal review.
 - `docs/CHROME_WEB_STORE_LISTING.md` - needs final store/product review and final screenshots.
 - `docs/ENTERPRISE_DEPLOYMENT.md` - needs admin review against current browser policy docs before publication.
 - `BROWSER_COMPAT.md` - should be refreshed after each browser-specific release hardening pass; the user/release matrix now lives in `docs/BROWSER_COMPATIBILITY_MATRIX.md`.
@@ -166,10 +170,9 @@ Inventory scope for this pass:
 ### Still missing / should be created later
 
 - Full enterprise deployment examples rechecked against current Chrome, Edge, and Firefox policy documentation immediately before publication.
-- Formal threat model that complements the refreshed `docs/deep-research-report.md`.
-- Architecture diagrams for redaction, placeholder state, secure reveal, and file handoff.
+- Store/legal/product signoff for privacy contact details and public release wording.
 - Canonical known-limitations page if `docs/NON_GOALS.md` becomes too broad for user-facing limitations.
-- Browser smoke CI for Chrome, Firefox, Firefox ESR, and Edge if the repo starts claiming release-tested Edge support.
+- Firefox ESR smoke CI and broader browser/site/file-flow coverage if the repo starts claiming release-tested support beyond the current Chrome, Firefox, and basic Edge smoke gates.
 
 ### Deprecated / candidate for archive
 
@@ -198,6 +201,13 @@ Inventory scope for this pass:
 - Refreshed [deep-research-report.md](deep-research-report.md) to remove stale citation artifacts and mark completed versus open hardening items.
 - Added [IMPLEMENTATION_ROADMAP.md](IMPLEMENTATION_ROADMAP.md) as the ordered implementation plan for remaining deep-research/code-quality work.
 - Kept runtime behavior untouched and did not modify generated artifacts.
+
+## Implementation Roadmap Completion Pass
+
+- Added [THREAT_MODEL.md](THREAT_MODEL.md) with assets, trust boundaries, hostile-page assumptions, extension UI trust, session storage fallback, file handoff boundaries, local AI assist boundaries, enterprise audit metadata boundaries, Mermaid diagrams, residual risks, and existing security test mapping.
+- Updated release provenance expectations so release notes must record source commit, build command, package/artifact hash, SBOM artifact, dependency scan result, QA signoff, and residual risks.
+- Replaced the privacy contact placeholder with explicit TODO checklist items because no correct project support or privacy contact was locally discoverable.
+- Kept publication/legal/store review and browser-policy rechecks pending for humans before submission.
 
 ## Remaining Documentation Roadmap
 
@@ -245,8 +255,8 @@ Inventory scope for this pass:
 
 ### Phase 6 - Long-term documentation hardening
 
-- Create a formal threat model.
-- Add architecture diagrams for redaction, placeholder state, secure reveal, and file handoff.
+- Create a formal threat model. Completed with `docs/THREAT_MODEL.md`.
+- Add architecture diagrams for redaction, placeholder state, secure reveal, file handoff, and AI candidate gate. Completed with `docs/THREAT_MODEL.md`.
 - Maintain known limitations in one canonical place and cross-link from public docs.
 - Create a compatibility matrix for browser/version/site/file-flow support. Initial browser-target matrix completed with `docs/BROWSER_COMPATIBILITY_MATRIX.md`; site/file-flow coverage still belongs in release QA.
 - Create a troubleshooting guide. Completed with `docs/TROUBLESHOOTING.md`.

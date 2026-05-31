@@ -88,4 +88,8 @@ Session-scoped placeholder mappings are kept in browser session storage when ava
 
 ## Contact
 
-If you publish LeakGuard, replace this section with your actual support and privacy contact details before store submission.
+- [ ] TODO before publication: add the project support contact.
+- [ ] TODO before publication: add the project privacy contact.
+- [ ] TODO before publication: confirm the private security reporting contact or GitHub private vulnerability reporting path.
+
+No project support or privacy contact is currently recorded in this repository. Do not publish this policy or submit store listings until those contacts are filled in and reviewed.
