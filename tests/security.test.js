@@ -438,30 +438,36 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const baseManifest = JSON.parse(fs.readFileSync(path.join(repoRoot, "manifests/base.json"), "utf8"));
   const staticScripts = baseManifest.content_scripts[0].js;
   const dynamicScripts = Array.from(
-    backgroundSource.matchAll(/"([^"]+(?:fileScanner|file_paste_helpers|content)\.js)"/g)
+    backgroundSource.matchAll(/"([^"]+(?:fileScanner|file_paste_helpers|file_handoff_state|content)\.js)"/g)
   ).map((match) => match[1]);
 
   const staticFileScanner = staticScripts.indexOf("shared/fileScanner.js");
   const staticFilePaste = staticScripts.indexOf("content/file_paste_helpers.js");
+  const staticFileHandoffState = staticScripts.indexOf("content/file_handoff_state.js");
   const staticContent = staticScripts.indexOf("content/content.js");
   const dynamicFileScanner = dynamicScripts.indexOf("shared/fileScanner.js");
   const dynamicFilePaste = dynamicScripts.indexOf("content/file_paste_helpers.js");
+  const dynamicFileHandoffState = dynamicScripts.indexOf("content/file_handoff_state.js");
   const dynamicContent = dynamicScripts.indexOf("content/content.js");
 
   assert.ok(
-    staticFileScanner > -1 && staticFilePaste > -1 && staticContent > -1,
-    "static manifest should include scanner, file paste helper, and content script"
+    staticFileScanner > -1 && staticFilePaste > -1 && staticFileHandoffState > -1 && staticContent > -1,
+    "static manifest should include scanner, file paste helper, file handoff state, and content script"
   );
   assert.ok(
-    dynamicFileScanner > -1 && dynamicFilePaste > -1 && dynamicContent > -1,
-    "dynamic injection should include scanner, file paste helper, and content script"
+    dynamicFileScanner > -1 && dynamicFilePaste > -1 && dynamicFileHandoffState > -1 && dynamicContent > -1,
+    "dynamic injection should include scanner, file paste helper, file handoff state, and content script"
   );
   assert.ok(
-    staticFileScanner < staticFilePaste && staticFilePaste < staticContent,
+    staticFileScanner < staticFilePaste &&
+      staticFilePaste < staticFileHandoffState &&
+      staticFileHandoffState < staticContent,
     "static manifest file paste order should load dependencies before content.js"
   );
   assert.ok(
-    dynamicFileScanner < dynamicFilePaste && dynamicFilePaste < dynamicContent,
+    dynamicFileScanner < dynamicFilePaste &&
+      dynamicFilePaste < dynamicFileHandoffState &&
+      dynamicFileHandoffState < dynamicContent,
     "dynamic injection file paste order should load dependencies before content.js"
   );
 }

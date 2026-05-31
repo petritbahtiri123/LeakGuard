@@ -4,6 +4,10 @@ const path = require("path");
 
 const repoRoot = path.join(__dirname, "..");
 const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
+const fileHandoffStateSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/file_handoff_state.js"),
+  "utf8"
+);
 const backgroundSource = fs.readFileSync(path.join(repoRoot, "src/background/core.js"), "utf8");
 const overlayCssSource = fs.readFileSync(path.join(repoRoot, "src/content/overlay.css"), "utf8");
 
@@ -216,6 +220,47 @@ function fileHandoffAdapterHarnessSource() {
     extractFunctionSource(contentSource, "attemptPendingSanitizedFileHandoff"),
     extractFunctionSource(contentSource, "clearPendingSanitizedFileHandoff"),
     extractFunctionSource(contentSource, "attachPendingSanitizedFileWithTrustedActivation")
+  ];
+}
+
+function fileHandoffStateHarnessSource() {
+  return [
+    extractFunctionSource(fileHandoffStateSource, "createFileHandoffState"),
+    `const {
+      sanitizedFileInputHandoffs,
+      getFileMetadataSignature,
+      getFileListMetadataSignature,
+      markSanitizedFileHandoff,
+      deleteSanitizedFileHandoffMark,
+      shouldSuppressSanitizedFileReprocessing,
+      isFileUnavailableLocalFileResult,
+      getFileUnavailableAfterHandoffSuppression,
+      suppressFileUnavailableAfterHandoff,
+      suppressStaleHandoffErrorAfterSuccess,
+      isFirefoxProtectedFileInputEvent,
+      getFirefoxFileInputTransaction,
+      setFirefoxFileInputTransaction,
+      markFirefoxFileInputTransactionReplaced,
+      shouldSuppressFirefoxFileInputEvent,
+      clearLocalFileInputSelection
+    } = createFileHandoffState({
+      emitDebug: debugReveal,
+      describeFileForDebug,
+      describeFileInputForDebug,
+      getCurrentHandoffDriverId,
+      getFileHandoffAdapterForLocation,
+      isFileInputElement,
+      isFirefoxRuntime,
+      isProtectedFileDropDriver,
+      listLocalTransferFiles,
+      locationRef: location,
+      setTimeoutFn: setTimeout,
+      DataTransferCtor: typeof DataTransfer === "function" ? DataTransfer : null,
+      constants: {
+        PROGRAMMATIC_INPUT_SUPPRESS_MS,
+        SANITIZED_FILE_HANDOFF_SUPPRESS_MS
+      }
+    });`
   ];
 }
 
@@ -860,17 +905,6 @@ function createHarness(overrides = {}) {
       "let suppressInputScanUntil = 0;",
       "let syntheticFileListCapabilityCache = null;",
       "let inputFileAssignmentCapabilityCache = null;",
-      "const sanitizedFileInputHandoffs = new WeakSet();",
-      "const sanitizedFileInputHandoffExpires = new WeakMap();",
-      "const sanitizedFileInputHandoffRecords = new WeakMap();",
-      "const sanitizedFileHandoffFiles = new WeakSet();",
-      "const sanitizedFileHandoffFileExpires = new WeakMap();",
-      "const sanitizedFileHandoffSignatures = new Map();",
-      "const recentSanitizedFileInputHandoffRecords = [];",
-      "const firefoxFileInputTransactions = new WeakMap();",
-      "let sanitizedFileHandoffSequence = 0;",
-      "let lastCompletedSanitizedFileInputHandoff = null;",
-      "let lastCompletedPendingSanitizedFileInputHandoff = null;",
       "let pendingGeminiSanitizedFileHandoff = null;",
       "let pendingGeminiSanitizedFileObserver = null;",
       "let pendingGeminiSanitizedFileTimer = 0;",
@@ -916,36 +950,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "isExpectedFirefoxGeminiNoPickerMiss"),
       extractFunctionSource(contentSource, "shouldQueueFirefoxGeminiPendingSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "getFirefoxRawFileUploadBlockedMessage"),
-      extractFunctionSource(contentSource, "getFileMetadataSignature"),
-      extractFunctionSource(contentSource, "getFileListMetadataSignature"),
-      extractFunctionSource(contentSource, "isWeakSetFileObject"),
-      extractFunctionSource(contentSource, "getSanitizedFileHandoffSiteId"),
-      extractFunctionSource(contentSource, "getSanitizedFileHandoffAdapterId"),
-      extractFunctionSource(contentSource, "isPendingSanitizedFileHandoffStage"),
-      extractFunctionSource(contentSource, "pruneRecentSanitizedFileInputHandoffRecords"),
-      extractFunctionSource(contentSource, "createSanitizedFileInputHandoffRecord"),
-      extractFunctionSource(contentSource, "recordSanitizedFileInputHandoffCompletion"),
-      extractFunctionSource(contentSource, "deleteSanitizedFileInputHandoffRecord"),
-      extractFunctionSource(contentSource, "getRecentSanitizedFileInputHandoffRecord"),
-      extractFunctionSource(contentSource, "createSanitizedHandoffSuppressionDebug"),
-      extractFunctionSource(contentSource, "deleteSanitizedFileHandoffMark"),
-      extractFunctionSource(contentSource, "expireSanitizedFileHandoffMarks"),
-      extractFunctionSource(contentSource, "pruneExpiredSanitizedFileHandoffSignatures"),
-      extractFunctionSource(contentSource, "markSanitizedFileHandoff"),
-      extractFunctionSource(contentSource, "isSanitizedFileHandoffFile"),
-      extractFunctionSource(contentSource, "getSanitizedFileInputHandoffSuppression"),
-      extractFunctionSource(contentSource, "suppressSanitizedFileInputHandoffEvent"),
-      extractFunctionSource(contentSource, "isFileUnavailableLocalFileResult"),
-      extractFunctionSource(contentSource, "getFileUnavailableAfterHandoffSuppression"),
-      extractFunctionSource(contentSource, "suppressFileUnavailableAfterHandoff"),
-      extractFunctionSource(contentSource, "getRecentSanitizedFileHandoffSuccessForSite"),
-      extractFunctionSource(contentSource, "suppressStaleHandoffErrorAfterSuccess"),
-      extractFunctionSource(contentSource, "isFirefoxProtectedFileInputEvent"),
-      extractFunctionSource(contentSource, "getFirefoxFileInputTransaction"),
-      extractFunctionSource(contentSource, "setFirefoxFileInputTransaction"),
-      extractFunctionSource(contentSource, "markFirefoxFileInputTransactionReplaced"),
-      extractFunctionSource(contentSource, "shouldSuppressFirefoxFileInputEvent"),
-      extractFunctionSource(contentSource, "clearLocalFileInputSelection"),
+      ...fileHandoffStateHarnessSource(),
       extractFunctionSource(contentSource, "isPasteBeforeInput"),
       extractFunctionSource(contentSource, "getPasteTransfer"),
       extractFunctionSource(contentSource, "getPastedPlainText"),
@@ -1702,7 +1707,6 @@ function createHandoffHarness({
     console: {
       error: (...args) => consoleErrors.push(args)
     },
-    sanitizedFileInputHandoffs: new WeakSet(),
     fallbackDrops,
     debugReveal: (label, payload) => debugEvents.push({ label, payload })
   };
@@ -1719,6 +1723,7 @@ function createHandoffHarness({
       "const GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MS = 60000;",
       "const GROK_PENDING_SANITIZED_FILE_HANDOFF_MS = 60000;",
       "const SANITIZED_FILE_HANDOFF_SUPPRESS_MS = 30000;",
+      "const PROGRAMMATIC_INPUT_SUPPRESS_MS = 500;",
       'const GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MESSAGE = "Large file sanitized. Click Attach sanitized file or Gemini Upload files.";',
       'const GROK_PENDING_SANITIZED_FILE_HANDOFF_MESSAGE = "Large file sanitized. Click Attach sanitized file or Grok Upload/Attach.";',
       "let pendingGeminiSanitizedFileHandoff = null;",
@@ -1739,16 +1744,6 @@ function createHandoffHarness({
       "let pendingAttachPromptSite = \"\";",
       "let syntheticFileListCapabilityCache = null;",
       "let inputFileAssignmentCapabilityCache = null;",
-      "const sanitizedFileInputHandoffExpires = new WeakMap();",
-      "const sanitizedFileInputHandoffRecords = new WeakMap();",
-      "const sanitizedFileHandoffFiles = new WeakSet();",
-      "const sanitizedFileHandoffFileExpires = new WeakMap();",
-      "const sanitizedFileHandoffSignatures = new Map();",
-      "const recentSanitizedFileInputHandoffRecords = [];",
-      "const firefoxFileInputTransactions = new WeakMap();",
-      "let sanitizedFileHandoffSequence = 0;",
-      "let lastCompletedSanitizedFileInputHandoff = null;",
-      "let lastCompletedPendingSanitizedFileInputHandoff = null;",
       "const geminiSanitizedDownloadFallbacks = new WeakSet();",
       'const GEMINI_SANITIZED_DOWNLOAD_MESSAGE = "Sanitized file downloaded. Upload the LeakGuard redacted copy to Gemini.";',
       'const GEMINI_SANITIZED_DOWNLOAD_MODAL_MESSAGE = "Gemini does not expose a safe upload target. LeakGuard downloaded a sanitized copy. Upload that redacted file manually.";',
@@ -1776,30 +1771,7 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "shouldUseFirefoxTextFallbackForFileHandoff"),
       extractFunctionSource(contentSource, "isExpectedFirefoxGeminiNoPickerMiss"),
       extractFunctionSource(contentSource, "shouldQueueFirefoxGeminiPendingSanitizedFileHandoff"),
-      extractFunctionSource(contentSource, "getFileMetadataSignature"),
-      extractFunctionSource(contentSource, "getFileListMetadataSignature"),
-      extractFunctionSource(contentSource, "isWeakSetFileObject"),
-      extractFunctionSource(contentSource, "getSanitizedFileHandoffSiteId"),
-      extractFunctionSource(contentSource, "getSanitizedFileHandoffAdapterId"),
-      extractFunctionSource(contentSource, "isPendingSanitizedFileHandoffStage"),
-      extractFunctionSource(contentSource, "pruneRecentSanitizedFileInputHandoffRecords"),
-      extractFunctionSource(contentSource, "createSanitizedFileInputHandoffRecord"),
-      extractFunctionSource(contentSource, "recordSanitizedFileInputHandoffCompletion"),
-      extractFunctionSource(contentSource, "deleteSanitizedFileInputHandoffRecord"),
-      extractFunctionSource(contentSource, "getRecentSanitizedFileInputHandoffRecord"),
-      extractFunctionSource(contentSource, "createSanitizedHandoffSuppressionDebug"),
-      extractFunctionSource(contentSource, "deleteSanitizedFileHandoffMark"),
-      extractFunctionSource(contentSource, "expireSanitizedFileHandoffMarks"),
-      extractFunctionSource(contentSource, "pruneExpiredSanitizedFileHandoffSignatures"),
-      extractFunctionSource(contentSource, "markSanitizedFileHandoff"),
-      extractFunctionSource(contentSource, "isSanitizedFileHandoffFile"),
-      extractFunctionSource(contentSource, "getSanitizedFileInputHandoffSuppression"),
-      extractFunctionSource(contentSource, "suppressSanitizedFileInputHandoffEvent"),
-      extractFunctionSource(contentSource, "getRecentSanitizedFileHandoffSuccessForSite"),
-      extractFunctionSource(contentSource, "suppressStaleHandoffErrorAfterSuccess"),
-      extractFunctionSource(contentSource, "getFirefoxFileInputTransaction"),
-      extractFunctionSource(contentSource, "setFirefoxFileInputTransaction"),
-      extractFunctionSource(contentSource, "markFirefoxFileInputTransactionReplaced"),
+      ...fileHandoffStateHarnessSource(),
       extractFunctionSource(contentSource, "isSanitizedFileHandoffEvent"),
       extractFunctionSource(contentSource, "markSanitizedFileHandoffEvent"),
       extractFunctionSource(contentSource, "listLocalTransferFiles"),
@@ -3777,6 +3749,7 @@ function testFileHandoffAdapterRegistryCoversSupportedSites() {
 }
 
 function testGenericFileHandoffHelpersAndDiagnosticsExist() {
+  const contentBundleSource = `${contentSource}\n${fileHandoffStateSource}`;
   for (const functionName of [
     "getFileHandoffAdapterForLocation",
     "showFileProcessingOverlay",
@@ -3790,7 +3763,7 @@ function testGenericFileHandoffHelpersAndDiagnosticsExist() {
     "markSanitizedFileHandoff",
     "shouldSuppressSanitizedFileReprocessing"
   ]) {
-    assert.ok(contentSource.includes(`function ${functionName}`), `expected ${functionName}`);
+    assert.ok(contentBundleSource.includes(`function ${functionName}`), `expected ${functionName}`);
   }
   for (const label of [
     "file-handoff:adapter-selected",

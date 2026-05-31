@@ -66,6 +66,7 @@
         "shared/policy.js",
         "content/composer_helpers.js",
         "content/file_paste_helpers.js",
+        "content/file_handoff_state.js",
         "content/content.js"
       ],
       "css": ["content/overlay.css"],

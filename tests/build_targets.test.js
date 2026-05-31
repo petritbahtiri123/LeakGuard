@@ -46,24 +46,23 @@ function assertReleaseArtifactsAreSanitized(results) {
       );
     }
 
-    const contentSource = fs.readFileSync(
-      path.join(result.targetRoot, "content/content.js"),
-      "utf8"
-    );
-    for (const banned of [
-      "pwm:debug",
-      "debugReveal",
-      "debugLogSnapshot",
-      "console.group(",
-      "console.groupCollapsed(",
-      "console.groupEnd(",
-      "console.log("
-    ]) {
-      assert.strictEqual(
-        contentSource.includes(banned),
-        false,
-        `${result.target} release content script should not contain ${banned}`
-      );
+    for (const relativeContentScript of ["content/content.js", "content/file_handoff_state.js"]) {
+      const contentSource = fs.readFileSync(path.join(result.targetRoot, relativeContentScript), "utf8");
+      for (const banned of [
+        "pwm:debug",
+        "debugReveal",
+        "debugLogSnapshot",
+        "console.group(",
+        "console.groupCollapsed(",
+        "console.groupEnd(",
+        "console.log("
+      ]) {
+        assert.strictEqual(
+          contentSource.includes(banned),
+          false,
+          `${result.target} release ${relativeContentScript} should not contain ${banned}`
+        );
+      }
     }
   }
 }
@@ -132,6 +131,7 @@ async function run() {
   const fileScannerIndex = contentScripts.indexOf("shared/fileScanner.js");
   const streamingRedactorIndex = contentScripts.indexOf("shared/streamingFileRedactor.js");
   const filePasteHelperIndex = contentScripts.indexOf("content/file_paste_helpers.js");
+  const fileHandoffStateIndex = contentScripts.indexOf("content/file_handoff_state.js");
   const contentIndex = contentScripts.indexOf("content/content.js");
 
   assert.ok(knownSecretReuseIndex > -1, "content scripts should include known-secret reuse helpers");
@@ -142,11 +142,13 @@ async function run() {
   assert.ok(fileScannerIndex > -1, "content scripts should include shared file scanner helpers");
   assert.ok(streamingRedactorIndex > -1, "content scripts should include streaming file redactor helpers");
   assert.ok(filePasteHelperIndex > -1, "content scripts should include local file paste helpers");
+  assert.ok(fileHandoffStateIndex > -1, "content scripts should include file handoff state helpers");
   assert.ok(
     fileScannerIndex < streamingRedactorIndex &&
       streamingRedactorIndex < filePasteHelperIndex &&
-      filePasteHelperIndex < contentIndex,
-    "file scanner, streaming redactor, file paste helper, and content script injection order should stay aligned"
+      filePasteHelperIndex < fileHandoffStateIndex &&
+      fileHandoffStateIndex < contentIndex,
+    "file scanner, streaming redactor, file paste helper, file handoff state, and content script injection order should stay aligned"
   );
   assert.strictEqual(
     chromeEnterpriseManifest.storage?.managed_schema,

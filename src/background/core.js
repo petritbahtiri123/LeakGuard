@@ -54,6 +54,7 @@ const CONTENT_SCRIPT_FILES = [
   "shared/policy.js",
   "content/composer_helpers.js",
   "content/file_paste_helpers.js",
+  "content/file_handoff_state.js",
   "content/content.js"
 ];
 const CONTENT_STYLE_FILES = ["content/overlay.css"];
