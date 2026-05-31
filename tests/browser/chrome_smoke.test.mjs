@@ -318,13 +318,76 @@ function prepareSmokeExtension(tempDir, sourceExtensionDir = extensionDir) {
   fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
   return smokeExtensionDir;
 }
-class CdpPipeConnection {
-  constructor(input, output) {
-    this.input = input;
-    this.output = output;
+class CdpConnection {
+  constructor() {
     this.nextId = 1;
     this.pending = new Map();
     this.events = [];
+  }
+
+  handleMessage(data) {
+    const message = JSON.parse(String(data));
+    if (message.id !== undefined && this.pending.has(message.id)) {
+      const { resolve, reject } = this.pending.get(message.id);
+      this.pending.delete(message.id);
+      if (message.error) {
+        reject(new Error(`${message.error.message}: ${JSON.stringify(message.error.data || {})}`));
+      } else {
+        resolve(message.result || {});
+      }
+      return;
+    }
+    this.events.push(message);
+  }
+
+  rejectPending(error) {
+    for (const [id, { reject }] of this.pending.entries()) {
+      this.pending.delete(id);
+      reject(error);
+    }
+  }
+
+  send(method, params = {}, sessionId = null) {
+    const id = this.nextId;
+    this.nextId += 1;
+    const payload = { id, method, params };
+    if (sessionId) payload.sessionId = sessionId;
+    const request = new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`CDP command timed out: ${method}`));
+      }, cdpCommandTimeoutMs);
+      this.pending.set(id, {
+        resolve: (value) => {
+          clearTimeout(timeout);
+          resolve(value);
+        },
+        reject: (error) => {
+          clearTimeout(timeout);
+          reject(error);
+        }
+      });
+    });
+    try {
+      this.writeMessage(JSON.stringify(payload));
+    } catch (error) {
+      const pending = this.pending.get(id);
+      this.pending.delete(id);
+      pending?.reject(error);
+    }
+    return request;
+  }
+
+  writeMessage() {
+    throw new Error("CDP transport is not connected.");
+  }
+}
+
+class CdpPipeConnection extends CdpConnection {
+  constructor(input, output) {
+    super();
+    this.input = input;
+    this.output = output;
     this.buffer = "";
   }
 
@@ -342,58 +405,104 @@ class CdpPipeConnection {
         separator = this.buffer.indexOf("\0");
       }
     });
-    this.output.on("error", (error) => {
-      for (const { reject } of this.pending.values()) {
-        reject(error);
-      }
-      this.pending.clear();
+    this.input.on("error", (error) => this.rejectPending(error));
+    this.output.on("error", (error) => this.rejectPending(error));
+    this.output.on("close", () => this.rejectPending(new Error("CDP pipe closed.")));
+    await this.send("Browser.getVersion");
+  }
+
+  writeMessage(payload) {
+    this.input.write(`${payload}\0`);
+  }
+
+  async close() {
+    this.rejectPending(new Error("CDP pipe closed."));
+    this.input?.destroy();
+    this.output?.destroy();
+  }
+}
+
+async function cdpMessageDataToText(data) {
+  if (typeof data === "string") return data;
+  if (Buffer.isBuffer(data)) return data.toString("utf8");
+  if (data instanceof ArrayBuffer) return Buffer.from(data).toString("utf8");
+  if (ArrayBuffer.isView(data)) {
+    return Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString("utf8");
+  }
+  if (data && typeof data.text === "function") return await data.text();
+  return String(data);
+}
+
+class CdpWebSocketConnection extends CdpConnection {
+  constructor(webSocketUrl) {
+    super();
+    this.webSocketUrl = webSocketUrl;
+    this.socket = null;
+  }
+
+  async connect() {
+    assert.equal(typeof WebSocket, "function", "Node.js WebSocket support is required for CDP port mode.");
+    this.socket = new WebSocket(this.webSocketUrl);
+    await new Promise((resolve, reject) => {
+      const cleanup = () => {
+        this.socket.removeEventListener("open", handleOpen);
+        this.socket.removeEventListener("error", handleError);
+        this.socket.removeEventListener("close", handleClose);
+      };
+      const handleOpen = () => {
+        cleanup();
+        resolve();
+      };
+      const handleError = () => {
+        cleanup();
+        reject(new Error(`Failed to connect to CDP WebSocket ${this.webSocketUrl}`));
+      };
+      const handleClose = () => {
+        cleanup();
+        reject(new Error(`CDP WebSocket closed before connecting: ${this.webSocketUrl}`));
+      };
+      this.socket.addEventListener("open", handleOpen);
+      this.socket.addEventListener("error", handleError);
+      this.socket.addEventListener("close", handleClose);
+    });
+    this.socket.addEventListener("message", (event) => {
+      cdpMessageDataToText(event.data)
+        .then((text) => this.handleMessage(text))
+        .catch((error) => this.rejectPending(error));
+    });
+    this.socket.addEventListener("error", () => {
+      this.rejectPending(new Error(`CDP WebSocket error: ${this.webSocketUrl}`));
+    });
+    this.socket.addEventListener("close", () => {
+      this.rejectPending(new Error(`CDP WebSocket closed: ${this.webSocketUrl}`));
     });
     await this.send("Browser.getVersion");
   }
 
-  handleMessage(data) {
-    const message = JSON.parse(String(data));
-    if (message.id && this.pending.has(message.id)) {
-      const { resolve, reject } = this.pending.get(message.id);
-      this.pending.delete(message.id);
-      if (message.error) {
-        reject(new Error(`${message.error.message}: ${JSON.stringify(message.error.data || {})}`));
-      } else {
-        resolve(message.result || {});
-      }
-      return;
-    }
-    this.events.push(message);
-  }
-
-  send(method, params = {}, sessionId = null) {
-    const id = this.nextId;
-    this.nextId += 1;
-    const payload = { id, method, params };
-    if (sessionId) payload.sessionId = sessionId;
-    this.input.write(`${JSON.stringify(payload)}\0`);
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new Error(`CDP command timed out: ${method}`));
-      }, cdpCommandTimeoutMs);
-      this.pending.set(id, {
-        resolve: (value) => {
-          clearTimeout(timeout);
-          resolve(value);
-        },
-        reject: (error) => {
-          clearTimeout(timeout);
-          reject(error);
-        }
-      });
-    });
+  writeMessage(payload) {
+    assert.equal(this.socket?.readyState, WebSocket.OPEN, "CDP WebSocket is not open.");
+    this.socket.send(payload);
   }
 
   async close() {
-    this.input?.destroy();
-    this.output?.destroy();
+    this.rejectPending(new Error("CDP WebSocket closed."));
+    if (this.socket?.readyState === WebSocket.OPEN || this.socket?.readyState === WebSocket.CONNECTING) {
+      this.socket.close();
+    }
   }
+}
+
+async function getDevToolsWebSocketUrl(profileDir, browserName = "Chrome") {
+  const activePortPath = path.join(profileDir, "DevToolsActivePort");
+  const [port, browserPath] = await waitFor(() => {
+    if (!fs.existsSync(activePortPath)) return null;
+    const lines = fs.readFileSync(activePortPath, "utf8").trim().split(/\r?\n/);
+    if (!/^\d+$/.test(lines[0] || "") || !String(lines[1] || "").startsWith("/")) {
+      return null;
+    }
+    return [lines[0], lines[1]];
+  }, `${browserName} DevToolsActivePort`);
+  return `ws://127.0.0.1:${port}${browserPath}`;
 }
 
 async function launchChrome({
@@ -402,12 +511,17 @@ async function launchChrome({
   browserName = "Chrome",
   browserExecutable = findChromeExecutable(),
   headlessEnvName = "LEAKGUARD_CHROME_HEADLESS",
+  remoteDebuggingMode = "pipe",
   missingMessage = "Chrome stable or Chromium was not found. Set CHROME_BIN to run this smoke test."
 }) {
   assert.ok(browserExecutable, missingMessage);
+  assert.ok(
+    remoteDebuggingMode === "pipe" || remoteDebuggingMode === "port",
+    `Unsupported remote debugging mode: ${remoteDebuggingMode}`
+  );
 
   const args = [
-    "--remote-debugging-pipe",
+    remoteDebuggingMode === "port" ? "--remote-debugging-port=0" : "--remote-debugging-pipe",
     `--user-data-dir=${profileDir}`,
     `--load-extension=${extensionPath}`,
     "--enable-unsafe-extension-debugging",
@@ -422,6 +536,7 @@ async function launchChrome({
     "--host-resolver-rules=MAP chatgpt.com 127.0.0.1",
     "--window-size=1280,900",
     "--window-position=-2400,-2400",
+    ...(remoteDebuggingMode === "port" ? ["--remote-allow-origins=*"] : []),
     "about:blank"
   ];
   if (process.env[headlessEnvName] === "1") {
@@ -960,6 +1075,7 @@ async function runChromiumSmoke(options = {}) {
     buildCommand = "npm run build:chrome",
     findBrowserExecutable = findChromeExecutable,
     headlessEnvName = "LEAKGUARD_CHROME_HEADLESS",
+    remoteDebuggingMode = "pipe",
     missingMessage = "Chrome stable or Chromium was not found. Set CHROME_BIN to run this smoke test."
   } = options;
   assertBuiltExtensionExists(sourceExtensionDir, buildCommand);
@@ -984,10 +1100,14 @@ async function runChromiumSmoke(options = {}) {
       browserName,
       browserExecutable: findBrowserExecutable(),
       headlessEnvName,
+      remoteDebuggingMode,
       missingMessage
     });
 
-    connection = new CdpPipeConnection(chrome.child.stdio[3], chrome.child.stdio[4]);
+    connection =
+      remoteDebuggingMode === "port"
+        ? new CdpWebSocketConnection(await getDevToolsWebSocketUrl(profileDir, browserName))
+        : new CdpPipeConnection(chrome.child.stdio[3], chrome.child.stdio[4]);
     await connection.connect();
     await connection.send("Target.setDiscoverTargets", { discover: true });
 
