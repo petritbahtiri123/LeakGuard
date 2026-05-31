@@ -11,6 +11,7 @@ importScripts(
   "../shared/networkHierarchy.js",
   "../shared/placeholderAllocator.js",
   "../shared/sessionMapStore.js",
+  "../shared/knownSecretReuse.js",
   "../shared/transformOutboundPrompt.js",
   "../shared/redactor.js",
   "../shared/protected_sites.js",

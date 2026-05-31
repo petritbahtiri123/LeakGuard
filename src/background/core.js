@@ -44,6 +44,7 @@ const CONTENT_SCRIPT_FILES = [
   "shared/networkHierarchy.js",
   "shared/placeholderAllocator.js",
   "shared/sessionMapStore.js",
+  "shared/knownSecretReuse.js",
   "shared/transformOutboundPrompt.js",
   "shared/transformOutboundPromptWithAi.js",
   "shared/redactor.js",

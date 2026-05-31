@@ -12,6 +12,7 @@ require(path.join(repoRoot, "src/shared/ipClassification.js"));
 require(path.join(repoRoot, "src/shared/ipDetection.js"));
 require(path.join(repoRoot, "src/shared/networkHierarchy.js"));
 require(path.join(repoRoot, "src/shared/placeholderAllocator.js"));
+require(path.join(repoRoot, "src/shared/knownSecretReuse.js"));
 require(path.join(repoRoot, "src/shared/transformOutboundPrompt.js"));
 require(path.join(repoRoot, "src/shared/fileScanner.js"));
 

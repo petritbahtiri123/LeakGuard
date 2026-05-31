@@ -126,11 +126,19 @@ async function run() {
     );
   }
   const contentScripts = chromeManifest.content_scripts[0].js;
+  const knownSecretReuseIndex = contentScripts.indexOf("shared/knownSecretReuse.js");
+  const transformOutboundPromptIndex = contentScripts.indexOf("shared/transformOutboundPrompt.js");
+  const redactorIndex = contentScripts.indexOf("shared/redactor.js");
   const fileScannerIndex = contentScripts.indexOf("shared/fileScanner.js");
   const streamingRedactorIndex = contentScripts.indexOf("shared/streamingFileRedactor.js");
   const filePasteHelperIndex = contentScripts.indexOf("content/file_paste_helpers.js");
   const contentIndex = contentScripts.indexOf("content/content.js");
 
+  assert.ok(knownSecretReuseIndex > -1, "content scripts should include known-secret reuse helpers");
+  assert.ok(
+    knownSecretReuseIndex < transformOutboundPromptIndex && knownSecretReuseIndex < redactorIndex,
+    "known-secret reuse helpers should load before prompt transform and redactor modules"
+  );
   assert.ok(fileScannerIndex > -1, "content scripts should include shared file scanner helpers");
   assert.ok(streamingRedactorIndex > -1, "content scripts should include streaming file redactor helpers");
   assert.ok(filePasteHelperIndex > -1, "content scripts should include local file paste helpers");

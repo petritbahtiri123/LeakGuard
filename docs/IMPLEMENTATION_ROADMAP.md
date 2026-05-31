@@ -176,17 +176,17 @@ Acceptance criteria:
 
 Tasks:
 
-- Consolidate duplicate known-secret reuse logic in `redactor.js` and `transformOutboundPrompt.js`.
-- Preserve current transform overlap semantics unless tests prove a safer correction.
+- [x] Consolidate duplicate known-secret reuse logic in `redactor.js` and `transformOutboundPrompt.js`.
+- [x] Preserve current transform overlap semantics unless tests prove a safer correction.
 
 Acceptance criteria:
 
-- Repeated raw secrets reuse the same placeholder.
-- No raw prefix/suffix remains beside placeholders.
-- Focused tests pass:
-  - `node tests/break_pack.test.js`
-  - `node tests/placeholder_trust.test.js`
-  - `node tests/typed_interception.test.js`
+- [x] Repeated raw secrets reuse the same placeholder.
+- [x] No raw prefix/suffix remains beside placeholders.
+- [x] Focused tests pass:
+  - [x] `node tests/break_pack.test.js`
+  - [x] `node tests/placeholder_trust.test.js`
+  - [x] `node tests/typed_interception.test.js`
 
 ### 4D - Extract File Handoff Submodules
 
