@@ -1,17 +1,23 @@
 (function () {
   const root = typeof globalThis !== "undefined" ? globalThis : window;
   root.PWM = root.PWM || {};
+  const FileLimits = root.PWM.FileLimits || {};
 
   const LOCAL_FILE_MULTI_MESSAGE =
+    FileLimits.LOCAL_FILE_MULTI_MESSAGE ||
     "LeakGuard did not attach these files. Paste or drop one supported text file at a time.";
   const LOCAL_FILE_READ_MESSAGE =
+    FileLimits.LOCAL_FILE_READ_MESSAGE ||
     "LeakGuard could not read this local file, so nothing was attached.";
-  const LOCAL_FILE_TEXT_INSERTION_FALLBACK_ENABLED = false;
+  const LOCAL_FILE_TEXT_INSERTION_FALLBACK_ENABLED =
+    Boolean(FileLimits.LOCAL_FILE_TEXT_INSERTION_FALLBACK_ENABLED);
   const LOCAL_FILE_STREAMING_REQUIRED_MESSAGE =
     getFileScanner().LOCAL_FILE_STREAMING_REQUIRED_MESSAGE ||
+    FileLimits.LOCAL_FILE_STREAMING_REQUIRED_MESSAGE ||
     "LeakGuard will stream-redact this large text file locally before upload.";
   const LOCAL_FILE_UNSUPPORTED_WARNING =
     getFileScanner().UNSUPPORTED_COMPOSER_FILE_MESSAGE ||
+    FileLimits.UNSUPPORTED_COMPOSER_FILE_MESSAGE ||
     "LeakGuard did not scan or redact this file. Unsupported file types such as PDF, DOCX, images, archives, executables, and binary files are not protected in this release. Normal upload may continue through the site.";
 
   function getFileScanner() {
@@ -124,7 +130,14 @@
     });
     if (!metadataValidation?.ok) return resultFromValidation(metadataValidation);
 
-    if (sizeBytes > Number(FileScanner.LOCAL_TEXT_HARD_BLOCK_BYTES || 4 * 1024 * 1024)) {
+    if (
+      sizeBytes >
+      Number(
+        FileScanner.LOCAL_TEXT_HARD_BLOCK_BYTES ||
+          FileLimits.LOCAL_TEXT_HARD_BLOCK_BYTES ||
+          4 * 1024 * 1024
+      )
+    ) {
       return {
         handled: true,
         ok: false,
@@ -233,7 +246,10 @@
 
   function createSanitizedTextFile(fileInfo, redactedText) {
     const FileScanner = root.PWM.FileScanner || {};
-    const normalizedName = String(fileInfo?.name || "").split(/[\\/]/).pop() || "leakguard-redacted.txt";
+    const normalizedName =
+      String(fileInfo?.name || "").split(/[\\/]/).pop() ||
+      FileLimits.DEFAULT_SANITIZED_TEXT_FILE_NAME ||
+      "leakguard-redacted.txt";
     const mimeType =
       FileScanner.normalizeMimeType?.(fileInfo?.type) ||
       String(fileInfo?.type || "").split(";")[0].trim().toLowerCase() ||

@@ -44,6 +44,7 @@
   } = FilePasteHelpers || {};
   const FileScanner = globalThis.PWM?.FileScanner || {};
   const StreamingFileRedactor = globalThis.PWM?.StreamingFileRedactor || {};
+  const FileLimits = globalThis.PWM?.FileLimits || {};
 
   const CHATGPT_COMPOSER_SELECTORS = [
     "#prompt-textarea",
@@ -159,6 +160,16 @@
   const rawFileDropInterceptions = new WeakSet();
   const fileDragEventRoots = new WeakSet();
   const editorRiskState = new WeakMap();
+  const CONTENT_DEBUG_EVENTS = Object.freeze({
+    FILE_UI_PROCESSING_SHOWN: "file-ui:processing-shown",
+    PENDING_ATTACH_PROMPT_SHOWN: "pending-attach-prompt-shown",
+    FILE_HANDOFF_PENDING_PROMPT_SHOWN: "file-handoff:pending-prompt-shown",
+    FILE_UI_PENDING_PROMPT_SHOWN: "file-ui:pending-prompt-shown",
+    FILE_HANDOFF_TEXT_FALLBACK_UNAVAILABLE: "file-handoff:text-fallback-unavailable",
+    FILE_HANDOFF_TEXT_FALLBACK_FAILED: "file-handoff:text-fallback-failed",
+    FILE_HANDOFF_TEXT_FALLBACK_SUCCESS: "file-handoff:text-fallback-success",
+    FILE_HANDOFF_PENDING_DUPLICATE_SUPPRESSED: "file-handoff:pending-duplicate-suppressed"
+  });
   const SANITIZED_FILE_HANDOFF_SUPPRESS_MS = 30000;
   const PROGRAMMATIC_INPUT_SUPPRESS_MS = 500;
   const CHATGPT_LARGE_PASTE_FILE_THRESHOLD = 16 * 1024;
@@ -169,35 +180,49 @@
   const GEMINI_AUTO_INSERT_TEXT_LIMIT = 256 * 1024;
   const GEMINI_LARGE_TEXT_SUPPRESS_MS = 2500;
   const LOCAL_TEXT_FAST_MAX_BYTES =
-    FileScanner.LOCAL_TEXT_FAST_MAX_BYTES || 2 * 1024 * 1024;
+    FileScanner.LOCAL_TEXT_FAST_MAX_BYTES ||
+    FileLimits.LOCAL_TEXT_FAST_MAX_BYTES ||
+    2 * 1024 * 1024;
   const LOCAL_TEXT_OPTIMIZED_MAX_BYTES =
-    FileScanner.LOCAL_TEXT_OPTIMIZED_MAX_BYTES || 4 * 1024 * 1024;
+    FileScanner.LOCAL_TEXT_OPTIMIZED_MAX_BYTES ||
+    FileLimits.LOCAL_TEXT_OPTIMIZED_MAX_BYTES ||
+    4 * 1024 * 1024;
   const LOCAL_TEXT_HARD_BLOCK_BYTES =
-    FileScanner.LOCAL_TEXT_HARD_BLOCK_BYTES || 4 * 1024 * 1024;
+    FileScanner.LOCAL_TEXT_HARD_BLOCK_BYTES ||
+    FileLimits.LOCAL_TEXT_HARD_BLOCK_BYTES ||
+    4 * 1024 * 1024;
   const LOCAL_TEXT_HARD_BLOCK_TITLE =
-    FileScanner.LOCAL_TEXT_HARD_BLOCK_TITLE || "Large payload blocked for browser stability";
+    FileScanner.LOCAL_TEXT_HARD_BLOCK_TITLE ||
+    FileLimits.LOCAL_TEXT_HARD_BLOCK_TITLE ||
+    "Large payload blocked for browser stability";
   const LOCAL_TEXT_HARD_BLOCK_MESSAGE =
     FileScanner.LOCAL_TEXT_HARD_BLOCK_MESSAGE ||
+    FileLimits.LOCAL_TEXT_HARD_BLOCK_MESSAGE ||
     "This content is over 4 MB. LeakGuard did not process or send it automatically to avoid browser instability. Split the file into smaller parts, or sanitize it separately before upload.";
   const LARGE_TEXT_STREAMING_MAX_BYTES =
     StreamingFileRedactor.LARGE_TEXT_STREAMING_MAX_BYTES ||
     FileScanner.LARGE_TEXT_STREAMING_MAX_BYTES ||
+    FileLimits.LARGE_TEXT_STREAMING_MAX_BYTES ||
     50 * 1024 * 1024;
   const STREAMING_BLOCK_TITLE =
     StreamingFileRedactor.STREAMING_BLOCK_TITLE ||
     FileScanner.LARGE_TEXT_STREAMING_BLOCK_TITLE ||
+    FileLimits.LARGE_TEXT_STREAMING_BLOCK_TITLE ||
     "File too large for local redaction";
   const STREAMING_BLOCK_MESSAGE =
     StreamingFileRedactor.STREAMING_BLOCK_MESSAGE ||
     FileScanner.LARGE_TEXT_STREAMING_BLOCK_MESSAGE ||
+    FileLimits.LARGE_TEXT_STREAMING_BLOCK_MESSAGE ||
     "This file is over 50 MB. LeakGuard blocked the upload because it cannot safely sanitize it yet.";
   const LOCAL_FILE_STREAMING_REQUIRED_MESSAGE =
     FileScanner.LOCAL_FILE_STREAMING_REQUIRED_MESSAGE ||
     FilePasteHelpers?.LOCAL_FILE_STREAMING_REQUIRED_MESSAGE ||
+    FileLimits.LOCAL_FILE_STREAMING_REQUIRED_MESSAGE ||
     "LeakGuard will stream-redact this large text file locally before upload.";
   const LOCAL_FILE_UNSUPPORTED_WARNING =
     FileScanner.UNSUPPORTED_COMPOSER_FILE_MESSAGE ||
     FilePasteHelpers?.LOCAL_FILE_UNSUPPORTED_WARNING ||
+    FileLimits.UNSUPPORTED_COMPOSER_FILE_MESSAGE ||
     "LeakGuard did not scan or redact this file. Unsupported file types such as PDF, DOCX, images, archives, executables, and binary files are not protected in this release. Normal upload may continue through the site.";
   const FILE_DRAG_SESSION_RESET_MS = 5000;
   const GEMINI_UPLOAD_INPUT_WAIT_MS = 450;
@@ -1113,7 +1138,7 @@
     }
 
     if (typeof document?.createElement !== "function" || !document.documentElement?.appendChild) {
-      debugReveal("file-ui:processing-shown", {
+      debugReveal(CONTENT_DEBUG_EVENTS.FILE_UI_PROCESSING_SHOWN, {
         site,
         rendered: false,
         blocking,
@@ -1158,7 +1183,7 @@
     fileProcessingStatusEl.textContent = status;
     fileProcessingProgressEl.textContent = progressText;
 
-    debugReveal("file-ui:processing-shown", {
+    debugReveal(CONTENT_DEBUG_EVENTS.FILE_UI_PROCESSING_SHOWN, {
       site,
       rendered: true,
       blocking,
@@ -1384,18 +1409,18 @@
     };
 
     if (typeof document?.createElement !== "function" || !document.documentElement?.appendChild) {
-      debugReveal("pending-attach-prompt-shown", {
+      debugReveal(CONTENT_DEBUG_EVENTS.PENDING_ATTACH_PROMPT_SHOWN, {
         site,
         rendered: false,
         sanitizedFile: describeFileForDebug(sanitizedFile)
       });
-      debugReveal("file-handoff:pending-prompt-shown", {
+      debugReveal(CONTENT_DEBUG_EVENTS.FILE_HANDOFF_PENDING_PROMPT_SHOWN, {
         site,
         rendered: false,
         adapter: describeFileHandoffAdapter(selectedAdapter),
         sanitizedFile: describeFileForDebug(sanitizedFile)
       });
-      debugReveal("file-ui:pending-prompt-shown", {
+      debugReveal(CONTENT_DEBUG_EVENTS.FILE_UI_PENDING_PROMPT_SHOWN, {
         site,
         rendered: false,
         sanitizedFile: describeFileForDebug(sanitizedFile)
@@ -1472,18 +1497,18 @@
     document.documentElement.appendChild(prompt);
     pendingAttachPromptEl = prompt;
 
-    debugReveal("pending-attach-prompt-shown", {
+    debugReveal(CONTENT_DEBUG_EVENTS.PENDING_ATTACH_PROMPT_SHOWN, {
       site,
       rendered: true,
       sanitizedFile: describeFileForDebug(sanitizedFile)
     });
-    debugReveal("file-handoff:pending-prompt-shown", {
+    debugReveal(CONTENT_DEBUG_EVENTS.FILE_HANDOFF_PENDING_PROMPT_SHOWN, {
       site,
       rendered: true,
       adapter: describeFileHandoffAdapter(selectedAdapter),
       sanitizedFile: describeFileForDebug(sanitizedFile)
     });
-    debugReveal("file-ui:pending-prompt-shown", {
+    debugReveal(CONTENT_DEBUG_EVENTS.FILE_UI_PENDING_PROMPT_SHOWN, {
       site,
       rendered: true,
       sanitizedFile: describeFileForDebug(sanitizedFile)
@@ -9481,7 +9506,7 @@
 
     const targetInput = input || findComposer(event?.target) || findComposer(document.activeElement);
     if (!targetInput) {
-      debugReveal("file-handoff:text-fallback-unavailable", {
+      debugReveal(CONTENT_DEBUG_EVENTS.FILE_HANDOFF_TEXT_FALLBACK_UNAVAILABLE, {
         context: event?.type || "",
         reason: "composer_not_found"
       });
@@ -9500,14 +9525,14 @@
     );
 
     if (!inserted) {
-      debugReveal("file-handoff:text-fallback-failed", {
+      debugReveal(CONTENT_DEBUG_EVENTS.FILE_HANDOFF_TEXT_FALLBACK_FAILED, {
         context: event?.type || "",
         reason: "composer_rewrite_failed"
       });
       return false;
     }
 
-    debugReveal("file-handoff:text-fallback-success", {
+    debugReveal(CONTENT_DEBUG_EVENTS.FILE_HANDOFF_TEXT_FALLBACK_SUCCESS, {
       context: event?.type || "",
       redactedLength: String(redactedText || "").length
     });
@@ -9530,7 +9555,7 @@
     }
 
     if (text.length > GEMINI_AUTO_INSERT_TEXT_LIMIT) {
-      debugReveal("file-handoff:text-fallback-unavailable", {
+      debugReveal(CONTENT_DEBUG_EVENTS.FILE_HANDOFF_TEXT_FALLBACK_UNAVAILABLE, {
         context: event?.type || "",
         reason: "sanitized_text_too_large",
         redactedLength: text.length
@@ -9540,7 +9565,7 @@
 
     const targetInput = input || findComposer(event?.target) || findComposer(document.activeElement);
     if (!targetInput) {
-      debugReveal("file-handoff:text-fallback-unavailable", {
+      debugReveal(CONTENT_DEBUG_EVENTS.FILE_HANDOFF_TEXT_FALLBACK_UNAVAILABLE, {
         context: event?.type || "",
         reason: "composer_not_found"
       });
@@ -9559,14 +9584,14 @@
     );
 
     if (!inserted) {
-      debugReveal("file-handoff:text-fallback-failed", {
+      debugReveal(CONTENT_DEBUG_EVENTS.FILE_HANDOFF_TEXT_FALLBACK_FAILED, {
         context: event?.type || "",
         reason: "composer_rewrite_failed"
       });
       return false;
     }
 
-    debugReveal("file-handoff:text-fallback-success", {
+    debugReveal(CONTENT_DEBUG_EVENTS.FILE_HANDOFF_TEXT_FALLBACK_SUCCESS, {
       context: event?.type || "",
       redactedLength: text.length
     });
@@ -10282,7 +10307,7 @@
 
     if (sanitizedFileInputHandoffs.has(event.target)) {
       if (!isFirefoxProtectedInput) {
-        debugReveal("file-handoff:pending-duplicate-suppressed", {
+        debugReveal(CONTENT_DEBUG_EVENTS.FILE_HANDOFF_PENDING_DUPLICATE_SUPPRESSED, {
           eventType: event.type || "",
           input: describeFileInputForDebug(event.target, "sanitized-file-handoff")
         });
@@ -10295,7 +10320,7 @@
         (!existingTransaction.sanitizedSignature || currentSignature === existingTransaction.sanitizedSignature) &&
         (!existingTransaction.suppressUntil || Date.now() <= existingTransaction.suppressUntil);
       if (isOwnSanitizedRedispatch) {
-        debugReveal("file-handoff:pending-duplicate-suppressed", {
+        debugReveal(CONTENT_DEBUG_EVENTS.FILE_HANDOFF_PENDING_DUPLICATE_SUPPRESSED, {
           eventType: event.type || "",
           input: describeFileInputForDebug(event.target, "firefox-sanitized-file-handoff"),
           state: existingTransaction.state

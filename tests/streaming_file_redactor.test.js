@@ -17,6 +17,7 @@ require(path.join(repoRoot, "src/shared/knownSecretReuse.js"));
 require(path.join(repoRoot, "src/shared/transformOutboundPrompt.js"));
 require(path.join(repoRoot, "src/shared/aiCandidateGate.js"));
 require(path.join(repoRoot, "src/shared/transformOutboundPromptWithAi.js"));
+require(path.join(repoRoot, "src/shared/fileLimits.js"));
 require(path.join(repoRoot, "src/shared/fileScanner.js"));
 require(path.join(repoRoot, "src/shared/streamingFileRedactor.js"));
 

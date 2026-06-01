@@ -138,6 +138,7 @@ function assertPackageContentsAreRuntimeOnly(result) {
     "options/options.html",
     "scanner/scanner.html",
     "scanner/scanner.js",
+    "shared/fileLimits.js",
     "shared/fileScanner.js",
     "vendor/onnxruntime/ort.wasm.min.js",
     "ai/models/leakguard_secret_classifier.features.json",
@@ -333,6 +334,7 @@ async function run() {
   const knownSecretReuseIndex = contentScripts.indexOf("shared/knownSecretReuse.js");
   const transformOutboundPromptIndex = contentScripts.indexOf("shared/transformOutboundPrompt.js");
   const redactorIndex = contentScripts.indexOf("shared/redactor.js");
+  const fileLimitsIndex = contentScripts.indexOf("shared/fileLimits.js");
   const fileScannerIndex = contentScripts.indexOf("shared/fileScanner.js");
   const streamingRedactorIndex = contentScripts.indexOf("shared/streamingFileRedactor.js");
   const filePasteHelperIndex = contentScripts.indexOf("content/file_paste_helpers.js");
@@ -347,6 +349,7 @@ async function run() {
     "known-secret reuse helpers should load before prompt transform and redactor modules"
   );
   assert.ok(fileScannerIndex > -1, "content scripts should include shared file scanner helpers");
+  assert.ok(fileLimitsIndex > -1, "content scripts should include shared file limit constants");
   assert.ok(streamingRedactorIndex > -1, "content scripts should include streaming file redactor helpers");
   assert.ok(filePasteHelperIndex > -1, "content scripts should include local file paste helpers");
   assert.ok(fileHandoffStateIndex > -1, "content scripts should include file handoff state helpers");
@@ -354,6 +357,7 @@ async function run() {
   assert.ok(fileHandoffFlowIndex > -1, "content scripts should include file handoff flow helpers");
   assert.ok(
     fileScannerIndex < streamingRedactorIndex &&
+      fileLimitsIndex < fileScannerIndex &&
       streamingRedactorIndex < filePasteHelperIndex &&
       filePasteHelperIndex < fileHandoffStateIndex &&
       fileHandoffStateIndex < fileHandoffPendingIndex &&
