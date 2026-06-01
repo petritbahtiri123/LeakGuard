@@ -5,6 +5,40 @@ const { pathToFileURL } = require("url");
 
 const repoRoot = path.join(__dirname, "..");
 const policyModule = require(path.join(repoRoot, "src/shared/policy.js"));
+const protectedSitesModule = require(path.join(repoRoot, "src/shared/protected_sites.js"));
+
+const restrictiveExtensionPageCsp =
+  "script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none';";
+const forbiddenPackageDirectories = new Set([
+  ".git",
+  ".github",
+  "artifacts",
+  "dist",
+  "docs",
+  "manifests",
+  "node_modules",
+  "scripts",
+  "src",
+  "tests"
+]);
+const forbiddenPackageBasenames = new Set([
+  ".env",
+  ".gitignore",
+  ".npmrc",
+  "AGENTS.md",
+  "package-lock.json",
+  "package.json",
+  "README.md"
+]);
+const forbiddenPackageExtensions = new Set([
+  ".crx",
+  ".pem",
+  ".pfx",
+  ".p12",
+  ".log",
+  ".xpi",
+  ".zip"
+]);
 
 function walkFiles(rootDir) {
   const entries = fs.readdirSync(rootDir, { withFileTypes: true });
@@ -72,12 +106,178 @@ function assertReleaseArtifactsAreSanitized(results) {
   }
 }
 
+function relativePackagePath(targetRoot, file) {
+  return path.relative(targetRoot, file).split(path.sep).join("/");
+}
+
+function assertNoInlineJavaScript(target, targetRoot, file) {
+  if (!file.endsWith(".html")) return;
+
+  const relativePath = relativePackagePath(targetRoot, file);
+  const source = fs.readFileSync(file, "utf8");
+  assert.strictEqual(
+    /<script\b(?![^>]*\bsrc=)[^>]*>/i.test(source),
+    false,
+    `${target}:${relativePath} must not contain inline script tags`
+  );
+  assert.strictEqual(
+    /\son[a-z]+\s*=/i.test(source),
+    false,
+    `${target}:${relativePath} must not contain inline event handlers`
+  );
+}
+
+function assertPackageContentsAreRuntimeOnly(result) {
+  const files = walkFiles(result.targetRoot);
+  const requiredFiles = [
+    "manifest.json",
+    "compat/browser_api.js",
+    "content/content.js",
+    "content/overlay.css",
+    "popup/popup.html",
+    "options/options.html",
+    "scanner/scanner.html",
+    "scanner/scanner.js",
+    "shared/fileScanner.js",
+    "vendor/onnxruntime/ort.wasm.min.js",
+    "ai/models/leakguard_secret_classifier.features.json",
+    "ai/models/leakguard_secret_classifier.onnx"
+  ];
+
+  requiredFiles.forEach((relativePath) => {
+    assert.ok(
+      fs.existsSync(path.join(result.targetRoot, relativePath)),
+      `${result.target} package should include ${relativePath}`
+    );
+  });
+
+  for (const file of files) {
+    const relativePath = relativePackagePath(result.targetRoot, file);
+    const parts = relativePath.split("/");
+    const basename = path.basename(relativePath);
+    const extension = path.extname(relativePath).toLowerCase();
+
+    for (const part of parts) {
+      assert.strictEqual(
+        forbiddenPackageDirectories.has(part),
+        false,
+        `${result.target} package should not include source-only directory ${relativePath}`
+      );
+    }
+
+    assert.strictEqual(
+      forbiddenPackageBasenames.has(basename),
+      false,
+      `${result.target} package should not include source-only file ${relativePath}`
+    );
+    assert.strictEqual(
+      forbiddenPackageExtensions.has(extension),
+      false,
+      `${result.target} package should not include forbidden artifact ${relativePath}`
+    );
+
+    assertNoInlineJavaScript(result.target, result.targetRoot, file);
+  }
+}
+
+function assertManifestStructure(result, expectedHostPermissions) {
+  const manifest = result.manifest;
+  const contentScript = manifest.content_scripts?.[0] || {};
+
+  assert.strictEqual(manifest.manifest_version, 3, `${result.target} should remain MV3`);
+  assert.deepStrictEqual(
+    manifest.content_security_policy,
+    { extension_pages: restrictiveExtensionPageCsp },
+    `${result.target} should keep the restrictive extension-page CSP`
+  );
+  assert.deepStrictEqual(
+    [...(manifest.host_permissions || [])].sort(),
+    expectedHostPermissions,
+    `${result.target} host permissions should stay limited to built-in protected sites`
+  );
+  assert.deepStrictEqual(
+    [...(contentScript.matches || [])].sort(),
+    expectedHostPermissions,
+    `${result.target} content-script matches should stay aligned with host permissions`
+  );
+  assert.deepStrictEqual(
+    [...(manifest.optional_host_permissions || [])].sort(),
+    ["http://*/*", "https://*/*"].sort(),
+    `${result.target} optional host permissions should remain user-managed-site scoped`
+  );
+  assert.strictEqual(
+    (contentScript.js || []).some((script) => script.startsWith("scanner/")),
+    false,
+    `${result.target} should not inject scanner pages into protected sites`
+  );
+  assert.strictEqual(
+    (manifest.web_accessible_resources || []).some((entry) =>
+      (entry.resources || []).some((resource) => resource.startsWith("scanner/"))
+    ),
+    false,
+    `${result.target} should not expose scanner pages as web-accessible resources`
+  );
+  assert.strictEqual(
+    (manifest.host_permissions || []).some((pattern) =>
+      pattern === "<all_urls>" || pattern === "*://*/*" || pattern.includes("127.0.0.1")
+    ),
+    false,
+    `${result.target} package manifest should not include test-only or all-site host permissions`
+  );
+
+  if (result.browser === "chrome") {
+    assert.strictEqual(
+      manifest.background?.service_worker,
+      "background/service_worker.js",
+      `${result.target} should use the Chrome MV3 service worker entry`
+    );
+    assert.strictEqual(
+      Object.prototype.hasOwnProperty.call(manifest.background || {}, "scripts"),
+      false,
+      `${result.target} should not use Firefox background scripts`
+    );
+    assert.strictEqual(
+      Object.prototype.hasOwnProperty.call(manifest, "browser_specific_settings"),
+      false,
+      `${result.target} should not include Firefox-only manifest metadata`
+    );
+  } else {
+    assert.strictEqual(
+      Object.prototype.hasOwnProperty.call(manifest.background || {}, "service_worker"),
+      false,
+      `${result.target} should not use a Chrome service worker entry`
+    );
+    assert.ok(
+      (manifest.background?.scripts || []).includes("background/core.js"),
+      `${result.target} should include Firefox background scripts`
+    );
+    assert.deepStrictEqual(
+      manifest.browser_specific_settings?.gecko?.data_collection_permissions,
+      { required: ["none"] },
+      `${result.target} should disclose no transmitted data collection for Firefox`
+    );
+  }
+}
+
+function assertPackageStructure(results) {
+  const expectedHostPermissions = protectedSitesModule.BUILTIN_PROTECTED_SITES
+    .map((rule) => rule.matchPattern)
+    .sort();
+
+  for (const result of results) {
+    assertManifestStructure(result, expectedHostPermissions);
+    assertPackageContentsAreRuntimeOnly(result);
+  }
+}
+
 async function run() {
   const { BUILD_TARGETS, buildTarget } = await import(
     pathToFileURL(path.join(repoRoot, "scripts/build-extension.mjs")).href
   );
 
   const results = BUILD_TARGETS.map((target) => buildTarget(target.browser, target.mode));
+  assertReleaseArtifactsAreSanitized(results);
+  assertPackageStructure(results);
 
   results.forEach((result) => {
     const manifestPath = path.join(result.targetRoot, "manifest.json");

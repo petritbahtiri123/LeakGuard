@@ -13,6 +13,8 @@
     "report:sizes": "node scripts/generate-runtime-size-report.mjs",
     "scan:repo-secrets": "node scripts/repository-secret-scan.mjs",
     "test": "npm run prepare:build && node scripts/run-tests.mjs",
+    "qa:browser": "npm run build:chrome && node tests/browser/extension_qa_harness.test.mjs",
+    "test:release": "npm test && npm run docs:check-links && npm run smoke:firefox && npm run qa:browser",
     "smoke:chrome": "npm run build:chrome && node tests/browser/chrome_smoke.test.mjs",
     "smoke:edge": "npm run build:chrome && node tests/browser/edge_smoke.test.mjs",
     "smoke:firefox": "npm run build:firefox && node tests/browser/firefox_smoke.test.mjs",

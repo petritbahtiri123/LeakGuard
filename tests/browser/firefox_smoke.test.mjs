@@ -16,6 +16,40 @@ const extensionDir = path.join(repoRoot, "dist", "firefox");
 const smokeTimeoutMs = Number(process.env.LEAKGUARD_FIREFOX_SMOKE_TIMEOUT_MS || 60000);
 const webdriverCommandTimeoutMs = Number(process.env.LEAKGUARD_FIREFOX_WEBDRIVER_TIMEOUT_MS || 30000);
 const smokeTimingWarningMs = Number(process.env.LEAKGUARD_SMOKE_TIMING_WARN_MS || 5000);
+const firefoxExtensionId = "leakguard@test.local";
+const localProtectedSiteInput = "https://127.0.0.1";
+const localProtectedSiteId = "https://127.0.0.1";
+const localProtectedSitePermission = "https://127.0.0.1/*";
+
+const syntheticSecrets = {
+  openAi: ["sk-proj", "A".repeat(48)].join("-"),
+  anthropic: ["sk-ant-api03", "B".repeat(44)].join("-"),
+  github: `ghp_${"C".repeat(36)}`,
+  stripe: `sk_live_${"D".repeat(32)}`,
+  databasePassword: "SuperFakePassword123",
+  publicIp: "8.8.8.8"
+};
+
+const promptLines = [
+  `OPENAI_API_KEY=${syntheticSecrets.openAi}`,
+  `OPENAI_API_KEY_REPEAT=${syntheticSecrets.openAi}`,
+  `ANTHROPIC_API_KEY=${syntheticSecrets.anthropic}`,
+  `GITHUB_TOKEN=${syntheticSecrets.github}`,
+  `STRIPE_SECRET_KEY=${syntheticSecrets.stripe}`,
+  `DATABASE_URL=postgres://admin:${syntheticSecrets.databasePassword}@db.example.com:5432/customerdb`,
+  `PUBLIC_IP=${syntheticSecrets.publicIp}`,
+  "PRIVATE_IP=192.168.1.10",
+  "PLACEHOLDER_ALREADY=[PWM_1]"
+];
+const promptPayload = promptLines.join("\n");
+const rawValues = [
+  syntheticSecrets.openAi,
+  syntheticSecrets.anthropic,
+  syntheticSecrets.github,
+  syntheticSecrets.stripe,
+  syntheticSecrets.databasePassword,
+  syntheticSecrets.publicIp
+];
 
 function assertBuiltExtensionExists() {
   const manifestPath = path.join(extensionDir, "manifest.json");
@@ -296,9 +330,11 @@ async function startHttpsChatGptServer() {
     response.end(createHarnessPage());
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
   return {
     server,
-    origin: `https://chatgpt.com:${server.address().port}`,
+    origin: `https://chatgpt.com:${port}`,
+    localOrigin: `https://127.0.0.1:${port}`,
     close: () => new Promise((resolve) => server.close(resolve))
   };
 }
@@ -340,11 +376,24 @@ function walkFiles(dir) {
   return files;
 }
 
-async function packageFirefoxExtension(tempDir) {
+function prepareFirefoxSmokeExtension(tempDir) {
+  const smokeExtensionDir = path.join(tempDir, "extension");
+  fs.cpSync(extensionDir, smokeExtensionDir, { recursive: true });
+
+  const manifestPath = path.join(smokeExtensionDir, "manifest.json");
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  manifest.host_permissions = Array.from(
+    new Set([...(manifest.host_permissions || []), localProtectedSitePermission])
+  );
+  fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  return smokeExtensionDir;
+}
+
+async function packageFirefoxExtension(tempDir, sourceDir = extensionDir) {
   const xpiPath = path.join(tempDir, "leakguard-firefox-smoke.xpi");
   const zip = new yazl.ZipFile();
-  for (const file of walkFiles(extensionDir)) {
-    zip.addFile(file, path.relative(extensionDir, file).split(path.sep).join("/"));
+  for (const file of walkFiles(sourceDir)) {
+    zip.addFile(file, path.relative(sourceDir, file).split(path.sep).join("/"));
   }
   zip.end();
   await new Promise((resolve, reject) => {
@@ -361,6 +410,41 @@ async function fetchJson(url, options = {}) {
     throw new Error(`${options.method || "GET"} ${url} failed with ${response.status}: ${text}`);
   }
   return payload;
+}
+
+function parseFirefoxPrefString(source, prefName) {
+  const escapedPrefName = prefName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(`user_pref\\("${escapedPrefName}",\\s*"((?:\\\\.|[^"])*)"\\);`).exec(
+    source
+  );
+  if (!match) return null;
+  return JSON.parse(`"${match[1]}"`);
+}
+
+function readFirefoxExtensionUuid(profileDir, extensionId) {
+  const prefsPath = path.join(profileDir, "prefs.js");
+  if (!fs.existsSync(prefsPath)) return null;
+
+  const prefsSource = fs.readFileSync(prefsPath, "utf8");
+  const uuidPref = parseFirefoxPrefString(prefsSource, "extensions.webextensions.uuids");
+  if (!uuidPref) return null;
+
+  const uuids = JSON.parse(uuidPref);
+  return uuids?.[extensionId] || null;
+}
+
+async function getFirefoxExtensionOrigin(profileDir, extensionId) {
+  const uuid = await waitFor(
+    () => readFirefoxExtensionUuid(profileDir, extensionId),
+    `Firefox extension UUID for ${extensionId}`
+  );
+  return `moz-extension://${uuid}`;
+}
+
+function assertNoRawSyntheticValues(text, label) {
+  for (const raw of rawValues) {
+    assert.equal(String(text || "").includes(raw), false, `${label} leaked raw synthetic value ${raw}`);
+  }
 }
 
 class WebDriverClient {
@@ -385,9 +469,10 @@ class WebDriverClient {
     }
   }
 
-  async createSession({ firefoxPath, proxyAddress }) {
+  async createSession({ firefoxPath, proxyAddress, profileDir, downloadDir }) {
     const firefoxArgs = [];
     if (process.env.LEAKGUARD_FIREFOX_HEADLESS === "1") firefoxArgs.push("-headless");
+    if (profileDir) firefoxArgs.push("-profile", profileDir);
     const value = await this.request("POST", "/session", {
       capabilities: {
         alwaysMatch: {
@@ -397,7 +482,7 @@ class WebDriverClient {
             proxyType: "manual",
             httpProxy: proxyAddress,
             sslProxy: proxyAddress,
-            noProxy: []
+            noProxy: ["127.0.0.1", "localhost"]
           },
           "moz:firefoxOptions": {
             binary: firefoxPath,
@@ -405,6 +490,13 @@ class WebDriverClient {
             prefs: {
               "browser.shell.checkDefaultBrowser": false,
               "browser.startup.homepage_override.mstone": "ignore",
+              "browser.download.alwaysOpenPanel": false,
+              "browser.download.dir": downloadDir,
+              "browser.download.folderList": 2,
+              "browser.download.manager.showWhenStarting": false,
+              "browser.download.panel.shown": true,
+              "browser.download.useDownloadDir": true,
+              "browser.helperApps.neverAsk.saveToDisk": "text/plain,application/json,application/octet-stream",
               "network.trr.mode": 5
             }
           }
@@ -431,12 +523,47 @@ class WebDriverClient {
     await this.request("POST", `/session/${this.sessionId}/url`, { url });
   }
 
+  async refresh() {
+    await this.request("POST", `/session/${this.sessionId}/refresh`, {});
+  }
+
   async execute(script, args = []) {
     return await this.request("POST", `/session/${this.sessionId}/execute/sync`, { script, args });
   }
 
   async executeAsync(script, args = []) {
     return await this.request("POST", `/session/${this.sessionId}/execute/async`, { script, args });
+  }
+
+  async findElement(selector) {
+    const element = await this.request("POST", `/session/${this.sessionId}/element`, {
+      using: "css selector",
+      value: selector
+    });
+    const elementId = element?.["element-6066-11e4-a52e-4f735466cecf"] || element?.ELEMENT;
+    assert.ok(elementId, `Expected to find element ${selector}`);
+    return elementId;
+  }
+
+  async clickElement(selector) {
+    const elementId = await this.findElement(selector);
+    await this.request("POST", `/session/${this.sessionId}/element/${elementId}/click`, {});
+  }
+
+  async setFileInputFiles(selector, files) {
+    const elementId = await this.findElement(selector);
+    const normalizedFiles = Array.isArray(files) ? files : [files];
+    await this.request("POST", `/session/${this.sessionId}/element/${elementId}/value`, {
+      text: normalizedFiles.join("\n"),
+      value: normalizedFiles
+    });
+    await this.execute(
+      `const input = document.querySelector(arguments[0]);
+      input?.dispatchEvent(new Event('input', { bubbles: true }));
+      input?.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;`,
+      [selector]
+    );
   }
 
   async quit() {
@@ -501,12 +628,387 @@ async function stopGeckodriver(geckodriver) {
   await waitForExit(child, 3000);
 }
 
+async function extensionMessage(webdriver, message) {
+  return await webdriver.executeAsync(`const message = arguments[0];
+    const done = arguments[arguments.length - 1];
+    const ext = globalThis.browser || globalThis.chrome;
+    Promise.resolve(ext.runtime.sendMessage(message)).then(done, (error) => {
+      done({ ok: false, error: error?.message || String(error) });
+    });`, [message]);
+}
+
+function getUserProtectedSite(overview) {
+  return (overview.userSites || []).find((rule) => rule.id === localProtectedSiteId) || null;
+}
+
+async function getLocalProtectedSiteOverview(webdriver, localOrigin) {
+  const overview = await extensionMessage(webdriver, {
+    type: "PWM_GET_PROTECTED_SITE_OVERVIEW",
+    url: `${localOrigin}/`
+  });
+  assert.equal(overview.ok, true);
+  return overview;
+}
+
+function assertLocalProtectedSiteOverview(overview, expected) {
+  const userRule = getUserProtectedSite(overview);
+
+  assert.equal(overview.currentSite.eligible, true, "local harness should be eligible for protection");
+  assert.equal(
+    overview.currentSite.protected,
+    expected.protected,
+    "current-site protection state did not match"
+  );
+  assert.equal(overview.currentSite.source || null, expected.source || null);
+  assert.equal(Boolean(userRule), expected.present, "user-managed site presence did not match");
+
+  if (expected.present) {
+    assert.equal(userRule.enabled, expected.enabled, "user-managed site enabled state did not match");
+    assert.equal(userRule.matchPattern, localProtectedSitePermission);
+    assert.equal(userRule.hasPermission, true);
+  }
+}
+
+async function runFirefoxPopupAndProtectedSiteQa(webdriver, extensionOrigin, localOrigin) {
+  await webdriver.navigate(`${extensionOrigin}/popup/popup.html`);
+  await waitFor(
+    () => webdriver.execute("return Boolean(document.querySelector('#manage-btn'));"),
+    "Firefox popup ready"
+  );
+
+  const hasPermission = await webdriver.executeAsync(`const done = arguments[arguments.length - 1];
+    const ext = globalThis.browser || globalThis.chrome;
+    ext.permissions.contains({ origins: [arguments[0]] }).then(done);`, [localProtectedSitePermission]);
+  assert.equal(hasPermission, true, "temporary Firefox XPI should pregrant localhost permission");
+
+  const addResponse = await extensionMessage(webdriver, {
+    type: "PWM_ADD_PROTECTED_SITE",
+    input: localProtectedSiteInput,
+    url: `${localOrigin}/`
+  });
+  assert.equal(addResponse.ok, true);
+  assert.equal(addResponse.rule.id, localProtectedSiteId);
+  assert.equal(addResponse.rule.enabled, true);
+  assertLocalProtectedSiteOverview(await getLocalProtectedSiteOverview(webdriver, localOrigin), {
+    present: true,
+    enabled: true,
+    protected: true,
+    source: "user"
+  });
+
+  const disableResponse = await extensionMessage(webdriver, {
+    type: "PWM_SET_PROTECTED_SITE_ENABLED",
+    siteId: localProtectedSiteId,
+    enabled: false,
+    url: `${localOrigin}/`
+  });
+  assert.equal(disableResponse.ok, true);
+  assert.equal(disableResponse.rule.enabled, false);
+  assertLocalProtectedSiteOverview(await getLocalProtectedSiteOverview(webdriver, localOrigin), {
+    present: true,
+    enabled: false,
+    protected: false,
+    source: null
+  });
+
+  const reenableResponse = await extensionMessage(webdriver, {
+    type: "PWM_SET_PROTECTED_SITE_ENABLED",
+    siteId: localProtectedSiteId,
+    enabled: true,
+    url: `${localOrigin}/`
+  });
+  assert.equal(reenableResponse.ok, true);
+  assert.equal(reenableResponse.rule.enabled, true);
+  assertLocalProtectedSiteOverview(await getLocalProtectedSiteOverview(webdriver, localOrigin), {
+    present: true,
+    enabled: true,
+    protected: true,
+    source: "user"
+  });
+}
+
+async function runFirefoxProtectedSiteRemovalQa(webdriver, localOrigin) {
+  const deleteResponse = await extensionMessage(webdriver, {
+    type: "PWM_DELETE_PROTECTED_SITE",
+    siteId: localProtectedSiteId,
+    url: `${localOrigin}/`
+  });
+  assert.equal(deleteResponse.ok, true);
+  assert.equal(deleteResponse.rule.id, localProtectedSiteId);
+  assertLocalProtectedSiteOverview(await getLocalProtectedSiteOverview(webdriver, localOrigin), {
+    present: false,
+    enabled: false,
+    protected: false,
+    source: null
+  });
+}
+
+async function openFirefoxLocalProtectedHarness(webdriver, localOrigin) {
+  await webdriver.navigate(`${localOrigin}/`);
+  await waitFor(
+    () => webdriver.execute("return Boolean(document.querySelector('.pwm-panel'));"),
+    "Firefox user-managed protected site panel"
+  );
+  const panel = await webdriver.execute(`return {
+    text: document.querySelector('.pwm-panel')?.innerText || '',
+    rows: Array.from(document.querySelectorAll('.pwm-panel-row')).map((row) => row.innerText)
+  };`);
+  assert.match(panel.text, /LeakGuard/);
+  assert.match(panel.rows.join("\n"), /PROTECTION\s+Active/i);
+  assert.match(panel.rows.join("\n"), /127\.0\.0\.1/);
+}
+
+async function runFirefoxPromptRedactionQa(webdriver) {
+  const result = await webdriver.executeAsync(`const payload = arguments[0];
+    const rawValues = arguments[1];
+    const done = arguments[arguments.length - 1];
+    const textarea = document.querySelector('#prompt-textarea');
+    textarea.focus();
+
+    textarea.dispatchEvent(new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      inputType: 'insertText',
+      data: payload
+    }));
+
+    const started = Date.now();
+    const timer = setInterval(() => {
+      const redactButton = Array.from(
+        document.querySelectorAll('.pwm-modal-backdrop button, .pwm-modal button')
+      ).find((button) => /Redact/i.test(button.textContent || ''));
+      if (redactButton) redactButton.click();
+
+      const value = textarea.value || '';
+      const first = /^OPENAI_API_KEY=(\\[PWM_\\d+\\])$/m.exec(value)?.[1] || '';
+      const repeat = /^OPENAI_API_KEY_REPEAT=(\\[PWM_\\d+\\])$/m.exec(value)?.[1] || '';
+      const ready = /\\[PWM_\\d+\\]/.test(value) && /PUBLIC_IP=\\[(PUB_HOST|NET)_\\d+\\]/.test(value);
+      if (ready) {
+        clearInterval(timer);
+        done({
+          value,
+          firstPlaceholder: first,
+          lineCount: value.split('\\n').length,
+          hasAnyRaw: rawValues.some((raw) => value.includes(raw)),
+          hasRawSecretPrefix: ['sk-proj-', 'sk-ant-api03-', 'ghp_', 'sk_live_', 'SuperFakePassword123']
+            .some((raw) => value.includes(raw)),
+          openAiRedacted: /^OPENAI_API_KEY=\\[PWM_\\d+\\]$/m.test(value),
+          anthropicRedacted: /^ANTHROPIC_API_KEY=\\[PWM_\\d+\\]$/m.test(value),
+          githubRedacted: /^GITHUB_TOKEN=\\[PWM_\\d+\\]$/m.test(value),
+          stripeRedacted: /^STRIPE_SECRET_KEY=\\[PWM_\\d+\\]$/m.test(value),
+          databasePasswordRedacted:
+            /^DATABASE_URL=postgres:\\/\\/admin:\\[PWM_\\d+\\]@db\\.example\\.com:5432\\/customerdb$/m
+              .test(value),
+          repeatedPlaceholderReused: Boolean(first && repeat && first === repeat),
+          existingPlaceholderPreserved: /^PLACEHOLDER_ALREADY=\\[PWM_1\\]$/m.test(value),
+          publicIpRedacted: /PUBLIC_IP=\\[(PUB_HOST|NET)_\\d+\\]/.test(value),
+          privateIpVisible: value.includes('PRIVATE_IP=192.168.1.10')
+        });
+      } else if (Date.now() - started > 15000) {
+        clearInterval(timer);
+        done({ error: 'Timed out waiting for prompt redaction', value });
+      }
+    }, 50);`, [promptPayload, rawValues]);
+
+  assert.equal(result.error, undefined, result.error || "Firefox prompt redaction failed");
+  assert.equal(result.hasAnyRaw, false, "Firefox prompt still contains raw synthetic values");
+  assert.equal(result.hasRawSecretPrefix, false, "Firefox prompt still contains raw secret prefixes");
+  assert.equal(result.lineCount, promptLines.length, "Firefox multiline formatting was not preserved");
+  assert.equal(result.openAiRedacted, true);
+  assert.equal(result.anthropicRedacted, true);
+  assert.equal(result.githubRedacted, true);
+  assert.equal(result.stripeRedacted, true);
+  assert.equal(result.databasePasswordRedacted, true);
+  assert.equal(result.repeatedPlaceholderReused, true);
+  assert.equal(result.existingPlaceholderPreserved, true);
+  assert.equal(result.publicIpRedacted, true);
+  assert.equal(result.privateIpVisible, true);
+  return result;
+}
+
+async function runFirefoxSecureRevealQa(webdriver, extensionOrigin, placeholder) {
+  const revealState = await webdriver.executeAsync(`const placeholder = arguments[0];
+    const rawValues = arguments[1];
+    const done = arguments[arguments.length - 1];
+    const echo = document.querySelector('#echo-zone');
+    echo.textContent = 'Assistant echoed ' + placeholder + ' after redaction.';
+    const started = Date.now();
+    const timer = setInterval(() => {
+      const chip = document.querySelector('#echo-zone .pwm-secret');
+      if (chip) {
+        clearInterval(timer);
+        chip.click();
+        setTimeout(() => done({
+          chipText: chip.textContent,
+          pageHasRaw: rawValues.some((raw) => document.body.innerText.includes(raw))
+        }), 250);
+      } else if (Date.now() - started > 5000) {
+        clearInterval(timer);
+        done({ error: 'Timed out waiting for hydrated placeholder chip' });
+      }
+    }, 50);`, [placeholder, rawValues]);
+  assert.equal(revealState.error, undefined, revealState.error || "Firefox secure reveal chip failed");
+  assert.equal(revealState.chipText, placeholder);
+  assert.equal(revealState.pageHasRaw, false);
+
+  await webdriver.navigate(`${extensionOrigin}/popup/popup.html`);
+  await waitFor(
+    () => webdriver.execute("return document.querySelector('#reveal-view') && !document.querySelector('#reveal-view').hidden;"),
+    "Firefox secure reveal popup view"
+  );
+  const beforeShow = await webdriver.execute(`return {
+    placeholder: document.querySelector('#reveal-placeholder')?.textContent || '',
+    hidden: document.querySelector('#secret-value')?.hidden,
+    rawVisible: arguments[0].some((raw) => (document.querySelector('#secret-value')?.textContent || '').includes(raw))
+  };`, [rawValues]);
+  assert.equal(beforeShow.placeholder, placeholder);
+  assert.equal(beforeShow.hidden, true);
+  assert.equal(beforeShow.rawVisible, false);
+
+  await webdriver.clickElement("#show-btn");
+  const afterShow = await waitFor(async () => {
+    const state = await webdriver.execute(`return {
+      hidden: document.querySelector('#secret-value')?.hidden,
+      rawVisible: arguments[0].some((raw) => (document.querySelector('#secret-value')?.textContent || '').includes(raw)),
+      status: document.querySelector('#reveal-status')?.textContent || ''
+    };`, [rawValues]);
+    return state.hidden === false && state.rawVisible ? state : null;
+  }, "Firefox secure reveal raw value in popup");
+  assert.match(afterShow.status, /Visible only inside this LeakGuard popup/);
+}
+
+async function waitForDownloadedText(downloadPath, fileName) {
+  const filePath = path.join(downloadPath, fileName);
+  return await waitFor(() => {
+    const entries = fs.existsSync(downloadPath) ? fs.readdirSync(downloadPath) : [];
+    const partialDownload = entries.some((entry) => entry.endsWith(".part") || entry.endsWith(".tmp"));
+    if (!fs.existsSync(filePath) || partialDownload) return null;
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile() || stat.size <= 0) return null;
+    return fs.readFileSync(filePath, "utf8");
+  }, `Firefox scanner export download ${fileName}`);
+}
+
+async function clickDownloadAndReadText(webdriver, downloadPath, selector, fileName) {
+  fs.rmSync(path.join(downloadPath, fileName), { force: true });
+  await webdriver.clickElement(selector);
+  return await waitForDownloadedText(downloadPath, fileName);
+}
+
+async function runFirefoxScannerQa(webdriver, extensionOrigin, tempDir, downloadDir) {
+  await webdriver.navigate(`${extensionOrigin}/scanner/scanner.html`);
+  await waitFor(
+    () => webdriver.execute("return Boolean(document.querySelector('#file-input'));"),
+    "Firefox scanner UI"
+  );
+
+  const envPath = path.join(tempDir, "leakguard-firefox-qa.env");
+  fs.writeFileSync(envPath, promptPayload);
+  await webdriver.setFileInputFiles("#file-input", [envPath]);
+  const supported = await webdriver.executeAsync(`const rawValues = arguments[0];
+    const done = arguments[arguments.length - 1];
+    const started = Date.now();
+    let clicked = false;
+    const timer = setInterval(() => {
+      const preview = document.querySelector('#redacted-preview')?.textContent || '';
+      const status = document.querySelector('#status')?.textContent || '';
+      const scanButton = document.querySelector('#scan-btn');
+      if (!clicked && scanButton && !scanButton.disabled) {
+        clicked = true;
+        scanButton.click();
+      }
+      if (/Scan complete/i.test(status) && /\\[PWM_\\d+\\]/.test(preview)) {
+        clearInterval(timer);
+        done({
+          status,
+          hasAnyRaw: rawValues.some((raw) => preview.includes(raw)),
+          openAiRedacted: /^OPENAI_API_KEY=\\[PWM_\\d+\\]$/m.test(preview),
+          anthropicRedacted: /^ANTHROPIC_API_KEY=\\[PWM_\\d+\\]$/m.test(preview),
+          githubRedacted: /^GITHUB_TOKEN=\\[PWM_\\d+\\]$/m.test(preview),
+          stripeRedacted: /^STRIPE_SECRET_KEY=\\[PWM_\\d+\\]$/m.test(preview),
+          databasePasswordRedacted:
+            /^DATABASE_URL=postgres:\\/\\/admin:\\[PWM_\\d+\\]@db\\.example\\.com:5432\\/customerdb$/m
+              .test(preview),
+          publicIpRedacted: /PUBLIC_IP=\\[(PUB_HOST|NET)_\\d+\\]/.test(preview),
+          privateIpVisible: preview.includes('PRIVATE_IP=192.168.1.10')
+        });
+      } else if (Date.now() - started > 15000) {
+        clearInterval(timer);
+        done({ error: 'Timed out waiting for scanner result', status, preview });
+      }
+    }, 50);`, [rawValues]);
+  assert.equal(supported.error, undefined, supported.error || "Firefox scanner failed");
+  assert.equal(supported.hasAnyRaw, false, "Firefox scanner preview still contains raw synthetic values");
+  assert.equal(supported.openAiRedacted, true);
+  assert.equal(supported.anthropicRedacted, true);
+  assert.equal(supported.githubRedacted, true);
+  assert.equal(supported.stripeRedacted, true);
+  assert.equal(supported.databasePasswordRedacted, true);
+  assert.equal(supported.publicIpRedacted, true);
+  assert.equal(supported.privateIpVisible, true);
+
+  const redactedText = await clickDownloadAndReadText(
+    webdriver,
+    downloadDir,
+    "#download-redacted-btn",
+    "leakguard-firefox-qa.redacted.env"
+  );
+  assertNoRawSyntheticValues(redactedText, "Firefox scanner redacted download");
+  assert.match(redactedText, /^OPENAI_API_KEY=\[PWM_\d+\]$/m);
+  assert.match(redactedText, /^PUBLIC_IP=\[(PUB_HOST|NET)_\d+\]$/m);
+  assert.ok(redactedText.includes("PRIVATE_IP=192.168.1.10"));
+
+  const reportText = await clickDownloadAndReadText(
+    webdriver,
+    downloadDir,
+    "#download-report-btn",
+    "leakguard-firefox-qa.leakguard-report.json"
+  );
+  assertNoRawSyntheticValues(reportText, "Firefox scanner JSON report download");
+  const report = JSON.parse(reportText);
+  assert.equal(report.product, "LeakGuard");
+  assert.equal(report.localOnly, true);
+  assert.ok(Array.isArray(report.findings));
+  assert.match(report.redactedPreview || "", /\[(PWM|PUB_HOST|NET)_\d+\]/);
+  assert.equal(JSON.stringify(report).includes("redactedText"), false);
+
+  await webdriver.clickElement("#clear-btn");
+  await waitFor(
+    () => webdriver.execute("return document.querySelector('#scan-btn')?.disabled;"),
+    "Firefox scanner reset"
+  );
+
+  const unsupportedPath = path.join(tempDir, "leakguard-firefox-qa.pdf");
+  fs.writeFileSync(unsupportedPath, "%PDF-1.7\nsynthetic unsupported file\n");
+  await webdriver.setFileInputFiles("#file-input", [unsupportedPath]);
+  const unsupported = await webdriver.executeAsync(`const done = arguments[arguments.length - 1];
+    const started = Date.now();
+    const timer = setInterval(() => {
+      const status = document.querySelector('#status')?.textContent || '';
+      const scanDisabled = document.querySelector('#scan-btn')?.disabled;
+      if (/Unsupported (?:file types|formats)/i.test(status) && scanDisabled) {
+        clearInterval(timer);
+        done({ status, scanDisabled });
+      } else if (Date.now() - started > 10000) {
+        clearInterval(timer);
+        done({ error: 'Timed out waiting for unsupported warning', status, scanDisabled });
+      }
+    }, 50);`);
+  assert.equal(unsupported.error, undefined, unsupported.error || "Firefox unsupported scanner case failed");
+  assert.equal(unsupported.scanDisabled, true);
+  assert.match(unsupported.status, /Unsupported (?:file types|formats)/i);
+}
+
 async function runFirefoxSmoke() {
   assertBuiltExtensionExists();
   const firefoxPath = findFirefoxExecutable();
   assert.ok(firefoxPath, "Firefox stable was not found. Set FIREFOX_BIN to run this smoke test.");
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "leakguard-firefox-smoke-"));
+  const profileDir = path.join(tempDir, "profile");
+  const downloadDir = path.join(tempDir, "downloads");
+  fs.mkdirSync(profileDir, { recursive: true });
+  fs.mkdirSync(downloadDir, { recursive: true });
 
   let geckodriver = null;
   let webdriver = null;
@@ -516,7 +1018,8 @@ async function runFirefoxSmoke() {
   try {
     httpsServer = await startHttpsChatGptServer();
     proxy = await startConnectProxy();
-    const xpiPath = await packageFirefoxExtension(tempDir);
+    const smokeExtensionDir = prepareFirefoxSmokeExtension(tempDir);
+    const xpiPath = await packageFirefoxExtension(tempDir, smokeExtensionDir);
 
     const geckodriverPort = await getFreePort();
     console.log("Firefox smoke: geckodriver");
@@ -525,11 +1028,18 @@ async function runFirefoxSmoke() {
     console.log("Firefox smoke: session");
     await webdriver.createSession({
       firefoxPath,
-      proxyAddress: proxy.address
+      proxyAddress: proxy.address,
+      profileDir,
+      downloadDir
     });
 
     const extensionId = await webdriver.installAddon(xpiPath);
-    console.log(`Firefox smoke: temporary extension loaded (${extensionId || "installed"})`);
+    const installedExtensionId = extensionId || firefoxExtensionId;
+    const extensionOrigin = await getFirefoxExtensionOrigin(profileDir, installedExtensionId);
+    console.log(`Firefox smoke: temporary extension loaded (${installedExtensionId})`);
+    console.log("Firefox smoke: popup and protected-site management");
+    await runFirefoxPopupAndProtectedSiteQa(webdriver, extensionOrigin, httpsServer.localOrigin);
+
     console.log("Firefox smoke: built-in protected site");
     const panelStartedAt = Date.now();
     await webdriver.navigate(`${httpsServer.origin}/`);
@@ -547,39 +1057,30 @@ async function runFirefoxSmoke() {
     assert.match(panel.rows.join("\n"), /PROTECTION\s+Active/i);
     assert.match(panel.rows.join("\n"), /chatgpt\.com/);
 
+    console.log("Firefox smoke: user-managed local protected site");
+    await openFirefoxLocalProtectedHarness(webdriver, httpsServer.localOrigin);
     console.log("Firefox smoke: composer redaction");
-    const rawSecret = "sk_live_7Qm2Lp9Xv4Nc8Tr6Yh1Zw5Kd3Bj0Pf";
-    const redacted = await webdriver.executeAsync(`const done = arguments[arguments.length - 1];
-      const rawSecret = ${JSON.stringify(rawSecret)};
-      const textarea = document.querySelector('#prompt-textarea');
-      textarea.focus();
-      const event = new InputEvent('beforeinput', {
-        bubbles: true,
-        cancelable: true,
-        inputType: 'insertText',
-        data: 'API_KEY=' + rawSecret
-      });
-      textarea.dispatchEvent(event);
-      const started = Date.now();
-      const timer = setInterval(() => {
-        if (/\\[PWM_\\d+\\]/.test(textarea.value)) {
-          clearInterval(timer);
-          done({ value: textarea.value, body: document.body.innerText || '' });
-          return;
-        }
-        const redactButton = Array.from(document.querySelectorAll('.pwm-modal-backdrop button, .pwm-modal button'))
-          .find((button) => /Redact/i.test(button.textContent || ''));
-        if (redactButton) {
-          redactButton.click();
-        } else if (Date.now() - started > 15000) {
-          clearInterval(timer);
-          done({ value: textarea.value, body: document.body.innerText || '', error: 'Timed out waiting for redaction' });
-        }
-      }, 50);`);
+    const redacted = await runFirefoxPromptRedactionQa(webdriver);
+    console.log("Firefox smoke: secure reveal");
+    await runFirefoxSecureRevealQa(webdriver, extensionOrigin, redacted.firstPlaceholder);
 
-    assert.equal(redacted.error, undefined, redacted.error || "Firefox redaction failed");
-    assert.match(redacted.value, /API_KEY=\[PWM_\d+\]/);
-    assert.equal(redacted.value.includes(rawSecret), false);
+    console.log("Firefox smoke: refresh safety");
+    await webdriver.refresh();
+    await waitFor(
+      () => webdriver.execute("return document.readyState === 'complete';"),
+      "Firefox harness refresh"
+    );
+    const refreshed = await webdriver.execute(`return {
+      body: document.body?.innerText || '',
+      value: document.querySelector('#prompt-textarea')?.value || ''
+    };`);
+    assertNoRawSyntheticValues(refreshed.body, "Firefox refreshed body");
+    assertNoRawSyntheticValues(refreshed.value, "Firefox refreshed textarea");
+
+    console.log("Firefox smoke: file scanner");
+    await runFirefoxScannerQa(webdriver, extensionOrigin, tempDir, downloadDir);
+    console.log("Firefox smoke: protected-site removal");
+    await runFirefoxProtectedSiteRemovalQa(webdriver, httpsServer.localOrigin);
 
     console.log("PASS firefox extension smoke");
   } catch (error) {
