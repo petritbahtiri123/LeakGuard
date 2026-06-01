@@ -7,6 +7,7 @@ require(path.join(repoRoot, "src/shared/placeholders.js"));
 require(path.join(repoRoot, "src/shared/entropy.js"));
 require(path.join(repoRoot, "src/shared/patterns.js"));
 require(path.join(repoRoot, "src/shared/detector.js"));
+require(path.join(repoRoot, "src/shared/knownSecretReuse.js"));
 require(path.join(repoRoot, "src/shared/redactor.js"));
 require(path.join(repoRoot, "src/shared/transformOutboundPrompt.js"));
 

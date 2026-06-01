@@ -13,6 +13,7 @@
   "defaultAction": "redact",
   "defaultDestinationAction": "allow",
   "auditMode": "off",
+  "auditRetentionDays": 30,
   "managedProtectedSites": [],
   "destinationPolicies": []
 }

@@ -92,6 +92,7 @@
 
 ## Firefox Protected-Site File/Drop Checks
 
+- Automated local Firefox smoke now covers popup loading, user-managed protected-site add/disable/re-enable/remove, secure reveal, refresh safety, File Scanner supported/unsupported files, and scanner exports. Keep live AI-site Firefox checks manual.
 - In Firefox on ChatGPT, upload unsupported files such as PDF, DOCX, image, archive, executable, binary, and invalid UTF-8 text files; confirm LeakGuard shows only a non-blocking warning that the file was not scanned/redacted and normal site upload continues.
 - In Firefox on ChatGPT, confirm unsupported and invalid UTF-8 uploads do not show `Local file not attached`, do not claim sanitization, and do not block native upload by default.
 - If Firefox ChatGPT login is blocked by account Advanced Security, mark Firefox ChatGPT as limited manual coverage and rely on Chrome live QA plus automated ChatGPT DOM/state tests for release gating.
@@ -133,6 +134,8 @@
 ## Store Submission Assets
 
 - Capture final screenshots for popup home, popup management, in-page panel, decision modal, and popup reveal.
-- Replace any temporary support or privacy contact placeholders in the privacy policy.
+- Confirm [STORE_ASSETS_CHECKLIST.md](STORE_ASSETS_CHECKLIST.md) is complete for the target store.
+- Complete the support, privacy, and security contact TODOs in the privacy policy with real project contacts.
 - Review the Chrome Web Store copy in `docs/CHROME_WEB_STORE_LISTING.md`.
+- Review the Firefox AMO submission notes in `docs/FIREFOX_AMO_CHECKLIST.md` if publishing a Firefox package.
 - Review release-facing wording for Firefox Add-ons suitability: local-only processing, no telemetry, no cloud processing, no remote model calls, and no perfect-protection claims.

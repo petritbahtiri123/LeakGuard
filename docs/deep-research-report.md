@@ -1,227 +1,148 @@
 # LeakGuard Deep Research Report
 
-Updated: 2026-05-05
+Updated: 2026-05-29
 
-Scope: repo inspection of the current release branch, the previous `docs/deep-research-report.md`, recent local git history, merged GitHub PRs/commits from roughly 2026-04-21 through 2026-05-05, and the public docs cleanup that added `docs/NON_GOALS.md`.
+Scope: current branch review of `main` versus this branch, `docs/DOCUMENTATION_ROADMAP.md`, security/privacy docs, build and policy docs, workflow files, tests, manifests, release artifacts, and the code-quality audit. This is an internal planning document, not release copy.
 
-## 1. Executive Summary
+## Executive Summary
 
-LeakGuard is a local-first browser privacy guard that reduces accidental AI prompt leaks. Its strongest current design choice is that deterministic detection remains authoritative: provider and context patterns, entropy checks, URL/header parsers, public IPv4 handling, placeholder trust, and right-to-left redaction run locally before text reaches protected chat composers.
+LeakGuard is in a much stronger place than the older report on `main`. The `main` report still reflects the May 5 state and says there is no docs validation command, describes older v1.3/v1.4 work, and does not include the current v1.7 documentation, release-hardening, audit-retention, file-handoff, and compatibility work.
 
-The current repo supports the v1.3.0 hardening goals in the critical deterministic areas: trust-aware placeholder handling, sensitive HTTP header ranges, URL credential redaction, repeated raw secret placeholder reuse, and targeted natural-language/labelled disclosures. v1.4.0 release prep adds release-facing coverage for local text-file paste/drop/file-select redaction in protected AI composers: supported UTF-8 text files are validated locally, redacted through the background-owned placeholder flow, and replaced with sanitized in-memory `File`/`Blob` objects where browser and site upload flows accept synthetic file handoff. Supported text-file composer uploads above 4 MiB and up to 50 MB use streaming/chunked local redaction before sanitized handoff. Unsupported files, files above 50 MB, and sanitized handoff failures are blocked fail-closed so raw uploads do not proceed. The optional AI assist is implemented as a local ONNX/classifier layer over leftover suspicious candidates, not as full-prompt cloud AI and not as a replacement for deterministic detection.
+The current branch has already closed several important hardening items:
 
-LeakGuard should continue to describe itself as local-first risk reduction, not full enterprise DLP. It does not perform remote secret verification, organization-wide discovery, SIEM integration, credential revocation, historical repository scanning, or managed endpoint hardening. The public non-goals list now lives in `docs/NON_GOALS.md`.
+- private placeholder/reveal fallback now uses ephemeral extension memory instead of `storage.local`
+- release builds strip debug helpers, debug console paths, and sourcemap references from packaged content scripts
+- audit logging is metadata-only, bounded, and covered by retention tests
+- exact-origin custom protected-site grants are tested
+- the early file drag guard has teardown coverage
+- local text-file scanning and protected composer text-file handoff are documented and tested
+- documentation now has a central index, user/admin/release guides, and `npm run docs:check-links`
 
-## 2. What Changed Since the Old Report
+The remaining work is not one obvious bug. It is an ordered hardening program: browser smoke CI, supply-chain reporting, release artifact hygiene, runtime budgets, maintainability refactors around large security-critical files, and a formal threat model. These are the things that move LeakGuard from "strong local privacy extension" toward a genuinely world-class extension without overclaiming enterprise DLP or perfect protection.
 
-The old report was a practical handoff focused on preserving deterministic detection, placeholder stability, local-only processing, and narrow future hardening. Since then, the repo has moved several recommendations from "guidance" to "implemented and covered by tests."
+## Current State
 
-Recent verified GitHub history:
+| Area | Status | Evidence |
+| --- | --- | --- |
+| Local-only model | Strong, still the core rule | `README.md`, `docs/NON_GOALS.md`, `docs/PRIVACY_POLICY.md`, `SECURITY_REVIEW.md` |
+| Secure reveal | Implemented and regression-tested | `SECURITY_REVIEW.md`, `tests/security.test.js`, `src/background/core.js`, `src/popup/popup.js` |
+| Private session fallback | Finished | `src/compat/platform.js`, `src/shared/sessionMapStore.js`, `tests/security.test.js` |
+| Release debug stripping | Finished | `scripts/build-extension.mjs`, `tests/build_targets.test.js` |
+| Sourcemap release policy | Finished | `tests/build_targets.test.js` |
+| Metadata-only audit retention | Finished | `src/background/core.js`, `src/shared/policy.js`, `tests/enterprise_policy.test.js` |
+| Exact-origin custom site grants | Finished | `src/shared/protected_sites.js`, `tests/protected_sites.test.js`, `tests/productization.test.js` |
+| Text file scanner and composer file handling | Implemented for supported UTF-8 text files | `src/shared/fileScanner.js`, `src/shared/streamingFileRedactor.js`, `docs/FILE_UPLOAD_SCANNING_GUIDE.md`, file-flow tests |
+| AI assist | Local, optional, candidate-gated | `docs/AI_ASSIST.md`, `src/shared/aiCandidateGate.js`, `src/shared/transformOutboundPromptWithAi.js`, AI tests |
+| Multi-target builds | Chrome/Firefox consumer and enterprise targets exist | `package.json`, `manifests/*.json`, `scripts/build-all.mjs`, `tests/build_targets.test.js` |
+| Documentation foundation | Much improved | `docs/README.md`, `docs/DOCUMENTATION_ROADMAP.md`, `scripts/check-doc-links.mjs` |
 
-| PR / commit | Date | Verified change |
-|---|---:|---|
-| [PR #57](https://github.com/petritbahtiri123/LeakGuard/pull/57), commit `069d618` | 2026-05-01 | v1.3.0 redaction hardening: placeholder trust, sensitive headers, URL credentials, labelled/natural-language ranges, known-secret reuse, package/manifest version bump. |
-| [PR #58](https://github.com/petritbahtiri123/LeakGuard/pull/58), commit `854a582` | 2026-05-02 | Provider token coverage refresh for GitLab token families plus Codex guidance/docs cleanup. |
-| [PR #59](https://github.com/petritbahtiri123/LeakGuard/pull/59), commit `d3046cd` | 2026-05-02 | Natural-language "real/actual value" detection fix, dynamic protected-site runtime injection aligned with AI assist modules, bounded placeholder rehydration. |
-| [PR #49](https://github.com/petritbahtiri123/LeakGuard/pull/49), commit `9f91205` | 2026-04-29 | Local text File Scanner with redacted text export and sanitized JSON report. |
-| [PR #41](https://github.com/petritbahtiri123/LeakGuard/pull/41) and [PR #42](https://github.com/petritbahtiri123/LeakGuard/pull/42) | 2026-04-27 | Local AI candidate gate and docs alignment: deterministic ranges reserved, leftover candidates only, classifier receives `candidate.contextText`. |
-| [PR #29](https://github.com/petritbahtiri123/LeakGuard/pull/29), [PR #53](https://github.com/petritbahtiri123/LeakGuard/pull/53), related ONNX/build commits | 2026-04-24 to 2026-04-30 | Local ONNX classifier packaging and ONNX Runtime sidecar packaging for extension builds. |
-| [PR #21](https://github.com/petritbahtiri123/LeakGuard/pull/21), [PR #26](https://github.com/petritbahtiri123/LeakGuard/pull/26), commit `1ff2d2a` | 2026-04-23 to 2026-04-24 | Firefox support and multi-target Chrome/Firefox consumer/enterprise builds. |
-| Public docs cleanup | 2026-05-03 | README AI-assist wording now matches the candidate-gated local architecture, and `docs/NON_GOALS.md` documents public limitations. |
+## Finished Since Main
 
-## 3. Current Architecture Snapshot
+`main:docs/deep-research-report.md` is now materially stale. The following items have moved from open, partial, or missing to done on this branch:
 
-| Area | Current files |
-|---|---|
-| Deterministic detection | `src/shared/patterns.js`, `src/shared/entropy.js`, `src/shared/detector.js` |
-| Redaction and placeholder reuse | `src/shared/redactor.js`, `src/shared/placeholders.js`, `src/shared/transformOutboundPrompt.js` |
-| Placeholder/session state | `src/shared/sessionMapStore.js`, `src/background/core.js` |
-| Browser interception | `src/content/content.js`, `src/content/composer_helpers.js` |
-| Local file sanitized handoff | `src/content/file_paste_helpers.js`, `src/content/content.js`, `src/shared/fileScanner.js`, `src/shared/streamingFileRedactor.js`, `src/background/core.js` |
-| Optional local AI assist | `src/shared/aiCandidateGate.js`, `src/shared/ai/classifier.js`, `src/shared/transformOutboundPromptWithAi.js`, `ai/models/*` |
-| Public IPv4 and CIDR pseudonymization | `src/shared/ipClassification.js`, `src/shared/ipDetection.js`, `src/shared/networkHierarchy.js`, `src/shared/placeholderAllocator.js` |
-| Local file scanner | `src/shared/fileScanner.js`, `src/scanner/scanner.js`, `src/scanner/scanner.html`, `src/scanner/scanner.css` |
-| Policy/protected sites | `src/shared/policy.js`, `src/shared/protected_sites.js`, `src/background/core.js`, `config/policy.*.json` |
-| Browser build targets | `scripts/build-extension.mjs`, `scripts/build-all.mjs`, `manifests/*.json`, `tests/build_targets.test.js` |
+- Docs validation: `npm run docs:check-links` now exists and checks local markdown links.
+- Documentation routing: `docs/README.md` is the central index and the root README points into it.
+- User guides: install, protected sites, placeholders/reveal, file upload scanning, browser compatibility, and troubleshooting now exist.
+- Admin/release guides: managed policy schema, Firefox AMO checklist, store assets checklist, and versioning policy now exist.
+- Enterprise policy: `destinationPolicies`, `managedProtectedSites`, `allowSiteRemoval`, `auditRetentionDays`, and strict-load behavior are documented and covered by policy tests.
+- Release hardening: generated builds are checked for no sourcemaps, no `sourceMappingURL`, and no content-script debug logging helpers.
+- File handling: supported text files above 4 MiB and up to 50 MB use streaming/chunked redaction in protected composer paths, with fail-closed behavior for oversized or failed sanitized handoff paths.
+- Firefox AMO readiness: Firefox manifests include Gecko metadata and no-data-collection declaration, and there is now a checklist distinct from the internal playbook.
 
-Current `package.json` commands verified:
+## Still Open
 
-- `npm run prepare:build`
-- `npm test`
-- `node tests/<file>.test.js`
-- `npm run build`
-- `npm run build:all`
-- `npm run build:chrome`
-- `npm run build:chrome-enterprise`
-- `npm run build:firefox`
-- `npm run build:firefox-enterprise`
-- `npm run icons:export`
+| Priority | Gap | Why it matters | Current best next step |
+| --- | --- | --- | --- |
+| P0 | Browser smoke CI is missing | Local-only and rewrite claims need live browser proof, especially for MV3 lifecycle, Firefox behavior, and file handoff | Add a minimal Chrome/Firefox smoke harness before broad refactors |
+| P0 | Release artifacts are committed under `release/` | Binaries in source history make review harder and can drift from source | Move future package publishing to tagged GitHub Releases or CI artifacts |
+| P0 | Large security-critical files remain concentrated | `content.js` is about 12.5k lines; `detector.js` about 3.5k; `core.js` about 1.4k | Add tests first, then extract behavior-preserving modules in small PRs |
+| P1 | Supply-chain reporting is partial | CI runs `npm audit`, but there is no OSV scan, SBOM, license report, or repo secret scan job | Add reporting-only jobs first, then make gates stricter after tuning |
+| P1 | Runtime budgets are not enforced | ONNX Runtime assets and document-start scripts can regress size/startup cost | Track bundle size, ORT asset size, init time, and redaction latency budgets |
+| P1 | Formal threat model is missing | Current security notes are good, but scattered | Create a concise threat model with trust boundaries, assets, abuse cases, and non-goals |
+| P1 | Edge support is documented as plausible, not proven | Edge can load the Chrome target, but there is no dedicated build or smoke CI | Keep Edge wording conservative until smoke tests pass |
+| P2 | Store/privacy release readiness still needs human review | Contact placeholders, screenshots, and legal/store review are not engineering-only tasks | Complete store assets checklist and privacy contact replacement before submission |
+| P2 | Natural-language detection remains inherently partial | Broad prose detection is noisy and false-positive-prone | Add paired positive and false-positive tests for every new phrase family |
+| P2 | File protection remains text-only | PDF, DOCX, OCR, archive, executable, and binary formats are not protected | Keep docs explicit; do not start binary formats until core hardening lands |
 
-No docs-only validation script exists in `package.json`.
+## Areas Needing The Most Care
 
-## 4. Old Recommendations Status
+### 1. Content Script And File Handoff
 
-| Old recommendation | Current status | Evidence path/PR | Remaining work |
-|---|---|---|---|
-| Keep placeholder trust explicit. | Implemented. Unknown placeholder-like tokens are not trusted automatically, trusted placeholders are preserved, and visible indices are reserved to avoid self-redaction. | `src/shared/placeholders.js`, `src/shared/detector.js`, `tests/placeholder_trust.test.js`, `tests/typed_interception.test.js`, [PR #57](https://github.com/petritbahtiri123/LeakGuard/pull/57). | Keep adding regressions for new placeholder syntaxes and partially redacted rerun cases. |
-| Prefer full intended ranges over suffix-only findings. | Implemented for the v1.3.0 target cases verified here: sensitive headers, labelled values, URL credentials, and known repeated secrets avoid raw prefix/suffix leaks. | `src/shared/detector.js`, `src/shared/redactor.js`, `src/shared/transformOutboundPrompt.js`, `tests/break_pack.test.js`, `tests/detector.test.js`, [PR #57](https://github.com/petritbahtiri123/LeakGuard/pull/57). | Continue provider-specific tests when adding new token families or separators. |
-| Expand natural-language detection carefully. | Partially implemented. Targeted chat-style examples and deny-list suppressions are tested, but broad natural-language coverage remains inherently noisy and not exhaustive. | `src/shared/detector.js`, `tests/natural_language_context.test.js`, `tests/detector.test.js`, [PR #55](https://github.com/petritbahtiri123/LeakGuard/pull/55), [PR #59](https://github.com/petritbahtiri123/LeakGuard/pull/59). | Broaden examples slowly with paired false-positive tests. Keep deterministic provider/context rules higher confidence than prose heuristics. |
-| Keep AI assist optional and local. | Implemented. The async wrapper reserves deterministic ranges, extracts leftover candidates, sends only `candidate.contextText` to the local classifier, and respects the `aiAssistEnabled` policy. README and `docs/AI_ASSIST.md` now use the same candidate-gated description. | `README.md`, `docs/AI_ASSIST.md`, `src/shared/aiCandidateGate.js`, `src/shared/transformOutboundPromptWithAi.js`, `src/shared/ai/classifier.js`, `tests/ai_candidate_gate.test.js`, `tests/transform_with_ai.test.js`, `tests/ai_assist.test.js`, [PR #41](https://github.com/petritbahtiri123/LeakGuard/pull/41), [PR #42](https://github.com/petritbahtiri123/LeakGuard/pull/42). | Keep README, `docs/AI_ASSIST.md`, and `docs/NON_GOALS.md` aligned when AI assist changes. |
-| Preserve local-only privacy model. | Implemented in inspected surfaces. File scanner and AI assist use local browser/runtime assets; security tests guard raw secret reveal and storage boundaries. | `README.md`, `docs/AI_ASSIST.md`, `src/shared/fileScanner.js`, `src/shared/ai/classifier.js`, `tests/security.test.js`, `tests/file_scanner.test.js`, [PR #49](https://github.com/petritbahtiri123/LeakGuard/pull/49). | Keep network calls, telemetry, cloud scanning, remote model calls, and remote secret verification out of runtime code. |
-| Preserve Chrome/Firefox build targets. | Implemented. The repo exposes four build commands and has a build-target regression file. | `package.json`, `scripts/build-extension.mjs`, `scripts/build-all.mjs`, `manifests/*.json`, `tests/build_targets.test.js`, [PR #21](https://github.com/petritbahtiri123/LeakGuard/pull/21), [PR #26](https://github.com/petritbahtiri123/LeakGuard/pull/26). | Run build-target tests or target builds when manifests, ONNX sidecars, CSP, or browser APIs change. |
-| Add local file scanning without changing privacy model. | Implemented for text files. Scanner is extension-owned, local-only, deterministic, size-limited, and exports redacted text plus sanitized JSON reports. | `src/shared/fileScanner.js`, `src/scanner/scanner.js`, `tests/file_scanner.test.js`, [PR #49](https://github.com/petritbahtiri123/LeakGuard/pull/49). | PDF/DOCX/image/OCR scanning remains out of scope and should not be claimed as enabled. |
+`src/content/content.js` is the highest-risk file. It handles composer interception, rewrite verification, file paste/drop/select handling, Gemini/Grok pending attach, Firefox-specific behavior, debug paths, and UI state. The code-quality audit calls out the local file insert path and pending attach duplication as the top refactor risks.
 
-### Implemented
+Care rule: do not extract this first. Add behavioral tests around cancellation, exception cleanup, non-Gemini/Grok pending-attach refusal, and fail-closed handoff before moving code.
 
-- Trust-aware placeholder handling for known versus unknown visible placeholders.
-- Sensitive HTTP header redaction that preserves names, separators, auth schemes, and cookie attributes where tests cover them.
-- URL credential parsing that redacts username and password/token segments separately while preserving URI shape.
-- Known raw secret reuse across headers, assignments, labelled prose, and plain repeats.
-- Provider-token coverage improvements for GitLab token prefixes and synthetic GitHub/GitLab regressions.
-- Optional local AI assist with candidate gating after deterministic detection.
-- Local text File Scanner with sanitized report exports.
-- Chrome/Firefox consumer and enterprise build target commands.
-- Public non-goals page linked from README.
-- Repo guidance cleanup in `AGENTS.md`, `docs/REPO_MAP.md`, `docs/BUG_PLAYBOOK.md`, and `docs/CODEX_PROMPT_TEMPLATES.md`.
+### 2. Release Build And Artifact Hygiene
 
-### Partially Implemented
+The build pipeline now strips high-risk debug artifacts, but packaged zips and XPI files still exist under `release/`. That is acceptable for historical evidence, but it should not be the future release model.
 
-- Natural-language detection: targeted contexts such as "this is my secret", "my db password is", "real/actual value", and "again same key" are covered, but broad prose remains noisy and should stay conservative.
-- Enterprise deployment behavior: policy hooks, destination actions, managed protected sites, and metadata-only audit events exist, but README correctly notes managed browser deployment is still required for force install, hard-removal prevention, incognito/InPrivate handling, and developer-mode restrictions.
+Care rule: move toward reproducible CI artifacts with checksums and source commit provenance before adding more package archives.
 
-### Still Open
+### 3. Browser Coverage
 
-- No docs-only validation script in `package.json`.
-- No remote/liveness secret verification by design.
-- No historical git scanning, CI secret baseline workflow, or credential rotation workflow.
-- No enabled PDF/DOCX/image/OCR scanner.
-- No claim-ready enterprise DLP posture.
+Chrome and Firefox targets are real. Edge is plausible through Chromium compatibility, but not proven by automated smoke tests. Safari is unsupported.
 
-## 5. Industry Standards Comparison
+Care rule: claim only what is tested. Add smoke CI before expanding public browser support language.
 
-| Reference | What it emphasizes | LeakGuard alignment | Gap / difference |
-|---|---|---|---|
-| [GitHub Secret Scanning](https://docs.github.com/en/code-security/reference/secret-security/secret-scanning-detection-scope) and [GitHub Secret Protection](https://github.com/security/advanced-security/secret-protection) | Repository and package scanning, push protection, supported provider patterns, partner-program coverage. | LeakGuard similarly values provider-specific high-signal patterns and false-positive control. | LeakGuard acts before prompt submission in browser composers and local files; it does not scan repository history, block git pushes, notify providers, or verify exposed credentials remotely. |
-| [detect-secrets](https://github.com/Yelp/detect-secrets) | Baseline generation, audit workflow, plugins, allowlisting. | LeakGuard has suppression/allowlist logic and focused regression suites. | LeakGuard has no reviewed baseline file or audit workflow for repo-wide secret triage. |
-| [Gitleaks](https://github.com/gitleaks/gitleaks) | CLI/CI/pre-commit secret scanning for code and git history with configurable rules and ignore fingerprints. | LeakGuard shares deterministic pattern thinking and tests provider token families. | LeakGuard is not a git-history scanner or CI/pre-commit tool. |
-| [TruffleHog](https://github.com/trufflesecurity/trufflehog) | Finding, verifying, and analyzing leaked credentials across sources; verified-result workflows. | LeakGuard redacts before user submission and avoids sending raw secrets out for verification. | LeakGuard intentionally does not perform live credential verification because remote verification would conflict with its local-only model. |
-| [OWASP Secrets Management Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html) | Centralized storage, provisioning, auditing, rotation, and management of secrets. | LeakGuard can reduce accidental disclosure by redacting prompt text and selected local files. | It is not a secrets manager, vault, rotation system, or access-control plane. |
-| [NIST Privacy Framework](https://www.nist.gov/privacy-framework/privacy-framework) and privacy engineering guidance | Data minimization, privacy risk management, system lifecycle thinking. | LeakGuard's local-only redaction, no telemetry, session-scoped raw mappings, and candidate-gated AI assist align with minimization. | It still handles raw secrets transiently in the browser session, so secure reveal and session storage boundaries remain high-risk surfaces. |
-| [ONNX Runtime Web](https://onnxruntime.ai/docs/tutorials/web/) / in-browser inference model | On-device/in-browser inference can improve privacy by avoiding server-side inference. | LeakGuard packages ONNX Runtime Web and model assets locally and classifies candidate windows in the browser. | Local inference still needs packaging, CSP, sidecar assets, performance, and stale-model validation; it is not a cloud LLM replacement. |
+### 4. Enterprise Language
 
-## 6. Where LeakGuard Stands Today
+Policy hooks are useful, but LeakGuard is still not full DLP. Browser policy is required for force install, hard-removal prevention, incognito/InPrivate controls, and developer-mode restrictions.
 
-### Strengths
+Care rule: keep "enterprise deployment support" separate from "enterprise DLP" or compliance claims.
 
-- Local-only privacy model with no backend, telemetry, cloud scanning, remote model calls, remote secret processing, or remote secret verification in the inspected runtime design.
-- Deterministic detection is authoritative and has focused tests around provider tokens, headers, URL credentials, repeated secrets, placeholders, safe literals, and public IPv4 data.
-- Placeholder behavior is mature enough for current v1.3.0 claims: session-known placeholders are preserved, unknown placeholder-like tokens in sensitive contexts are candidates, and known raw secrets reuse placeholders.
-- Browser composer safety has explicit interception and rewrite verification coverage for textarea/contenteditable and modal-block states.
-- File scanner and protected composer file paths extend the same local deterministic redaction model to selected text files without storing raw file contents in extension storage.
-- Protected composer text-file paths support streaming/chunked local redaction above 4 MiB and up to 50 MB, with fail-closed behavior if sanitized file handoff cannot complete.
-- Chrome and Firefox consumer/enterprise build targets are represented in commands, manifests, and tests.
+### 5. AI Assist And Detection Claims
 
-### Realistic Limitations
+AI assist is local and candidate-gated. It should remain behind deterministic detection, receive only candidate context windows, and never become a full-prompt cloud classifier.
 
-- Detection is heuristic and pattern-driven. It will miss unknown token formats and may suppress or warn on edge cases depending on context.
-- Natural-language detection is intentionally limited. It should not be presented as broad semantic understanding.
-- AI assist is small, local, optional, and candidate-gated. It should not be marketed as full-prompt AI scanning or cloud-grade classification.
-- LeakGuard protects configured browser surfaces and the extension file scanner, not every place a user can paste or upload data.
-- Secure reveal requires transient raw-to-placeholder mappings during the active browser session.
+Care rule: every AI wording change must stay aligned across `README.md`, `docs/AI_ASSIST.md`, `docs/NON_GOALS.md`, privacy policy, and store copy.
 
-### What It Should Not Claim
+## Do Not Turn These Into Goals
 
-- Full enterprise DLP.
-- Guaranteed prevention of all AI prompt leaks.
-- Credential liveness verification.
-- Automatic secret rotation or revocation.
-- Organization-wide repository, SaaS, endpoint, clipboard, screenshot, PDF, DOCX, or OCR coverage.
-- Cloud AI scanning, remote model inference, or remote secret verification.
+These are intentionally not goals unless the product direction changes:
 
-## 7. Remaining Gaps / What We Are Still Lacking
+- backend secret processing
+- telemetry or analytics
+- cloud scanning
+- remote model calls
+- remote secret verification or provider liveness checks
+- full enterprise DLP
+- credential rotation, revocation, or inventory
+- repository-history scanning
+- screenshot, clipboard-history, malware, endpoint, PDF/DOCX/OCR, or binary-file protection claims
 
-1. No docs validation command: `package.json` has no docs-only lint, link check, or markdown validation script.
-2. No repo-history scanner workflow: LeakGuard can reduce prompt/file leakage but does not replace GitHub Secret Scanning, Gitleaks, detect-secrets, or TruffleHog for source control.
-3. No remote verification by design: this is correct for local-only privacy, but it means LeakGuard cannot distinguish live from revoked secrets the way verification-first tools can.
-4. Natural-language detection remains partial: tests cover targeted examples and false-positive suppressions, not broad natural prose.
-5. File scanner and protected composer file scope remain text-only. Protected composer text-file paths stream larger supported text files up to 50 MB, while PDF, DOCX, and image redaction are still not enabled.
-6. Enterprise posture should remain carefully worded. The repo has enterprise modes/policy hooks, but not enough for an enterprise-grade DLP claim.
+## Recommended Implementation Order
 
-## 8. Recommended Next Steps
+The detailed roadmap lives in [IMPLEMENTATION_ROADMAP.md](IMPLEMENTATION_ROADMAP.md). The order matters:
 
-1. Add a docs-only validation script if docs changes will continue to be frequent, for example a markdown link/style check that does not touch build outputs.
-2. Keep README, `docs/AI_ASSIST.md`, `docs/NON_GOALS.md`, and this report aligned when AI assist, scanner scope, or enterprise wording changes.
-3. Keep v1.3.0 hardening narrow: add provider-specific tests before expanding generic entropy or prose rules.
-4. Add natural-language regressions in pairs: one positive disclosure and one false-positive suppression for each new phrase family.
-5. Add file scanner fixtures for tricky text formats already supported, such as `.env`, `.json`, `.yaml`, `.log`, shell, and PowerShell syntax.
-6. Keep Chrome/Firefox build-target tests close to any ONNX Runtime, manifest, CSP, or browser API changes.
-7. Keep non-goal claims explicit: no remote verification, no cloud AI, no full enterprise DLP, no PDF/DOCX/OCR support yet.
+1. Establish no-regression gates for docs, security, build artifacts, and current unit tests.
+2. Add browser smoke CI before refactoring `content.js`.
+3. Add supply-chain reporting and release provenance.
+4. Add runtime size/performance budgets.
+5. Refactor large files only behind focused behavioral tests.
+6. Refresh enterprise/store/privacy publication material after engineering gates are stable.
+7. Create a formal threat model and architecture diagrams.
+8. Consider larger product expansions only after the foundation is boring and repeatable.
 
-## 9. Implementation Handoff
+## Acceptance Criteria For The Hardening Program
 
-### Likely Files To Inspect
+LeakGuard is in a strong release posture when:
 
-- `src/shared/detector.js`
-- `src/shared/patterns.js`
-- `src/shared/redactor.js`
-- `src/shared/placeholders.js`
-- `src/shared/transformOutboundPrompt.js`
-- `src/shared/transformOutboundPromptWithAi.js`
-- `src/shared/aiCandidateGate.js`
-- `src/shared/sessionMapStore.js`
-- `src/background/core.js`
-- `src/content/content.js`
-- `src/content/composer_helpers.js`
-- `src/shared/fileScanner.js`
-- `scripts/build-extension.mjs`
-- `manifests/*.json`
+- `npm test` and `npm run docs:check-links` pass locally and in CI
+- build-target tests prove no debug helpers or sourcemaps ship
+- browser smoke CI covers Chrome stable, Firefox stable, and eventually Edge
+- release artifacts are reproducible from a source commit and published outside normal source diffs
+- dependency audit, OSV scan, SBOM, license report, and repo secret scan are available
+- runtime size and latency budgets are tracked
+- high-risk content/file-handoff refactors land only after focused tests
+- public docs avoid perfect-protection, full-DLP, remote-verification, and unsupported-file-format claims
+- privacy/store/enterprise docs receive human review before publication
 
-### Recommended Tests
+## Validation Notes
 
-- `node tests/detector.test.js`
-- `node tests/break_pack.test.js`
-- `node tests/placeholder_trust.test.js`
-- `node tests/natural_language_context.test.js`
-- `node tests/ai_candidate_gate.test.js`
-- `node tests/transform_with_ai.test.js`
-- `node tests/typed_interception.test.js`
-- `node tests/composer_helpers.test.js`
-- `node tests/file_scanner.test.js`
-- `node tests/security.test.js`
-- `node tests/build_targets.test.js`
-- `npm test` for behavior changes
+This update read the current branch report, `main:docs/deep-research-report.md`, documentation roadmap, privacy/non-goals/security docs, workflow files, package scripts, build-target tests, security tests, enterprise policy tests, and code-quality audit. No runtime behavior was changed.
 
-### Safe Order Of Changes
+Recommended validation for this docs-only update:
 
-1. Identify the narrow owner from `docs/REPO_MAP.md` and `docs/BUG_PLAYBOOK.md`.
-2. Add or update a focused regression test using synthetic values only.
-3. Patch the smallest owning module.
-4. Check redacted output for whole raw values and raw prefix/suffix tails, not just placeholder presence.
-5. Run the focused test file.
-6. Run `npm test` for source/behavior changes.
-7. Run build-target tests or target builds only when build scripts, manifests, ONNX assets, or browser APIs change.
-8. Keep generated `dist/`, `node_modules/`, `ai/models/`, `package-lock.json`, and build outputs out of routine docs/code patches unless the task explicitly targets them.
-
-### Acceptance Criteria
-
-- Deterministic detection remains authoritative.
-- Unknown placeholder-like tokens are not trusted automatically.
-- Existing trusted placeholders remain stable and pass through where appropriate.
-- Headers, labelled values, URL credentials, and known repeated secrets redact intended full ranges and do not leak raw prefixes/suffixes.
-- Same raw secret reuses the same placeholder.
-- AI assist remains local, optional, candidate-gated, and deterministic-first.
-- File scanner remains local-only and does not export raw secrets in sanitized reports.
-- No backend calls, telemetry, cloud scanning, remote model calls, remote secret verification, or remote secret processing are introduced.
-- Chrome/Firefox MV3 compatibility and CSP remain intact.
-
-## 10. Validation Notes
-
-Research and verification performed for this report:
-
-- Read `AGENTS.md`, `docs/REPO_MAP.md`, `docs/BUG_PLAYBOOK.md`, `docs/CODEX_PROMPT_TEMPLATES.md`, `docs/Prompt_Templates.md`, `docs/CODEX_CHANGELOG.md`, `package.json`, `scripts/run-tests.mjs`, prior `docs/deep-research-report.md`, `README.md`, `docs/AI_ASSIST.md`, `docs/NON_GOALS.md`, and `docs/DETECTION_ENHANCEMENTS.md`.
-- Reviewed local `git log --since='2026-04-21'` and GitHub PR/commit metadata for `petritbahtiri123/LeakGuard`, with special attention to PRs #29, #41, #42, #49, #53, #57, #58, #59, and #60.
-- Inspected source and tests for placeholder trust, full-range redaction, repeated secret reuse, natural-language detection, AI candidate gating, file scanner behavior, security constraints, and build target coverage.
-- Confirmed `package.json` has no docs-only validation script.
-- Did not run `npm test` or full builds because this is a docs-only update and no source, commands, or behavior implementation was changed.
-
-Pre-existing worktree note: local AI model artifacts under `ai/models/` were already modified before this report update and were not touched for this docs-only change.
+```bash
+npm run docs:check-links
+```

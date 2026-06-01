@@ -13,6 +13,7 @@
   "defaultAction": "block",
   "defaultDestinationAction": "block",
   "auditMode": "metadata-only",
+  "auditRetentionDays": 30,
   "managedProtectedSites": [],
   "destinationPolicies": [],
   "strictPolicyLoad": false,

@@ -4,7 +4,7 @@ Thank you for your interest in contributing to LeakGuard! This document provides
 
 ## Code of Conduct
 
-Be respectful and constructive in all interactions. We're building a security-focused tool that protects user privacy—maintaining trust and quality is essential.
+Be respectful and constructive in all interactions. We're building a security-focused tool that protects user privacy; maintaining trust and quality is essential.
 
 ## Getting Started
 
@@ -67,28 +67,29 @@ Be respectful and constructive in all interactions. We're building a security-fo
 
 ```
 LeakGuard/
-├── src/
-│   ├── background/          # Service worker and orchestration
-│   ├── content/             # Content script and composer integration
-│   ├── popup/               # Extension popup UI
-│   ├── options/             # Extension settings page
-│   ├── compat/              # Browser compatibility helpers
-│   └── shared/              # Detector, redaction, placeholders, transforms
-├── ai/                      # Local AI classifier training and export
-├── docs/                    # Extended documentation
-├── tests/                   # Node-based regression tests
-├── manifests/               # Manifest templates for different builds
-├── scripts/                 # Build and utility scripts
-└── config/                  # Policy configuration files
++-- src/
+|   +-- background/          # Service worker entry and orchestration
+|   +-- content/             # Content script and composer integration
+|   +-- popup/               # Extension popup UI
+|   +-- options/             # Extension settings page
+|   +-- compat/              # Browser compatibility helpers
+|   +-- scanner/             # Extension-owned local File Scanner UI
+|   +-- shared/              # Detector, redaction, placeholders, transforms
++-- ai/                      # Local AI classifier training and export
++-- docs/                    # Extended documentation
++-- tests/                   # Node-based regression tests
++-- manifests/               # Manifest templates for different builds
++-- scripts/                 # Build and utility scripts
++-- config/                  # Policy configuration files
 ```
 
 ### Key Modules
 
 - **`src/shared/detector.js`** - Core secret detection heuristics
-- **`src/shared/redaction.js`** - Text transformation and placeholder replacement
+- **`src/shared/redactor.js`** - Text transformation and placeholder replacement
 - **`src/shared/placeholders.js`** - Placeholder management and reveal state
 - **`src/content/content.js`** - Composer integration and DOM interception
-- **`src/background/service_worker.js`** - Session state and message routing
+- **`src/background/core.js`** - Session state and message routing
 - **`ai/scripts/`** - Model training, evaluation, and ONNX export
 
 ## Making Changes
@@ -182,6 +183,12 @@ Profile mode sets `LEAKGUARD_BENCH_PROFILE=1` and prints a second table with ave
 
 Set `LEAKGUARD_BENCH_ITERATIONS=<number>` to increase or reduce benchmark iterations during local investigation. Keep thresholds conservative enough for normal developer machines and CI; the benchmark is intended to catch major redaction slowdowns, not to replace profiling.
 
+For documentation-only changes, run the focused markdown link check:
+
+```bash
+npm run docs:check-links
+```
+
 ### Manual Testing
 
 Use the smoke test file to verify detection end-to-end:
@@ -203,7 +210,7 @@ If modifying the AI classifier:
 ```bash
 cd ai
 python -m pip install -r requirements.txt
-python scripts/generate_initial_dataset.py --count 10000
+python scripts/generate_dataset.py --count 10000
 python scripts/train_classifier.py
 python scripts/evaluate_model.py
 python scripts/export_onnx.py

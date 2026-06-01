@@ -8,10 +8,15 @@ const repoRoot = path.join(__dirname, "..");
 require(path.join(repoRoot, "src/shared/placeholders.js"));
 require(path.join(repoRoot, "src/shared/sessionMapStore.js"));
 const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
+const fileHandoffFlowSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/file_handoff_flow.js"),
+  "utf8"
+);
 const backgroundSource = fs.readFileSync(
   path.join(repoRoot, "src/background/core.js"),
   "utf8"
 );
+const platformSource = fs.readFileSync(path.join(repoRoot, "src/compat/platform.js"), "utf8");
 const filePasteHelperSource = fs.readFileSync(
   path.join(repoRoot, "src/content/file_paste_helpers.js"),
   "utf8"
@@ -206,6 +211,60 @@ function testSafeRevealUiExists() {
   );
 }
 
+async function testSessionStorageFallbackIsEphemeralOnly() {
+  let localGetCalls = 0;
+  let localSetCalls = 0;
+  let localRemoveCalls = 0;
+  const sandbox = {
+    navigator: { userAgent: "TestBrowser" },
+    chrome: {
+      storage: {
+        local: {
+          async get() {
+            localGetCalls += 1;
+            return {};
+          },
+          async set() {
+            localSetCalls += 1;
+          },
+          async remove() {
+            localRemoveCalls += 1;
+          }
+        }
+      }
+    }
+  };
+  sandbox.globalThis = sandbox;
+
+  vm.runInNewContext(platformSource, sandbox, {
+    filename: "platform.js"
+  });
+
+  const sessionArea = sandbox.PWM.getSessionStorageArea();
+  await sessionArea.set({
+    privateState: {
+      raw: "SessionOnlySecret123",
+      placeholder: "[PWM_1]"
+    }
+  });
+  const loaded = await sessionArea.get("privateState");
+  loaded.privateState.raw = "mutated";
+  const loadedAgain = await sessionArea.get("privateState");
+  await sessionArea.remove("privateState");
+  const removed = await sessionArea.get("privateState");
+
+  assert.strictEqual(sandbox.PWM.supportsStorageSession, false);
+  assert.strictEqual(sandbox.PWM.usingEphemeralSessionStorage, true);
+  assert.strictEqual(loadedAgain.privateState.raw, "SessionOnlySecret123");
+  assert.deepStrictEqual(Object.keys(removed), []);
+  assert.strictEqual(localGetCalls + localSetCalls + localRemoveCalls, 0);
+  assertNotIncludes(
+    platformSource,
+    "ext.storage.local",
+    "session storage fallback must not persist private placeholder/reveal state in storage.local"
+  );
+}
+
 function testAuditMetadataObjectsExcludeRawSecrets() {
   const { sandbox } = createBackgroundSecuritySandbox();
   const rawSecret = "AuditBoundarySecret123!";
@@ -326,7 +385,7 @@ function testLocalFilePasteDoesNotExposeRawFileContent() {
   assert.ok(
     localFileSource.includes("createSanitizedTextFile(localFile.file, result.redactedText)") &&
       localFileSource.includes("handOffSanitizedLocalFile(event, input, sanitizedFile, context)") &&
-      contentSource.includes("function handOffSanitizedLocalFile") &&
+      fileHandoffFlowSource.includes("function handOffSanitizedLocalFile") &&
       contentSource.includes("fileInput.files = transfer.files") &&
       contentSource.includes("function handOffGeminiSanitizedFileUpload") &&
       contentSource.includes("function handOffGrokSanitizedFileUpload") &&
@@ -335,9 +394,9 @@ function testLocalFilePasteDoesNotExposeRawFileContent() {
   );
   assert.ok(
     localFileSource.includes("sanitized_file_handoff_failed") &&
-      contentSource.includes("handoffSanitizedPayload") &&
-      contentSource.includes("downloadSanitizedFileFallback") &&
-      contentSource.includes("formatSanitizedFileFallbackText(payload)") &&
+      fileHandoffFlowSource.includes("handoffSanitizedPayload") &&
+      fileHandoffFlowSource.includes("downloadSanitizedFileFallback") &&
+      fileHandoffFlowSource.includes("formatSanitizedFileFallbackText(payload)") &&
       localFileSource.includes("LeakGuard blocked raw file upload. Sanitized file handoff failed"),
     "local file paste/drop should fail closed only after sanitized attachment, sanitized text fallback, and sanitized download fallback cannot be completed"
   );
@@ -383,30 +442,54 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const baseManifest = JSON.parse(fs.readFileSync(path.join(repoRoot, "manifests/base.json"), "utf8"));
   const staticScripts = baseManifest.content_scripts[0].js;
   const dynamicScripts = Array.from(
-    backgroundSource.matchAll(/"([^"]+(?:fileScanner|file_paste_helpers|content)\.js)"/g)
+    backgroundSource.matchAll(/"([^"]+(?:fileScanner|file_paste_helpers|file_handoff_state|file_handoff_pending|file_handoff_flow|content)\.js)"/g)
   ).map((match) => match[1]);
 
   const staticFileScanner = staticScripts.indexOf("shared/fileScanner.js");
   const staticFilePaste = staticScripts.indexOf("content/file_paste_helpers.js");
+  const staticFileHandoffState = staticScripts.indexOf("content/file_handoff_state.js");
+  const staticFileHandoffPending = staticScripts.indexOf("content/file_handoff_pending.js");
+  const staticFileHandoffFlow = staticScripts.indexOf("content/file_handoff_flow.js");
   const staticContent = staticScripts.indexOf("content/content.js");
   const dynamicFileScanner = dynamicScripts.indexOf("shared/fileScanner.js");
   const dynamicFilePaste = dynamicScripts.indexOf("content/file_paste_helpers.js");
+  const dynamicFileHandoffState = dynamicScripts.indexOf("content/file_handoff_state.js");
+  const dynamicFileHandoffPending = dynamicScripts.indexOf("content/file_handoff_pending.js");
+  const dynamicFileHandoffFlow = dynamicScripts.indexOf("content/file_handoff_flow.js");
   const dynamicContent = dynamicScripts.indexOf("content/content.js");
 
   assert.ok(
-    staticFileScanner > -1 && staticFilePaste > -1 && staticContent > -1,
-    "static manifest should include scanner, file paste helper, and content script"
+    staticFileScanner > -1 &&
+      staticFilePaste > -1 &&
+      staticFileHandoffState > -1 &&
+      staticFileHandoffPending > -1 &&
+      staticFileHandoffFlow > -1 &&
+      staticContent > -1,
+    "static manifest should include scanner, file paste helper, file handoff state, file handoff pending, file handoff flow, and content script"
   );
   assert.ok(
-    dynamicFileScanner > -1 && dynamicFilePaste > -1 && dynamicContent > -1,
-    "dynamic injection should include scanner, file paste helper, and content script"
+    dynamicFileScanner > -1 &&
+      dynamicFilePaste > -1 &&
+      dynamicFileHandoffState > -1 &&
+      dynamicFileHandoffPending > -1 &&
+      dynamicFileHandoffFlow > -1 &&
+      dynamicContent > -1,
+    "dynamic injection should include scanner, file paste helper, file handoff state, file handoff pending, file handoff flow, and content script"
   );
   assert.ok(
-    staticFileScanner < staticFilePaste && staticFilePaste < staticContent,
+    staticFileScanner < staticFilePaste &&
+      staticFilePaste < staticFileHandoffState &&
+      staticFileHandoffState < staticFileHandoffPending &&
+      staticFileHandoffPending < staticFileHandoffFlow &&
+      staticFileHandoffFlow < staticContent,
     "static manifest file paste order should load dependencies before content.js"
   );
   assert.ok(
-    dynamicFileScanner < dynamicFilePaste && dynamicFilePaste < dynamicContent,
+    dynamicFileScanner < dynamicFilePaste &&
+      dynamicFilePaste < dynamicFileHandoffState &&
+      dynamicFileHandoffState < dynamicFileHandoffPending &&
+      dynamicFileHandoffPending < dynamicFileHandoffFlow &&
+      dynamicFileHandoffFlow < dynamicContent,
     "dynamic injection file paste order should load dependencies before content.js"
   );
 }
@@ -594,6 +677,7 @@ async function run() {
 
   testUnsafeContentRevealPathRemoved();
   testSafeRevealUiExists();
+  await testSessionStorageFallbackIsEphemeralOnly();
   testAuditMetadataObjectsExcludeRawSecrets();
   await testSecureRevealRemainsBoundedToRequestSessionAndExtensionUi();
   testPlaceholderLabelsDoNotExposeRawValues();

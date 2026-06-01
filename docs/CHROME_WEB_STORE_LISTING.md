@@ -81,7 +81,7 @@ Productivity
 
 ### `storage`
 
-Used to store normalized protected-site rules and session-scoped prompt placeholder maps locally in the browser. File Scanner and local file paste/drop contents are not stored in extension storage.
+Used to store normalized protected-site rules and session-scoped prompt placeholder maps locally in the browser. Private placeholder maps use browser session storage when available and ephemeral extension memory otherwise. File Scanner and local file paste/drop contents are not stored in extension storage.
 
 ### `scripting`
 
@@ -96,6 +96,8 @@ Used so the popup can inspect the current tab, show protection status, and activ
 Used only when the user explicitly enables protection for an additional site. LeakGuard does not request broad access up front for every website.
 
 ## Screenshot Plan
+
+Track final capture requirements in [STORE_ASSETS_CHECKLIST.md](STORE_ASSETS_CHECKLIST.md).
 
 Use real extension screenshots with production copy. Avoid showing raw real credentials.
 

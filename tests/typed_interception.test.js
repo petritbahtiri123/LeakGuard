@@ -13,6 +13,7 @@ require(path.join(repoRoot, "src/shared/ipDetection.js"));
 require(path.join(repoRoot, "src/shared/networkHierarchy.js"));
 require(path.join(repoRoot, "src/shared/placeholderAllocator.js"));
 require(path.join(repoRoot, "src/shared/sessionMapStore.js"));
+require(path.join(repoRoot, "src/shared/knownSecretReuse.js"));
 require(path.join(repoRoot, "src/shared/transformOutboundPrompt.js"));
 require(path.join(repoRoot, "src/content/composer_helpers.js"));
 
@@ -34,6 +35,10 @@ const {
 } = ComposerHelpers;
 
 const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
+const fileHandoffFlowSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/file_handoff_flow.js"),
+  "utf8"
+);
 
 function extractFunctionSource(source, name) {
   const match = source.match(new RegExp(`(?:async\\s+)?function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n  \\}`));
@@ -471,17 +476,17 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
     "local file handoff should consume first, use background redaction, and avoid independent scanner managers"
   );
   assert.ok(
-    contentSource.includes("function handOffSanitizedLocalFile") &&
+    fileHandoffFlowSource.includes("function handOffSanitizedLocalFile") &&
       contentSource.includes("fileInput.files = transfer.files") &&
       contentSource.includes("function handOffSanitizedFileInput") &&
-      contentSource.includes("resolveFileInputForHandoff(event, input)") &&
+      fileHandoffFlowSource.includes("resolveFileInputForHandoff(event, input)") &&
       contentSource.includes("isGeminiHost()") &&
       contentSource.includes("isGrokHost()") &&
       contentSource.includes("function handOffGeminiSanitizedFileUpload") &&
       contentSource.includes("function handOffGrokSanitizedFileUpload") &&
       contentSource.includes("file-handoff:fail-closed") &&
-      contentSource.includes('dispatchSanitizedFileEvent(target, "drop", transfer)') &&
-      contentSource.includes('dispatchSanitizedFileEvent(target, "paste", transfer)'),
+      fileHandoffFlowSource.includes('dispatchSanitizedFileEvent(target, "drop", transfer)') &&
+      fileHandoffFlowSource.includes('dispatchSanitizedFileEvent(target, "paste", transfer)'),
     "local file handling should hand off sanitized files through native site upload adapters and fail closed when required handoff fails"
   );
   assert.ok(
@@ -548,6 +553,13 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
       beforeInputSource.indexOf("consumeInterceptionEvent(event);") <
         beforeInputSource.indexOf("await analyzeTextWithAiAssist(next.text)"),
     "Firefox beforeinput should synchronously consume risky raw text before any async analysis can yield to the page"
+  );
+  assert.ok(
+    beforeInputSource.includes("event?.isTrusted === false") &&
+      beforeInputSource.includes("isProgrammaticInputScanSuppressed()") &&
+      beforeInputSource.indexOf("event?.isTrusted === false") <
+        beforeInputSource.indexOf("shouldInterceptBeforeInput(event)"),
+    "programmatic ChatGPT rewrite events should not be re-intercepted as typed user input"
   );
   assert.ok(
     contentSource.includes("shouldAutoRedactTypedSecrets"),

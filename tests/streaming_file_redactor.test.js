@@ -13,6 +13,7 @@ require(path.join(repoRoot, "src/shared/ipClassification.js"));
 require(path.join(repoRoot, "src/shared/ipDetection.js"));
 require(path.join(repoRoot, "src/shared/networkHierarchy.js"));
 require(path.join(repoRoot, "src/shared/placeholderAllocator.js"));
+require(path.join(repoRoot, "src/shared/knownSecretReuse.js"));
 require(path.join(repoRoot, "src/shared/transformOutboundPrompt.js"));
 require(path.join(repoRoot, "src/shared/aiCandidateGate.js"));
 require(path.join(repoRoot, "src/shared/transformOutboundPromptWithAi.js"));
@@ -21,8 +22,11 @@ require(path.join(repoRoot, "src/shared/streamingFileRedactor.js"));
 
 const {
   LARGE_TEXT_STREAMING_MAX_BYTES,
+  STREAMING_BLOCK_TITLE,
+  STREAMING_BLOCK_MESSAGE,
   redactTextFileStream
 } = globalThis.PWM.StreamingFileRedactor;
+const FileScanner = globalThis.PWM.FileScanner;
 
 function encode(text) {
   return new TextEncoder().encode(text);
@@ -358,6 +362,10 @@ async function testFiveMiBUploadFixtureRedactsShortProjectKeyAssignment() {
 }
 
 async function testOverFiftyMiBBlocks() {
+  assert.strictEqual(LARGE_TEXT_STREAMING_MAX_BYTES, FileScanner.LARGE_TEXT_STREAMING_MAX_BYTES);
+  assert.strictEqual(STREAMING_BLOCK_TITLE, FileScanner.LARGE_TEXT_STREAMING_BLOCK_TITLE);
+  assert.strictEqual(STREAMING_BLOCK_MESSAGE, FileScanner.LARGE_TEXT_STREAMING_BLOCK_MESSAGE);
+
   const file = {
     name: "too-large.log",
     type: "text/plain",

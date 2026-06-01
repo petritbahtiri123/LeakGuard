@@ -210,7 +210,7 @@ python -m venv venv
 Generate synthetic training data:
 
 ```bash
-./venv/bin/python scripts/generate_initial_dataset.py --count 2000
+./venv/bin/python scripts/generate_dataset.py --count 10000
 ```
 
 Add manually reviewed JSONL files to:
@@ -252,4 +252,4 @@ cd ..
 npm run build:all
 ```
 
-The normal build commands run this preparation automatically. `npm run build:chrome`, `npm run build:firefox`, and `npm run build:all` install missing npm dependencies, prepare `ai/.venv`, generate 2000 synthetic examples, train the local classifier, export ONNX, and then package the extension.
+The normal build commands run this preparation automatically. `npm run build:chrome`, `npm run build:firefox`, and `npm run build:all` install missing npm dependencies, prepare `ai/.venv`, generate 10,000 synthetic examples by default, train the local classifier, run independent evaluation, export ONNX, and then package the extension. Set `LEAKGUARD_TRAINING_EXAMPLES` to change the generated training count locally.

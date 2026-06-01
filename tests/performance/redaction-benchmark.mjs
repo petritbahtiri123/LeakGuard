@@ -18,6 +18,7 @@ const repoRoot = path.join(__dirname, "..", "..");
   "src/shared/networkHierarchy.js",
   "src/shared/placeholderAllocator.js",
   "src/shared/sessionMapStore.js",
+  "src/shared/knownSecretReuse.js",
   "src/shared/transformOutboundPrompt.js"
 ].forEach((relativePath) => {
   require(path.join(repoRoot, relativePath));

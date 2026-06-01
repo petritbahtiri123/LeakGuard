@@ -116,6 +116,118 @@ function copyDirContents(sourceDir, targetDir) {
   fs.cpSync(sourceDir, targetDir, { recursive: true });
 }
 
+function walkFiles(dirPath) {
+  const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+  const files = [];
+
+  for (const entry of entries) {
+    const fullPath = path.join(dirPath, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...walkFiles(fullPath));
+    } else if (entry.isFile()) {
+      files.push(fullPath);
+    }
+  }
+
+  return files;
+}
+
+function replaceFunctionSource(source, functionName, replacement = "") {
+  const signature = `  function ${functionName}`;
+  const start = source.indexOf(signature);
+  if (start === -1) {
+    throw new Error(`Expected ${functionName}() in content script before release sanitization.`);
+  }
+
+  const bodyStart = source.indexOf("{", start);
+  if (bodyStart === -1) {
+    throw new Error(`Could not locate ${functionName}() body for release sanitization.`);
+  }
+
+  let depth = 0;
+  for (let index = bodyStart; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === "{") {
+      depth += 1;
+    } else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return `${source.slice(0, start)}${replacement}${source.slice(index + 1)}`;
+      }
+    }
+  }
+
+  throw new Error(`Could not replace ${functionName}() for release sanitization.`);
+}
+
+function stripContentDebugDiagnostics(targetRoot) {
+  const contentPath = path.join(targetRoot, "content", "content.js");
+  let source = fs.readFileSync(contentPath, "utf8");
+
+  source = replaceFunctionSource(source, "isDebugEnabled", "  function leakGuardBuildNoop() {}\n");
+  for (const functionName of [
+    "debugLogSnapshot",
+    "debugReveal",
+    "logFailureDetails",
+    "logFileInterception"
+  ]) {
+    source = replaceFunctionSource(source, functionName);
+  }
+
+  source = source
+    .replace(/^\s*emitDebug:\s*debugReveal,\r?\n/gm, "")
+    .replace(/\bdebugLogSnapshot\s*\(/g, "false && leakGuardBuildNoop(")
+    .replace(/\bdebugReveal\s*\(/g, "false && leakGuardBuildNoop(")
+    .replace(/\blogFailureDetails\s*\(/g, "false && leakGuardBuildNoop(")
+    .replace(/\blogFileInterception\s*\(/g, "false && leakGuardBuildNoop(");
+
+  for (const banned of [
+    "pwm:debug",
+    "debugLogSnapshot",
+    "debugReveal",
+    "console.group(",
+    "console.groupCollapsed(",
+    "console.groupEnd(",
+    "console.log("
+  ]) {
+    if (source.includes(banned)) {
+      throw new Error(`Release content script still contains debug artifact: ${banned}`);
+    }
+  }
+
+  fs.writeFileSync(contentPath, source);
+}
+
+function stripSourceMappingUrls(targetRoot) {
+  const sourceMapPattern = /(?:\/\/[#@]\s*sourceMappingURL=.*|\/\*[#@]\s*sourceMappingURL=[\s\S]*?\*\/)/g;
+  for (const file of walkFiles(targetRoot)) {
+    if (!/\.(?:js|mjs|css|json|html)$/i.test(file)) {
+      continue;
+    }
+
+    const source = fs.readFileSync(file, "utf8");
+    if (!source.includes("sourceMappingURL")) {
+      continue;
+    }
+
+    fs.writeFileSync(file, source.replace(sourceMapPattern, ""));
+  }
+}
+
+function assertNoReleaseSourceMaps(targetRoot) {
+  for (const file of walkFiles(targetRoot)) {
+    if (file.endsWith(".map") || path.basename(file).toLowerCase().includes(".map.")) {
+      throw new Error(`Release artifact must not include sourcemap file: ${file}`);
+    }
+    if (/\.(?:js|mjs|css|json|html)$/i.test(file)) {
+      const source = fs.readFileSync(file, "utf8");
+      if (source.includes("sourceMappingURL")) {
+        throw new Error(`Release artifact still references a sourcemap: ${file}`);
+      }
+    }
+  }
+}
+
 function resolveTargetName(browser, mode = "consumer") {
   return mode === "enterprise" ? `${browser}-enterprise` : browser;
 }
@@ -219,7 +331,10 @@ function buildTarget(browser, mode = "consumer") {
     copyDirContents(path.join(repoRoot, dir), path.join(targetRoot, dir));
   }
 
+  stripContentDebugDiagnostics(targetRoot);
   copyOnnxRuntime(targetRoot);
+  stripSourceMappingUrls(targetRoot);
+  assertNoReleaseSourceMaps(targetRoot);
 
   writeBuildInfo(targetRoot, { browser, mode, builtAt });
 

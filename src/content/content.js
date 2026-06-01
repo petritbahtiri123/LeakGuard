@@ -14,7 +14,10 @@
     buildNetworkUiFindings,
     evaluateDestinationPolicy,
     ComposerHelpers,
-    FilePasteHelpers
+    FilePasteHelpers,
+    createFileHandoffState,
+    createFileHandoffPending,
+    createFileHandoffFlow
   } = globalThis.PWM;
   const {
     normalizeComposerText,
@@ -153,20 +156,9 @@
   let statusPanelSessionValueEl = null;
   let statusPanelPauseBtn = null;
   let extensionRuntimeAvailable = true;
-  const sanitizedFileInputHandoffs = new WeakSet();
-  const sanitizedFileInputHandoffExpires = new WeakMap();
-  const sanitizedFileInputHandoffRecords = new WeakMap();
-  const sanitizedFileHandoffFiles = new WeakSet();
-  const sanitizedFileHandoffFileExpires = new WeakMap();
-  const sanitizedFileHandoffSignatures = new Map();
-  const recentSanitizedFileInputHandoffRecords = [];
-  const firefoxFileInputTransactions = new WeakMap();
   const rawFileDropInterceptions = new WeakSet();
   const fileDragEventRoots = new WeakSet();
   const editorRiskState = new WeakMap();
-  let sanitizedFileHandoffSequence = 0;
-  let lastCompletedSanitizedFileInputHandoff = null;
-  let lastCompletedPendingSanitizedFileInputHandoff = null;
   const SANITIZED_FILE_HANDOFF_SUPPRESS_MS = 30000;
   const PROGRAMMATIC_INPUT_SUPPRESS_MS = 500;
   const CHATGPT_LARGE_PASTE_FILE_THRESHOLD = 16 * 1024;
@@ -182,9 +174,15 @@
     FileScanner.LOCAL_TEXT_OPTIMIZED_MAX_BYTES || 4 * 1024 * 1024;
   const LOCAL_TEXT_HARD_BLOCK_BYTES =
     FileScanner.LOCAL_TEXT_HARD_BLOCK_BYTES || 4 * 1024 * 1024;
-  const LOCAL_TEXT_HARD_BLOCK_TITLE = "Large payload blocked for browser stability";
+  const LOCAL_TEXT_HARD_BLOCK_TITLE =
+    FileScanner.LOCAL_TEXT_HARD_BLOCK_TITLE || "Large payload blocked for browser stability";
   const LOCAL_TEXT_HARD_BLOCK_MESSAGE =
+    FileScanner.LOCAL_TEXT_HARD_BLOCK_MESSAGE ||
     "This content is over 4 MB. LeakGuard did not process or send it automatically to avoid browser instability. Split the file into smaller parts, or sanitize it separately before upload.";
+  const LARGE_TEXT_STREAMING_MAX_BYTES =
+    StreamingFileRedactor.LARGE_TEXT_STREAMING_MAX_BYTES ||
+    FileScanner.LARGE_TEXT_STREAMING_MAX_BYTES ||
+    50 * 1024 * 1024;
   const STREAMING_BLOCK_TITLE =
     StreamingFileRedactor.STREAMING_BLOCK_TITLE ||
     FileScanner.LARGE_TEXT_STREAMING_BLOCK_TITLE ||
@@ -193,6 +191,14 @@
     StreamingFileRedactor.STREAMING_BLOCK_MESSAGE ||
     FileScanner.LARGE_TEXT_STREAMING_BLOCK_MESSAGE ||
     "This file is over 50 MB. LeakGuard blocked the upload because it cannot safely sanitize it yet.";
+  const LOCAL_FILE_STREAMING_REQUIRED_MESSAGE =
+    FileScanner.LOCAL_FILE_STREAMING_REQUIRED_MESSAGE ||
+    FilePasteHelpers?.LOCAL_FILE_STREAMING_REQUIRED_MESSAGE ||
+    "LeakGuard will stream-redact this large text file locally before upload.";
+  const LOCAL_FILE_UNSUPPORTED_WARNING =
+    FileScanner.UNSUPPORTED_COMPOSER_FILE_MESSAGE ||
+    FilePasteHelpers?.LOCAL_FILE_UNSUPPORTED_WARNING ||
+    "LeakGuard did not scan or redact this file. Unsupported file types such as PDF, DOCX, images, archives, executables, and binary files are not protected in this release. Normal upload may continue through the site.";
   const FILE_DRAG_SESSION_RESET_MS = 5000;
   const GEMINI_UPLOAD_INPUT_WAIT_MS = 450;
   const GEMINI_GHOST_INGRESS_TIMEOUT_MS = 2200;
@@ -252,6 +258,130 @@
   let pendingAttachPromptSite = "";
   let syntheticFileListCapabilityCache = null;
   let inputFileAssignmentCapabilityCache = null;
+  const fileHandoffState = createFileHandoffState({
+    emitDebug: debugReveal,
+    describeFileForDebug,
+    describeFileInputForDebug,
+    getCurrentHandoffDriverId,
+    getFileHandoffAdapterForLocation,
+    isFileInputElement,
+    isFirefoxRuntime,
+    isProtectedFileDropDriver,
+    listLocalTransferFiles,
+    locationRef: location,
+    setTimeoutFn: setTimeout,
+    DataTransferCtor: typeof DataTransfer === "function" ? DataTransfer : null,
+    constants: {
+      PROGRAMMATIC_INPUT_SUPPRESS_MS,
+      SANITIZED_FILE_HANDOFF_SUPPRESS_MS
+    }
+  });
+  const {
+    sanitizedFileInputHandoffs,
+    getFileMetadataSignature,
+    getFileListMetadataSignature,
+    markSanitizedFileHandoff,
+    deleteSanitizedFileHandoffMark,
+    shouldSuppressSanitizedFileReprocessing,
+    isFileUnavailableLocalFileResult,
+    getFileUnavailableAfterHandoffSuppression,
+    suppressFileUnavailableAfterHandoff,
+    suppressStaleHandoffErrorAfterSuccess,
+    isFirefoxProtectedFileInputEvent,
+    getFirefoxFileInputTransaction,
+    setFirefoxFileInputTransaction,
+    markFirefoxFileInputTransactionReplaced,
+    shouldSuppressFirefoxFileInputEvent,
+    clearLocalFileInputSelection
+  } = fileHandoffState;
+  const fileHandoffPending = createFileHandoffPending({
+    attemptPendingGeminiSanitizedFileHandoff,
+    attemptPendingGrokSanitizedFileHandoff,
+    clearPendingGeminiSanitizedFileHandoff,
+    clearPendingGrokSanitizedFileHandoff,
+    clearPendingSanitizedAttachPrompt,
+    createSanitizedFileHandoffDetails,
+    debugFileHandoffAdapterSelected,
+    describeFileForDebug,
+    describeFileHandoffAdapter,
+    downloadSanitizedFileFallback: (...args) => downloadSanitizedFileFallback(...args),
+    emitDebug: debugReveal,
+    getCurrentHandoffDriver: (...args) => getCurrentHandoffDriver(...args),
+    hideBadgeSoon,
+    isFileHandoffAdapterPendingAttachEnabled,
+    normalizeFileHandoffAdapter,
+    normalizeTarget,
+    queuePendingGeminiSanitizedFileHandoff,
+    queuePendingGrokSanitizedFileHandoff,
+    readSanitizedFileTextForFallback,
+    refreshBadgeFromCurrentInput,
+    setBadge,
+    suppressStaleHandoffErrorAfterSuccess
+  });
+  const {
+    createPendingAttachEvent,
+    queuePendingSanitizedFileHandoff,
+    attemptPendingSanitizedFileHandoff,
+    clearPendingSanitizedFileHandoff,
+    attachPendingSanitizedFileWithTrustedActivation,
+    insertPendingSanitizedFileText,
+    downloadPendingSanitizedFile,
+    cancelPendingSanitizedFileAttach
+  } = fileHandoffPending;
+  const fileHandoffFlow = createFileHandoffFlow({
+    applySanitizedTextFallback,
+    buildSanitizedDownloadFileName,
+    createSanitizedDataTransfer,
+    createSanitizedDataTransferForHandoff,
+    createSanitizedFileHandoffDetails,
+    createSanitizedPayload,
+    debugFileHandoffAdapterSelected,
+    describeFileForDebug,
+    describeFileHandoffAdapter,
+    documentRef: document,
+    dispatchSanitizedFileEvent,
+    downloadGeminiSanitizedFileFallback,
+    emitDebug: debugReveal,
+    findGeminiFileInput,
+    formatSanitizedFileFallbackText,
+    getCurrentHandoffDriverId,
+    getFileHandoffAdapterById,
+    getFileHandoffAdapterForLocation,
+    handOffGeminiSanitizedFileUpload,
+    handOffGrokSanitizedFileUpload,
+    handOffSanitizedFileInput,
+    hideBadgeSoon,
+    hideDmzOverlay,
+    insertGeminiSanitizedText,
+    isFileHandoffAdapterPendingAttachEnabled,
+    isFirefoxRuntime,
+    isGeminiHost,
+    isGrokHost,
+    isProtectedFileDropDriver,
+    locationRef: location,
+    logSanitizedFileHandoffFailure,
+    queuePendingSanitizedFileHandoff,
+    readSanitizedFileTextForFallback,
+    refreshBadgeFromCurrentInput,
+    resolveFileInputForHandoff,
+    scheduleDmzOverlayCleanup,
+    sendRuntimeMessage,
+    setBadge,
+    setDmzOverlayState,
+    shouldUseFirefoxTextFallbackForFileHandoff,
+    tryFirefoxGeminiFileInputBridge,
+    tryGeminiSanitizedFileAttach
+  });
+  const {
+    isFileOnlySanitizedPayload,
+    isSafeSanitizedPayload,
+    handOffSanitizedLocalFile,
+    tryRealFileInputSanitizedFileAttach,
+    insertSanitizedPayloadText,
+    downloadSanitizedFileFallback,
+    getCurrentHandoffDriver,
+    handoffSanitizedPayload
+  } = fileHandoffFlow;
 
   function isExtensionContextInvalidatedError(error) {
     const message = String(error?.message || error || "");
@@ -603,645 +733,6 @@
   const FIREFOX_GEMINI_DROP_FILE_UNAVAILABLE_MESSAGE =
     "Firefox did not expose the dropped file to LeakGuard. Use Gemini's upload button so LeakGuard can sanitize and replace the selected file before upload.";
 
-  function getFileMetadataSignature(file) {
-    if (!file) return "";
-    return [
-      String(file.name || ""),
-      String(Number(file.size ?? file.sizeBytes ?? 0)),
-      String(file.type || ""),
-      String(Number(file.lastModified || 0))
-    ].join("|");
-  }
-
-  function getFileListMetadataSignature(files) {
-    return Array.from(files || []).map(getFileMetadataSignature).join("||");
-  }
-
-  function isWeakSetFileObject(file) {
-    return Boolean(file && (typeof file === "object" || typeof file === "function"));
-  }
-
-  function getSanitizedFileHandoffSiteId() {
-    try {
-      return getCurrentHandoffDriverId() || "";
-    } catch {
-      return "";
-    }
-  }
-
-  function getSanitizedFileHandoffAdapterId(site = "") {
-    try {
-      return getFileHandoffAdapterForLocation()?.id || site || "";
-    } catch {
-      return site || "";
-    }
-  }
-
-  function isPendingSanitizedFileHandoffStage(stage) {
-    return /\b(?:pending|ghost|bridge|prime|primed)\b/i.test(String(stage || ""));
-  }
-
-  function pruneRecentSanitizedFileInputHandoffRecords(now = Date.now()) {
-    for (let index = recentSanitizedFileInputHandoffRecords.length - 1; index >= 0; index -= 1) {
-      const record = recentSanitizedFileInputHandoffRecords[index];
-      if (!record || Number(record.expiresAt || 0) <= now) {
-        recentSanitizedFileInputHandoffRecords.splice(index, 1);
-      }
-    }
-
-    if (
-      lastCompletedSanitizedFileInputHandoff &&
-      Number(lastCompletedSanitizedFileInputHandoff.expiresAt || 0) <= now
-    ) {
-      lastCompletedSanitizedFileInputHandoff = null;
-    }
-    if (
-      lastCompletedPendingSanitizedFileInputHandoff &&
-      Number(lastCompletedPendingSanitizedFileInputHandoff.expiresAt || 0) <= now
-    ) {
-      lastCompletedPendingSanitizedFileInputHandoff = null;
-    }
-  }
-
-  function createSanitizedFileInputHandoffRecord(fileInput, files, options = {}) {
-    if (!isFileInputElement(fileInput)) return null;
-
-    const assignedFiles = Array.from(files || []).filter(Boolean);
-    const now = Date.now();
-    const ttlMs = Math.max(1, Number(options.ttlMs || SANITIZED_FILE_HANDOFF_SUPPRESS_MS));
-    const expiresAt = Number(options.expiresAt || now + ttlMs);
-    const details = options.details || null;
-    const stage = String(options.stage || details?.handoffStage || "");
-    const site = String(options.site || getSanitizedFileHandoffSiteId() || details?.hostname || "");
-    const adapter = String(options.adapter || getSanitizedFileHandoffAdapterId(site) || site || "");
-    const signatures = assignedFiles.map(getFileMetadataSignature).filter(Boolean);
-    const signature = getFileListMetadataSignature(assignedFiles);
-    const pending = Boolean(options.pending || isPendingSanitizedFileHandoffStage(stage));
-    sanitizedFileHandoffSequence += 1;
-
-    return {
-      input: fileInput,
-      timestamp: now,
-      expiresAt,
-      ttlMs,
-      handoffId:
-        options.handoffId ||
-        `${site || adapter || "site"}:${now}:${sanitizedFileHandoffSequence}`,
-      sessionId: String(options.sessionId || details?.sessionHash || ""),
-      site,
-      adapter,
-      stage,
-      pending,
-      signature,
-      signatures,
-      files: assignedFiles.map(describeFileForDebug)
-    };
-  }
-
-  function recordSanitizedFileInputHandoffCompletion(fileInput, files, options = {}) {
-    const record = createSanitizedFileInputHandoffRecord(fileInput, files, options);
-    if (!record) return null;
-
-    pruneRecentSanitizedFileInputHandoffRecords(record.timestamp);
-    sanitizedFileInputHandoffRecords.set(fileInput, record);
-    recentSanitizedFileInputHandoffRecords.push(record);
-    while (recentSanitizedFileInputHandoffRecords.length > 20) {
-      recentSanitizedFileInputHandoffRecords.shift();
-    }
-    lastCompletedSanitizedFileInputHandoff = record;
-    if (record.pending) {
-      lastCompletedPendingSanitizedFileInputHandoff = record;
-    }
-    return record;
-  }
-
-  function deleteSanitizedFileInputHandoffRecord(fileInput) {
-    if (!isFileInputElement(fileInput)) return;
-
-    sanitizedFileInputHandoffRecords.delete(fileInput);
-    for (let index = recentSanitizedFileInputHandoffRecords.length - 1; index >= 0; index -= 1) {
-      if (recentSanitizedFileInputHandoffRecords[index]?.input === fileInput) {
-        recentSanitizedFileInputHandoffRecords.splice(index, 1);
-      }
-    }
-    if (lastCompletedSanitizedFileInputHandoff?.input === fileInput) {
-      lastCompletedSanitizedFileInputHandoff = null;
-    }
-    if (lastCompletedPendingSanitizedFileInputHandoff?.input === fileInput) {
-      lastCompletedPendingSanitizedFileInputHandoff = null;
-    }
-  }
-
-  function getRecentSanitizedFileInputHandoffRecord(fileInput, options = {}) {
-    const now = Date.now();
-    pruneRecentSanitizedFileInputHandoffRecords(now);
-
-    const selectedFiles = Array.from(options.files || []).filter(Boolean);
-    const signature = getFileListMetadataSignature(selectedFiles);
-    const currentSite = getSanitizedFileHandoffSiteId();
-    const inputRecord = isFileInputElement(fileInput)
-      ? sanitizedFileInputHandoffRecords.get(fileInput) || null
-      : null;
-    const recordIsActive = (record) => Boolean(record && Number(record.expiresAt || 0) > now);
-    const recordMatches = (record) => {
-      if (!recordIsActive(record)) return null;
-      const inputMatch = Boolean(isFileInputElement(fileInput) && record.input === fileInput);
-      const signatureMatch = Boolean(
-        signature &&
-          (record.signature === signature ||
-            selectedFiles.every((file) => record.signatures.includes(getFileMetadataSignature(file))))
-      );
-      const sitePendingMatch = Boolean(
-        options.allowSitePending &&
-          record.pending &&
-          currentSite &&
-          record.site === currentSite
-      );
-      if (!inputMatch && !signatureMatch && !sitePendingMatch) return null;
-      return { record, inputMatch, signatureMatch, sitePendingMatch };
-    };
-
-    const inputMatch = recordMatches(inputRecord);
-    if (inputMatch) return inputMatch;
-
-    const pendingMatch = recordMatches(lastCompletedPendingSanitizedFileInputHandoff);
-    if (pendingMatch) return pendingMatch;
-
-    const latestMatch = recordMatches(lastCompletedSanitizedFileInputHandoff);
-    if (latestMatch) return latestMatch;
-
-    for (let index = recentSanitizedFileInputHandoffRecords.length - 1; index >= 0; index -= 1) {
-      const match = recordMatches(recentSanitizedFileInputHandoffRecords[index]);
-      if (match) return match;
-    }
-
-    return null;
-  }
-
-  function createSanitizedHandoffSuppressionDebug(fileInput, suppression, reason = "") {
-    const record = suppression?.record || null;
-    return {
-      reason,
-      input: describeFileInputForDebug(fileInput, "sanitized-file-handoff"),
-      handoffId: record?.handoffId || "",
-      sessionId: record?.sessionId || "",
-      site: record?.site || getSanitizedFileHandoffSiteId(),
-      adapter: record?.adapter || "",
-      stage: record?.stage || "",
-      pending: Boolean(record?.pending),
-      ageMs: record ? Math.max(0, Date.now() - Number(record.timestamp || 0)) : 0,
-      signature: record?.signature || "",
-      files: record?.files || [],
-      inputMatch: Boolean(suppression?.inputMatch),
-      signatureMatch: Boolean(suppression?.signatureMatch),
-      sitePendingMatch: Boolean(suppression?.sitePendingMatch)
-    };
-  }
-
-  function deleteSanitizedFileHandoffMark(fileInput, files) {
-    if (isFileInputElement(fileInput)) {
-      sanitizedFileInputHandoffs.delete(fileInput);
-      sanitizedFileInputHandoffExpires.delete(fileInput);
-      deleteSanitizedFileInputHandoffRecord(fileInput);
-    }
-    for (const file of Array.from(files || [])) {
-      if (isWeakSetFileObject(file)) {
-        sanitizedFileHandoffFiles.delete(file);
-        sanitizedFileHandoffFileExpires.delete(file);
-      }
-      const signature = getFileMetadataSignature(file);
-      if (signature) {
-        sanitizedFileHandoffSignatures.delete(signature);
-      }
-    }
-  }
-
-  function expireSanitizedFileHandoffMarks(fileInput, files, signatures, expiresAt) {
-    const now = Date.now();
-    let inputExpired = false;
-    let fileCount = 0;
-    let signatureCount = 0;
-
-    if (isFileInputElement(fileInput)) {
-      const inputExpiresAt = Number(sanitizedFileInputHandoffExpires.get(fileInput) || 0);
-      if (inputExpiresAt && inputExpiresAt <= now && inputExpiresAt <= expiresAt) {
-        sanitizedFileInputHandoffs.delete(fileInput);
-        sanitizedFileInputHandoffExpires.delete(fileInput);
-        deleteSanitizedFileInputHandoffRecord(fileInput);
-        inputExpired = true;
-      }
-    }
-
-    for (const file of files || []) {
-      if (!isWeakSetFileObject(file)) continue;
-      const fileExpiresAt = Number(sanitizedFileHandoffFileExpires.get(file) || 0);
-      if (fileExpiresAt && fileExpiresAt <= now && fileExpiresAt <= expiresAt) {
-        sanitizedFileHandoffFiles.delete(file);
-        sanitizedFileHandoffFileExpires.delete(file);
-        fileCount += 1;
-      }
-    }
-
-    for (const signature of signatures || []) {
-      const signatureExpiresAt = Number(sanitizedFileHandoffSignatures.get(signature) || 0);
-      if (signatureExpiresAt && signatureExpiresAt <= now && signatureExpiresAt <= expiresAt) {
-        sanitizedFileHandoffSignatures.delete(signature);
-        signatureCount += 1;
-      }
-    }
-
-    if (inputExpired || fileCount > 0 || signatureCount > 0) {
-      debugReveal("file-input:sanitized-handoff-expired", {
-        inputExpired,
-        fileCount,
-        signatureCount,
-        ttlMs: SANITIZED_FILE_HANDOFF_SUPPRESS_MS
-      });
-    }
-  }
-
-  function pruneExpiredSanitizedFileHandoffSignatures(now = Date.now()) {
-    let expiredCount = 0;
-    for (const [signature, expiresAt] of sanitizedFileHandoffSignatures) {
-      if (Number(expiresAt || 0) <= now) {
-        sanitizedFileHandoffSignatures.delete(signature);
-        expiredCount += 1;
-      }
-    }
-    if (expiredCount > 0) {
-      debugReveal("file-input:sanitized-handoff-expired", {
-        inputExpired: false,
-        signatureCount: expiredCount,
-        ttlMs: SANITIZED_FILE_HANDOFF_SUPPRESS_MS
-      });
-    }
-  }
-
-  function markSanitizedFileHandoff(fileInput, files, options = {}) {
-    if (!isFileInputElement(fileInput)) return false;
-    const assignedFiles = Array.from(files || []).filter(Boolean);
-    if (!assignedFiles.length) return false;
-
-    const ttlMs = Math.max(1, Number(options.ttlMs || SANITIZED_FILE_HANDOFF_SUPPRESS_MS));
-    const expiresAt = Date.now() + ttlMs;
-    const signatures = [];
-    sanitizedFileInputHandoffs.add(fileInput);
-    sanitizedFileInputHandoffExpires.set(fileInput, expiresAt);
-    const record = recordSanitizedFileInputHandoffCompletion(fileInput, assignedFiles, {
-      ...options,
-      expiresAt,
-      ttlMs
-    });
-
-    for (const file of assignedFiles) {
-      if (isWeakSetFileObject(file)) {
-        sanitizedFileHandoffFiles.add(file);
-        sanitizedFileHandoffFileExpires.set(file, expiresAt);
-      }
-      const signature = getFileMetadataSignature(file);
-      if (signature) {
-        sanitizedFileHandoffSignatures.set(signature, expiresAt);
-        signatures.push(signature);
-      }
-    }
-
-    debugReveal("file-input:sanitized-handoff-marked", {
-      input: describeFileInputForDebug(fileInput, "sanitized-file-handoff"),
-      files: assignedFiles.map(describeFileForDebug),
-      ttlMs,
-      handoffId: record?.handoffId || "",
-      sessionId: record?.sessionId || "",
-      signature: record?.signature || "",
-      site: record?.site || "",
-      adapter: record?.adapter || "",
-      stage: record?.stage || ""
-    });
-
-    setTimeout(() => {
-      expireSanitizedFileHandoffMarks(fileInput, assignedFiles, signatures, expiresAt);
-    }, ttlMs);
-    return true;
-  }
-
-  function isSanitizedFileHandoffFile(file, now = Date.now()) {
-    if (isWeakSetFileObject(file) && sanitizedFileHandoffFiles.has(file)) {
-      const fileExpiresAt = Number(sanitizedFileHandoffFileExpires.get(file) || 0);
-      if (fileExpiresAt > now) {
-        return true;
-      }
-      sanitizedFileHandoffFiles.delete(file);
-      sanitizedFileHandoffFileExpires.delete(file);
-      if (fileExpiresAt) {
-        debugReveal("file-input:sanitized-handoff-expired", {
-          inputExpired: false,
-          fileCount: 1,
-          signatureCount: 0,
-          ttlMs: SANITIZED_FILE_HANDOFF_SUPPRESS_MS
-        });
-      }
-    }
-
-    const signature = getFileMetadataSignature(file);
-    if (!signature) return false;
-
-    const expiresAt = Number(sanitizedFileHandoffSignatures.get(signature) || 0);
-    if (!expiresAt) return false;
-    if (expiresAt <= now) {
-      sanitizedFileHandoffSignatures.delete(signature);
-      debugReveal("file-input:sanitized-handoff-expired", {
-        inputExpired: false,
-        fileCount: 0,
-        signatureCount: 1,
-        ttlMs: SANITIZED_FILE_HANDOFF_SUPPRESS_MS
-      });
-      return false;
-    }
-    return true;
-  }
-
-  function getSanitizedFileInputHandoffSuppression(fileInput, files) {
-    if (!isFileInputElement(fileInput)) return null;
-    const selectedFiles = Array.from(files || []).filter(Boolean);
-    const now = Date.now();
-    pruneExpiredSanitizedFileHandoffSignatures(now);
-
-    const inputExpiresAt = Number(sanitizedFileInputHandoffExpires.get(fileInput) || 0);
-    const inputMarked = sanitizedFileInputHandoffs.has(fileInput);
-    const inputActive = Boolean(inputMarked && inputExpiresAt && inputExpiresAt > now);
-    const allFilesMatch = selectedFiles.every((file) => isSanitizedFileHandoffFile(file, now));
-
-    if (inputMarked && inputExpiresAt && inputExpiresAt <= now) {
-      sanitizedFileInputHandoffs.delete(fileInput);
-      sanitizedFileInputHandoffExpires.delete(fileInput);
-      deleteSanitizedFileInputHandoffRecord(fileInput);
-      debugReveal("file-input:sanitized-handoff-expired", {
-        inputExpired: true,
-        signatureCount: 0,
-        ttlMs: SANITIZED_FILE_HANDOFF_SUPPRESS_MS
-      });
-    }
-
-    if (!selectedFiles.length) {
-      const recentMatch = getRecentSanitizedFileInputHandoffRecord(fileInput, {
-        files: selectedFiles
-      });
-      return inputActive || recentMatch
-        ? {
-            record: recentMatch?.record || sanitizedFileInputHandoffRecords.get(fileInput) || null,
-            inputMatch: Boolean(inputActive || recentMatch?.inputMatch),
-            signatureMatch: false,
-            sitePendingMatch: Boolean(recentMatch?.sitePendingMatch),
-            files: []
-          }
-        : null;
-    }
-
-    if (!allFilesMatch) {
-      if (inputActive) {
-        sanitizedFileInputHandoffs.delete(fileInput);
-        sanitizedFileInputHandoffExpires.delete(fileInput);
-        deleteSanitizedFileInputHandoffRecord(fileInput);
-      }
-      return null;
-    }
-
-    const recentMatch = getRecentSanitizedFileInputHandoffRecord(fileInput, {
-      files: selectedFiles
-    });
-    return {
-      record: recentMatch?.record || sanitizedFileInputHandoffRecords.get(fileInput) || null,
-      inputMatch: inputActive,
-      signatureMatch: true,
-      files: selectedFiles
-    };
-  }
-
-  function suppressSanitizedFileInputHandoffEvent(event, suppression) {
-    const fileInput = event?.target || null;
-    if (suppression.inputMatch) {
-      debugReveal("file-input:sanitized-handoff-input-match", {
-        eventType: event?.type || "",
-        input: describeFileInputForDebug(fileInput, "sanitized-file-handoff"),
-        files: suppression.files.map(describeFileForDebug)
-      });
-    }
-    if (suppression.signatureMatch) {
-      debugReveal("file-input:sanitized-handoff-signature-match", {
-        eventType: event?.type || "",
-        files: suppression.files.map(describeFileForDebug)
-      });
-    }
-    debugReveal("file-input:sanitized-handoff-suppressed", {
-      eventType: event?.type || "",
-      input: describeFileInputForDebug(fileInput, "sanitized-file-handoff"),
-      files: suppression.files.map(describeFileForDebug),
-      browser: isFirefoxRuntime() ? "firefox" : "other",
-      host: location?.hostname || "",
-      handoffId: suppression.record?.handoffId || "",
-      sitePendingMatch: Boolean(suppression.sitePendingMatch)
-    });
-    if (!suppression.files.length) {
-      const details = createSanitizedHandoffSuppressionDebug(
-        fileInput,
-        suppression,
-        "empty_file_input_event"
-      );
-      debugReveal("file-input:empty-event-after-handoff-suppressed", {
-        ...details,
-        eventType: event?.type || "",
-        browser: isFirefoxRuntime() ? "firefox" : "other"
-      });
-      debugReveal("file-handoff:stale-error-suppressed-after-success", {
-        ...details,
-        eventType: event?.type || "",
-        staleReason: "empty_file_input_event"
-      });
-    }
-  }
-
-  function shouldSuppressSanitizedFileReprocessing(eventOrInput, files) {
-    const fileInput = isFileInputElement(eventOrInput) ? eventOrInput : eventOrInput?.target || null;
-    const selectedFiles =
-      files ||
-      (isFileInputElement(eventOrInput) ? eventOrInput.files : eventOrInput?.target?.files) ||
-      [];
-    const suppression = getSanitizedFileInputHandoffSuppression(fileInput, selectedFiles);
-    if (suppression && eventOrInput?.type) {
-      suppressSanitizedFileInputHandoffEvent(eventOrInput, suppression);
-    }
-    return Boolean(suppression);
-  }
-
-  function isFileUnavailableLocalFileResult(localFile) {
-    return Boolean(
-      localFile?.code === "file_unavailable" ||
-        (
-          !localFile?.code &&
-          /could not read this local file/i.test(String(localFile?.message || ""))
-        )
-    );
-  }
-
-  function getFileUnavailableAfterHandoffSuppression(event, dataTransfer, localFile) {
-    const fileInput = event?.target || null;
-    if (!isFileInputElement(fileInput) || !isFileUnavailableLocalFileResult(localFile)) return null;
-
-    const selectedFiles = Array.from(fileInput.files || []).filter(Boolean);
-    const transferFiles = listLocalTransferFiles(dataTransfer);
-    if (selectedFiles.length || transferFiles.length) return null;
-
-    return getRecentSanitizedFileInputHandoffRecord(fileInput, {
-      files: [],
-      allowSitePending: true
-    });
-  }
-
-  function suppressFileUnavailableAfterHandoff(event, suppression, localFile) {
-    const fileInput = event?.target || null;
-    const details = createSanitizedHandoffSuppressionDebug(
-      fileInput,
-      suppression,
-      localFile?.code || "file_unavailable"
-    );
-    debugReveal("file-input:file-unavailable-after-handoff-suppressed", {
-      ...details,
-      eventType: event?.type || "",
-      code: localFile?.code || "",
-      browser: isFirefoxRuntime() ? "firefox" : "other"
-    });
-    debugReveal("file-handoff:stale-error-suppressed-after-success", {
-      ...details,
-      eventType: event?.type || "",
-      staleReason: localFile?.code || "file_unavailable"
-    });
-    return {
-      handled: true,
-      ok: true,
-      strategy: "file-unavailable-after-sanitized-handoff-suppressed"
-    };
-  }
-
-  function getRecentSanitizedFileHandoffSuccessForSite(site = "", sanitizedFile = null) {
-    const now = Date.now();
-    pruneRecentSanitizedFileInputHandoffRecords(now);
-
-    const expectedSite = String(site || getSanitizedFileHandoffSiteId() || "");
-    const expectedSignature = getFileMetadataSignature(sanitizedFile);
-    const matches = (record) => {
-      if (!record || Number(record.expiresAt || 0) <= now) return false;
-      if (expectedSite && record.site !== expectedSite) return false;
-      if (!expectedSignature) return true;
-      return record.signatures.includes(expectedSignature) || record.signature === expectedSignature;
-    };
-
-    if (matches(lastCompletedSanitizedFileInputHandoff)) return lastCompletedSanitizedFileInputHandoff;
-    if (matches(lastCompletedPendingSanitizedFileInputHandoff)) {
-      return lastCompletedPendingSanitizedFileInputHandoff;
-    }
-    for (let index = recentSanitizedFileInputHandoffRecords.length - 1; index >= 0; index -= 1) {
-      const record = recentSanitizedFileInputHandoffRecords[index];
-      if (matches(record)) return record;
-    }
-    return null;
-  }
-
-  function suppressStaleHandoffErrorAfterSuccess(reason, site = "", sanitizedFile = null, extra = {}) {
-    const record = getRecentSanitizedFileHandoffSuccessForSite(site, sanitizedFile);
-    if (!record) return false;
-    debugReveal("file-handoff:stale-error-suppressed-after-success", {
-      reason,
-      site: record.site || site || "",
-      adapter: record.adapter || "",
-      handoffId: record.handoffId || "",
-      sessionId: record.sessionId || "",
-      stage: record.stage || "",
-      pending: Boolean(record.pending),
-      ageMs: Math.max(0, Date.now() - Number(record.timestamp || 0)),
-      sanitizedFile: describeFileForDebug(sanitizedFile),
-      ...extra
-    });
-    return true;
-  }
-
-  function isFirefoxProtectedFileInputEvent(event) {
-    return Boolean(
-      isFirefoxRuntime() &&
-        isProtectedFileDropDriver(getCurrentHandoffDriverId()) &&
-        event?.target &&
-        event.target.tagName === "INPUT" &&
-        String(event.target.type || "").toLowerCase() === "file"
-    );
-  }
-
-  function getFirefoxFileInputTransaction(input) {
-    return isFileInputElement(input) ? firefoxFileInputTransactions.get(input) || null : null;
-  }
-
-  function setFirefoxFileInputTransaction(input, updates) {
-    if (!isFileInputElement(input)) return null;
-    const existing = firefoxFileInputTransactions.get(input) || {};
-    const transaction = {
-      id: existing.id || `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      state: existing.state || "processing",
-      startedAt: existing.startedAt || Date.now(),
-      rawSignature: existing.rawSignature || "",
-      sanitizedSignature: existing.sanitizedSignature || "",
-      suppressUntil: existing.suppressUntil || 0,
-      replacementDispatched: Boolean(existing.replacementDispatched),
-      ...(updates || {})
-    };
-    firefoxFileInputTransactions.set(input, transaction);
-    return transaction;
-  }
-
-  function markFirefoxFileInputTransactionReplaced(input, files) {
-    const transaction = getFirefoxFileInputTransaction(input);
-    if (!transaction) return null;
-    return setFirefoxFileInputTransaction(input, {
-      state: "replaced",
-      sanitizedSignature: getFileListMetadataSignature(files),
-      suppressUntil: Date.now() + PROGRAMMATIC_INPUT_SUPPRESS_MS,
-      replacementDispatched: true
-    });
-  }
-
-  function shouldSuppressFirefoxFileInputEvent(event, transaction) {
-    if (!transaction) return false;
-    if (transaction.state === "processing") return true;
-    if (transaction.suppressUntil && Date.now() < transaction.suppressUntil) return true;
-    if (transaction.state === "replaced") {
-      const currentSignature = getFileListMetadataSignature(event?.target?.files);
-      return Boolean(
-        transaction.sanitizedSignature &&
-          currentSignature &&
-          currentSignature === transaction.sanitizedSignature
-      );
-    }
-    return false;
-  }
-
-  function clearLocalFileInputSelection(fileInput) {
-    if (!isFileInputElement(fileInput)) return false;
-    let cleared = false;
-    try {
-      fileInput.value = "";
-      cleared = true;
-    } catch {
-      // Some host-controlled inputs reject value clearing; try an empty FileList below.
-    }
-
-    if (typeof DataTransfer === "function") {
-      try {
-        const emptyTransfer = new DataTransfer();
-        fileInput.files = emptyTransfer.files;
-        cleared = true;
-      } catch {
-        // Assignment is best-effort. The original event is still stopped fail-closed.
-      }
-    }
-    return cleared;
-  }
-
   function isPasteBeforeInput(event) {
     return String(event?.inputType || "") === "insertFromPaste";
   }
@@ -1375,8 +866,7 @@
     return {
       kind: "unknown",
       action: "allow",
-      message:
-        "LeakGuard did not scan or redact this file. Unsupported file types such as PDF, DOCX, images, archives, executables, and binary files are not protected in this release. Normal upload may continue through the site."
+      message: LOCAL_FILE_UNSUPPORTED_WARNING
     };
   }
 
@@ -1398,7 +888,7 @@
       classifications,
       message:
         classifications.find((classification) => classification.message)?.message ||
-        "LeakGuard did not scan or redact this file. Unsupported file types such as PDF, DOCX, images, archives, executables, and binary files are not protected in this release. Normal upload may continue through the site."
+        LOCAL_FILE_UNSUPPORTED_WARNING
     };
   }
 
@@ -2074,7 +1564,7 @@
   function showStreamingRedactionStatus(fileInfo) {
     debugReveal("streaming-redaction:started", {
       file: describeFileForDebug(fileInfo),
-      maxBytes: StreamingFileRedactor.LARGE_TEXT_STREAMING_MAX_BYTES || 50 * 1024 * 1024
+      maxBytes: LARGE_TEXT_STREAMING_MAX_BYTES
     });
     updateFileProcessingOverlay({
       status: "Stream-redacting large file locally...",
@@ -4469,6 +3959,8 @@
       return;
     }
 
+    if (event?.isTrusted === false && isProgrammaticInputScanSuppressed()) return;
+
     if (!extensionRuntimeAvailable || modalOpen || !shouldInterceptBeforeInput(event)) return;
 
     const input = findComposer(event.target);
@@ -6175,12 +5667,11 @@
     if (!isSupportedGeminiTextFile(file) || typeof file?.text !== "function") {
       return {
         ok: false,
-        message:
-          "LeakGuard did not scan or redact this file. Unsupported file types such as PDF, DOCX, images, archives, executables, and binary files are not protected in this release. Normal upload may continue through the site."
+        message: LOCAL_FILE_UNSUPPORTED_WARNING
       };
     }
 
-    if (Number(file?.size || 0) > (StreamingFileRedactor.LARGE_TEXT_STREAMING_MAX_BYTES || 50 * 1024 * 1024)) {
+    if (Number(file?.size || 0) > LARGE_TEXT_STREAMING_MAX_BYTES) {
       return {
         ok: false,
         code: "file_too_large",
@@ -6198,7 +5689,7 @@
           type: file?.type || "text/plain",
           sizeBytes: Number(file?.size || 0)
         },
-        message: "LeakGuard will stream-redact this large text file locally before upload."
+        message: LOCAL_FILE_STREAMING_REQUIRED_MESSAGE
       };
     }
 
@@ -7527,298 +7018,10 @@
     };
   }
 
-  function isFileOnlySanitizedPayload(payload) {
-    return Boolean(payload?.allowFileOnlyHandoff && !String(payload?.redactedText || "").trim());
-  }
-
-  function isSafeSanitizedPayload(payload) {
-    return Boolean(
-      payload &&
-        payload.sanitizedFile &&
-        typeof payload.redactedText === "string" &&
-        (payload.redactedText.length > 0 || payload.allowFileOnlyHandoff === true)
-    );
-  }
-
-  function tryRealFileInputSanitizedFileAttach(payload, event, input, driverId) {
-    if (!payload?.sanitizedFile) return false;
-    if (shouldUseFirefoxTextFallbackForFileHandoff()) return false;
-    const details = createSanitizedFileHandoffDetails(event, payload.sanitizedFile, `${driverId}:file-input`);
-    const transfer = createSanitizedDataTransferForHandoff(payload.sanitizedFile, details);
-    if (!transfer) {
-      details.failureReason = "data_transfer_failed";
-      logSanitizedFileHandoffFailure(details);
-      return false;
-    }
-
-    const adapter = getFileHandoffAdapterById(driverId);
-    const fileInput =
-      adapter?.resolveFileInput?.(event, input, adapter) || resolveFileInputForHandoff(event, input);
-    details.fileInputCountBeforeClick = fileInput ? 1 : 0;
-    details.fileInputCountAfterTopTriggerClick = fileInput ? 1 : 0;
-    details.fileInputCountAfterOverlayItemClick = fileInput ? 1 : 0;
-    if (!fileInput) {
-      details.failureReason = "no_safe_file_input";
-      return false;
-    }
-
-    const assigned = handOffSanitizedFileInput(fileInput, transfer, {
-      dispatchInput: true,
-      details
-    });
-    if (!assigned) {
-      logSanitizedFileHandoffFailure(details);
-    }
-    return assigned;
-  }
-
-  async function insertSanitizedPayloadText(payload, event, input, context = null) {
-    if (!String(payload?.redactedText || "").trim()) return false;
-    if (!input && context?.composerResolved && !isFirefoxRuntime()) return false;
-    if (isGeminiHost()) {
-      return insertGeminiSanitizedText(payload, event, input);
-    }
-    return applySanitizedTextFallback(event, input, formatSanitizedFileFallbackText(payload), {
-      rawInsertedText: payload.rawText || ""
-    });
-  }
-
   function buildSanitizedDownloadFileName(sanitizedFile) {
     const originalName = sanitizeDownloadFileNameSegment(sanitizedFile?.name || "sanitized-file.txt");
     const timestamp = new Date().toISOString().replace(/[:.]/g, "").replace(/\d{3}Z$/, "Z");
     return `LeakGuard/redacted/${timestamp}-${originalName}`;
-  }
-
-  async function downloadSanitizedFileFallback(event, input, payload, driverId, details = null) {
-    if (isGeminiHost()) {
-      return downloadGeminiSanitizedFileFallback(event, input, payload?.sanitizedFile, details);
-    }
-    if (!payload?.sanitizedFile) return false;
-
-    let redactedText = "";
-    try {
-      redactedText = await readSanitizedFileTextForFallback(payload.sanitizedFile);
-    } catch (error) {
-      if (details) {
-        details.failureReason = "sanitized_download_read_failed";
-        details.errorMessage = error?.message || String(error);
-        details.errorStack = error?.stack || "";
-      }
-      return false;
-    }
-
-    try {
-      const response = await sendRuntimeMessage({
-        type: "PWM_DOWNLOAD_SANITIZED_FILE",
-        fileName: buildSanitizedDownloadFileName(payload.sanitizedFile),
-        mimeType: payload.sanitizedFile.type || "text/plain",
-        redactedText
-      });
-      if (!response?.ok) {
-        if (details) {
-          details.failureReason = "sanitized_download_failed";
-          details.errorMessage = response?.error || "Background download request failed.";
-        }
-        return false;
-      }
-      debugReveal("file-handoff:sanitized-download", {
-        driver: driverId,
-        sanitizedFile: describeFileForDebug(payload.sanitizedFile),
-        downloadId: response.downloadId ?? null
-      });
-      setDmzOverlayState("Sanitized download ready", "fallback");
-      scheduleDmzOverlayCleanup(3600);
-      setBadge("Sanitized download ready");
-      hideBadgeSoon(6500);
-      refreshBadgeFromCurrentInput();
-      return true;
-    } catch (error) {
-      if (details) {
-        details.failureReason = "sanitized_download_failed";
-        details.errorMessage = error?.message || String(error);
-        details.errorStack = error?.stack || "";
-      }
-      return false;
-    }
-  }
-
-  function getCurrentHandoffDriver() {
-    const id = getCurrentHandoffDriverId();
-    return {
-      id,
-      usesDmzOverlay: isProtectedFileDropDriver(id),
-      canHandle: () => true,
-      preparePayload: (sanitizedFile, redactedText, metadata) =>
-        createSanitizedPayload(
-          sanitizedFile,
-          redactedText,
-          metadata?.localFile,
-          metadata?.analysis,
-          metadata?.result
-        ),
-      tryAttachSanitizedFile: async (payload, context) => {
-        if (id === "gemini") return tryGeminiSanitizedFileAttach(payload, context.event, context.input);
-        if (id === "grok") return handOffGrokSanitizedFileUpload(context.event, context.input, payload.sanitizedFile);
-        if (id === "chatgpt" || id === "claude" || id === "openai" || id === "x" || id === "generic") {
-          return tryRealFileInputSanitizedFileAttach(payload, context.event, context.input, id);
-        }
-        return false;
-      },
-      insertSanitizedText: (payload, context) => insertSanitizedPayloadText(payload, context.event, context.input, context),
-      emergencyDownload: (payload, context) =>
-        downloadSanitizedFileFallback(
-          context.event,
-          context.input,
-          payload,
-          id,
-          createSanitizedFileHandoffDetails(context.event, payload?.sanitizedFile, `${id}:emergency-download`)
-        ),
-      handoff: async (payload, context) => handoffSanitizedPayload(payload, context)
-    };
-  }
-
-  async function handoffSanitizedPayload(payload, context) {
-    const driver = context?.driver || getCurrentHandoffDriver();
-    const adapter = context?.adapter || driver.adapter || getFileHandoffAdapterForLocation();
-    debugFileHandoffAdapterSelected(adapter, "handoff");
-    if (!driver?.canHandle?.(location, document)) {
-      return { ok: false, stage: "driver-unavailable" };
-    }
-    if (!isSafeSanitizedPayload(payload)) {
-      setDmzOverlayState("Raw file blocked", "failed");
-      return { ok: false, stage: "failed", reason: "unsafe_sanitized_payload" };
-    }
-
-    const firefoxGeminiDropInput =
-      driver.id === "gemini" && isFirefoxRuntime() && context?.context === "drop"
-        ? findGeminiFileInput(context.event, context.input).fileInput
-        : null;
-    if (
-      driver.id === "gemini" &&
-      isFirefoxRuntime() &&
-      context?.context === "drop" &&
-      !firefoxGeminiDropInput &&
-      payload?.sanitizedFile &&
-      isFileHandoffAdapterPendingAttachEnabled(adapter)
-    ) {
-      const pendingDetails = createSanitizedFileHandoffDetails(
-        context.event,
-        payload.sanitizedFile,
-        `${adapter.id}:firefox-drop-pending-attach`
-      );
-      if (queuePendingSanitizedFileHandoff(adapter, context.event, context.input, payload.sanitizedFile, pendingDetails)) {
-        debugReveal("file-handoff:firefox-gemini-drop-pending-queued", {
-          adapter: describeFileHandoffAdapter(adapter),
-          context: context?.context || "",
-          sanitizedFile: describeFileForDebug(payload.sanitizedFile)
-        });
-        hideDmzOverlay();
-        return { ok: true, stage: "pending", strategy: `${adapter.id}-pending-sanitized-file-handoff` };
-      }
-    }
-
-    debugReveal("file-handoff:direct-attempt-start", {
-      site: driver.id,
-      adapter: describeFileHandoffAdapter(adapter),
-      context: context?.context || "",
-      sanitizedFile: describeFileForDebug(payload.sanitizedFile)
-    });
-    if (await driver.tryAttachSanitizedFile(payload, context)) {
-      debugReveal("file-handoff:direct-attempt-success", {
-        site: driver.id,
-        adapter: describeFileHandoffAdapter(adapter),
-        context: context?.context || "",
-        sanitizedFile: describeFileForDebug(payload.sanitizedFile)
-      });
-      setDmzOverlayState("Attached sanitized file", "attached");
-      return { ok: true, stage: "file", strategy: `${driver.id}-sanitized-file-handoff` };
-    }
-    debugReveal("file-handoff:direct-attempt-failed", {
-      site: driver.id,
-      adapter: describeFileHandoffAdapter(adapter),
-      context: context?.context || "",
-      sanitizedFile: describeFileForDebug(payload.sanitizedFile)
-    });
-
-    const firefoxGeminiBridgeResult =
-      driver.id === "gemini"
-        ? await tryFirefoxGeminiFileInputBridge(payload, context)
-        : { handled: false, ok: false };
-    if (firefoxGeminiBridgeResult.ok) {
-      if (firefoxGeminiBridgeResult.stage === "text") {
-        setDmzOverlayState("Inserted sanitized content", "inserted");
-        return { ok: true, stage: "text", strategy: firefoxGeminiBridgeResult.strategy };
-      }
-      if (firefoxGeminiBridgeResult.stage === "pending") {
-        hideDmzOverlay();
-        return { ok: true, stage: "pending", strategy: firefoxGeminiBridgeResult.strategy };
-      }
-      setDmzOverlayState("Attached sanitized file", "attached");
-      return { ok: true, stage: "file", strategy: firefoxGeminiBridgeResult.strategy };
-    }
-    if (firefoxGeminiBridgeResult.handled) {
-      if (
-        firefoxGeminiBridgeResult.reason === "gemini_firefox_file_input_not_found" &&
-        context?.context === "drop" &&
-        payload?.sanitizedFile &&
-        isFileHandoffAdapterPendingAttachEnabled(adapter)
-      ) {
-        const pendingDetails = createSanitizedFileHandoffDetails(
-          context.event,
-          payload.sanitizedFile,
-          `${adapter.id}:pending-after-firefox-bridge-miss`
-        );
-        if (queuePendingSanitizedFileHandoff(adapter, context.event, context.input, payload.sanitizedFile, pendingDetails)) {
-          hideDmzOverlay();
-          return { ok: true, stage: "pending", strategy: `${adapter.id}-pending-sanitized-file-handoff` };
-        }
-      }
-      setDmzOverlayState("Raw file blocked", "failed");
-      return firefoxGeminiBridgeResult;
-    }
-
-    if (
-      context?.context === "drop" &&
-      payload?.sanitizedFile &&
-      isFileHandoffAdapterPendingAttachEnabled(adapter)
-    ) {
-      const pendingDetails = createSanitizedFileHandoffDetails(
-        context.event,
-        payload.sanitizedFile,
-        `${adapter.id}:pending-after-direct-failure`
-      );
-      if (queuePendingSanitizedFileHandoff(adapter, context.event, context.input, payload.sanitizedFile, pendingDetails)) {
-        hideDmzOverlay();
-        return { ok: true, stage: "pending", strategy: `${adapter.id}-pending-sanitized-file-handoff` };
-      }
-    }
-
-    const fileOnlyPayload = isFileOnlySanitizedPayload(payload);
-    if (!fileOnlyPayload) {
-      const textInserted = await driver.insertSanitizedText(payload, context);
-      if (textInserted === true) {
-        setDmzOverlayState("Inserted sanitized content", "inserted");
-        return { ok: true, stage: "text", strategy: `${driver.id}-sanitized-text-fallback` };
-      }
-      if (textInserted === "cancelled") {
-        return { ok: false, stage: "text", reason: "sanitized_text_cancelled" };
-      }
-
-      if (await driver.emergencyDownload(payload, context)) {
-        return { ok: true, stage: "download", strategy: `${driver.id}-sanitized-download-fallback` };
-      }
-    } else {
-      debugReveal("file-handoff:file-only-fallback-skipped", {
-        site: driver.id,
-        adapter: describeFileHandoffAdapter(adapter),
-        context: context?.context || "",
-        sanitizedFile: describeFileForDebug(payload.sanitizedFile),
-        reason: "streamed_sanitized_file_not_read_back"
-      });
-    }
-
-    setDmzOverlayState("Raw file blocked", "failed");
-    return { ok: false, stage: "failed", reason: "sanitized_payload_handoff_failed" };
   }
 
   function createSanitizedFileHandoffDetails(event, sanitizedFile, stage) {
@@ -7943,151 +7146,10 @@
     }
   }
 
-  function createPendingAttachEvent(event, type) {
-    return {
-      type,
-      target: normalizeTarget(event?.target) || null
-    };
-  }
-
   function normalizeFileHandoffAdapter(adapter) {
     if (!adapter) return getFileHandoffAdapterForLocation();
     if (typeof adapter === "string") return getFileHandoffAdapterById(adapter);
     return adapter;
-  }
-
-  function queuePendingSanitizedFileHandoff(adapter, event, input, sanitizedFile, details = null) {
-    const selectedAdapter = normalizeFileHandoffAdapter(adapter);
-    debugFileHandoffAdapterSelected(selectedAdapter, "pending-queue");
-    if (!selectedAdapter || !sanitizedFile) return false;
-    if (!isFileHandoffAdapterPendingAttachEnabled(selectedAdapter)) {
-      debugReveal("file-handoff:pending-queue-skipped", {
-        site: selectedAdapter.id || "",
-        reason: "pending_attach_disabled",
-        adapter: describeFileHandoffAdapter(selectedAdapter),
-        sanitizedFile: describeFileForDebug(sanitizedFile)
-      });
-      return false;
-    }
-
-    let queued = false;
-    if (selectedAdapter.id === "gemini") {
-      queued = queuePendingGeminiSanitizedFileHandoff(event, input, sanitizedFile, details);
-    } else if (selectedAdapter.id === "grok") {
-      queued = queuePendingGrokSanitizedFileHandoff(event, input, sanitizedFile, details);
-    }
-
-    if (queued) {
-      debugReveal("file-handoff:pending-queued", {
-        site: selectedAdapter.id,
-        adapter: describeFileHandoffAdapter(selectedAdapter),
-        sanitizedFile: describeFileForDebug(sanitizedFile)
-      });
-    }
-    return queued;
-  }
-
-  function attemptPendingSanitizedFileHandoff(adapter, reason = "") {
-    const selectedAdapter = normalizeFileHandoffAdapter(adapter);
-    if (!selectedAdapter) return false;
-    if (selectedAdapter.id === "gemini") return attemptPendingGeminiSanitizedFileHandoff(reason);
-    if (selectedAdapter.id === "grok") return attemptPendingGrokSanitizedFileHandoff(reason);
-    return false;
-  }
-
-  function clearPendingSanitizedFileHandoff(adapter, reason = "") {
-    if (adapter == null) {
-      clearPendingGeminiSanitizedFileHandoff(reason);
-      clearPendingGrokSanitizedFileHandoff(reason);
-      return;
-    }
-    const selectedAdapter = normalizeFileHandoffAdapter(adapter);
-    if (!selectedAdapter) return;
-    if (selectedAdapter.id === "gemini") {
-      clearPendingGeminiSanitizedFileHandoff(reason);
-    } else if (selectedAdapter.id === "grok") {
-      clearPendingGrokSanitizedFileHandoff(reason);
-    }
-  }
-
-  async function attachPendingSanitizedFileWithTrustedActivation(adapter, pending) {
-    const selectedAdapter = normalizeFileHandoffAdapter(adapter);
-    if (!selectedAdapter || !pending?.sanitizedFile) return false;
-    if (!isFileHandoffAdapterPendingAttachEnabled(selectedAdapter)) {
-      debugReveal("file-handoff:pending-user-attach-skipped", {
-        site: selectedAdapter.id || "",
-        reason: "pending_attach_disabled",
-        adapter: describeFileHandoffAdapter(selectedAdapter),
-        sanitizedFile: describeFileForDebug(pending.sanitizedFile)
-      });
-      return false;
-    }
-    if (typeof selectedAdapter.attachWithTrustedActivation !== "function") return false;
-    return await selectedAdapter.attachWithTrustedActivation(pending, selectedAdapter);
-  }
-
-  async function insertPendingSanitizedFileText(site, event, input, sanitizedFile) {
-    if (!sanitizedFile) return false;
-
-    const redactedText = await readSanitizedFileTextForFallback(sanitizedFile);
-    const driver = getCurrentHandoffDriver();
-    const payload = driver.preparePayload(sanitizedFile, redactedText, {
-      localFile: sanitizedFile,
-      analysis: null,
-      result: null
-    });
-    const inserted = await driver.insertSanitizedText(payload, {
-      event,
-      input,
-      context: "pending-attach-text-fallback",
-      driver,
-      composerResolved: true
-    });
-    if (inserted === true) {
-      clearPendingSanitizedFileHandoff(site, "insert-text");
-      clearPendingSanitizedAttachPrompt("insert-text");
-      return true;
-    }
-    if (suppressStaleHandoffErrorAfterSuccess("sanitized_text_fallback", site, sanitizedFile)) {
-      clearPendingSanitizedAttachPrompt("stale-text-fallback-suppressed");
-      return true;
-    }
-    setBadge("Sanitized text insertion unavailable");
-    hideBadgeSoon(4200);
-    refreshBadgeFromCurrentInput();
-    return false;
-  }
-
-  async function downloadPendingSanitizedFile(site, event, input, sanitizedFile) {
-    if (!sanitizedFile) return false;
-    const driver = getCurrentHandoffDriver();
-    const payload = driver.preparePayload(sanitizedFile, "", {
-      localFile: sanitizedFile,
-      analysis: null,
-      result: null
-    });
-    const details = createSanitizedFileHandoffDetails(
-      event,
-      sanitizedFile,
-      `${site || driver.id}:pending-attach-download`
-    );
-    const downloaded = await downloadSanitizedFileFallback(event, input, payload, driver.id, details);
-    if (downloaded) {
-      clearPendingSanitizedFileHandoff(site, "download");
-      clearPendingSanitizedAttachPrompt("download");
-    } else if (suppressStaleHandoffErrorAfterSuccess("sanitized_download_fallback", site, sanitizedFile)) {
-      clearPendingSanitizedAttachPrompt("stale-download-fallback-suppressed");
-      return true;
-    }
-    return downloaded;
-  }
-
-  function cancelPendingSanitizedFileAttach(site) {
-    clearPendingSanitizedFileHandoff(site, "cancelled");
-    clearPendingSanitizedAttachPrompt("cancelled");
-    setBadge("Sanitized file attach cancelled");
-    hideBadgeSoon(3200);
-    refreshBadgeFromCurrentInput();
   }
 
   async function performPendingGeminiUserAttach(event, input, sanitizedFile) {
@@ -9935,60 +8997,6 @@
       }
       return false;
     }
-  }
-
-  async function handOffSanitizedLocalFile(event, input, sanitizedFile, context) {
-    if (shouldUseFirefoxTextFallbackForFileHandoff()) {
-      debugReveal("file-handoff:firefox-text-fallback-required", {
-        context,
-        sanitizedFile: describeFileForDebug(sanitizedFile)
-      });
-      return false;
-    }
-
-    const target = event?.target || input;
-    if (context === "drop") {
-      if (isGeminiHost()) {
-        return handOffGeminiSanitizedFileUpload(event, input, sanitizedFile, {
-          allowUploadUiClick: isFirefoxRuntime()
-        });
-      }
-
-      if (isGrokHost()) {
-        return handOffGrokSanitizedFileUpload(event, input, sanitizedFile);
-      }
-    }
-
-    const transfer = createSanitizedDataTransfer(sanitizedFile);
-    if (!transfer) {
-      debugReveal("file-handoff:data-transfer-create-failed", {
-        context,
-        sanitizedFile: describeFileForDebug(sanitizedFile)
-      });
-      return false;
-    }
-
-    if (context === "file-input") {
-      return handOffSanitizedFileInput(event?.target, transfer, {
-        dispatchInput: true
-      });
-    }
-
-    if (context === "drop") {
-
-      try {
-        transfer.dropEffect = "copy";
-      } catch {
-        // Some synthetic DataTransfer objects expose dropEffect as read-only.
-      }
-      return dispatchSanitizedFileEvent(target, "drop", transfer);
-    }
-
-    if (context === "paste") {
-      return dispatchSanitizedFileEvent(target, "paste", transfer);
-    }
-
-    return false;
   }
 
   function isForbiddenGeminiUploadButton(candidate) {

@@ -3,6 +3,9 @@ const fs = require("fs");
 const path = require("path");
 
 const repoRoot = path.join(__dirname, "..");
+const popupSource = fs.readFileSync(path.join(repoRoot, "src/popup/popup.js"), "utf8");
+const optionsSource = fs.readFileSync(path.join(repoRoot, "src/options/options.js"), "utf8");
+const backgroundSource = fs.readFileSync(path.join(repoRoot, "src/background/core.js"), "utf8");
 const {
   BUILTIN_PROTECTED_SITES,
   normalizeProtectedSiteInput,
@@ -11,8 +14,7 @@ const {
 } = require(path.join(repoRoot, "src/shared/protected_sites.js"));
 
 function extractContentScriptFilesFromBackground() {
-  const source = fs.readFileSync(path.join(repoRoot, "src/background/core.js"), "utf8");
-  const match = /const CONTENT_SCRIPT_FILES = \[([\s\S]*?)\];/.exec(source);
+  const match = /const CONTENT_SCRIPT_FILES = \[([\s\S]*?)\];/.exec(backgroundSource);
   assert.ok(match, "expected background CONTENT_SCRIPT_FILES list");
 
   return [...match[1].matchAll(/"([^"]+)"/g)].map((entry) => entry[1]);
@@ -122,6 +124,42 @@ function testDynamicContentScriptsMatchManifestRuntimeStack() {
   );
 }
 
+function testCustomSitePermissionRequestsUseExactOriginPatterns() {
+  const normalized = normalizeProtectedSiteInput(
+    "https://app.example.com/chat/new?token=raw-secret#composer"
+  );
+  assert.strictEqual(normalized.ok, true);
+  assert.strictEqual(normalized.rule.origin, "https://app.example.com");
+  assert.strictEqual(normalized.rule.matchPattern, "https://app.example.com/*");
+
+  assert.ok(
+    popupSource.includes("origins: [site.rule.matchPattern]") &&
+      popupSource.includes("origins: [normalized.rule.matchPattern]") &&
+      popupSource.includes("origins: [rule.matchPattern]"),
+    "popup custom-site grants should request normalized exact-origin match patterns"
+  );
+  assert.ok(
+    optionsSource.includes("origins: [normalized.rule.matchPattern]") &&
+      optionsSource.includes("origins: [rule.matchPattern]"),
+    "options custom-site grants should request normalized exact-origin match patterns"
+  );
+  assert.ok(
+    backgroundSource.includes("origins: [rule.matchPattern]") &&
+      backgroundSource.includes("matches: [rule.matchPattern]"),
+    "background permission checks and dynamic registrations should use exact-origin match patterns"
+  );
+
+  for (const source of [popupSource, optionsSource, backgroundSource]) {
+    assert.strictEqual(
+      /origins:\s*\[\s*(?:inputEl\.value|activeTab\.url|message\.url|normalized\.rule\.origin|rule\.origin)\s*\]/.test(
+        source
+      ),
+      false,
+      "custom-site permission requests must not use raw URLs or origin strings directly"
+    );
+  }
+}
+
 function run() {
   testNormalizesFullUrlToOriginRule();
   testNormalizesBareHostnameToHttpsRule();
@@ -131,6 +169,7 @@ function run() {
   testSafeOriginMatchingStaysExactAndDeterministic();
   testBuiltInSitesRemainRecognizedWithoutUserRules();
   testDynamicContentScriptsMatchManifestRuntimeStack();
+  testCustomSitePermissionRequestsUseExactOriginPatterns();
   console.log("PASS protected site normalization and matching regressions");
 }
 

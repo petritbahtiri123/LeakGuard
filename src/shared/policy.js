@@ -22,6 +22,7 @@
     defaultAction: "redact",
     defaultDestinationAction: "allow",
     auditMode: "off",
+    auditRetentionDays: 30,
     strictPolicyLoad: false,
     managedProtectedSites: [],
     destinationPolicies: [],
@@ -43,6 +44,7 @@
     defaultAction: "block",
     defaultDestinationAction: "block",
     auditMode: "metadata-only",
+    auditRetentionDays: 30,
     strictPolicyLoad: false,
     managedProtectedSites: [],
     destinationPolicies: [],
@@ -58,6 +60,8 @@
   const VALID_DEFAULT_ACTIONS = new Set(["redact", "block"]);
   const VALID_AUDIT_MODES = new Set(["off", "metadata-only", "full"]);
   const VALID_DESTINATION_ACTIONS = new Set(["allow", "redact", "block"]);
+  const MIN_AUDIT_RETENTION_DAYS = 1;
+  const MAX_AUDIT_RETENTION_DAYS = 365;
   let cachedPolicyPromise = null;
 
   function cloneValue(value) {
@@ -187,6 +191,11 @@
     return value;
   }
 
+  function normalizeAuditMode(value, fallback) {
+    const normalized = asEnum(value, fallback, VALID_AUDIT_MODES);
+    return normalized === "full" ? "metadata-only" : normalized;
+  }
+
   function asDestinationPolicies(value, fallback) {
     if (value === undefined) {
       return Array.isArray(fallback) ? cloneValue(fallback) : [];
@@ -258,7 +267,10 @@
     assign("defaultDestinationAction", (value, fallback) =>
       asEnum(value, fallback, VALID_DESTINATION_ACTIONS)
     );
-    assign("auditMode", (value, fallback) => asEnum(value, fallback, VALID_AUDIT_MODES));
+    assign("auditMode", normalizeAuditMode);
+    assign("auditRetentionDays", (value, fallback) =>
+      asNumberInRange(value, fallback, MIN_AUDIT_RETENTION_DAYS, MAX_AUDIT_RETENTION_DAYS)
+    );
     assign("destinationPolicies", asDestinationPolicies);
     assign("approvedDestinations", asStringArray);
     assign("blockedDestinations", asStringArray);
@@ -289,6 +301,7 @@
       defaultAction: "block",
       defaultDestinationAction: "block",
       auditMode: "metadata-only",
+      auditRetentionDays: 30,
       managedProtectedSites: []
     };
   }
@@ -601,6 +614,7 @@
         ? [...policy.managedProtectedSites]
         : [],
       auditMode: policy.auditMode,
+      auditRetentionDays: Number(policy.auditRetentionDays || 30),
       strictPolicyLoad: Boolean(policy.strictPolicyLoad),
       destinationPoliciesConfigured: destinationPolicy.destinationPoliciesConfigured,
       destinationAction: destinationPolicy.destinationAction,

@@ -8,8 +8,10 @@
     "LeakGuard could not read this local file, so nothing was attached.";
   const LOCAL_FILE_TEXT_INSERTION_FALLBACK_ENABLED = false;
   const LOCAL_FILE_STREAMING_REQUIRED_MESSAGE =
+    getFileScanner().LOCAL_FILE_STREAMING_REQUIRED_MESSAGE ||
     "LeakGuard will stream-redact this large text file locally before upload.";
   const LOCAL_FILE_UNSUPPORTED_WARNING =
+    getFileScanner().UNSUPPORTED_COMPOSER_FILE_MESSAGE ||
     "LeakGuard did not scan or redact this file. Unsupported file types such as PDF, DOCX, images, archives, executables, and binary files are not protected in this release. Normal upload may continue through the site.";
 
   function getFileScanner() {
@@ -76,7 +78,7 @@
         message:
           validation?.code === "invalid_utf8"
             ? validation?.message || LOCAL_FILE_READ_MESSAGE
-            : getFileScanner().UNSUPPORTED_COMPOSER_FILE_MESSAGE || LOCAL_FILE_UNSUPPORTED_WARNING
+            : LOCAL_FILE_UNSUPPORTED_WARNING
       };
     }
 
@@ -127,7 +129,7 @@
         handled: true,
         ok: false,
         code: "streaming_required",
-        message: LOCAL_FILE_STREAMING_REQUIRED_MESSAGE,
+        message: FileScanner.LOCAL_FILE_STREAMING_REQUIRED_MESSAGE || LOCAL_FILE_STREAMING_REQUIRED_MESSAGE,
         sourceFile: file,
         file: {
           name: fileName.split(/[\\/]/).pop() || "",

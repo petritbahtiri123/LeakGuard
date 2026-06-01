@@ -1,9 +1,13 @@
 # Browser Compatibility
 
+For the user-facing support matrix and release compatibility checklist, see [docs/BROWSER_COMPATIBILITY_MATRIX.md](docs/BROWSER_COMPATIBILITY_MATRIX.md).
+
 LeakGuard now builds from one shared source tree into separate unpacked browser targets:
 
 - `dist/chrome`
+- `dist/chrome-enterprise`
 - `dist/firefox`
+- `dist/firefox-enterprise`
 
 ## Shared By Default
 
@@ -30,12 +34,12 @@ LeakGuard uses a small compatibility layer in `src/compat`:
 
 - Firefox and Chrome both support Manifest V3 for this extension shape, but background lifecycle behavior can still differ in practice under reloads and idle shutdown.
 - LeakGuard prefers dynamic MV3 content-script registration through `scripting.registerContentScripts()` and `scripting.unregisterContentScripts()`.
-- LeakGuard prefers `storage.session` for reveal-state and placeholder mappings. If a browser does not expose `storage.session`, LeakGuard falls back to `storage.local` for that session-state path so the extension can still function for testing.
+- LeakGuard prefers `storage.session` for reveal-state and placeholder mappings. If a browser does not expose `storage.session`, LeakGuard uses an in-memory session-storage shim instead of persisting private placeholder or reveal state to `storage.local`.
 
 ## Current Firefox Fallbacks
 
 - Session-only state uses `storage.session` when available.
-- If `storage.session` is unavailable, LeakGuard falls back to `storage.local` for the internal session-state path.
+- If `storage.session` is unavailable, LeakGuard uses ephemeral extension memory for the internal session-state path.
 - If dynamic content scripts are unavailable, LeakGuard raises an explicit runtime error instead of silently dropping protected-site functionality.
 
 ## Areas Worth Hardening Later

@@ -15,6 +15,9 @@ function createEventTarget() {
     addEventListener(type, listener, capture) {
       listeners[type] = listeners[type] || [];
       listeners[type].push({ listener, capture });
+    },
+    removeEventListener(type, listener) {
+      listeners[type] = (listeners[type] || []).filter((entry) => entry.listener !== listener);
     }
   };
 }
@@ -341,6 +344,28 @@ async function testStrictPolicyResolverBlocksUnknownBinaryDrop() {
   assert.strictEqual(nativePageHandlerCalls, 0);
 }
 
+async function testDisposeRemovesListenersAndAllowsFreshInit() {
+  const { sandbox, windowTarget, documentTarget, documentElementTarget, bodyTarget } = createSandbox();
+  const targets = [windowTarget, documentTarget, documentElementTarget, bodyTarget];
+
+  sandbox.__PWM_FILE_DRAG_GUARD__.dispose();
+
+  targets.forEach((target) => {
+    for (const type of ["dragenter", "dragover", "drop", "dragend"]) {
+      assert.strictEqual(target.listeners[type]?.length || 0, 0, `expected ${type} to be removed`);
+    }
+  });
+  assert.strictEqual(sandbox.__PWM_FILE_DRAG_GUARD__, undefined);
+  assert.strictEqual(windowTarget.__LEAKGUARD_FILE_DRAG_GUARD_INIT__, undefined);
+
+  runGuard(sandbox);
+  const { event } = createEvent({ dataTransfer: createDataTransfer() });
+  dispatch(windowTarget, "dragover", event);
+
+  assert.strictEqual(windowTarget.listeners.dragover.length, 1);
+  assert.strictEqual(event.defaultPrevented, true);
+}
+
 (async () => {
   await testDragoverPreventsFileDragBeforeRuntimeLoads();
   await testDragoverListenersAreExplicitlyNonPassive();
@@ -354,6 +379,7 @@ async function testStrictPolicyResolverBlocksUnknownBinaryDrop() {
   await testSanitizedHandoffIsIgnored();
   await testUnsupportedBinaryDropPassesThroughByDefault();
   await testStrictPolicyResolverBlocksUnknownBinaryDrop();
+  await testDisposeRemovesListenersAndAllowsFreshInit();
   console.log("PASS early file drag guard regressions");
 })().catch((error) => {
   console.error(error);

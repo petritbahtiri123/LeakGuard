@@ -11,7 +11,7 @@ It watches supported composers for typed or pasted content, detects likely secre
 
 LeakGuard does not use a backend service, cloud processing, telemetry, or remote model calls. It is designed for practical risk reduction, not perfect privacy or full enterprise DLP.
 
-> Local-only. No backend. No telemetry. Secure reveal stays inside extension-owned UI..
+> Local-only. No backend. No telemetry. Secure reveal stays inside extension-owned UI.
 
 ## What LeakGuard Is
 
@@ -33,7 +33,7 @@ LeakGuard does not use a backend service, cloud processing, telemetry, or remote
 
 See [docs/NON_GOALS.md](docs/NON_GOALS.md) for the maintained non-goals list.
 
-## ❤️ Support LeakGuard
+## Support LeakGuard
 
 LeakGuard is a privacy-first AI protection tool that helps prevent accidental data leaks when using ChatGPT, Gemini, and other AI platforms.
 
@@ -42,12 +42,13 @@ Everything runs locally:
 - No tracking
 - No data collection
 
-If you want to support development and upcoming features like:
-- File scanning (env, logs, configs)
-- PDF & DOCX detection
-- Image OCR redaction
+If you want to support development and future work such as:
+- broader file-format detection research
+- PDF and DOCX text extraction review
+- image OCR redaction research
+- deeper Chrome and Firefox QA
 
-👉 You can support here:
+Support here:
 https://ko-fi.com/petritbahtiri
 
 ## v1.7.0 Snapshot
@@ -73,7 +74,7 @@ https://ko-fi.com/petritbahtiri
 - Popup-based site management for add, enable, disable, and remove flows
 - In-page top-center status menu on protected pages
 - Popup-only secure reveal for placeholders
-- Session-scoped placeholder state in `chrome.storage.session`
+- Session-scoped placeholder state in `chrome.storage.session`, or ephemeral extension memory when session storage is unavailable
 - No cloud processing, telemetry, or backend service
 
 ## How LeakGuard Works
@@ -81,7 +82,7 @@ https://ko-fi.com/petritbahtiri
 1. On a protected site, LeakGuard watches supported chat composers for paste, typing, send, and supported local text-file paste/drop/file-select events.
 2. If it finds likely secrets or sensitive public IPv4 hosts/CIDRs, it shows an `Allow once` or `Redact` decision flow.
 3. If you choose `Redact`, it rewrites the composer with stable placeholders such as `[PWM_1]`, `[PUB_HOST_1]`, and `[NET_1]`.
-4. Private raw-to-placeholder mappings stay in the background service worker and `chrome.storage.session` for the active browser session only.
+4. Private raw-to-placeholder mappings stay in the background service worker and `chrome.storage.session` for the active browser session only; on browsers without session storage, LeakGuard uses ephemeral extension memory instead of `storage.local`.
 5. Clicking a revealable placeholder stages a secure reveal inside the LeakGuard popup. Raw values are not written back into the page DOM.
 
 ## Local File Scanner
@@ -212,6 +213,8 @@ npm run build:firefox-enterprise
 
 Open a built-in protected site or any normal website you want to add from the popup, then click the LeakGuard toolbar icon to verify the popup renders and current-site state loads correctly.
 
+Detailed install and first-smoke steps live in [docs/INSTALL_GUIDE.md](docs/INSTALL_GUIDE.md).
+
 ## Enterprise Deployment
 
 LeakGuard's enterprise runtime can now:
@@ -295,16 +298,22 @@ The manual smoke block contains synthetic secrets, passwords, tokens, connection
 
 ## Documentation
 
-- [SECURITY_REVIEW.md](SECURITY_REVIEW.md)
-- [BROWSER_COMPAT.md](BROWSER_COMPAT.md)
-- [docs/BUILD_TARGETS.md](docs/BUILD_TARGETS.md)
-- [docs/ENTERPRISE_DEPLOYMENT.md](docs/ENTERPRISE_DEPLOYMENT.md)
-- [docs/AI_ASSIST.md](docs/AI_ASSIST.md)
-- [docs/NON_GOALS.md](docs/NON_GOALS.md)
-- [docs/CHROME_WEB_STORE_LISTING.md](docs/CHROME_WEB_STORE_LISTING.md)
+Start with [docs/README.md](docs/README.md) for the full documentation index. The current documentation inventory, cleanup status, and future roadmap live in [docs/DOCUMENTATION_ROADMAP.md](docs/DOCUMENTATION_ROADMAP.md).
+
+Common entry points:
+
+- [docs/INSTALL_GUIDE.md](docs/INSTALL_GUIDE.md)
+- [docs/PROTECTED_SITES_GUIDE.md](docs/PROTECTED_SITES_GUIDE.md)
+- [docs/PLACEHOLDERS_AND_REVEAL.md](docs/PLACEHOLDERS_AND_REVEAL.md)
+- [docs/FILE_UPLOAD_SCANNING_GUIDE.md](docs/FILE_UPLOAD_SCANNING_GUIDE.md)
 - [docs/PRIVACY_POLICY.md](docs/PRIVACY_POLICY.md)
+- [SECURITY_REVIEW.md](SECURITY_REVIEW.md)
+- [docs/BROWSER_COMPATIBILITY_MATRIX.md](docs/BROWSER_COMPATIBILITY_MATRIX.md)
+- [docs/ENTERPRISE_DEPLOYMENT.md](docs/ENTERPRISE_DEPLOYMENT.md)
+- [docs/MANAGED_POLICY_SCHEMA.md](docs/MANAGED_POLICY_SCHEMA.md)
+- [docs/AI_ASSIST.md](docs/AI_ASSIST.md)
 - [docs/RELEASE_QA_CHECKLIST.md](docs/RELEASE_QA_CHECKLIST.md)
-- [tests/manual_detection_paste_block.txt](tests/manual_detection_paste_block.txt)
+- [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
 
 ## Non-Goals
 

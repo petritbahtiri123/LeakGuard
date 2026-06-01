@@ -12,6 +12,12 @@ Use this file as a short handoff log for AI-made changes. Add newest entries fir
 ```
 
 ## Entries
+### 2026-05-29 - CI docs link gate
+- Goal: Added the roadmap Phase 0 documentation link check to the default GitHub test workflow so broken local Markdown links are caught in CI before the full suite.
+- Files: `.github/workflows/test.yml`, `docs/CODEX_CHANGELOG.md`
+- Tests: `npm run docs:check-links` -> pass; `node tests/security.test.js` -> pass; `node tests/build_targets.test.js` -> pass; `node tests/productization.test.js` -> pass; `npm test` -> pass
+- Notes: CI-only/documentation-gate change. No runtime redaction, placeholder, privacy model, browser permission, manifest, generated `dist/`, model, or package-lock changes.
+
 ### 2026-05-21 - Gemini Upload & tools handoff
 - Goal: Treated Gemini's new `Upload & tools` button as a safe upload menu opener only when upload intent is explicit, and routed Firefox/Gemini drops with no exposed file input directly to the trusted pending attach overlay hook.
 - Files: `src/content/content.js`, `tests/content_file_drop_interception.test.js`, `docs/CODEX_CHANGELOG.md`

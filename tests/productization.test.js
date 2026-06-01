@@ -253,8 +253,10 @@ function testPublishReadinessDocsCoverStorePrivacyAndQa() {
   );
   assert.ok(
     privacyPolicy.includes("does not use a backend service") &&
-      privacyPolicy.includes("chrome.storage.session"),
-    "privacy policy should describe local-only handling and session storage use"
+      privacyPolicy.includes("chrome.storage.session") &&
+      privacyPolicy.includes("ephemeral extension memory") &&
+      privacyPolicy.includes("configured retention window"),
+    "privacy policy should describe local-only handling, session storage, ephemeral fallback, and audit retention"
   );
   assert.ok(
     releaseChecklist.includes("Manage Protected Sites") &&

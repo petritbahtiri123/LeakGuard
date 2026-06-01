@@ -28,8 +28,77 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Setup Chrome
+        uses: browser-actions/setup-chrome@v2
+
+      - name: Setup Firefox
+        uses: browser-actions/setup-firefox@v1
+
+      - name: Setup geckodriver
+        uses: browser-actions/setup-geckodriver@latest
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Edge
+        uses: browser-actions/setup-edge@v1
+
       - name: Install dependencies
         run: npm ci
 
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Generate supply-chain reports
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/supply-chain
+          npm sbom --sbom-format cyclonedx --json > artifacts/supply-chain/sbom.cdx.json
+          npm run report:licenses -- --output-dir artifacts/supply-chain
+          npm run report:osv -- --output-dir artifacts/supply-chain
+          npm run scan:repo-secrets -- --output-dir artifacts/supply-chain
+
+      - name: Upload supply-chain reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: supply-chain-reports
+          path: artifacts/supply-chain/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Check documentation links
+        run: npm run docs:check-links
+
       - name: Run tests
         run: npm test
+
+      - name: Generate runtime size report
+        run: npm run report:sizes -- --output-dir artifacts/runtime-budgets
+
+      - name: Upload runtime size report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-size-report
+          path: artifacts/runtime-budgets/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Run Chrome extension smoke
+        run: xvfb-run -a npm run smoke:chrome
+
+      - name: Run Firefox extension smoke
+        run: xvfb-run -a npm run smoke:firefox
+
+      - name: Run Edge extension smoke
+        run: xvfb-run -a npm run smoke:edge
+
+      - name: Upload browser smoke timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-smoke-timings
+          path: artifacts/runtime-budgets/smoke-timings.jsonl
+          if-no-files-found: warn
+          retention-days: 14
