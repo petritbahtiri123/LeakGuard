@@ -827,6 +827,10 @@ async function createPage(connection, url = "about:blank") {
 
 async function setFileInputFiles(connection, sessionId, selector, files) {
   await connection.send("DOM.enable", {}, sessionId).catch(() => {});
+  const normalizedFiles = (Array.isArray(files) ? files : [files]).map((file) => path.resolve(file));
+  for (const file of normalizedFiles) {
+    assert.ok(fs.existsSync(file), `Expected file input path to exist: ${file}`);
+  }
   let lastError = null;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
@@ -844,9 +848,37 @@ async function setFileInputFiles(connection, sessionId, selector, files) {
         "DOM.setFileInputFiles",
         {
           nodeId,
-          files
+          files: normalizedFiles
         },
         sessionId
+      );
+      let inputState = await getFileInputState(connection, sessionId, selector);
+      if (inputState.count !== normalizedFiles.length) {
+        const result = await connection.send(
+          "Runtime.evaluate",
+          {
+            expression: `document.querySelector(${JSON.stringify(selector)})`,
+            awaitPromise: false,
+            returnByValue: false
+          },
+          sessionId
+        );
+        const objectId = result.result?.objectId;
+        assert.ok(objectId, `Expected to find file input object ${selector}`);
+        await connection.send(
+          "DOM.setFileInputFiles",
+          {
+            objectId,
+            files: normalizedFiles
+          },
+          sessionId
+        );
+        inputState = await getFileInputState(connection, sessionId, selector);
+      }
+      assert.equal(
+        inputState.count,
+        normalizedFiles.length,
+        `Expected ${selector} to contain ${normalizedFiles.length} file(s), got ${JSON.stringify(inputState)}`
       );
       await evaluate(
         connection,
@@ -865,6 +897,24 @@ async function setFileInputFiles(connection, sessionId, selector, files) {
     }
   }
   throw lastError;
+}
+
+async function getFileInputState(connection, sessionId, selector) {
+  return await evaluate(
+    connection,
+    sessionId,
+    `(() => {
+      const input = document.querySelector(${JSON.stringify(selector)});
+      return {
+        count: input?.files?.length || 0,
+        files: Array.from(input?.files || []).map((file) => ({
+          name: file.name,
+          type: file.type,
+          size: file.size
+        }))
+      };
+    })()`
+  );
 }
 
 async function evaluate(connection, sessionId, expression, options = {}) {
