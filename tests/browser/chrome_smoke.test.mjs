@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { createSign, generateKeyPairSync, randomBytes } from "node:crypto";
+import { createHash, createSign, generateKeyPairSync, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import https from "node:https";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -46,6 +47,59 @@ function findExecutable(candidates) {
     }
   }
   return "";
+}
+
+function normalizeRemoteDebuggingMode(mode) {
+  if (!mode || mode === "pipe") return "pipe";
+  if (mode === "port") return "port";
+  throw new Error(`Unsupported Chromium remote debugging mode: ${mode}`);
+}
+
+async function reserveLoopbackPort() {
+  const server = net.createServer();
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const { port } = server.address();
+  await new Promise((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
+  return port;
+}
+
+function requestJson(url) {
+  return new Promise((resolve, reject) => {
+    const request = http.get(url, { timeout: 1000 }, (response) => {
+      let body = "";
+      response.setEncoding("utf8");
+      response.on("data", (chunk) => {
+        body += chunk;
+      });
+      response.on("end", () => {
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          reject(new Error(`HTTP ${response.statusCode} from ${url}`));
+          return;
+        }
+        try {
+          resolve(JSON.parse(body));
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+    request.on("timeout", () => {
+      request.destroy(new Error(`Timed out requesting ${url}`));
+    });
+    request.on("error", reject);
+  });
+}
+
+async function findCdpWebSocketUrl(port, browserName) {
+  return await waitFor(async () => {
+    const version = await requestJson(`http://127.0.0.1:${port}/json/version`);
+    return version.webSocketDebuggerUrl || null;
+  }, `${browserName} remote debugging port`);
 }
 
 function findChromeExecutable() {
@@ -396,18 +450,311 @@ class CdpPipeConnection {
   }
 }
 
+class CdpWebSocketConnection {
+  constructor(webSocketUrl) {
+    this.webSocketUrl = webSocketUrl;
+    this.socket = null;
+    this.nextId = 1;
+    this.pending = new Map();
+    this.events = [];
+    this.buffer = Buffer.alloc(0);
+    this.fragmentedOpcode = 0;
+    this.fragmentedChunks = [];
+  }
+
+  async connect() {
+    assert.ok(this.webSocketUrl, "Chromium remote debugging websocket URL is missing.");
+    const { socket, initialBuffer } = await openWebSocket(this.webSocketUrl);
+    this.socket = socket;
+    this.socket.on("data", (chunk) => {
+      try {
+        this.handleChunk(chunk);
+      } catch (error) {
+        this.rejectPending(error);
+        this.socket.destroy(error);
+      }
+    });
+    this.socket.on("error", (error) => this.rejectPending(error));
+    this.socket.on("close", () => this.rejectPending(new Error("CDP websocket closed.")));
+    if (initialBuffer.length) this.handleChunk(initialBuffer);
+    await this.send("Browser.getVersion");
+  }
+
+  handleChunk(chunk) {
+    this.buffer = Buffer.concat([this.buffer, chunk]);
+    let frame = readWebSocketFrame(this.buffer);
+    while (frame) {
+      this.buffer = this.buffer.subarray(frame.consumed);
+      this.handleFrame(frame);
+      frame = readWebSocketFrame(this.buffer);
+    }
+  }
+
+  handleFrame(frame) {
+    if (frame.opcode === 0x8) {
+      this.rejectPending(new Error("CDP websocket closed."));
+      this.socket.end();
+      return;
+    }
+    if (frame.opcode === 0x9) {
+      this.socket.write(encodeWebSocketFrame(frame.payload, 0xa));
+      return;
+    }
+    if (frame.opcode === 0xa) return;
+
+    if (frame.opcode === 0x1 || frame.opcode === 0x2) {
+      if (frame.fin) {
+        this.handleMessage(frame.payload.toString("utf8"));
+        return;
+      }
+      this.fragmentedOpcode = frame.opcode;
+      this.fragmentedChunks = [frame.payload];
+      return;
+    }
+
+    if (frame.opcode === 0x0 && this.fragmentedOpcode) {
+      this.fragmentedChunks.push(frame.payload);
+      if (frame.fin) {
+        const payload = Buffer.concat(this.fragmentedChunks);
+        const opcode = this.fragmentedOpcode;
+        this.fragmentedOpcode = 0;
+        this.fragmentedChunks = [];
+        if (opcode === 0x1) this.handleMessage(payload.toString("utf8"));
+      }
+    }
+  }
+
+  handleMessage(data) {
+    const message = JSON.parse(String(data));
+    if (message.id && this.pending.has(message.id)) {
+      const { resolve, reject } = this.pending.get(message.id);
+      this.pending.delete(message.id);
+      if (message.error) {
+        reject(new Error(`${message.error.message}: ${JSON.stringify(message.error.data || {})}`));
+      } else {
+        resolve(message.result || {});
+      }
+      return;
+    }
+    this.events.push(message);
+  }
+
+  rejectPending(error) {
+    for (const { reject } of this.pending.values()) {
+      reject(error);
+    }
+    this.pending.clear();
+  }
+
+  send(method, params = {}, sessionId = null) {
+    if (!this.socket || this.socket.destroyed) {
+      return Promise.reject(new Error(`CDP websocket is not connected: ${method}`));
+    }
+    const id = this.nextId;
+    this.nextId += 1;
+    const payload = { id, method, params };
+    if (sessionId) payload.sessionId = sessionId;
+    const request = new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`CDP command timed out: ${method}`));
+      }, cdpCommandTimeoutMs);
+      this.pending.set(id, {
+        resolve: (value) => {
+          clearTimeout(timeout);
+          resolve(value);
+        },
+        reject: (error) => {
+          clearTimeout(timeout);
+          reject(error);
+        }
+      });
+    });
+    this.socket.write(encodeWebSocketFrame(Buffer.from(JSON.stringify(payload), "utf8")));
+    return request;
+  }
+
+  async close() {
+    this.rejectPending(new Error("CDP websocket closed."));
+    if (this.socket && !this.socket.destroyed) {
+      this.socket.write(encodeWebSocketFrame(Buffer.alloc(0), 0x8));
+      this.socket.end();
+      this.socket.destroy();
+    }
+  }
+}
+
+function parseHttpHeaderMap(headerText) {
+  const headers = new Map();
+  for (const line of headerText.split(/\r?\n/).slice(1)) {
+    const separator = line.indexOf(":");
+    if (separator === -1) continue;
+    headers.set(line.slice(0, separator).trim().toLowerCase(), line.slice(separator + 1).trim());
+  }
+  return headers;
+}
+
+function openWebSocket(webSocketUrl) {
+  const url = new URL(webSocketUrl);
+  assert.equal(url.protocol, "ws:", `Expected ws:// CDP websocket URL, got ${webSocketUrl}`);
+  const key = randomBytes(16).toString("base64");
+  const expectedAccept = createHash("sha1")
+    .update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
+    .digest("base64");
+  const pathAndSearch = `${url.pathname || "/"}${url.search || ""}`;
+  const request = [
+    `GET ${pathAndSearch} HTTP/1.1`,
+    `Host: ${url.host}`,
+    "Upgrade: websocket",
+    "Connection: Upgrade",
+    `Sec-WebSocket-Key: ${key}`,
+    "Sec-WebSocket-Version: 13",
+    "",
+    ""
+  ].join("\r\n");
+
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection({
+      host: url.hostname,
+      port: Number(url.port || 80)
+    });
+    let buffer = Buffer.alloc(0);
+    const timeout = setTimeout(() => {
+      fail(new Error(`Timed out opening CDP websocket ${webSocketUrl}`));
+    }, cdpCommandTimeoutMs);
+
+    function cleanup() {
+      clearTimeout(timeout);
+      socket.off("error", fail);
+      socket.off("data", onData);
+    }
+
+    function fail(error) {
+      cleanup();
+      socket.destroy();
+      reject(error);
+    }
+
+    function onData(chunk) {
+      buffer = Buffer.concat([buffer, chunk]);
+      const headerEnd = buffer.indexOf("\r\n\r\n");
+      if (headerEnd === -1) return;
+
+      const headerText = buffer.subarray(0, headerEnd).toString("utf8");
+      const [statusLine] = headerText.split(/\r?\n/);
+      if (!/^HTTP\/1\.[01] 101\b/.test(statusLine)) {
+        fail(new Error(`CDP websocket upgrade failed: ${statusLine}`));
+        return;
+      }
+
+      const headers = parseHttpHeaderMap(headerText);
+      if (headers.get("sec-websocket-accept") !== expectedAccept) {
+        fail(new Error("CDP websocket upgrade returned an invalid accept key."));
+        return;
+      }
+
+      cleanup();
+      socket.setNoDelay(true);
+      resolve({
+        socket,
+        initialBuffer: buffer.subarray(headerEnd + 4)
+      });
+    }
+
+    socket.on("error", fail);
+    socket.on("data", onData);
+    socket.once("connect", () => {
+      socket.write(request);
+    });
+  });
+}
+
+function readWebSocketFrame(buffer) {
+  if (buffer.length < 2) return null;
+  const first = buffer[0];
+  const second = buffer[1];
+  let offset = 2;
+  let length = second & 0x7f;
+  if (length === 126) {
+    if (buffer.length < offset + 2) return null;
+    length = buffer.readUInt16BE(offset);
+    offset += 2;
+  } else if (length === 127) {
+    if (buffer.length < offset + 8) return null;
+    const wideLength = buffer.readBigUInt64BE(offset);
+    if (wideLength > BigInt(Number.MAX_SAFE_INTEGER)) {
+      throw new Error("CDP websocket frame is too large.");
+    }
+    length = Number(wideLength);
+    offset += 8;
+  }
+
+  const masked = Boolean(second & 0x80);
+  const mask = masked ? buffer.subarray(offset, offset + 4) : null;
+  if (masked) offset += 4;
+  if (buffer.length < offset + length) return null;
+
+  let payload = buffer.subarray(offset, offset + length);
+  if (mask) {
+    payload = Buffer.from(payload);
+    for (let index = 0; index < payload.length; index += 1) {
+      payload[index] ^= mask[index % 4];
+    }
+  }
+
+  return {
+    fin: Boolean(first & 0x80),
+    opcode: first & 0x0f,
+    payload,
+    consumed: offset + length
+  };
+}
+
+function encodeWebSocketFrame(payload, opcode = 0x1) {
+  const data = Buffer.isBuffer(payload) ? payload : Buffer.from(String(payload), "utf8");
+  const length = data.length;
+  const headerLength = length < 126 ? 2 : length <= 0xffff ? 4 : 10;
+  const header = Buffer.alloc(headerLength + 4);
+  header[0] = 0x80 | opcode;
+  let offset = 2;
+  if (length < 126) {
+    header[1] = 0x80 | length;
+  } else if (length <= 0xffff) {
+    header[1] = 0x80 | 126;
+    header.writeUInt16BE(length, offset);
+    offset += 2;
+  } else {
+    header[1] = 0x80 | 127;
+    header.writeBigUInt64BE(BigInt(length), offset);
+    offset += 8;
+  }
+
+  const mask = randomBytes(4);
+  mask.copy(header, offset);
+  const masked = Buffer.from(data);
+  for (let index = 0; index < masked.length; index += 1) {
+    masked[index] ^= mask[index % 4];
+  }
+  return Buffer.concat([header, masked]);
+}
+
 async function launchChrome({
   extensionPath,
   profileDir,
   browserName = "Chrome",
   browserExecutable = findChromeExecutable(),
   headlessEnvName = "LEAKGUARD_CHROME_HEADLESS",
-  missingMessage = "Chrome stable or Chromium was not found. Set CHROME_BIN to run this smoke test."
+  missingMessage = "Chrome stable or Chromium was not found. Set CHROME_BIN to run this smoke test.",
+  remoteDebuggingMode = "pipe"
 }) {
   assert.ok(browserExecutable, missingMessage);
+  const debuggingMode = normalizeRemoteDebuggingMode(remoteDebuggingMode);
+  const debuggingPort = debuggingMode === "port" ? await reserveLoopbackPort() : 0;
 
   const args = [
-    "--remote-debugging-pipe",
+    debuggingMode === "port"
+      ? `--remote-debugging-port=${debuggingPort}`
+      : "--remote-debugging-pipe",
     `--user-data-dir=${profileDir}`,
     `--load-extension=${extensionPath}`,
     "--enable-unsafe-extension-debugging",
@@ -422,18 +769,24 @@ async function launchChrome({
     "--host-resolver-rules=MAP chatgpt.com 127.0.0.1",
     "--window-size=1280,900",
     "--window-position=-2400,-2400",
-    "--dbus-stub",
-    "about:blank"
+    "--dbus-stub"
   ];
+  if (debuggingMode === "port") {
+    args.push("--remote-debugging-address=127.0.0.1");
+  }
   if (process.env[headlessEnvName] === "1") {
     args.push("--headless=new");
   }
   if (process.platform === "linux") {
     args.push("--no-sandbox");
   }
+  args.push("about:blank");
 
   const child = spawn(browserExecutable, args.map(quoteForArg), {
-    stdio: ["ignore", "pipe", "pipe", "pipe", "pipe"]
+    stdio:
+      debuggingMode === "pipe"
+        ? ["ignore", "pipe", "pipe", "pipe", "pipe"]
+        : ["ignore", "pipe", "pipe"]
   });
   let stderr = "";
   child.stderr.on("data", (chunk) => {
@@ -445,7 +798,7 @@ async function launchChrome({
     }
   });
 
-  return { child, stderr: () => stderr };
+  return { child, debuggingMode, debuggingPort, stderr: () => stderr };
 }
 
 async function waitForChromeExit(child, timeoutMs = 5000) {
@@ -961,8 +1314,10 @@ async function runChromiumSmoke(options = {}) {
     buildCommand = "npm run build:chrome",
     findBrowserExecutable = findChromeExecutable,
     headlessEnvName = "LEAKGUARD_CHROME_HEADLESS",
-    missingMessage = "Chrome stable or Chromium was not found. Set CHROME_BIN to run this smoke test."
+    missingMessage = "Chrome stable or Chromium was not found. Set CHROME_BIN to run this smoke test.",
+    remoteDebuggingMode = "pipe"
   } = options;
+  const debuggingMode = normalizeRemoteDebuggingMode(remoteDebuggingMode);
   assertBuiltExtensionExists(sourceExtensionDir, buildCommand);
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `leakguard-${browserName.toLowerCase()}-smoke-`));
@@ -985,10 +1340,16 @@ async function runChromiumSmoke(options = {}) {
       browserName,
       browserExecutable: findBrowserExecutable(),
       headlessEnvName,
-      missingMessage
+      missingMessage,
+      remoteDebuggingMode: debuggingMode
     });
 
-    connection = new CdpPipeConnection(chrome.child.stdio[3], chrome.child.stdio[4]);
+    if (chrome.debuggingMode === "port") {
+      const webSocketUrl = await findCdpWebSocketUrl(chrome.debuggingPort, browserName);
+      connection = new CdpWebSocketConnection(webSocketUrl);
+    } else {
+      connection = new CdpPipeConnection(chrome.child.stdio[3], chrome.child.stdio[4]);
+    }
     await connection.connect();
     await connection.send("Target.setDiscoverTargets", { discover: true });
 
