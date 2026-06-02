@@ -16,6 +16,7 @@ require(path.join(repoRoot, "src/shared/sessionMapStore.js"));
 require(path.join(repoRoot, "src/shared/knownSecretReuse.js"));
 require(path.join(repoRoot, "src/shared/transformOutboundPrompt.js"));
 require(path.join(repoRoot, "src/content/composer_helpers.js"));
+require(path.join(repoRoot, "src/content/input/rewriteVerificationText.js"));
 
 const {
   Detector,
@@ -35,6 +36,10 @@ const {
 } = ComposerHelpers;
 
 const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
+const rewriteVerificationTextSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/input/rewriteVerificationText.js"),
+  "utf8"
+);
 const fileHandoffFlowSource = fs.readFileSync(
   path.join(repoRoot, "src/content/file_handoff_flow.js"),
   "utf8"
@@ -636,7 +641,10 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
     "rewrite:multiline-preserving-retry-failed",
     "rewrite:failure-modal-suppressed-duplicate"
   ]) {
-    assert.ok(contentSource.includes(label), `content script should keep safe debug label ${label}`);
+    assert.ok(
+      `${contentSource}\n${rewriteVerificationTextSource}`.includes(label),
+      `content script should keep safe debug label ${label}`
+    );
   }
   assert.ok(
     contentSource.includes("const latestInput = findComposer(input);") &&

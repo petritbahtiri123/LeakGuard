@@ -880,41 +880,18 @@
   }
 
   function classifyLocalFile(file) {
-    const FileScanner = globalThis.PWM?.FileScanner || {};
-    if (typeof FileScanner.classifyFileForTextScan === "function") {
-      return FileScanner.classifyFileForTextScan({
-        fileName: file?.name || "",
-        mimeType: file?.type || ""
-      });
-    }
-
-    return {
-      kind: "unknown",
-      action: "allow",
-      message: LOCAL_FILE_UNSUPPORTED_WARNING
-    };
+    return globalThis.PWM.FileTransferPolicy.classifyLocalFile(file, {
+      FileScanner: globalThis.PWM?.FileScanner || {},
+      unsupportedWarning: LOCAL_FILE_UNSUPPORTED_WARNING
+    });
   }
 
   function resolveLocalFileTransferPolicy(dataTransfer) {
-    const files = listLocalTransferFiles(dataTransfer);
-    if (!files.length) {
-      return { action: "scan" };
-    }
-
-    const classifications = files.map(classifyLocalFile);
-    if (classifications.some((classification) => classification.action === "scan")) {
-      return { action: "scan", files, classifications };
-    }
-
-    return {
-      action: "allow",
-      reason: "unsupported_file_pass_through",
-      files,
-      classifications,
-      message:
-        classifications.find((classification) => classification.message)?.message ||
-        LOCAL_FILE_UNSUPPORTED_WARNING
-    };
+    return globalThis.PWM.FileTransferPolicy.resolveLocalFileTransferPolicy(dataTransfer, {
+      listLocalTransferFiles,
+      classifyLocalFile,
+      unsupportedWarning: LOCAL_FILE_UNSUPPORTED_WARNING
+    });
   }
 
   function resolveFileDragGuardPolicy(dataTransfer) {
@@ -938,19 +915,16 @@
   }
 
   function shouldBlockUnsupportedFileTransfer(policy) {
-    return (
-      isFirefoxRuntime() &&
-      policy?.action === "allow" &&
-      dataTransferLooksLikeFiles({ files: policy.files || [], types: ["Files"], items: [] }) &&
-      isProtectedFileDropDriver(getCurrentHandoffDriverId())
-    );
+    return globalThis.PWM.FileTransferPolicy.shouldBlockUnsupportedFileTransfer(policy, {
+      isFirefoxRuntime,
+      dataTransferLooksLikeFiles,
+      isProtectedFileDropDriver,
+      getCurrentHandoffDriverId
+    });
   }
 
   function getUnsupportedFileBlockedMessage(policy) {
-    return (
-      policy?.message ||
-      "LeakGuard blocked this file because Firefox cannot safely pass unsupported files through on protected AI sites. Use the LeakGuard drag/drop box with a supported text file."
-    );
+    return globalThis.PWM.FileTransferPolicy.getUnsupportedFileBlockedMessage(policy);
   }
 
   function clearDmzOverlayTimer() {
@@ -1517,33 +1491,17 @@
   }
 
   function getLocalTextPayloadByteLength(text, fallbackBytes = 0) {
-    if (typeof text !== "string") {
-      return Math.max(0, Number(fallbackBytes) || 0);
-    }
-
-    try {
-      if (typeof TextEncoder === "function") {
-        return new TextEncoder().encode(text).byteLength;
-      }
-    } catch {
-      // Fall through to a conservative UTF-16 estimate.
-    }
-
-    return text.length * 2;
+    return globalThis.PWM.FileTransferPolicy.getLocalTextPayloadByteLength(text, fallbackBytes);
   }
 
   function classifyLocalTextPayloadSize(payload) {
-    const input = payload || {};
-    const bytes = getLocalTextPayloadByteLength(input.text || "", input.sizeBytes || 0);
-    if (bytes > LOCAL_TEXT_HARD_BLOCK_BYTES) {
-      return { zone: "blocked", bytes };
-    }
-
-    if (bytes > LOCAL_TEXT_FAST_MAX_BYTES && bytes <= LOCAL_TEXT_OPTIMIZED_MAX_BYTES) {
-      return { zone: "optimized", bytes };
-    }
-
-    return { zone: "fast", bytes };
+    return globalThis.PWM.FileTransferPolicy.classifyLocalTextPayloadSize(payload, {
+      constants: {
+        LOCAL_TEXT_FAST_MAX_BYTES,
+        LOCAL_TEXT_OPTIMIZED_MAX_BYTES,
+        LOCAL_TEXT_HARD_BLOCK_BYTES
+      }
+    });
   }
 
   function showLocalPayloadOptimizationStatus(sizeInfo) {
@@ -1712,101 +1670,47 @@
   }
 
   function normalizeVerificationText(text) {
-    return normalizeEditorInnerText(normalizeComposerText(normalizeVisiblePlaceholders(text)))
-      .replace(/[^\S\n]+$/gm, "")
-      .replace(/\n{3,}$/g, "\n\n")
-      .replace(/\n+$/g, "");
+    return globalThis.PWM.RewriteVerificationText.normalizeVerificationText(text);
   }
 
   function normalizeLooseVerificationText(text) {
-    return normalizeVerificationText(text)
-      .replace(/[^\S\n]*\n+[^\S\n]*(?=\[(?:PWM|NET|PUB_HOST)_\d+\])/g, " ")
-      .replace(/(\[(?:PWM|NET|PUB_HOST)_\d+\])[^\S\n]*\n+[^\S\n]*/g, "$1 ")
-      .replace(/\n{2,}/g, "\n")
-      .trim();
+    return globalThis.PWM.RewriteVerificationText.normalizeLooseVerificationText(text);
   }
 
   function listExpectedPlaceholders(text) {
-    const normalized = normalizeVisiblePlaceholders(text);
-    const matches = normalized.match(new RegExp(PLACEHOLDER_TOKEN_REGEX.source, "g")) || [];
-    return [...new Set(matches)];
+    return globalThis.PWM.RewriteVerificationText.listExpectedPlaceholders(text);
   }
 
   function listPlaceholderTokens(text) {
-    const normalized = normalizeVisiblePlaceholders(text);
-    return normalized.match(new RegExp(PLACEHOLDER_TOKEN_REGEX.source, "g")) || [];
+    return globalThis.PWM.RewriteVerificationText.listPlaceholderTokens(text);
   }
 
   function samePlaceholderTokenSet(expectedText, actualText) {
-    const expected = listExpectedPlaceholders(expectedText);
-    const actual = listExpectedPlaceholders(actualText);
-    if (expected.length !== actual.length) return false;
-    return expected.every((placeholder) => actual.includes(placeholder));
+    return globalThis.PWM.RewriteVerificationText.samePlaceholderTokenSet(expectedText, actualText);
   }
 
   function actualContainsExpectedPlaceholders(expectedText, actualText) {
-    const placeholders = listExpectedPlaceholders(expectedText);
-    if (!placeholders.length) return true;
-
-    const actual = normalizeVisiblePlaceholders(actualText);
-    return placeholders.every((placeholder) => actual.includes(placeholder));
+    return globalThis.PWM.RewriteVerificationText.actualContainsExpectedPlaceholders(expectedText, actualText);
   }
 
   function countVerificationLineBreaks(text) {
-    const matches = normalizeVerificationText(text).match(/\n/g);
-    return matches ? matches.length : 0;
+    return globalThis.PWM.RewriteVerificationText.countVerificationLineBreaks(text);
   }
 
   function countVerificationLines(text) {
-    const normalized = normalizeVerificationText(text);
-    return normalized ? normalized.split("\n").length : 0;
+    return globalThis.PWM.RewriteVerificationText.countVerificationLines(text);
   }
 
   function lineCollapseTokens(text) {
-    return normalizeVerificationText(text)
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line.length >= 2)
-      .slice(0, 12);
+    return globalThis.PWM.RewriteVerificationText.lineCollapseTokens(text);
   }
 
   function detectMultilineCollapse(expected, actual) {
-    const expectedBreaks = countVerificationLineBreaks(expected);
-    if (expectedBreaks < 2) return false;
-
-    const actualBreaks = countVerificationLineBreaks(actual);
-    if (actualBreaks >= Math.max(1, Math.floor(expectedBreaks / 2))) {
-      return false;
-    }
-
-    const tokens = lineCollapseTokens(expected);
-    if (tokens.length < 2) return false;
-
-    const normalizedActual = normalizeVerificationText(actual);
-    const compactActual = normalizedActual.replace(/\s+/g, "");
-    const spaceJoinedActual = normalizedActual.replace(/\s+/g, " ").trim();
-    const compactExpected = tokens.join("").replace(/\s+/g, "");
-    const spaceJoinedExpected = tokens.join(" ").replace(/\s+/g, " ").trim();
-
-    if (compactExpected && compactActual.includes(compactExpected)) return true;
-    if (spaceJoinedExpected && spaceJoinedActual.includes(spaceJoinedExpected)) return true;
-
-    let searchOffset = 0;
-    return tokens.every((token) => {
-      const compactToken = token.replace(/\s+/g, "");
-      const index = compactActual.indexOf(compactToken, searchOffset);
-      if (index < 0) return false;
-      searchOffset = index + compactToken.length;
-      return true;
-    });
+    return globalThis.PWM.RewriteVerificationText.detectMultilineCollapse(expected, actual);
   }
 
   function isReasonablyCloseRewriteLength(expectedText, actualText) {
-    const expectedLength = normalizeVerificationText(expectedText).length;
-    const actualLength = normalizeVerificationText(actualText).length;
-    if (!actualLength && expectedLength) return false;
-    const difference = Math.abs(expectedLength - actualLength);
-    return difference <= Math.max(80, Math.ceil(expectedLength * 0.35));
+    return globalThis.PWM.RewriteVerificationText.isReasonablyCloseRewriteLength(expectedText, actualText);
   }
 
   function collectComposerVerificationCandidates(input, initialActualText) {
@@ -1838,75 +1742,23 @@
   }
 
   function isHighConfidenceRewriteFinding(finding) {
-    if (!finding || typeof finding["raw"] !== "string") return false;
-    if (finding.severity === "high") return true;
-    if (Number(finding.score) >= 80) return true;
-    if (finding.confidence === "high") return true;
-    if (Number(finding.confidence) >= 0.85) return true;
-    return false;
+    return globalThis.PWM.RewriteVerificationText.isHighConfidenceRewriteFinding(finding);
   }
 
   function collectOriginalRawSecretValues(originalText, findings) {
-    const rawValues = new Set();
-    const addRawValue = (raw) => {
-      const normalized = normalizeComposerText(raw);
-      if (!normalized || PLACEHOLDER_TOKEN_REGEX.test(normalized)) {
-        PLACEHOLDER_TOKEN_REGEX.lastIndex = 0;
-        return;
-      }
-      PLACEHOLDER_TOKEN_REGEX.lastIndex = 0;
-      rawValues.add(normalized);
-    };
-
-    for (const finding of Array.isArray(findings) ? findings : []) {
-      if (isHighConfidenceRewriteFinding(finding)) {
-        addRawValue(finding["raw"]);
-      }
-    }
-
-    if (typeof originalText === "string" && originalText.trim()) {
-      try {
-        const analysis = analyzeText(originalText);
-        for (const finding of analysis.findings || analysis.secretFindings || []) {
-          if (isHighConfidenceRewriteFinding(finding)) {
-            addRawValue(finding["raw"]);
-          }
-        }
-      } catch {
-        // Analysis is fail-closed later if visible candidates still look sensitive.
-      }
-    }
-
-    return [...rawValues];
+    return globalThis.PWM.RewriteVerificationText.collectOriginalRawSecretValues(originalText, findings, {
+      analyzeText
+    });
   }
 
   function candidateHasHighConfidenceSecret(candidateText, rawSecretValues) {
-    const normalized = normalizeComposerText(candidateText);
-    if (!normalized.trim()) return false;
-
-    if (rawSecretValues.some((raw) => raw && normalized.includes(raw))) {
-      return true;
-    }
-
-    try {
-      const analysis = analyzeText(normalized);
-      return (analysis.secretFindings || []).some(isHighConfidenceRewriteFinding);
-    } catch {
-      return false;
-    }
+    return globalThis.PWM.RewriteVerificationText.candidateHasHighConfidenceSecret(candidateText, rawSecretValues, {
+      analyzeText
+    });
   }
 
   function summarizeVerificationCandidate(source, text, expectedText) {
-    return {
-      source,
-      length: normalizeComposerText(text).length,
-      lineCount: countVerificationLines(text),
-      placeholderCount: listPlaceholderTokens(text).length,
-      expectedLength: normalizeComposerText(expectedText).length,
-      expectedLineCount: countVerificationLines(expectedText),
-      expectedPlaceholderCount: listPlaceholderTokens(expectedText).length,
-      multilineCollapsed: detectMultilineCollapse(expectedText, text)
-    };
+    return globalThis.PWM.RewriteVerificationText.summarizeVerificationCandidate(source, text, expectedText);
   }
 
   function debugRewriteVerification(label, payload) {
@@ -1914,163 +1766,13 @@
   }
 
   function evaluateComposerVerificationCandidates({ candidates, expectedText, originalText, findings, context }) {
-    const expected = normalizeComposerText(expectedText);
-    const normalizedExpected = normalizeVerificationText(expected);
-    const looseExpected = normalizeLooseVerificationText(expected);
-    const expectedPlaceholders = listExpectedPlaceholders(expected);
-    const rawSecretValues = collectOriginalRawSecretValues(originalText, findings);
-    let firstNonEmptyActual = "";
-    let firstCandidate = null;
-    let collapseDetected = false;
-    let placeholderMissing = expectedPlaceholders.length > 0;
-    let rawSecretPresent = false;
-
-    for (const candidate of candidates) {
-      const actual = normalizeComposerText(candidate.text);
-      const summary = summarizeVerificationCandidate(candidate.source, actual, expected);
-      debugRewriteVerification("rewrite:verification-candidate", {
-        context,
-        ...summary,
-        hasRawSecretValues: rawSecretValues.length > 0
-      });
-
-      if (!firstCandidate) {
-        firstCandidate = candidate;
+    return globalThis.PWM.RewriteVerificationText.evaluateComposerVerificationCandidates(
+      { candidates, expectedText, originalText, findings, context },
+      {
+        analyzeText,
+        debug: debugRewriteVerification
       }
-      if (!firstNonEmptyActual && actual.trim()) {
-        firstNonEmptyActual = actual;
-      }
-
-      if (candidateHasHighConfidenceSecret(actual, rawSecretValues)) {
-        rawSecretPresent = true;
-        debugRewriteVerification("rewrite:verification-failed-raw-secret-present", {
-          context,
-          source: candidate.source,
-          length: summary.length,
-          lineCount: summary.lineCount,
-          placeholderCount: summary.placeholderCount
-        });
-      }
-    }
-
-    if (rawSecretPresent) {
-      return {
-        ok: false,
-        actual: firstNonEmptyActual || normalizeComposerText(firstCandidate?.text || ""),
-        reason: "raw-secret-present",
-        collapseDetected: false,
-        rawSecretPresent: true,
-        placeholderMissing: false
-      };
-    }
-
-    for (const candidate of candidates) {
-      const actual = normalizeComposerText(candidate.text);
-      const summary = summarizeVerificationCandidate(candidate.source, actual, expected);
-
-      if (!firstCandidate) {
-        firstCandidate = candidate;
-      }
-      if (!firstNonEmptyActual && actual.trim()) {
-        firstNonEmptyActual = actual;
-      }
-
-      if (expectedPlaceholders.length && !actualContainsExpectedPlaceholders(expected, actual)) {
-        debugRewriteVerification("rewrite:verification-failed-placeholder-missing", {
-          context,
-          source: candidate.source,
-          length: summary.length,
-          lineCount: summary.lineCount,
-          expectedPlaceholderCount: expectedPlaceholders.length,
-          actualPlaceholderCount: listExpectedPlaceholders(actual).length
-        });
-        continue;
-      }
-      placeholderMissing = false;
-
-      if (detectMultilineCollapse(expected, actual)) {
-        collapseDetected = true;
-        debugRewriteVerification("rewrite:multiline-collapse-detected", {
-          context,
-          source: candidate.source,
-          expectedLineCount: countVerificationLines(expected),
-          actualLineCount: countVerificationLines(actual),
-          expectedLength: expected.length,
-          actualLength: actual.length
-        });
-        continue;
-      }
-
-      if (actual === expected) {
-        debugRewriteVerification("rewrite:verification-pass-exact", {
-          context,
-          source: candidate.source,
-          length: summary.length,
-          lineCount: summary.lineCount,
-          placeholderCount: summary.placeholderCount
-        });
-        return { ok: true, actual, strategy: "exact", source: candidate.source };
-      }
-
-      const normalizedActual = normalizeVerificationText(actual);
-      if (normalizedActual === normalizedExpected) {
-        debugRewriteVerification("rewrite:verification-pass-normalized", {
-          context,
-          source: candidate.source,
-          length: summary.length,
-          lineCount: summary.lineCount,
-          placeholderCount: summary.placeholderCount
-        });
-        return { ok: true, actual, strategy: "normalized", source: candidate.source };
-      }
-
-      const looseActual = normalizeLooseVerificationText(actual);
-      if (
-        looseActual === looseExpected &&
-        actualContainsExpectedPlaceholders(expected, actual)
-      ) {
-        debugRewriteVerification("rewrite:verification-pass-normalized", {
-          context,
-          source: candidate.source,
-          length: summary.length,
-          lineCount: summary.lineCount,
-          placeholderCount: summary.placeholderCount,
-          wrapperAdjusted: true
-        });
-        return { ok: true, actual, strategy: "normalized-wrapper", source: candidate.source };
-      }
-
-      if (
-        expectedPlaceholders.length &&
-        samePlaceholderTokenSet(expected, actual) &&
-        actual.trim() &&
-        isReasonablyCloseRewriteLength(expected, actual)
-      ) {
-        debugRewriteVerification("rewrite:verification-pass-placeholder-safe", {
-          context,
-          source: candidate.source,
-          length: summary.length,
-          lineCount: summary.lineCount,
-          placeholderCount: summary.placeholderCount
-        });
-        return { ok: true, actual, strategy: "placeholder-safe", source: candidate.source };
-      }
-    }
-
-    return {
-      ok: false,
-      actual: firstNonEmptyActual || normalizeComposerText(firstCandidate?.text || ""),
-      reason: rawSecretPresent
-        ? "raw-secret-present"
-        : placeholderMissing
-          ? "placeholder-missing"
-          : collapseDetected
-            ? "multiline-collapse"
-            : "mismatch",
-      collapseDetected,
-      rawSecretPresent,
-      placeholderMissing
-    };
+    );
   }
 
   async function verifyComposerRewriteSafe({
@@ -4523,32 +4225,27 @@
   }
 
   function isChatGptHost() {
-    return location.hostname === "chatgpt.com" || location.hostname === "chat.openai.com";
+    return globalThis.PWM.HostMatching.isChatGptHost(location.hostname);
   }
 
   function isOpenAiChatHost() {
-    return location.hostname === "chat.openai.com";
+    return globalThis.PWM.HostMatching.isOpenAiChatHost(location.hostname);
   }
 
   function isGeminiHost() {
-    return location.hostname === "gemini.google.com";
+    return globalThis.PWM.HostMatching.isGeminiHost(location.hostname);
   }
 
   function isClaudeHost() {
-    return location.hostname === "claude.ai" || location.hostname.endsWith(".claude.ai");
+    return globalThis.PWM.HostMatching.isClaudeHost(location.hostname);
   }
 
   function isGrokHost() {
-    return location.hostname === "grok.com" || location.hostname.endsWith(".grok.com");
+    return globalThis.PWM.HostMatching.isGrokHost(location.hostname);
   }
 
   function isXHost() {
-    return (
-      location.hostname === "x.com" ||
-      location.hostname.endsWith(".x.com") ||
-      location.hostname === "twitter.com" ||
-      location.hostname.endsWith(".twitter.com")
-    );
+    return globalThis.PWM.HostMatching.isXHost(location.hostname);
   }
 
   const FILE_HANDOFF_ADAPTERS = {
@@ -4786,37 +4483,23 @@
   };
 
   function getFileHandoffAdapterById(id) {
-    return FILE_HANDOFF_ADAPTERS[String(id || "").toLowerCase()] || null;
+    return globalThis.PWM.HostMatching.getFileHandoffAdapterById(FILE_HANDOFF_ADAPTERS, id);
   }
 
   function hostMatchesFileHandoffAdapter(hostname, adapter) {
-    const host = String(hostname || "").toLowerCase();
-    return (adapter?.hosts || []).some((candidate) => {
-      const normalized = String(candidate || "").toLowerCase();
-      return host === normalized || host.endsWith(`.${normalized}`);
-    });
+    return globalThis.PWM.HostMatching.hostMatchesFileHandoffAdapter(hostname, adapter);
   }
 
   function getFileHandoffAdapterForLocation(targetLocation = location) {
-    const host = String(targetLocation?.hostname || "").toLowerCase();
-    return Object.values(FILE_HANDOFF_ADAPTERS).find((adapter) => hostMatchesFileHandoffAdapter(host, adapter)) || null;
+    return globalThis.PWM.HostMatching.getFileHandoffAdapterForLocation(FILE_HANDOFF_ADAPTERS, targetLocation);
   }
 
   function isFileHandoffAdapterPendingAttachEnabled(adapter) {
-    return Boolean(adapter?.supportsPendingAttach && adapter.pendingAttachEnabled !== false);
+    return globalThis.PWM.HostMatching.isFileHandoffAdapterPendingAttachEnabled(adapter);
   }
 
   function describeFileHandoffAdapter(adapter) {
-    if (!adapter) return null;
-    return {
-      id: adapter.id || "",
-      siteLabel: adapter.siteLabel || adapter.id || "",
-      hosts: Array.from(adapter.hosts || []),
-      supportsDirectDropReplay: Boolean(adapter.supportsDirectDropReplay),
-      supportsPendingAttach: Boolean(adapter.supportsPendingAttach),
-      supportsTrustedAttachButton: Boolean(adapter.supportsTrustedAttachButton),
-      pendingAttachEnabled: isFileHandoffAdapterPendingAttachEnabled(adapter)
-    };
+    return globalThis.PWM.HostMatching.describeFileHandoffAdapter(adapter);
   }
 
   function debugFileHandoffAdapterSelected(adapter, reason = "") {
@@ -4828,13 +4511,7 @@
   }
 
   function getCurrentHandoffDriverId() {
-    if (isGeminiHost()) return "gemini";
-    if (isOpenAiChatHost()) return "openai";
-    if (isChatGptHost()) return "chatgpt";
-    if (isClaudeHost()) return "claude";
-    if (isGrokHost()) return "grok";
-    if (isXHost()) return "x";
-    return "generic";
+    return globalThis.PWM.HostMatching.getCurrentHandoffDriverId(location.hostname);
   }
 
   function isProtectedFileDropDriver(id) {
@@ -5803,12 +5480,7 @@
   }
 
   function describeFileForDebug(file) {
-    if (!file) return null;
-    return {
-      name: file.name || "",
-      type: file.type || "",
-      size: Number(file.size || 0)
-    };
+    return globalThis.PWM.SafeSnapshots.describeFileForDebug(file);
   }
 
   function describeFileInputForDebug(fileInput, source = "") {
@@ -5867,13 +5539,7 @@
   }
 
   function originalFileMetadataFromLocalFile(localFile) {
-    const file = localFile?.file || localFile || null;
-    return {
-      name: file?.name || "",
-      type: file?.type || "",
-      size: Number(file?.size ?? file?.sizeBytes ?? 0),
-      lastModified: Number(file?.lastModified || 0)
-    };
+    return globalThis.PWM.SafeSnapshots.originalFileMetadataFromLocalFile(localFile);
   }
 
   function createSanitizedPayload(sanitizedFile, redactedText, localFile, analysis, result) {
@@ -7080,13 +6746,7 @@
   }
 
   function sanitizeDownloadFileNameSegment(value, fallback = "sanitized-file.txt") {
-    const unsafePathChars = new RegExp('[\\\\/:*?"<>|\\u0000-\\u001f]+', "g");
-    const normalized = String(value || fallback)
-      .replace(unsafePathChars, "-")
-      .replace(/\s+/g, " ")
-      .trim()
-      .replace(/^\.+|\.+$/g, "");
-    return normalized || fallback;
+    return globalThis.PWM.SafeSnapshots.sanitizeDownloadFileNameSegment(value, fallback);
   }
 
   function buildGeminiSanitizedDownloadFileName(sanitizedFile) {
