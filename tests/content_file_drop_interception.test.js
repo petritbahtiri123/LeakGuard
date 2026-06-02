@@ -4127,6 +4127,132 @@ async function testSanitizedPayloadFallbackOrderRemainsStable() {
   assert.strictEqual(result.strategy, "chatgpt-sanitized-download-fallback");
 }
 
+async function testFileAttachPipelineDropUsesInjectedHandoffOnly() {
+  const order = [];
+  const expected = {
+    ok: true,
+    stage: "download",
+    strategy: "chatgpt-sanitized-download-fallback"
+  };
+  const result = await globalThis.PWM.FileAttachPipeline.runSanitizedPayloadHandoffOrder({
+    context: "drop",
+    tryDropHandoff: async () => {
+      order.push("drop-handoff");
+      return expected;
+    },
+    trySanitizedHandoff: async () => {
+      throw new Error("drop path must not use non-drop sanitized handoff callback");
+    },
+    shouldSkipFallback: () => {
+      throw new Error("drop path must not check non-drop fallback gates");
+    },
+    insertFallbackText: async () => {
+      throw new Error("drop path must not insert fallback text directly");
+    }
+  });
+
+  assert.strictEqual(result, expected);
+  assert.deepStrictEqual(order, ["drop-handoff"]);
+}
+
+async function testFileAttachPipelineNonDropAttemptsFileBeforeTextFallback() {
+  const order = [];
+  const result = await globalThis.PWM.FileAttachPipeline.runSanitizedPayloadHandoffOrder({
+    context: "file-input",
+    tryDropHandoff: async () => {
+      throw new Error("non-drop path must not call drop handoff");
+    },
+    trySanitizedHandoff: async () => {
+      order.push("sanitized-file-handoff");
+      return false;
+    },
+    shouldSkipFallback: () => {
+      order.push("fallback-gate");
+      return false;
+    },
+    insertFallbackText: async () => {
+      order.push("sanitized-text-fallback");
+      return true;
+    }
+  });
+
+  assert.deepStrictEqual(order, [
+    "sanitized-file-handoff",
+    "fallback-gate",
+    "sanitized-text-fallback"
+  ]);
+  assert.deepStrictEqual(result, {
+    ok: true,
+    stage: "text",
+    strategy: "sanitized-text-fallback"
+  });
+}
+
+async function testFileAttachPipelineNonDropFileSuccessSkipsFallback() {
+  const order = [];
+  const result = await globalThis.PWM.FileAttachPipeline.runSanitizedPayloadHandoffOrder({
+    context: "paste",
+    trySanitizedHandoff: async () => {
+      order.push("sanitized-file-handoff");
+      return true;
+    },
+    shouldSkipFallback: () => {
+      throw new Error("successful file handoff must not check fallback gates");
+    },
+    insertFallbackText: async () => {
+      throw new Error("successful file handoff must not insert fallback text");
+    },
+    fileStrategy: "custom-file-strategy"
+  });
+
+  assert.deepStrictEqual(order, ["sanitized-file-handoff"]);
+  assert.deepStrictEqual(result, {
+    ok: true,
+    stage: "file",
+    strategy: "custom-file-strategy"
+  });
+}
+
+async function testFileAttachPipelineSkipFallbackBranchPreservesReason() {
+  const order = [];
+  const result = await globalThis.PWM.FileAttachPipeline.runSanitizedPayloadHandoffOrder({
+    context: "file-input",
+    trySanitizedHandoff: async () => {
+      order.push("sanitized-file-handoff");
+      return false;
+    },
+    shouldSkipFallback: () => {
+      order.push("fallback-gate");
+      return true;
+    },
+    skipFallbackReason: "firefox_gemini_file_input_replacement_failed",
+    insertFallbackText: async () => {
+      throw new Error("skip fallback branch must not insert text");
+    }
+  });
+
+  assert.deepStrictEqual(order, ["sanitized-file-handoff", "fallback-gate"]);
+  assert.deepStrictEqual(result, {
+    ok: false,
+    stage: "failed",
+    reason: "firefox_gemini_file_input_replacement_failed"
+  });
+}
+
+async function testFileAttachPipelineCancelledFallbackPreservesReason() {
+  const result = await globalThis.PWM.FileAttachPipeline.runSanitizedPayloadHandoffOrder({
+    context: "file-input",
+    trySanitizedHandoff: async () => false,
+    insertFallbackText: async () => "cancelled"
+  });
+
+  assert.deepStrictEqual(result, {
+    ok: false,
+    stage: "failed",
+    reason: "sanitized_text_cancelled"
+  });
+}
+
 function testFileAttachPipelineProcessingStageControlsDelegateExactly() {
   const calls = [];
   const controls = globalThis.PWM.FileAttachPipeline.createProcessingStageControls({
@@ -11272,6 +11398,11 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   testFileHandoffAdapterRegistryCoversSupportedSites();
   testFileAttachPipelineCreatesSanitizedPayloadMetadata();
   await testSanitizedPayloadFallbackOrderRemainsStable();
+  await testFileAttachPipelineDropUsesInjectedHandoffOnly();
+  await testFileAttachPipelineNonDropAttemptsFileBeforeTextFallback();
+  await testFileAttachPipelineNonDropFileSuccessSkipsFallback();
+  await testFileAttachPipelineSkipFallbackBranchPreservesReason();
+  await testFileAttachPipelineCancelledFallbackPreservesReason();
   testFileAttachPipelineProcessingStageControlsDelegateExactly();
   testGenericFileHandoffHelpersAndDiagnosticsExist();
   testFileProcessingOverlayCssExists();

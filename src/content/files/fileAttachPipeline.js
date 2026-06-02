@@ -54,12 +54,55 @@
     };
   }
 
-  // TODO(PR4): Move pipeline control flow here only after event timing, handoff order,
-  // raw blocking, streaming memory behavior, and trusted pending attach coverage are pinned.
+  async function runSanitizedPayloadHandoffOrder(options = {}) {
+    const context = options.context || "";
+    const tryDropHandoff =
+      typeof options.tryDropHandoff === "function" ? options.tryDropHandoff : async () => ({
+        ok: false,
+        stage: "failed",
+        reason: "sanitized_payload_handoff_failed"
+      });
+    const trySanitizedHandoff =
+      typeof options.trySanitizedHandoff === "function" ? options.trySanitizedHandoff : async () => false;
+    const shouldSkipFallback =
+      typeof options.shouldSkipFallback === "function" ? options.shouldSkipFallback : () => false;
+    const insertFallbackText =
+      typeof options.insertFallbackText === "function" ? options.insertFallbackText : async () => false;
+    const fileStrategy = options.fileStrategy || "sanitized-file-handoff";
+    const textStrategy = options.textStrategy || "sanitized-text-fallback";
+    const failedReason = options.failedReason || "sanitized_payload_handoff_failed";
+
+    if (context === "drop") {
+      return tryDropHandoff();
+    }
+
+    if (await trySanitizedHandoff()) {
+      return { ok: true, stage: "file", strategy: fileStrategy };
+    }
+
+    if (shouldSkipFallback()) {
+      return {
+        ok: false,
+        stage: "failed",
+        reason: options.skipFallbackReason || failedReason
+      };
+    }
+
+    const inserted = await insertFallbackText();
+    return inserted === true
+      ? { ok: true, stage: "text", strategy: textStrategy }
+      : {
+          ok: false,
+          stage: "failed",
+          reason: inserted === "cancelled" ? "sanitized_text_cancelled" : failedReason
+        };
+  }
+
   root.PWM.FileAttachPipeline = {
     originalFileMetadataFromLocalFile,
     createSanitizedPayload,
-    createProcessingStageControls
+    createProcessingStageControls,
+    runSanitizedPayloadHandoffOrder
   };
 
   if (typeof module !== "undefined" && module.exports) {
