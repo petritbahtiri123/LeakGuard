@@ -442,7 +442,9 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const baseManifest = JSON.parse(fs.readFileSync(path.join(repoRoot, "manifests/base.json"), "utf8"));
   const staticScripts = baseManifest.content_scripts[0].js;
   const dynamicScripts = Array.from(
-    backgroundSource.matchAll(/"([^"]+(?:fileLimits|fileScanner|file_paste_helpers|file_handoff_state|file_handoff_pending|file_handoff_flow|content)\.js)"/g)
+    backgroundSource.matchAll(
+      /"([^"]+(?:fileLimits|fileScanner|file_paste_helpers|file_handoff_state|file_handoff_pending|file_handoff_flow|rewriteVerificationText|fileTransferPolicy|hostMatching|safeSnapshots|content)\.js)"/g
+    )
   ).map((match) => match[1]);
 
   const staticFileLimits = staticScripts.indexOf("shared/fileLimits.js");
@@ -451,6 +453,10 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const staticFileHandoffState = staticScripts.indexOf("content/file_handoff_state.js");
   const staticFileHandoffPending = staticScripts.indexOf("content/file_handoff_pending.js");
   const staticFileHandoffFlow = staticScripts.indexOf("content/file_handoff_flow.js");
+  const staticRewriteVerificationText = staticScripts.indexOf("content/input/rewriteVerificationText.js");
+  const staticFileTransferPolicy = staticScripts.indexOf("content/files/fileTransferPolicy.js");
+  const staticHostMatching = staticScripts.indexOf("content/adapters/hostMatching.js");
+  const staticSafeSnapshots = staticScripts.indexOf("content/diagnostics/safeSnapshots.js");
   const staticContent = staticScripts.indexOf("content/content.js");
   const dynamicFileLimits = dynamicScripts.indexOf("shared/fileLimits.js");
   const dynamicFileScanner = dynamicScripts.indexOf("shared/fileScanner.js");
@@ -458,6 +464,10 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const dynamicFileHandoffState = dynamicScripts.indexOf("content/file_handoff_state.js");
   const dynamicFileHandoffPending = dynamicScripts.indexOf("content/file_handoff_pending.js");
   const dynamicFileHandoffFlow = dynamicScripts.indexOf("content/file_handoff_flow.js");
+  const dynamicRewriteVerificationText = dynamicScripts.indexOf("content/input/rewriteVerificationText.js");
+  const dynamicFileTransferPolicy = dynamicScripts.indexOf("content/files/fileTransferPolicy.js");
+  const dynamicHostMatching = dynamicScripts.indexOf("content/adapters/hostMatching.js");
+  const dynamicSafeSnapshots = dynamicScripts.indexOf("content/diagnostics/safeSnapshots.js");
   const dynamicContent = dynamicScripts.indexOf("content/content.js");
 
   assert.ok(
@@ -467,8 +477,12 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       staticFileHandoffState > -1 &&
       staticFileHandoffPending > -1 &&
       staticFileHandoffFlow > -1 &&
+      staticRewriteVerificationText > -1 &&
+      staticFileTransferPolicy > -1 &&
+      staticHostMatching > -1 &&
+      staticSafeSnapshots > -1 &&
       staticContent > -1,
-    "static manifest should include file limits, scanner, file paste helper, file handoff state, file handoff pending, file handoff flow, and content script"
+    "static manifest should include file limits, scanner, file paste helper, file handoff helpers, pure helpers, and content script"
   );
   assert.ok(
     dynamicFileLimits > -1 &&
@@ -477,8 +491,12 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       dynamicFileHandoffState > -1 &&
       dynamicFileHandoffPending > -1 &&
       dynamicFileHandoffFlow > -1 &&
+      dynamicRewriteVerificationText > -1 &&
+      dynamicFileTransferPolicy > -1 &&
+      dynamicHostMatching > -1 &&
+      dynamicSafeSnapshots > -1 &&
       dynamicContent > -1,
-    "dynamic injection should include file limits, scanner, file paste helper, file handoff state, file handoff pending, file handoff flow, and content script"
+    "dynamic injection should include file limits, scanner, file paste helper, file handoff helpers, pure helpers, and content script"
   );
   assert.ok(
     staticFileLimits < staticFileScanner &&
@@ -486,7 +504,11 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       staticFilePaste < staticFileHandoffState &&
       staticFileHandoffState < staticFileHandoffPending &&
       staticFileHandoffPending < staticFileHandoffFlow &&
-      staticFileHandoffFlow < staticContent,
+      staticFileHandoffFlow < staticRewriteVerificationText &&
+      staticRewriteVerificationText < staticFileTransferPolicy &&
+      staticFileTransferPolicy < staticHostMatching &&
+      staticHostMatching < staticSafeSnapshots &&
+      staticSafeSnapshots < staticContent,
     "static manifest file paste order should load dependencies before content.js"
   );
   assert.ok(
@@ -495,7 +517,11 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       dynamicFilePaste < dynamicFileHandoffState &&
       dynamicFileHandoffState < dynamicFileHandoffPending &&
       dynamicFileHandoffPending < dynamicFileHandoffFlow &&
-      dynamicFileHandoffFlow < dynamicContent,
+      dynamicFileHandoffFlow < dynamicRewriteVerificationText &&
+      dynamicRewriteVerificationText < dynamicFileTransferPolicy &&
+      dynamicFileTransferPolicy < dynamicHostMatching &&
+      dynamicHostMatching < dynamicSafeSnapshots &&
+      dynamicSafeSnapshots < dynamicContent,
     "dynamic injection file paste order should load dependencies before content.js"
   );
 }

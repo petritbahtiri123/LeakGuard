@@ -22,6 +22,10 @@ const overlayCssSource = fs.readFileSync(path.join(repoRoot, "src/content/overla
 require(path.join(repoRoot, "src/shared/fileLimits.js"));
 require(path.join(repoRoot, "src/content/file_paste_helpers.js"));
 require(path.join(repoRoot, "src/content/composer_helpers.js"));
+require(path.join(repoRoot, "src/content/input/rewriteVerificationText.js"));
+require(path.join(repoRoot, "src/content/files/fileTransferPolicy.js"));
+require(path.join(repoRoot, "src/content/adapters/hostMatching.js"));
+require(path.join(repoRoot, "src/content/diagnostics/safeSnapshots.js"));
 require(path.join(repoRoot, "src/shared/fileScanner.js"));
 require(path.join(repoRoot, "src/shared/streamingFileRedactor.js"));
 

@@ -58,6 +58,10 @@ const CONTENT_SCRIPT_FILES = [
   "content/file_handoff_state.js",
   "content/file_handoff_pending.js",
   "content/file_handoff_flow.js",
+  "content/input/rewriteVerificationText.js",
+  "content/files/fileTransferPolicy.js",
+  "content/adapters/hostMatching.js",
+  "content/diagnostics/safeSnapshots.js",
   "content/content.js"
 ];
 const CONTENT_STYLE_FILES = ["content/overlay.css"];
