@@ -61,6 +61,13 @@ const CONTENT_SCRIPT_FILES = [
   "content/input/rewriteVerificationText.js",
   "content/files/fileTransferPolicy.js",
   "content/adapters/hostMatching.js",
+  "content/adapters/chatgptAdapter.js",
+  "content/adapters/openaiAdapter.js",
+  "content/adapters/geminiAdapter.js",
+  "content/adapters/claudeAdapter.js",
+  "content/adapters/grokAdapter.js",
+  "content/adapters/xAdapter.js",
+  "content/adapters/index.js",
   "content/diagnostics/safeSnapshots.js",
   "content/content.js"
 ];

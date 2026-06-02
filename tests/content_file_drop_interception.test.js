@@ -4,6 +4,18 @@ const path = require("path");
 
 const repoRoot = path.join(__dirname, "..");
 const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
+const adapterSourceFiles = [
+  "src/content/adapters/chatgptAdapter.js",
+  "src/content/adapters/openaiAdapter.js",
+  "src/content/adapters/geminiAdapter.js",
+  "src/content/adapters/claudeAdapter.js",
+  "src/content/adapters/grokAdapter.js",
+  "src/content/adapters/xAdapter.js",
+  "src/content/adapters/index.js"
+];
+const adapterRegistrySource = adapterSourceFiles
+  .map((relativePath) => fs.readFileSync(path.join(repoRoot, relativePath), "utf8"))
+  .join("\n");
 const fileHandoffStateSource = fs.readFileSync(
   path.join(repoRoot, "src/content/file_handoff_state.js"),
   "utf8"
@@ -25,6 +37,13 @@ require(path.join(repoRoot, "src/content/composer_helpers.js"));
 require(path.join(repoRoot, "src/content/input/rewriteVerificationText.js"));
 require(path.join(repoRoot, "src/content/files/fileTransferPolicy.js"));
 require(path.join(repoRoot, "src/content/adapters/hostMatching.js"));
+require(path.join(repoRoot, "src/content/adapters/chatgptAdapter.js"));
+require(path.join(repoRoot, "src/content/adapters/openaiAdapter.js"));
+require(path.join(repoRoot, "src/content/adapters/geminiAdapter.js"));
+require(path.join(repoRoot, "src/content/adapters/claudeAdapter.js"));
+require(path.join(repoRoot, "src/content/adapters/grokAdapter.js"));
+require(path.join(repoRoot, "src/content/adapters/xAdapter.js"));
+require(path.join(repoRoot, "src/content/adapters/index.js"));
 require(path.join(repoRoot, "src/content/diagnostics/safeSnapshots.js"));
 require(path.join(repoRoot, "src/shared/fileScanner.js"));
 require(path.join(repoRoot, "src/shared/streamingFileRedactor.js"));
@@ -234,6 +253,35 @@ function fileHandoffAdapterHarnessSource() {
 
 function contentDebugEventsHarnessSource() {
   return [extractConstSource(contentSource, "CONTENT_DEBUG_EVENTS")];
+}
+
+function createAdapterRegistryForTest() {
+  const noopHooks = {
+    findGeminiUploadMenuButton: () => null,
+    findGeminiUploadFilesMenuItem: () => null,
+    findGeminiFileInput: () => ({ fileInput: null }),
+    isLikelyGeminiUploadClickTarget: () => false,
+    performPendingGeminiUserAttach: async () => false,
+    findGrokUploadButton: () => null,
+    discoverGrokPendingFileInput: () => ({ fileInput: null }),
+    isLikelyGrokUploadClickTarget: () => false,
+    performPendingGrokUserAttach: async () => false,
+    findGenericAdapterUploadTrigger: () => null,
+    resolveGenericAdapterFileInput: () => null,
+    isLikelyGenericUploadClickTarget: () => false,
+    attachGenericPendingWithTrustedActivation: async () => false
+  };
+  return globalThis.PWM.SiteAdapters.createFileHandoffAdapters({
+    pendingAttachEnabled: {
+      gemini: true,
+      grok: true,
+      chatgpt: false,
+      claude: false,
+      openai: false,
+      x: false
+    },
+    hooks: noopHooks
+  });
 }
 
 function fileHandoffStateHarnessSource() {
@@ -3885,7 +3933,11 @@ async function testPendingCleanupErrorsClearStateAndLogMetadataOnly() {
 }
 
 function testFileHandoffAdapterRegistryCoversSupportedSites() {
-  assert.ok(contentSource.includes("const FILE_HANDOFF_ADAPTERS = {"));
+  const adapters = createAdapterRegistryForTest();
+  assert.ok(
+    contentSource.includes("globalThis.PWM.SiteAdapters.createFileHandoffAdapters"),
+    "content script should build file handoff adapters from adapter modules"
+  );
   for (const [id, host] of [
     ["gemini", "gemini.google.com"],
     ["grok", "grok.com"],
@@ -3894,15 +3946,22 @@ function testFileHandoffAdapterRegistryCoversSupportedSites() {
     ["openai", "chat.openai.com"],
     ["x", "x.com"]
   ]) {
-    assert.ok(contentSource.includes(`${id}: {`), `expected ${id} adapter`);
-    assert.ok(contentSource.includes(`"${host}"`), `expected ${id} host ${host}`);
+    assert.ok(adapters[id], `expected ${id} adapter`);
+    assert.strictEqual(adapters[id].id, id, `expected ${id} adapter id`);
+    assert.ok(adapters[id].hosts.includes(host), `expected ${id} host ${host}`);
   }
-  assert.ok(contentSource.includes("pendingAttachEnabled: FILE_HANDOFF_PENDING_ATTACH_ENABLED.gemini"));
-  assert.ok(contentSource.includes("pendingAttachEnabled: FILE_HANDOFF_PENDING_ATTACH_ENABLED.grok"));
-  assert.ok(contentSource.includes("pendingAttachEnabled: FILE_HANDOFF_PENDING_ATTACH_ENABLED.chatgpt"));
-  assert.ok(contentSource.includes("pendingAttachEnabled: FILE_HANDOFF_PENDING_ATTACH_ENABLED.claude"));
-  assert.ok(contentSource.includes("pendingAttachEnabled: FILE_HANDOFF_PENDING_ATTACH_ENABLED.openai"));
-  assert.ok(contentSource.includes("pendingAttachEnabled: FILE_HANDOFF_PENDING_ATTACH_ENABLED.x"));
+  assert.strictEqual(adapters.gemini.pendingAttachEnabled, true);
+  assert.strictEqual(adapters.grok.pendingAttachEnabled, true);
+  assert.strictEqual(adapters.chatgpt.pendingAttachEnabled, false);
+  assert.strictEqual(adapters.claude.pendingAttachEnabled, false);
+  assert.strictEqual(adapters.openai.pendingAttachEnabled, false);
+  assert.strictEqual(adapters.x.pendingAttachEnabled, false);
+  for (const id of ["gemini", "grok", "chatgpt", "claude", "openai", "x"]) {
+    assert.ok(
+      adapterRegistrySource.includes(`pendingAttachEnabled: pendingAttachEnabled?.${id}`),
+      `expected ${id} pending attach to stay wired to the content-script gate`
+    );
+  }
 }
 
 function testGenericFileHandoffHelpersAndDiagnosticsExist() {
@@ -3982,9 +4041,10 @@ function testPendingAttachPromptCssIsNonBlocking() {
 }
 
 function testUnprovenAdaptersKeepPendingAttachFeatureGated() {
+  const adapters = createAdapterRegistryForTest();
   for (const id of ["chatgpt", "claude", "openai", "x"]) {
-    const pattern = new RegExp(`${id}: \\{[\\s\\S]*?pendingAttachEnabled: FILE_HANDOFF_PENDING_ATTACH_ENABLED\\.${id}`);
-    assert.ok(pattern.test(contentSource), `expected ${id} pending attach to be feature-flagged`);
+    assert.strictEqual(adapters[id].supportsPendingAttach, true, `${id} should keep its adapter capability shape`);
+    assert.strictEqual(adapters[id].pendingAttachEnabled, false, `${id} pending attach should stay disabled`);
   }
   assert.ok(
     contentSource.includes("if (id === \"chatgpt\" || id === \"claude\" || id === \"openai\" || id === \"x\" || id === \"generic\")"),
@@ -7913,9 +7973,9 @@ async function testChatGptOutOfSyncFallbackRetriesAndVerifies() {
 
 function testChatGptPendingAttachRemainsDisabled() {
   const queueSource = extractFunctionSource(fileHandoffPendingSource, "queuePendingSanitizedFileHandoff");
+  const adapters = createAdapterRegistryForTest();
   assert.ok(
-    contentSource.includes("chatgpt: false") &&
-      contentSource.includes("pendingAttachEnabled: FILE_HANDOFF_PENDING_ATTACH_ENABLED.chatgpt"),
+    contentSource.includes("chatgpt: false") && adapters.chatgpt.pendingAttachEnabled === false,
     "ChatGPT pending attach should stay diagnostic-gated off"
   );
   assert.ok(
