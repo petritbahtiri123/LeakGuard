@@ -98,10 +98,68 @@
         };
   }
 
+  function getSuccessDetailsForStage(stage) {
+    if (stage === "text") {
+      return {
+        successStatus: "Sanitized content inserted.",
+        successReason: "inserted"
+      };
+    }
+    if (stage === "download") {
+      return {
+        successStatus: "Sanitized file ready.",
+        successReason: "download"
+      };
+    }
+    return {
+      successStatus: "Sanitized file attached.",
+      successReason: "attached"
+    };
+  }
+
+  function classifyPostHandoffResult(options = {}) {
+    const handoffResult = options.handoffResult;
+    const context = options.context || "";
+    const ok = Boolean(handoffResult.ok);
+    const stage = handoffResult.stage || "";
+    const handoffReason = handoffResult.reason || "";
+    const cancellationReason = options.cancellationReason || "sanitized_text_cancelled";
+    const treatsCancellation = options.treatCancellation !== false;
+    const cancelled = !ok && treatsCancellation && handoffReason === cancellationReason;
+    const reason = ok ? "" : cancelled ? cancellationReason : options.failureReason || "sanitized_file_handoff_failed";
+    const shouldContinueFallback = !ok && !cancelled && options.allowPendingFallback === true;
+    const shouldShowSuccess = ok && stage !== "pending";
+    const successDetails = shouldShowSuccess
+      ? getSuccessDetailsForStage(stage)
+      : {
+          successStatus: "",
+          successReason: ""
+        };
+
+    return {
+      handled: true,
+      ok,
+      stage,
+      reason,
+      handoffReason,
+      strategy: ok ? handoffResult.strategy || options.defaultSuccessStrategy || "sanitized-file-handoff" : "",
+      shouldShowSuccess,
+      shouldHideProcessing: cancelled || (ok && stage === "pending"),
+      hideProcessingReason: cancelled ? "cancelled" : ok && stage === "pending" ? "pending" : "",
+      shouldFailProcessing: !ok && !cancelled,
+      shouldContinueFallback,
+      shouldShowAttachedBadge: ok && (stage === "file" || context !== "drop"),
+      successStatus: successDetails.successStatus,
+      successReason: successDetails.successReason,
+      handoffResult
+    };
+  }
+
   root.PWM.FileAttachPipeline = {
     originalFileMetadataFromLocalFile,
     createSanitizedPayload,
     createProcessingStageControls,
+    classifyPostHandoffResult,
     runSanitizedPayloadHandoffOrder
   };
 
