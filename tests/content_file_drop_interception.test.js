@@ -46,6 +46,7 @@ require(path.join(repoRoot, "src/content/adapters/xAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/index.js"));
 require(path.join(repoRoot, "src/content/diagnostics/safeSnapshots.js"));
 require(path.join(repoRoot, "src/content/files/fileAttachPipeline.js"));
+require(path.join(repoRoot, "src/content/file_handoff_flow.js"));
 require(path.join(repoRoot, "src/shared/fileScanner.js"));
 require(path.join(repoRoot, "src/shared/streamingFileRedactor.js"));
 
@@ -2345,17 +2346,36 @@ async function testFileDropIsBlockedWithoutHelperLoaded() {
 
 async function testFileDropIsConsumedBeforeComposerLookup() {
   const findComposerCalls = [];
+  let event;
+  let eventCalls;
   const { maybeHandleDrop, calls } = createHarness({
+    readLocalTextFileFromDataTransfer: async (transfer) => {
+      assert.strictEqual(event.defaultPrevented, true, "raw drop must be consumed before file read");
+      assert.ok(
+        eventCalls.stopImmediatePropagation >= 1,
+        "raw drop must be stopped before asynchronous sanitization"
+      );
+      calls.reads.push(transfer);
+      return {
+        handled: true,
+        ok: true,
+        text: "API_KEY=LeakGuardDropApiKey1234567890",
+        file: {
+          name: "secrets.env",
+          type: "text/plain"
+        }
+      };
+    },
     findComposer: (target) => {
       findComposerCalls.push(target);
       assert.strictEqual(event.defaultPrevented, true);
       return null;
     }
   });
-  const { event, calls: eventCalls } = createEvent({
+  ({ event, calls: eventCalls } = createEvent({
     dataTransfer: createDataTransfer(),
     target: { tagName: "P" }
-  });
+  }));
 
   await maybeHandleDrop(event);
 
@@ -4001,6 +4021,15 @@ function testFileAttachPipelineCreatesSanitizedPayloadMetadata() {
     result
   );
 
+  assert.deepStrictEqual(Object.keys(payload), [
+    "sanitizedFile",
+    "redactedText",
+    "rawText",
+    "originalFile",
+    "placeholders",
+    "replacements",
+    "findingCount"
+  ]);
   assert.strictEqual(payload.sanitizedFile, sanitizedFile);
   assert.strictEqual(payload.redactedText, "API_KEY=[PWM_1]\nHOST=[NET_2]\nTOKEN=[PWM_1]");
   assert.strictEqual(payload.rawText, "API_KEY=raw-secret");
@@ -4020,6 +4049,82 @@ function testFileAttachPipelineCreatesSanitizedPayloadMetadata() {
     }
   ]);
   assert.strictEqual(payload.findingCount, 2);
+}
+
+async function testSanitizedPayloadFallbackOrderRemainsStable() {
+  const order = [];
+  const sanitizedFile = {
+    name: "fallback-order.env",
+    type: "text/plain",
+    size: 16,
+    async text() {
+      order.push("read-sanitized-download-text");
+      return "API_KEY=[PWM_1]";
+    }
+  };
+  const adapter = {
+    id: "chatgpt",
+    pendingAttachEnabled: false
+  };
+  const flow = globalThis.PWM.createFileHandoffFlow({
+    applySanitizedTextFallback: async () => {
+      order.push("sanitized-text-fallback");
+      return false;
+    },
+    buildSanitizedDownloadFileName: () => "fallback-order.env",
+    createSanitizedDataTransferForHandoff: () => {
+      order.push("direct-file-transfer");
+      return { files: [sanitizedFile] };
+    },
+    createSanitizedFileHandoffDetails: () => ({}),
+    describeFileForDebug: (file) => ({
+      name: file?.name || "",
+      type: file?.type || "",
+      size: Number(file?.size || 0)
+    }),
+    formatSanitizedFileFallbackText: (payload) => payload.redactedText,
+    getCurrentHandoffDriverId: () => "chatgpt",
+    getFileHandoffAdapterForLocation: () => adapter,
+    isFileHandoffAdapterPendingAttachEnabled: () => false,
+    readSanitizedFileTextForFallback: (file) => file.text(),
+    resolveFileInputForHandoff: () => {
+      order.push("direct-file-input-lookup");
+      return null;
+    },
+    sendRuntimeMessage: async (message) => {
+      order.push("sanitized-download-fallback");
+      assert.strictEqual(message.type, "PWM_DOWNLOAD_SANITIZED_FILE");
+      assert.strictEqual(message.redactedText, "API_KEY=[PWM_1]");
+      return { ok: true, downloadId: 7 };
+    }
+  });
+  const driver = flow.getCurrentHandoffDriver();
+  const result = await flow.handoffSanitizedPayload(
+    {
+      sanitizedFile,
+      redactedText: "API_KEY=[PWM_1]",
+      rawText: "API_KEY=raw-secret"
+    },
+    {
+      event: { target: { tagName: "DIV" } },
+      input: { tagName: "TEXTAREA" },
+      context: "drop",
+      driver,
+      adapter,
+      composerResolved: true
+    }
+  );
+
+  assert.deepStrictEqual(order, [
+    "direct-file-transfer",
+    "direct-file-input-lookup",
+    "sanitized-text-fallback",
+    "read-sanitized-download-text",
+    "sanitized-download-fallback"
+  ]);
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.stage, "download");
+  assert.strictEqual(result.strategy, "chatgpt-sanitized-download-fallback");
 }
 
 function testFileAttachPipelineProcessingStageControlsDelegateExactly() {
@@ -11166,6 +11271,7 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testPendingCleanupErrorsClearStateAndLogMetadataOnly();
   testFileHandoffAdapterRegistryCoversSupportedSites();
   testFileAttachPipelineCreatesSanitizedPayloadMetadata();
+  await testSanitizedPayloadFallbackOrderRemainsStable();
   testFileAttachPipelineProcessingStageControlsDelegateExactly();
   testGenericFileHandoffHelpersAndDiagnosticsExist();
   testFileProcessingOverlayCssExists();

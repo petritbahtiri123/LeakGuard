@@ -253,6 +253,34 @@ async function testOptimizedZoneFileStillDecodesAndOversizedFileBlocks() {
   assert.strictEqual(oversized.file.name, "oversized.log");
 }
 
+async function testOversizedTextFileRequiresStreamingWithoutWholeFileRead() {
+  const readCalls = {
+    text: 0,
+    arrayBuffer: 0
+  };
+  const file = {
+    name: "stream-me.env",
+    type: "text/plain",
+    size: 4 * 1024 * 1024 + 1,
+    async text() {
+      readCalls.text += 1;
+      throw new Error("streaming-required ingress must not call file.text()");
+    },
+    async arrayBuffer() {
+      readCalls.arrayBuffer += 1;
+      throw new Error("streaming-required ingress must not call file.arrayBuffer()");
+    }
+  };
+  const result = await readLocalTextFileFromDataTransfer(createDataTransfer([file]));
+
+  assert.strictEqual(result.handled, true);
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.code, "streaming_required");
+  assert.strictEqual(result.sourceFile, file);
+  assert.strictEqual(readCalls.text, 0);
+  assert.strictEqual(readCalls.arrayBuffer, 0);
+}
+
 (async () => {
   await testSupportedEnvFileDecodesLocally();
   await testFirefoxStyleEnvFileWithEmptyMimeDecodesLocally();
@@ -265,6 +293,7 @@ async function testOptimizedZoneFileStillDecodesAndOversizedFileBlocks() {
   await testUnsupportedFilesPassThroughAndTextBinaryFilesRejected();
   await testNoFileTransferIgnored();
   await testOptimizedZoneFileStillDecodesAndOversizedFileBlocks();
+  await testOversizedTextFileRequiresStreamingWithoutWholeFileRead();
   console.log("PASS local file paste helper regressions");
 })().catch((error) => {
   console.error(error);

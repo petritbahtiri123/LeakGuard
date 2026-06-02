@@ -7,6 +7,7 @@ const { pathToFileURL } = require("url");
 const repoRoot = path.join(__dirname, "..");
 require(path.join(repoRoot, "src/shared/placeholders.js"));
 require(path.join(repoRoot, "src/shared/sessionMapStore.js"));
+require(path.join(repoRoot, "src/content/diagnostics/safeSnapshots.js"));
 const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
 const fileHandoffFlowSource = fs.readFileSync(
   path.join(repoRoot, "src/content/file_handoff_flow.js"),
@@ -438,6 +439,48 @@ function testLocalFilePasteDoesNotExposeRawFileContent() {
   );
 }
 
+function testFileSnapshotDebugPayloadsStayMetadataOnly() {
+  const rawSecret = "SnapshotPayloadRawSecret123!";
+  const file = {
+    name: "service.env",
+    type: "text/plain",
+    size: 123,
+    lastModified: 456,
+    text: `API_KEY=${rawSecret}`,
+    raw: rawSecret,
+    path: `C:\\fakepath\\${rawSecret}.env`
+  };
+  const description = globalThis.PWM.SafeSnapshots.describeFileForDebug(file);
+  const metadata = globalThis.PWM.SafeSnapshots.originalFileMetadataFromLocalFile({
+    text: `API_KEY=${rawSecret}`,
+    file
+  });
+  const snapshotSourceStart = contentSource.indexOf("function describeDataTransferFileSnapshot");
+  const snapshotSourceEnd = contentSource.indexOf("function snapshotLocalFileDataTransfer", snapshotSourceStart);
+  assert.notStrictEqual(snapshotSourceStart, -1, "expected DataTransfer snapshot debug helper");
+  assert.notStrictEqual(snapshotSourceEnd, -1, "expected snapshot helper boundary");
+  const describeSnapshotSource = contentSource.slice(snapshotSourceStart, snapshotSourceEnd);
+
+  assert.deepStrictEqual(Object.keys(description), ["name", "type", "size"]);
+  assert.deepStrictEqual(Object.keys(metadata), ["name", "type", "size", "lastModified"]);
+  assert.strictEqual(JSON.stringify({ description, metadata }).includes(rawSecret), false);
+  assertNotIncludes(
+    describeSnapshotSource,
+    "file.name",
+    "DataTransfer snapshot debug payloads must not include file names or raw path-like values"
+  );
+  assertNotIncludes(
+    describeSnapshotSource,
+    ".text",
+    "DataTransfer snapshot debug payloads must not read or include file text"
+  );
+  assertNotIncludes(
+    describeSnapshotSource,
+    "arrayBuffer",
+    "DataTransfer snapshot debug payloads must not read file bytes"
+  );
+}
+
 function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const baseManifest = JSON.parse(fs.readFileSync(path.join(repoRoot, "manifests/base.json"), "utf8"));
   const staticScripts = baseManifest.content_scripts[0].js;
@@ -743,6 +786,7 @@ async function run() {
   await testSecureRevealRemainsBoundedToRequestSessionAndExtensionUi();
   testPlaceholderLabelsDoNotExposeRawValues();
   testLocalFilePasteDoesNotExposeRawFileContent();
+  testFileSnapshotDebugPayloadsStayMetadataOnly();
   testStaticAndDynamicFilePasteInjectionOrderStaysAligned();
   testBackgroundDeterministicRescanBackstopExists();
   testContentPublicStateIsMinimized();
