@@ -442,9 +442,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const baseManifest = JSON.parse(fs.readFileSync(path.join(repoRoot, "manifests/base.json"), "utf8"));
   const staticScripts = baseManifest.content_scripts[0].js;
   const dynamicScripts = Array.from(
-    backgroundSource.matchAll(
-      /"([^"]+(?:fileLimits|fileScanner|file_paste_helpers|file_handoff_state|file_handoff_pending|file_handoff_flow|rewriteVerificationText|fileTransferPolicy|hostMatching|safeSnapshots|content)\.js)"/g
-    )
+    backgroundSource.matchAll(/"([^"]+(?:fileLimits|fileScanner|file_paste_helpers|file_handoff_state|file_handoff_pending|file_handoff_flow|content)\.js)"/g)
   ).map((match) => match[1]);
 
   const staticFileLimits = staticScripts.indexOf("shared/fileLimits.js");
@@ -482,7 +480,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       staticHostMatching > -1 &&
       staticSafeSnapshots > -1 &&
       staticContent > -1,
-    "static manifest should include file limits, scanner, file paste helper, file handoff helpers, pure helpers, and content script"
+    "static manifest should include file limits, scanner, file paste helper, file handoff state, file handoff pending, file handoff flow, and content script"
   );
   assert.ok(
     dynamicFileLimits > -1 &&
@@ -496,7 +494,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       dynamicHostMatching > -1 &&
       dynamicSafeSnapshots > -1 &&
       dynamicContent > -1,
-    "dynamic injection should include file limits, scanner, file paste helper, file handoff helpers, pure helpers, and content script"
+    "dynamic injection should include file limits, scanner, file paste helper, file handoff state, file handoff pending, file handoff flow, and content script"
   );
   assert.ok(
     staticFileLimits < staticFileScanner &&
