@@ -9338,21 +9338,18 @@
         });
         payload.allowFileOnlyHandoff = true;
         payload.streamed = true;
-        const handoffResult =
-          context === "drop"
-            ? await driver.handoff(payload, { event, input, context, driver, composerResolved: true })
-            : await (async () => {
-                if (await handOffSanitizedLocalFile(event, input, streamResult.sanitizedFile, context)) {
-                  return { ok: true, stage: "file", strategy: "streaming-sanitized-file-handoff" };
-                }
-      if (context === "file-input" && isFirefoxRuntime() && isGeminiHost()) {
-        return { ok: false, stage: "failed", reason: "firefox_gemini_file_input_replacement_failed" };
-      }
-      const inserted = await driver.insertSanitizedText(payload, { event, input, context, driver });
-      return inserted === true
-        ? { ok: true, stage: "text", strategy: "streaming-sanitized-text-fallback" }
-        : { ok: false, stage: "failed", reason: inserted === "cancelled" ? "sanitized_text_cancelled" : "sanitized_payload_handoff_failed" };
-              })();
+        const handoffResult = await globalThis.PWM.FileAttachPipeline.runSanitizedPayloadHandoffOrder({
+          context,
+          tryDropHandoff: () =>
+            driver.handoff(payload, { event, input, context, driver, composerResolved: true }),
+          trySanitizedHandoff: () =>
+            handOffSanitizedLocalFile(event, input, streamResult.sanitizedFile, context),
+          shouldSkipFallback: () => context === "file-input" && isFirefoxRuntime() && isGeminiHost(),
+          skipFallbackReason: "firefox_gemini_file_input_replacement_failed",
+          insertFallbackText: () => driver.insertSanitizedText(payload, { event, input, context, driver }),
+          fileStrategy: "streaming-sanitized-file-handoff",
+          textStrategy: "streaming-sanitized-text-fallback"
+        });
         if (handoffResult.ok) {
           setDmzOverlayState("Attached sanitized file", "attached");
           if (handoffResult.stage === "pending") {
@@ -9488,22 +9485,15 @@
       analysis,
       result
     });
-    const handoffResult =
-      context === "drop"
-        ? await driver.handoff(payload, { event, input, context, driver, composerResolved: true })
-        : await (async () => {
-            // Legacy non-drop path starts with handOffSanitizedLocalFile(event, input, sanitizedFile, context).
-            if (await handOffSanitizedLocalFile(event, input, sanitizedFile, context)) {
-              return { ok: true, stage: "file", strategy: "sanitized-file-handoff" };
-            }
-            if (context === "file-input" && isFirefoxRuntime() && isGeminiHost()) {
-              return { ok: false, stage: "failed", reason: "firefox_gemini_file_input_replacement_failed" };
-            }
-            const inserted = await driver.insertSanitizedText(payload, { event, input, context, driver });
-            return inserted === true
-              ? { ok: true, stage: "text", strategy: "sanitized-text-fallback" }
-              : { ok: false, stage: "failed", reason: inserted === "cancelled" ? "sanitized_text_cancelled" : "sanitized_payload_handoff_failed" };
-          })();
+    const handoffResult = await globalThis.PWM.FileAttachPipeline.runSanitizedPayloadHandoffOrder({
+      context,
+      tryDropHandoff: () =>
+        driver.handoff(payload, { event, input, context, driver, composerResolved: true }),
+      trySanitizedHandoff: () => handOffSanitizedLocalFile(event, input, sanitizedFile, context),
+      shouldSkipFallback: () => context === "file-input" && isFirefoxRuntime() && isGeminiHost(),
+      skipFallbackReason: "firefox_gemini_file_input_replacement_failed",
+      insertFallbackText: () => driver.insertSanitizedText(payload, { event, input, context, driver })
+    });
 
     if (!handoffResult.ok) {
       if (handoffResult.reason === "sanitized_text_cancelled") {
