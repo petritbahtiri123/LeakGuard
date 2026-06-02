@@ -5324,26 +5324,17 @@
   }
 
   function originalFileMetadataFromLocalFile(localFile) {
-    return globalThis.PWM.SafeSnapshots.originalFileMetadataFromLocalFile(localFile);
+    return globalThis.PWM.FileAttachPipeline.originalFileMetadataFromLocalFile(localFile);
   }
 
   function createSanitizedPayload(sanitizedFile, redactedText, localFile, analysis, result) {
-    return {
+    return globalThis.PWM.FileAttachPipeline.createSanitizedPayload(
       sanitizedFile,
-      redactedText: String(redactedText || ""),
-      rawText: typeof localFile?.text === "string" ? localFile.text : "",
-      originalFile: originalFileMetadataFromLocalFile(localFile),
-      placeholders: Array.from(new Set(String(redactedText || "").match(/\[[A-Z_]+_\d+\]/g) || [])),
-      replacements: Array.isArray(result?.replacements)
-        ? result.replacements.map((replacement) => ({
-            id: replacement?.id || "",
-            start: Number(replacement?.start || 0),
-            end: Number(replacement?.end || 0),
-            placeholder: replacement?.placeholder || ""
-          }))
-        : [],
-      findingCount: Number(analysis?.secretFindings?.length || analysis?.findings?.length || 0)
-    };
+      redactedText,
+      localFile,
+      analysis,
+      result
+    );
   }
 
   function createGeminiSanitizedPayload(sanitizedFile, redactedText, localFile, analysis, result) {
@@ -9170,22 +9161,13 @@
     }
 
     const processingSite = getCurrentHandoffDriverId();
-    const failProcessing = (reason, status = "Raw file upload blocked") => {
-      showFileProcessingError(status, {
+    const { failProcessing, hideProcessing, showProcessingSuccess } =
+      globalThis.PWM.FileAttachPipeline.createProcessingStageControls({
         site: processingSite,
-        reason
+        showFileProcessingError,
+        hideFileProcessingOverlay,
+        showFileProcessingSuccess
       });
-      hideFileProcessingOverlay(reason);
-    };
-    const hideProcessing = (reason) => {
-      hideFileProcessingOverlay(reason);
-    };
-    const showProcessingSuccess = (status, reason = "success") => {
-      showFileProcessingSuccess(status, {
-        site: processingSite,
-        reason
-      });
-    };
 
     showFileProcessingOverlay({
       site: processingSite,

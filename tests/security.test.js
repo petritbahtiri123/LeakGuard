@@ -443,7 +443,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const staticScripts = baseManifest.content_scripts[0].js;
   const dynamicScripts = Array.from(
     backgroundSource.matchAll(
-      /"([^"]+(?:fileLimits|fileScanner|file_paste_helpers|file_handoff_state|file_handoff_pending|file_handoff_flow|rewriteVerificationText|fileTransferPolicy|hostMatching|chatgptAdapter|openaiAdapter|geminiAdapter|claudeAdapter|grokAdapter|xAdapter|index|safeSnapshots|content)\.js)"/g
+      /"([^"]+(?:fileLimits|fileScanner|file_paste_helpers|file_handoff_state|file_handoff_pending|file_handoff_flow|rewriteVerificationText|fileTransferPolicy|hostMatching|chatgptAdapter|openaiAdapter|geminiAdapter|claudeAdapter|grokAdapter|xAdapter|index|safeSnapshots|fileAttachPipeline|content)\.js)"/g
     )
   ).map((match) => match[1]);
   const adapterScripts = [
@@ -467,6 +467,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const staticHostMatching = staticScripts.indexOf("content/adapters/hostMatching.js");
   const staticAdapterIndexes = adapterScripts.map((script) => staticScripts.indexOf(script));
   const staticSafeSnapshots = staticScripts.indexOf("content/diagnostics/safeSnapshots.js");
+  const staticFileAttachPipeline = staticScripts.indexOf("content/files/fileAttachPipeline.js");
   const staticContent = staticScripts.indexOf("content/content.js");
   const dynamicFileLimits = dynamicScripts.indexOf("shared/fileLimits.js");
   const dynamicFileScanner = dynamicScripts.indexOf("shared/fileScanner.js");
@@ -479,6 +480,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const dynamicHostMatching = dynamicScripts.indexOf("content/adapters/hostMatching.js");
   const dynamicAdapterIndexes = adapterScripts.map((script) => dynamicScripts.indexOf(script));
   const dynamicSafeSnapshots = dynamicScripts.indexOf("content/diagnostics/safeSnapshots.js");
+  const dynamicFileAttachPipeline = dynamicScripts.indexOf("content/files/fileAttachPipeline.js");
   const dynamicContent = dynamicScripts.indexOf("content/content.js");
 
   assert.ok(
@@ -493,6 +495,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       staticHostMatching > -1 &&
       staticAdapterIndexes.every((index) => index > -1) &&
       staticSafeSnapshots > -1 &&
+      staticFileAttachPipeline > -1 &&
       staticContent > -1,
     "static manifest should include file limits, scanner, file paste helper, file handoff helpers, adapter helpers, pure helpers, and content script"
   );
@@ -508,6 +511,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       dynamicHostMatching > -1 &&
       dynamicAdapterIndexes.every((index) => index > -1) &&
       dynamicSafeSnapshots > -1 &&
+      dynamicFileAttachPipeline > -1 &&
       dynamicContent > -1,
     "dynamic injection should include file limits, scanner, file paste helper, file handoff helpers, adapter helpers, pure helpers, and content script"
   );
@@ -529,7 +533,8 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       staticHostMatching < staticAdapterIndexes[0] &&
       staticAdapterOrderAligned &&
       staticAdapterIndexes.at(-1) < staticSafeSnapshots &&
-      staticSafeSnapshots < staticContent,
+      staticSafeSnapshots < staticFileAttachPipeline &&
+      staticFileAttachPipeline < staticContent,
     "static manifest file paste order should load dependencies before content.js"
   );
   assert.ok(
@@ -544,7 +549,8 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       dynamicHostMatching < dynamicAdapterIndexes[0] &&
       dynamicAdapterOrderAligned &&
       dynamicAdapterIndexes.at(-1) < dynamicSafeSnapshots &&
-      dynamicSafeSnapshots < dynamicContent,
+      dynamicSafeSnapshots < dynamicFileAttachPipeline &&
+      dynamicFileAttachPipeline < dynamicContent,
     "dynamic injection file paste order should load dependencies before content.js"
   );
 }

@@ -81,6 +81,7 @@
         "content/adapters/xAdapter.js",
         "content/adapters/index.js",
         "content/diagnostics/safeSnapshots.js",
+        "content/files/fileAttachPipeline.js",
         "content/content.js"
       ],
       "css": ["content/overlay.css"],
