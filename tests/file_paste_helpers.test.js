@@ -3,6 +3,7 @@ const path = require("path");
 
 const repoRoot = path.join(__dirname, "..");
 
+require(path.join(repoRoot, "src/shared/fileLimits.js"));
 require(path.join(repoRoot, "src/shared/fileScanner.js"));
 require(path.join(repoRoot, "src/content/file_paste_helpers.js"));
 

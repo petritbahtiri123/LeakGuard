@@ -19,6 +19,7 @@ const fileHandoffFlowSource = fs.readFileSync(
 const backgroundSource = fs.readFileSync(path.join(repoRoot, "src/background/core.js"), "utf8");
 const overlayCssSource = fs.readFileSync(path.join(repoRoot, "src/content/overlay.css"), "utf8");
 
+require(path.join(repoRoot, "src/shared/fileLimits.js"));
 require(path.join(repoRoot, "src/content/file_paste_helpers.js"));
 require(path.join(repoRoot, "src/content/composer_helpers.js"));
 require(path.join(repoRoot, "src/shared/fileScanner.js"));
@@ -225,6 +226,10 @@ function fileHandoffAdapterHarnessSource() {
     extractFunctionSource(contentSource, "attachGenericPendingWithTrustedActivation"),
     extractFunctionSource(contentSource, "normalizeFileHandoffAdapter")
   ];
+}
+
+function contentDebugEventsHarnessSource() {
+  return [extractConstSource(contentSource, "CONTENT_DEBUG_EVENTS")];
 }
 
 function fileHandoffStateHarnessSource() {
@@ -1078,6 +1083,7 @@ function createHarness(overrides = {}) {
       "let fileProcessingHideTimer = 0;",
       "let pendingAttachPromptEl = null;",
       "let pendingAttachPromptSite = \"\";",
+      ...contentDebugEventsHarnessSource(),
       ...fileHandoffAdapterHarnessSource(),
       "function setDmzOverlayState(message, state = \"\") { calls.dmzStates.push({ message, state }); }",
       "function scheduleDmzOverlayCleanup(delayMs = 1200) { calls.dmzCleanups.push(delayMs); }",
@@ -1896,6 +1902,7 @@ function createHandoffHarness({
       'const GEMINI_SANITIZED_DOWNLOAD_MESSAGE = "Sanitized file downloaded. Upload the LeakGuard redacted copy to Gemini.";',
       'const GEMINI_SANITIZED_DOWNLOAD_MODAL_MESSAGE = "Gemini does not expose a safe upload target. LeakGuard downloaded a sanitized copy. Upload that redacted file manually.";',
       'const FIREFOX_GEMINI_FILE_INPUT_BRIDGE_FAILURE_MESSAGE = "LeakGuard blocked the raw file drop. Could not locate Gemini upload input. Please use the upload button or retry.";',
+      ...contentDebugEventsHarnessSource(),
       ...fileHandoffAdapterHarnessSource(),
       "function setDmzOverlayState() {}",
       "function setGeminiDmzOverlayState() {}",

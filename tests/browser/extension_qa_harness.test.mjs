@@ -469,11 +469,10 @@ async function ensureLocalProtectedSitePermission(connection, extensionSessionId
   const permissionGranted = await evaluate(
     connection,
     extensionSessionId,
-    `new Promise((resolve) => {
-      const origin = arguments[0];
+    `((origin) => new Promise((resolve) => {
       chrome.permissions.contains({ origins: [origin] }, resolve);
-    })`,
-    { awaitPromise: true, arguments: [localProtectedSitePermission] }
+    }))(${JSON.stringify(localProtectedSitePermission)})`,
+    { awaitPromise: true }
   );
   assert.equal(permissionGranted, true, "temporary extension copy should pregrant localhost permission");
 }
