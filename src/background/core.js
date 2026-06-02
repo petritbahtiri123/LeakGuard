@@ -69,6 +69,7 @@ const CONTENT_SCRIPT_FILES = [
   "content/adapters/xAdapter.js",
   "content/adapters/index.js",
   "content/diagnostics/safeSnapshots.js",
+  "content/files/fileAttachPipeline.js",
   "content/content.js"
 ];
 const CONTENT_STYLE_FILES = ["content/overlay.css"];
