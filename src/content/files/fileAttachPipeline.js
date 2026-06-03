@@ -155,11 +155,55 @@
     };
   }
 
+  function classifyFileAttachDisposition(options = {}) {
+    const handoffClassification = options.handoffClassification || {};
+    const context = options.context || "";
+    const stage = handoffClassification.stage || "";
+    const usesDmzOverlay = options.usesDmzOverlay === true;
+    const forceDmzAttached = options.forceDmzAttached === true;
+    const forceAttachedBadge = options.forceAttachedBadge === true;
+    const shouldUseDropDmz = context === "drop" && usesDmzOverlay;
+    const shouldSetDmzAttached = forceDmzAttached || (shouldUseDropDmz && stage === "file");
+    const shouldScheduleDmzCleanup = shouldUseDropDmz && (stage === "file" || stage === "text");
+    const shouldShowAttachedBadge =
+      forceAttachedBadge || handoffClassification.shouldShowAttachedBadge === true;
+    const shouldHideProcessing = handoffClassification.shouldHideProcessing === true;
+    const shouldShowSuccess = !shouldHideProcessing;
+
+    return {
+      status: handoffClassification.ok === false ? "blocked" : "attached",
+      reason: handoffClassification.reason || handoffClassification.successReason || "attached",
+      badgeMode: shouldShowAttachedBadge ? "attached" : "none",
+      shouldSetDmzAttached,
+      dmzStatus: shouldSetDmzAttached ? "Attached sanitized file" : "",
+      dmzMode: shouldSetDmzAttached ? "attached" : "",
+      shouldScheduleDmzCleanup,
+      dmzCleanupDelay: shouldScheduleDmzCleanup ? (stage === "file" ? 1400 : 1800) : 0,
+      shouldHideProcessing,
+      hideProcessingReason: handoffClassification.hideProcessingReason || "",
+      shouldShowSuccess,
+      shouldShowOptimizedStatus: false,
+      shouldFailProcessing: handoffClassification.shouldFailProcessing === true,
+      successStatus:
+        handoffClassification.shouldShowSuccess === true
+          ? handoffClassification.successStatus
+          : "Sanitized file attached.",
+      successReason:
+        handoffClassification.shouldShowSuccess === true
+          ? handoffClassification.successReason
+          : "attached",
+      shouldShowAttachedBadge,
+      attachedBadgeMessage: shouldShowAttachedBadge ? "LeakGuard attached a sanitized local file." : "",
+      attachedBadgeHideDelay: shouldShowAttachedBadge ? 3200 : 0
+    };
+  }
+
   root.PWM.FileAttachPipeline = {
     originalFileMetadataFromLocalFile,
     createSanitizedPayload,
     createProcessingStageControls,
     classifyPostHandoffResult,
+    classifyFileAttachDisposition,
     runSanitizedPayloadHandoffOrder
   };
 
