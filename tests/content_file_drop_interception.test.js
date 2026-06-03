@@ -4253,6 +4253,150 @@ async function testFileAttachPipelineCancelledFallbackPreservesReason() {
   });
 }
 
+function testFileAttachPipelineClassifiesPostHandoffSuccessStages() {
+  const fileResult = {
+    ok: true,
+    stage: "file",
+    strategy: "chatgpt-sanitized-file-handoff"
+  };
+  const fileClassification = globalThis.PWM.FileAttachPipeline.classifyPostHandoffResult({
+    handoffResult: fileResult,
+    context: "drop"
+  });
+  assert.deepStrictEqual(fileClassification, {
+    handled: true,
+    ok: true,
+    stage: "file",
+    reason: "",
+    handoffReason: "",
+    strategy: "chatgpt-sanitized-file-handoff",
+    shouldShowSuccess: true,
+    shouldHideProcessing: false,
+    hideProcessingReason: "",
+    shouldFailProcessing: false,
+    shouldContinueFallback: false,
+    shouldShowAttachedBadge: true,
+    successStatus: "Sanitized file attached.",
+    successReason: "attached",
+    handoffResult: fileResult
+  });
+
+  const textResult = {
+    ok: true,
+    stage: "text"
+  };
+  const textClassification = globalThis.PWM.FileAttachPipeline.classifyPostHandoffResult({
+    handoffResult: textResult,
+    context: "file-input",
+    defaultSuccessStrategy: "sanitized-file-handoff"
+  });
+  assert.deepStrictEqual(textClassification, {
+    handled: true,
+    ok: true,
+    stage: "text",
+    reason: "",
+    handoffReason: "",
+    strategy: "sanitized-file-handoff",
+    shouldShowSuccess: true,
+    shouldHideProcessing: false,
+    hideProcessingReason: "",
+    shouldFailProcessing: false,
+    shouldContinueFallback: false,
+    shouldShowAttachedBadge: true,
+    successStatus: "Sanitized content inserted.",
+    successReason: "inserted",
+    handoffResult: textResult
+  });
+
+  const downloadResult = {
+    ok: true,
+    stage: "download",
+    strategy: "chatgpt-sanitized-download-fallback"
+  };
+  const downloadClassification = globalThis.PWM.FileAttachPipeline.classifyPostHandoffResult({
+    handoffResult: downloadResult,
+    context: "drop"
+  });
+  assert.strictEqual(downloadClassification.shouldShowSuccess, true);
+  assert.strictEqual(downloadClassification.shouldShowAttachedBadge, false);
+  assert.strictEqual(downloadClassification.successStatus, "Sanitized file ready.");
+  assert.strictEqual(downloadClassification.successReason, "download");
+
+  const pendingResult = {
+    ok: true,
+    stage: "pending",
+    strategy: "gemini-pending-sanitized-file-handoff"
+  };
+  const pendingClassification = globalThis.PWM.FileAttachPipeline.classifyPostHandoffResult({
+    handoffResult: pendingResult,
+    context: "drop"
+  });
+  assert.strictEqual(pendingClassification.shouldShowSuccess, false);
+  assert.strictEqual(pendingClassification.shouldHideProcessing, true);
+  assert.strictEqual(pendingClassification.hideProcessingReason, "pending");
+  assert.strictEqual(pendingClassification.shouldShowAttachedBadge, false);
+  assert.strictEqual(pendingClassification.successStatus, "");
+  assert.strictEqual(pendingClassification.successReason, "");
+}
+
+function testFileAttachPipelineClassifiesPostHandoffFailures() {
+  const failedResult = {
+    ok: false,
+    stage: "failed",
+    reason: "unsafe_sanitized_payload",
+    message: "raw failure message"
+  };
+  const failedClassification = globalThis.PWM.FileAttachPipeline.classifyPostHandoffResult({
+    handoffResult: failedResult,
+    context: "drop",
+    allowPendingFallback: true,
+    failureReason: "sanitized_file_handoff_failed"
+  });
+  assert.deepStrictEqual(failedClassification, {
+    handled: true,
+    ok: false,
+    stage: "failed",
+    reason: "sanitized_file_handoff_failed",
+    handoffReason: "unsafe_sanitized_payload",
+    strategy: "",
+    shouldShowSuccess: false,
+    shouldHideProcessing: false,
+    hideProcessingReason: "",
+    shouldFailProcessing: true,
+    shouldContinueFallback: true,
+    shouldShowAttachedBadge: false,
+    successStatus: "",
+    successReason: "",
+    handoffResult: failedResult
+  });
+
+  const cancelledResult = {
+    ok: false,
+    stage: "text",
+    reason: "sanitized_text_cancelled"
+  };
+  const cancelledClassification = globalThis.PWM.FileAttachPipeline.classifyPostHandoffResult({
+    handoffResult: cancelledResult,
+    context: "file-input",
+    allowPendingFallback: true
+  });
+  assert.strictEqual(cancelledClassification.reason, "sanitized_text_cancelled");
+  assert.strictEqual(cancelledClassification.shouldHideProcessing, true);
+  assert.strictEqual(cancelledClassification.hideProcessingReason, "cancelled");
+  assert.strictEqual(cancelledClassification.shouldFailProcessing, false);
+  assert.strictEqual(cancelledClassification.shouldContinueFallback, false);
+
+  const streamingCancelledClassification = globalThis.PWM.FileAttachPipeline.classifyPostHandoffResult({
+    handoffResult: cancelledResult,
+    context: "file-input",
+    failureReason: "streaming_sanitized_handoff_failed",
+    treatCancellation: false
+  });
+  assert.strictEqual(streamingCancelledClassification.reason, "streaming_sanitized_handoff_failed");
+  assert.strictEqual(streamingCancelledClassification.shouldHideProcessing, false);
+  assert.strictEqual(streamingCancelledClassification.shouldFailProcessing, true);
+}
+
 function testFileAttachPipelineProcessingStageControlsDelegateExactly() {
   const calls = [];
   const controls = globalThis.PWM.FileAttachPipeline.createProcessingStageControls({
@@ -11403,6 +11547,8 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testFileAttachPipelineNonDropFileSuccessSkipsFallback();
   await testFileAttachPipelineSkipFallbackBranchPreservesReason();
   await testFileAttachPipelineCancelledFallbackPreservesReason();
+  testFileAttachPipelineClassifiesPostHandoffSuccessStages();
+  testFileAttachPipelineClassifiesPostHandoffFailures();
   testFileAttachPipelineProcessingStageControlsDelegateExactly();
   testGenericFileHandoffHelpersAndDiagnosticsExist();
   testFileProcessingOverlayCssExists();

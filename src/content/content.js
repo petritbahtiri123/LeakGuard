@@ -9350,14 +9350,22 @@
           fileStrategy: "streaming-sanitized-file-handoff",
           textStrategy: "streaming-sanitized-text-fallback"
         });
-        if (handoffResult.ok) {
+        const handoffClassification = globalThis.PWM.FileAttachPipeline.classifyPostHandoffResult({
+          handoffResult,
+          context,
+          defaultSuccessStrategy: "streaming-sanitized-file-handoff",
+          failureReason: "streaming_sanitized_handoff_failed",
+          treatCancellation: false
+        });
+        if (handoffClassification.ok) {
           setDmzOverlayState("Attached sanitized file", "attached");
-          if (handoffResult.stage === "pending") {
-            hideProcessing("pending");
-          } else if (handoffResult.stage === "text") {
-            showProcessingSuccess("Sanitized content inserted.", "inserted");
-          } else if (handoffResult.stage === "download") {
-            showProcessingSuccess("Sanitized file ready.", "download");
+          if (handoffClassification.shouldHideProcessing) {
+            hideProcessing(handoffClassification.hideProcessingReason);
+          } else if (handoffClassification.shouldShowSuccess) {
+            showProcessingSuccess(
+              handoffClassification.successStatus,
+              handoffClassification.successReason
+            );
           } else {
             showProcessingSuccess("Sanitized file attached.", "attached");
           }
@@ -9367,11 +9375,13 @@
           return {
             handled: true,
             ok: true,
-            strategy: handoffResult.strategy || "streaming-sanitized-file-handoff"
+            strategy: handoffClassification.strategy
           };
         }
 
-        failProcessing("streaming_sanitized_handoff_failed", "Raw file upload blocked");
+        if (handoffClassification.shouldFailProcessing) {
+          failProcessing(handoffClassification.reason, "Raw file upload blocked");
+        }
         return blockStreamingLocalFile(
           event,
           "Raw file upload blocked",
@@ -9494,17 +9504,24 @@
       skipFallbackReason: "firefox_gemini_file_input_replacement_failed",
       insertFallbackText: () => driver.insertSanitizedText(payload, { event, input, context, driver })
     });
+    const handoffClassification = globalThis.PWM.FileAttachPipeline.classifyPostHandoffResult({
+      handoffResult,
+      context,
+      allowPendingFallback: context === "drop" && Boolean(sanitizedFile),
+      defaultSuccessStrategy: "sanitized-file-handoff",
+      failureReason: "sanitized_file_handoff_failed"
+    });
 
-    if (!handoffResult.ok) {
-      if (handoffResult.reason === "sanitized_text_cancelled") {
+    if (!handoffClassification.ok) {
+      if (handoffClassification.reason === "sanitized_text_cancelled") {
         if (optimizedStatus) {
           clearLocalPayloadOptimizationStatus(sizeInfo, "cancelled");
         }
-        hideProcessing("cancelled");
+        hideProcessing(handoffClassification.hideProcessingReason);
         return {
-          handled: true,
+          handled: handoffClassification.handled,
           ok: false,
-          reason: "sanitized_text_cancelled"
+          reason: handoffClassification.reason
         };
       }
 
@@ -9513,8 +9530,7 @@
       }
       const pendingAdapter = getFileHandoffAdapterForLocation();
       if (
-        context === "drop" &&
-        sanitizedFile &&
+        handoffClassification.shouldContinueFallback &&
         isFileHandoffAdapterPendingAttachEnabled(pendingAdapter) &&
         queuePendingSanitizedFileHandoff(
           pendingAdapter,
@@ -9531,17 +9547,19 @@
         hideProcessing("pending");
         hideDmzOverlay();
         return {
-          handled: true,
+          handled: handoffClassification.handled,
           ok: true,
           strategy: `${pendingAdapter.id}-pending-sanitized-file-handoff`
         };
       }
       debugReveal("file-handoff:fail-closed", {
         context,
-        reason: "sanitized_file_handoff_failed",
+        reason: handoffClassification.reason,
         sanitizedFile: describeFileForDebug(sanitizedFile)
       });
-      failProcessing("sanitized_file_handoff_failed", "Raw file upload blocked");
+      if (handoffClassification.shouldFailProcessing) {
+        failProcessing(handoffClassification.reason, "Raw file upload blocked");
+      }
       setBadge("Raw file upload blocked");
       hideBadgeSoon(4200);
       await showMessageModal(
@@ -9551,39 +9569,40 @@
       );
       refreshBadgeFromCurrentInput();
       return {
-        handled: true,
+        handled: handoffClassification.handled,
         ok: false,
-        reason: "sanitized_file_handoff_failed"
+        reason: handoffClassification.reason
       };
     }
 
     if (optimizedStatus) {
       clearLocalPayloadOptimizationStatus(sizeInfo, "complete");
     }
-    if (context === "drop" && driver.usesDmzOverlay && handoffResult.stage === "file") {
+    if (context === "drop" && driver.usesDmzOverlay && handoffClassification.stage === "file") {
       setDmzOverlayState("Attached sanitized file", "attached");
       scheduleDmzOverlayCleanup(1400);
-    } else if (context === "drop" && driver.usesDmzOverlay && handoffResult.stage === "text") {
+    } else if (context === "drop" && driver.usesDmzOverlay && handoffClassification.stage === "text") {
       scheduleDmzOverlayCleanup(1800);
     }
-    if (handoffResult.stage === "file" || context !== "drop") {
+    if (handoffClassification.shouldShowAttachedBadge) {
       setBadge("LeakGuard attached a sanitized local file.");
       hideBadgeSoon(3200);
     }
-    if (handoffResult.stage === "pending") {
-      hideProcessing("pending");
-    } else if (handoffResult.stage === "text") {
-      showProcessingSuccess("Sanitized content inserted.", "inserted");
-    } else if (handoffResult.stage === "download") {
-      showProcessingSuccess("Sanitized file ready.", "download");
+    if (handoffClassification.shouldHideProcessing) {
+      hideProcessing(handoffClassification.hideProcessingReason);
+    } else if (handoffClassification.shouldShowSuccess) {
+      showProcessingSuccess(
+        handoffClassification.successStatus,
+        handoffClassification.successReason
+      );
     } else {
       showProcessingSuccess("Sanitized file attached.", "attached");
     }
     refreshBadgeFromCurrentInput();
     return {
-      handled: true,
+      handled: handoffClassification.handled,
       ok: true,
-      strategy: handoffResult.strategy || "sanitized-file-handoff"
+      strategy: handoffClassification.strategy
     };
     } catch (error) {
       showFileProcessingError("File processing failed", {
