@@ -68,6 +68,22 @@ Top-level metrics from the current tree:
 
 The roadmap should be implemented as small PRs with no runtime behavior changes unless a PR explicitly says otherwise. Keep the current content-script global/IIFE loading model unless a separate build-system PR proves a module/bundler migration is safe for Chrome and Firefox MV3.
 
+### Current status after PR 4F
+
+As of PR 4F, PR 1 through PR 3 are substantially implemented. PR 4 is partially implemented through small behavior-preserving slices:
+- PR 4A added the `src/content/files/fileAttachPipeline.js` shell.
+- PR 4B pinned file attach behavior with focused regression coverage.
+- PR 4C extracted `runSanitizedPayloadHandoffOrder()`.
+- PR 4D extracted `classifyPostHandoffResult()`.
+- PR 4E extracted `classifyFileAttachDisposition()`.
+- PR 4F extracted `classifyPendingAttachFallbackDecision()`.
+
+`maybeHandleLocalFileInsert()` still remains in `src/content/content.js` and still owns the dangerous side effects: event consumption, raw blocking, file reads, streaming redaction, fallback insertion, pending attach queueing, browser/file-input behavior, and UI, badge, overlay, and fail-closed side effects.
+
+PR 5 response rehydration extraction has not started. PR 6 debug logger extraction has not started. PR 7 dead-code removal has not started and should remain blocked until production call-graph evidence, focused coverage, and manual browser QA are stronger.
+
+Next safe step: do not start PR 5 yet. Continue PR 4 only if another small pure helper exists; otherwise pause PR 4 and run a manual browser QA / human review checkpoint before moving more side-effectful file attach code.
+
 ### PR 1: Extract constants, labels, and lightweight helpers only
 
 Goal:
