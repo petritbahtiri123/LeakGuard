@@ -9373,8 +9373,8 @@
             showProcessingSuccess(disposition.successStatus, disposition.successReason);
           }
           if (disposition.shouldShowAttachedBadge) {
-            setBadge("LeakGuard attached a sanitized local file.");
-            hideBadgeSoon(3200);
+            setBadge(disposition.attachedBadgeMessage);
+            hideBadgeSoon(disposition.attachedBadgeHideDelay);
           }
           refreshBadgeFromCurrentInput();
           return {
@@ -9595,8 +9595,8 @@
       scheduleDmzOverlayCleanup(disposition.dmzCleanupDelay);
     }
     if (disposition.shouldShowAttachedBadge) {
-      setBadge("LeakGuard attached a sanitized local file.");
-      hideBadgeSoon(3200);
+      setBadge(disposition.attachedBadgeMessage);
+      hideBadgeSoon(disposition.attachedBadgeHideDelay);
     }
     if (disposition.shouldHideProcessing) {
       hideProcessing(disposition.hideProcessingReason);
