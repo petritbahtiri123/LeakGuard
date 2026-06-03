@@ -4501,6 +4501,66 @@ function testFileAttachPipelineClassifiesPostHandoffFailures() {
   assert.strictEqual(streamingCancelledClassification.shouldFailProcessing, true);
 }
 
+function testFileAttachPipelineClassifiesPendingAttachFallbackDecision() {
+  const retryableFailure = globalThis.PWM.FileAttachPipeline.classifyPostHandoffResult({
+    handoffResult: {
+      ok: false,
+      stage: "failed",
+      reason: "sanitized_payload_handoff_failed"
+    },
+    context: "drop",
+    allowPendingFallback: true,
+    failureReason: "sanitized_file_handoff_failed"
+  });
+  assert.deepStrictEqual(
+    globalThis.PWM.FileAttachPipeline.classifyPendingAttachFallbackDecision({
+      handoffClassification: retryableFailure,
+      pendingAttachEnabled: true,
+      adapterId: "gemini"
+    }),
+    {
+      shouldAttemptPendingFallback: true,
+      strategy: "gemini-pending-sanitized-file-handoff",
+      reason: "sanitized_file_handoff_failed"
+    }
+  );
+
+  assert.deepStrictEqual(
+    globalThis.PWM.FileAttachPipeline.classifyPendingAttachFallbackDecision({
+      handoffClassification: retryableFailure,
+      pendingAttachEnabled: false,
+      adapterId: "gemini"
+    }),
+    {
+      shouldAttemptPendingFallback: false,
+      strategy: "",
+      reason: "sanitized_file_handoff_failed"
+    }
+  );
+
+  const cancelledFailure = globalThis.PWM.FileAttachPipeline.classifyPostHandoffResult({
+    handoffResult: {
+      ok: false,
+      stage: "failed",
+      reason: "sanitized_text_cancelled"
+    },
+    context: "drop",
+    allowPendingFallback: true
+  });
+  assert.deepStrictEqual(
+    globalThis.PWM.FileAttachPipeline.classifyPendingAttachFallbackDecision({
+      handoffClassification: cancelledFailure,
+      pendingAttachEnabled: true,
+      adapterId: "gemini"
+    }),
+    {
+      shouldAttemptPendingFallback: false,
+      strategy: "",
+      reason: "sanitized_text_cancelled"
+    }
+  );
+}
+
 function testFileAttachPipelineProcessingStageControlsDelegateExactly() {
   const calls = [];
   const controls = globalThis.PWM.FileAttachPipeline.createProcessingStageControls({
@@ -11655,6 +11715,7 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   testFileAttachPipelineBuildsPureAttachDisposition();
   testFileAttachPipelineForcedStreamingDispositionPreservesLegacyUiPlan();
   testFileAttachPipelineClassifiesPostHandoffFailures();
+  testFileAttachPipelineClassifiesPendingAttachFallbackDecision();
   testFileAttachPipelineProcessingStageControlsDelegateExactly();
   testGenericFileHandoffHelpersAndDiagnosticsExist();
   testFileProcessingOverlayCssExists();

@@ -198,12 +198,27 @@
     };
   }
 
+  function classifyPendingAttachFallbackDecision(options = {}) {
+    const handoffClassification = options.handoffClassification || {};
+    const pendingAttachEnabled = options.pendingAttachEnabled === true;
+    const adapterId = String(options.adapterId || "");
+    const shouldAttemptPendingFallback =
+      handoffClassification.shouldContinueFallback === true && pendingAttachEnabled;
+
+    return {
+      shouldAttemptPendingFallback,
+      strategy: shouldAttemptPendingFallback ? `${adapterId}-pending-sanitized-file-handoff` : "",
+      reason: handoffClassification.reason || ""
+    };
+  }
+
   root.PWM.FileAttachPipeline = {
     originalFileMetadataFromLocalFile,
     createSanitizedPayload,
     createProcessingStageControls,
     classifyPostHandoffResult,
     classifyFileAttachDisposition,
+    classifyPendingAttachFallbackDecision,
     runSanitizedPayloadHandoffOrder
   };
 

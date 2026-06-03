@@ -9534,9 +9534,16 @@
         clearLocalPayloadOptimizationStatus(sizeInfo, "failed");
       }
       const pendingAdapter = getFileHandoffAdapterForLocation();
+      const pendingFallbackDecision =
+        globalThis.PWM.FileAttachPipeline.classifyPendingAttachFallbackDecision({
+          handoffClassification,
+          pendingAttachEnabled:
+            handoffClassification.shouldContinueFallback &&
+            isFileHandoffAdapterPendingAttachEnabled(pendingAdapter),
+          adapterId: pendingAdapter?.id
+        });
       if (
-        handoffClassification.shouldContinueFallback &&
-        isFileHandoffAdapterPendingAttachEnabled(pendingAdapter) &&
+        pendingFallbackDecision.shouldAttemptPendingFallback &&
         queuePendingSanitizedFileHandoff(
           pendingAdapter,
           event,
@@ -9554,7 +9561,7 @@
         return {
           handled: handoffClassification.handled,
           ok: true,
-          strategy: `${pendingAdapter.id}-pending-sanitized-file-handoff`
+          strategy: pendingFallbackDecision.strategy
         };
       }
       debugReveal("file-handoff:fail-closed", {
