@@ -9358,19 +9358,24 @@
           treatCancellation: false
         });
         if (handoffClassification.ok) {
-          setDmzOverlayState("Attached sanitized file", "attached");
-          if (handoffClassification.shouldHideProcessing) {
-            hideProcessing(handoffClassification.hideProcessingReason);
-          } else if (handoffClassification.shouldShowSuccess) {
-            showProcessingSuccess(
-              handoffClassification.successStatus,
-              handoffClassification.successReason
-            );
-          } else {
-            showProcessingSuccess("Sanitized file attached.", "attached");
+          const disposition = globalThis.PWM.FileAttachPipeline.classifyFileAttachDisposition({
+            handoffClassification,
+            context,
+            forceDmzAttached: true,
+            forceAttachedBadge: true
+          });
+          if (disposition.shouldSetDmzAttached) {
+            setDmzOverlayState(disposition.dmzStatus, disposition.dmzMode);
           }
-          setBadge("LeakGuard attached a sanitized local file.");
-          hideBadgeSoon(3200);
+          if (disposition.shouldHideProcessing) {
+            hideProcessing(disposition.hideProcessingReason);
+          } else if (disposition.shouldShowSuccess) {
+            showProcessingSuccess(disposition.successStatus, disposition.successReason);
+          }
+          if (disposition.shouldShowAttachedBadge) {
+            setBadge(disposition.attachedBadgeMessage);
+            hideBadgeSoon(disposition.attachedBadgeHideDelay);
+          }
           refreshBadgeFromCurrentInput();
           return {
             handled: true,
@@ -9578,25 +9583,25 @@
     if (optimizedStatus) {
       clearLocalPayloadOptimizationStatus(sizeInfo, "complete");
     }
-    if (context === "drop" && driver.usesDmzOverlay && handoffClassification.stage === "file") {
-      setDmzOverlayState("Attached sanitized file", "attached");
-      scheduleDmzOverlayCleanup(1400);
-    } else if (context === "drop" && driver.usesDmzOverlay && handoffClassification.stage === "text") {
-      scheduleDmzOverlayCleanup(1800);
+    const disposition = globalThis.PWM.FileAttachPipeline.classifyFileAttachDisposition({
+      handoffClassification,
+      context,
+      usesDmzOverlay: driver.usesDmzOverlay === true
+    });
+    if (disposition.shouldSetDmzAttached) {
+      setDmzOverlayState(disposition.dmzStatus, disposition.dmzMode);
     }
-    if (handoffClassification.shouldShowAttachedBadge) {
-      setBadge("LeakGuard attached a sanitized local file.");
-      hideBadgeSoon(3200);
+    if (disposition.shouldScheduleDmzCleanup) {
+      scheduleDmzOverlayCleanup(disposition.dmzCleanupDelay);
     }
-    if (handoffClassification.shouldHideProcessing) {
-      hideProcessing(handoffClassification.hideProcessingReason);
-    } else if (handoffClassification.shouldShowSuccess) {
-      showProcessingSuccess(
-        handoffClassification.successStatus,
-        handoffClassification.successReason
-      );
-    } else {
-      showProcessingSuccess("Sanitized file attached.", "attached");
+    if (disposition.shouldShowAttachedBadge) {
+      setBadge(disposition.attachedBadgeMessage);
+      hideBadgeSoon(disposition.attachedBadgeHideDelay);
+    }
+    if (disposition.shouldHideProcessing) {
+      hideProcessing(disposition.hideProcessingReason);
+    } else if (disposition.shouldShowSuccess) {
+      showProcessingSuccess(disposition.successStatus, disposition.successReason);
     }
     refreshBadgeFromCurrentInput();
     return {
