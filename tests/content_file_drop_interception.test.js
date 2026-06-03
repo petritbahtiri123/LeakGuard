@@ -4339,6 +4339,110 @@ function testFileAttachPipelineClassifiesPostHandoffSuccessStages() {
   assert.strictEqual(pendingClassification.successReason, "");
 }
 
+function testFileAttachPipelineBuildsPureAttachDisposition() {
+  const fileClassification = globalThis.PWM.FileAttachPipeline.classifyPostHandoffResult({
+    handoffResult: {
+      ok: true,
+      stage: "file",
+      strategy: "chatgpt-sanitized-file-handoff"
+    },
+    context: "drop"
+  });
+  const fileDisposition = globalThis.PWM.FileAttachPipeline.classifyFileAttachDisposition({
+    handoffClassification: fileClassification,
+    context: "drop",
+    usesDmzOverlay: true
+  });
+
+  assert.deepStrictEqual(fileDisposition, {
+    status: "attached",
+    reason: "attached",
+    badgeMode: "attached",
+    shouldSetDmzAttached: true,
+    dmzStatus: "Attached sanitized file",
+    dmzMode: "attached",
+    shouldScheduleDmzCleanup: true,
+    dmzCleanupDelay: 1400,
+    shouldHideProcessing: false,
+    hideProcessingReason: "",
+    shouldShowSuccess: true,
+    shouldShowOptimizedStatus: false,
+    shouldFailProcessing: false,
+    successStatus: "Sanitized file attached.",
+    successReason: "attached",
+    shouldShowAttachedBadge: true,
+    attachedBadgeMessage: "LeakGuard attached a sanitized local file.",
+    attachedBadgeHideDelay: 3200
+  });
+
+  const textClassification = globalThis.PWM.FileAttachPipeline.classifyPostHandoffResult({
+    handoffResult: {
+      ok: true,
+      stage: "text"
+    },
+    context: "drop"
+  });
+  const textDisposition = globalThis.PWM.FileAttachPipeline.classifyFileAttachDisposition({
+    handoffClassification: textClassification,
+    context: "drop",
+    usesDmzOverlay: true
+  });
+
+  assert.strictEqual(textDisposition.shouldSetDmzAttached, false);
+  assert.strictEqual(textDisposition.shouldScheduleDmzCleanup, true);
+  assert.strictEqual(textDisposition.dmzCleanupDelay, 1800);
+  assert.strictEqual(textDisposition.badgeMode, "none");
+  assert.strictEqual(textDisposition.successStatus, "Sanitized content inserted.");
+  assert.strictEqual(textDisposition.successReason, "inserted");
+
+  const pendingClassification = globalThis.PWM.FileAttachPipeline.classifyPostHandoffResult({
+    handoffResult: {
+      ok: true,
+      stage: "pending",
+      strategy: "gemini-pending-sanitized-file-handoff"
+    },
+    context: "drop"
+  });
+  const pendingDisposition = globalThis.PWM.FileAttachPipeline.classifyFileAttachDisposition({
+    handoffClassification: pendingClassification,
+    context: "drop",
+    usesDmzOverlay: true
+  });
+
+  assert.strictEqual(pendingDisposition.shouldHideProcessing, true);
+  assert.strictEqual(pendingDisposition.hideProcessingReason, "pending");
+  assert.strictEqual(pendingDisposition.shouldShowSuccess, false);
+  assert.strictEqual(pendingDisposition.badgeMode, "none");
+}
+
+function testFileAttachPipelineForcedStreamingDispositionPreservesLegacyUiPlan() {
+  const streamingClassification = globalThis.PWM.FileAttachPipeline.classifyPostHandoffResult({
+    handoffResult: {
+      ok: true,
+      stage: "download",
+      strategy: "streaming-sanitized-download-fallback"
+    },
+    context: "drop",
+    defaultSuccessStrategy: "streaming-sanitized-file-handoff"
+  });
+  const disposition = globalThis.PWM.FileAttachPipeline.classifyFileAttachDisposition({
+    handoffClassification: streamingClassification,
+    context: "drop",
+    forceDmzAttached: true,
+    forceAttachedBadge: true
+  });
+
+  assert.strictEqual(disposition.shouldSetDmzAttached, true);
+  assert.strictEqual(disposition.dmzStatus, "Attached sanitized file");
+  assert.strictEqual(disposition.dmzMode, "attached");
+  assert.strictEqual(disposition.shouldScheduleDmzCleanup, false);
+  assert.strictEqual(disposition.badgeMode, "attached");
+  assert.strictEqual(disposition.attachedBadgeMessage, "LeakGuard attached a sanitized local file.");
+  assert.strictEqual(disposition.attachedBadgeHideDelay, 3200);
+  assert.strictEqual(disposition.successStatus, "Sanitized file ready.");
+  assert.strictEqual(disposition.successReason, "download");
+}
+
 function testFileAttachPipelineClassifiesPostHandoffFailures() {
   const failedResult = {
     ok: false,
@@ -11548,6 +11652,8 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testFileAttachPipelineSkipFallbackBranchPreservesReason();
   await testFileAttachPipelineCancelledFallbackPreservesReason();
   testFileAttachPipelineClassifiesPostHandoffSuccessStages();
+  testFileAttachPipelineBuildsPureAttachDisposition();
+  testFileAttachPipelineForcedStreamingDispositionPreservesLegacyUiPlan();
   testFileAttachPipelineClassifiesPostHandoffFailures();
   testFileAttachPipelineProcessingStageControlsDelegateExactly();
   testGenericFileHandoffHelpersAndDiagnosticsExist();
