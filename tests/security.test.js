@@ -22,6 +22,10 @@ const filePasteHelperSource = fs.readFileSync(
   path.join(repoRoot, "src/content/file_paste_helpers.js"),
   "utf8"
 );
+const fileAttachPipelineSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/files/fileAttachPipeline.js"),
+  "utf8"
+);
 const popupSource = fs.readFileSync(path.join(repoRoot, "src/popup/popup.js"), "utf8");
 const harnessSource = fs.readFileSync(
   path.join(repoRoot, "sandbox/composer-harness.js"),
@@ -439,6 +443,73 @@ function testLocalFilePasteDoesNotExposeRawFileContent() {
   );
 }
 
+function testFileAttachPipelineStaysPureAndContentOwnsFileAttachSideEffects() {
+  const fileInsertSource = extractFunctionSource(contentSource, "maybeHandleLocalFileInsert");
+  const contentOwnedSideEffects = [
+    "consumeInterceptionEvent(event);",
+    "readLocalTextFileFromDataTransfer(dataTransfer)",
+    "streamRedactLocalTextFile(localFile.sourceFile, localFile.file)",
+    "handOffSanitizedLocalFile(event, input, sanitizedFile, context)",
+    "queuePendingSanitizedFileHandoff(",
+    "showFileProcessingOverlay({",
+    "showFileProcessingError(",
+    "setBadge(",
+    "showMessageModal("
+  ];
+  for (const sideEffect of contentOwnedSideEffects) {
+    assert.ok(
+      fileInsertSource.includes(sideEffect),
+      `maybeHandleLocalFileInsert should continue to own file attach side effect: ${sideEffect}`
+    );
+  }
+
+  const forbiddenDirectApis = [
+    "document.",
+    "documentRef",
+    ".querySelector",
+    ".querySelectorAll",
+    ".createElement",
+    ".dispatchEvent",
+    ".addEventListener",
+    ".removeEventListener",
+    ".preventDefault",
+    ".stopPropagation",
+    ".stopImmediatePropagation",
+    "DataTransfer",
+    "FileReader",
+    "MutationObserver",
+    "HTMLElement",
+    "HTMLInputElement",
+    ".files =",
+    ".click(",
+    ".showPicker(",
+    "globalThis.browser",
+    "globalThis.chrome",
+    "ext.runtime",
+    "browser.",
+    "chrome.",
+    "queuePendingSanitizedFileHandoff",
+    "clearPendingSanitizedFileHandoff",
+    "attemptPendingSanitizedFileHandoff",
+    "pendingGeminiSanitizedFileHandoff",
+    "pendingGrokSanitizedFileHandoff"
+  ];
+  for (const forbidden of forbiddenDirectApis) {
+    assertNotIncludes(
+      fileAttachPipelineSource,
+      forbidden,
+      `FileAttachPipeline helpers must stay pure and avoid direct side effects: ${forbidden}`
+    );
+  }
+
+  assert.ok(
+    fileAttachPipelineSource.includes("classifyPendingAttachFallbackDecision") &&
+      fileAttachPipelineSource.includes("classifyFileAttachDisposition") &&
+      fileAttachPipelineSource.includes("runSanitizedPayloadHandoffOrder"),
+    "FileAttachPipeline should remain limited to data construction, classification, and injected callbacks"
+  );
+}
+
 function testFileSnapshotDebugPayloadsStayMetadataOnly() {
   const rawSecret = "SnapshotPayloadRawSecret123!";
   const file = {
@@ -786,6 +857,7 @@ async function run() {
   await testSecureRevealRemainsBoundedToRequestSessionAndExtensionUi();
   testPlaceholderLabelsDoNotExposeRawValues();
   testLocalFilePasteDoesNotExposeRawFileContent();
+  testFileAttachPipelineStaysPureAndContentOwnsFileAttachSideEffects();
   testFileSnapshotDebugPayloadsStayMetadataOnly();
   testStaticAndDynamicFilePasteInjectionOrderStaysAligned();
   testBackgroundDeterministicRescanBackstopExists();

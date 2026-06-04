@@ -4395,6 +4395,25 @@ function testFileAttachPipelineBuildsPureAttachDisposition() {
   assert.strictEqual(textDisposition.successStatus, "Sanitized content inserted.");
   assert.strictEqual(textDisposition.successReason, "inserted");
 
+  const badgeOnlyDisposition = globalThis.PWM.FileAttachPipeline.classifyFileAttachDisposition({
+    handoffClassification: {
+      ok: true,
+      stage: "file",
+      shouldShowAttachedBadge: true,
+      shouldShowSuccess: true,
+      successStatus: "Sanitized file attached.",
+      successReason: "attached"
+    },
+    context: "file-input",
+    usesDmzOverlay: false
+  });
+  assert.strictEqual(badgeOnlyDisposition.shouldSetDmzAttached, false);
+  assert.strictEqual(badgeOnlyDisposition.shouldScheduleDmzCleanup, false);
+  assert.strictEqual(badgeOnlyDisposition.badgeMode, "attached");
+  assert.strictEqual(badgeOnlyDisposition.shouldShowAttachedBadge, true);
+  assert.strictEqual(badgeOnlyDisposition.attachedBadgeMessage, "LeakGuard attached a sanitized local file.");
+  assert.strictEqual(badgeOnlyDisposition.attachedBadgeHideDelay, 3200);
+
   const pendingClassification = globalThis.PWM.FileAttachPipeline.classifyPostHandoffResult({
     handoffResult: {
       ok: true,
@@ -4413,6 +4432,23 @@ function testFileAttachPipelineBuildsPureAttachDisposition() {
   assert.strictEqual(pendingDisposition.hideProcessingReason, "pending");
   assert.strictEqual(pendingDisposition.shouldShowSuccess, false);
   assert.strictEqual(pendingDisposition.badgeMode, "none");
+
+  const failureDisposition = globalThis.PWM.FileAttachPipeline.classifyFileAttachDisposition({
+    handoffClassification: {
+      ok: false,
+      stage: "failed",
+      reason: "sanitized_file_handoff_failed",
+      shouldFailProcessing: true,
+      shouldShowSuccess: false
+    },
+    context: "drop",
+    usesDmzOverlay: true
+  });
+  assert.strictEqual(failureDisposition.status, "blocked");
+  assert.strictEqual(failureDisposition.reason, "sanitized_file_handoff_failed");
+  assert.strictEqual(failureDisposition.shouldFailProcessing, true);
+  assert.strictEqual(failureDisposition.shouldSetDmzAttached, false);
+  assert.strictEqual(failureDisposition.shouldScheduleDmzCleanup, false);
 }
 
 function testFileAttachPipelineForcedStreamingDispositionPreservesLegacyUiPlan() {
@@ -4512,6 +4548,11 @@ function testFileAttachPipelineClassifiesPendingAttachFallbackDecision() {
     allowPendingFallback: true,
     failureReason: "sanitized_file_handoff_failed"
   });
+  assert.strictEqual(
+    retryableFailure.shouldContinueFallback,
+    true,
+    "fallback should be allowed for retryable drop handoff failures"
+  );
   assert.deepStrictEqual(
     globalThis.PWM.FileAttachPipeline.classifyPendingAttachFallbackDecision({
       handoffClassification: retryableFailure,
@@ -4523,6 +4564,24 @@ function testFileAttachPipelineClassifiesPendingAttachFallbackDecision() {
       strategy: "gemini-pending-sanitized-file-handoff",
       reason: "sanitized_file_handoff_failed"
     }
+  );
+
+  const blockedByClassification = {
+    ...retryableFailure,
+    shouldContinueFallback: false
+  };
+  assert.deepStrictEqual(
+    globalThis.PWM.FileAttachPipeline.classifyPendingAttachFallbackDecision({
+      handoffClassification: blockedByClassification,
+      pendingAttachEnabled: true,
+      adapterId: "gemini"
+    }),
+    {
+      shouldAttemptPendingFallback: false,
+      strategy: "",
+      reason: "sanitized_file_handoff_failed"
+    },
+    "pending attach should be blocked when the handoff classification disallows fallback"
   );
 
   assert.deepStrictEqual(
@@ -4538,6 +4597,35 @@ function testFileAttachPipelineClassifiesPendingAttachFallbackDecision() {
     }
   );
 
+  const fallbackSkipped = globalThis.PWM.FileAttachPipeline.classifyPostHandoffResult({
+    handoffResult: {
+      ok: false,
+      stage: "failed",
+      reason: "firefox_gemini_file_input_replacement_failed"
+    },
+    context: "file-input",
+    allowPendingFallback: true,
+    failureReason: "firefox_gemini_file_input_replacement_failed"
+  });
+  assert.strictEqual(
+    fallbackSkipped.shouldContinueFallback,
+    true,
+    "fallback-skipped non-cancellation failures may still be eligible for a caller-owned pending decision"
+  );
+  assert.deepStrictEqual(
+    globalThis.PWM.FileAttachPipeline.classifyPendingAttachFallbackDecision({
+      handoffClassification: fallbackSkipped,
+      pendingAttachEnabled: false,
+      adapterId: "gemini"
+    }),
+    {
+      shouldAttemptPendingFallback: false,
+      strategy: "",
+      reason: "firefox_gemini_file_input_replacement_failed"
+    },
+    "pending attach remains skipped when the content-script gate leaves pending attach disabled"
+  );
+
   const cancelledFailure = globalThis.PWM.FileAttachPipeline.classifyPostHandoffResult({
     handoffResult: {
       ok: false,
@@ -4547,6 +4635,11 @@ function testFileAttachPipelineClassifiesPendingAttachFallbackDecision() {
     context: "drop",
     allowPendingFallback: true
   });
+  assert.strictEqual(
+    cancelledFailure.shouldContinueFallback,
+    false,
+    "cancelled sanitized text fallback should skip later pending fallback"
+  );
   assert.deepStrictEqual(
     globalThis.PWM.FileAttachPipeline.classifyPendingAttachFallbackDecision({
       handoffClassification: cancelledFailure,
