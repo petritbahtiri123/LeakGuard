@@ -9230,8 +9230,17 @@
           blocking: true
         });
         const streamResult = await streamRedactLocalTextFile(localFile.sourceFile, localFile.file);
-        if (streamResult.action === "blocked") {
-          failProcessing("streaming_file_blocked", streamResult.title || STREAMING_BLOCK_TITLE);
+        const isGeminiDrop = context === "drop" && isGeminiHost();
+        const isGrokDrop = context === "drop" && isGrokHost();
+        const streamingPlan = globalThis.PWM.FileAttachPipeline.classifyStreamingAttachPlan({
+          context,
+          isGeminiDrop,
+          isGrokDrop,
+          streamResultAction: streamResult.action,
+          hasSanitizedFile: Boolean(streamResult.sanitizedFile)
+        });
+        if (streamingPlan.blockedResult.shouldBlock) {
+          failProcessing(streamingPlan.blockedResult.reason, streamResult.title || STREAMING_BLOCK_TITLE);
           return blockStreamingLocalFile(
             event,
             streamResult.title || STREAMING_BLOCK_TITLE,
@@ -9239,28 +9248,26 @@
           );
         }
 
-        if (streamResult.action !== "redacted" || !streamResult.sanitizedFile) {
-          failProcessing("streaming_file_redaction_failed", "Raw file upload blocked");
+        if (streamingPlan.failedResult.shouldBlock) {
+          failProcessing(streamingPlan.failedResult.reason, streamingPlan.failedResult.title);
           return blockStreamingLocalFile(
             event,
-            "Raw file upload blocked",
-            streamResult.error || "LeakGuard blocked raw file upload because streaming redaction failed."
+            streamingPlan.failedResult.title,
+            streamResult.error || streamingPlan.failedResult.message
           );
         }
 
         updateFileProcessingOverlay({
           site: processingSite,
-          status: "Preparing sanitized upload...",
-          progress: "Complete",
-          blocking: true
+          status: streamingPlan.preparingStatus.processingStatus,
+          progress: streamingPlan.preparingStatus.processingProgress,
+          blocking: streamingPlan.preparingStatus.processingBlocking
         });
-        const isGeminiDrop = context === "drop" && isGeminiHost();
-        const isGrokDrop = context === "drop" && isGrokHost();
-        if (isGeminiDrop) {
+        if (streamingPlan.pendingAttach.provider === "gemini") {
           const details = createSanitizedFileHandoffDetails(
             event,
             streamResult.sanitizedFile,
-            "gemini:streaming-pending-user-upload-input"
+            streamingPlan.pendingAttach.detailsStage
           );
 
           hideProcessing("sanitized");
@@ -9279,25 +9286,25 @@
             return {
               handled: true,
               ok: true,
-              strategy: "gemini-streaming-pending-sanitized-file-handoff"
+              strategy: streamingPlan.pendingAttach.strategy
             };
           }
-          showFileProcessingError("Raw file upload blocked", {
+          showFileProcessingError(streamingPlan.pendingAttach.queueFailureTitle, {
             site: processingSite,
-            reason: "gemini_pending_queue_failed"
+            reason: streamingPlan.pendingAttach.queueFailureReason
           });
           return blockStreamingLocalFile(
             event,
-            "Raw file upload blocked",
-            "LeakGuard sanitized the large file but could not queue Gemini pending attach."
+            streamingPlan.pendingAttach.queueFailureTitle,
+            streamingPlan.pendingAttach.queueFailureMessage
           );
         }
 
-        if (isGrokDrop) {
+        if (streamingPlan.pendingAttach.provider === "grok") {
           const details = createSanitizedFileHandoffDetails(
             event,
             streamResult.sanitizedFile,
-            "grok:streaming-pending-user-upload-input"
+            streamingPlan.pendingAttach.detailsStage
           );
 
           hideProcessing("sanitized");
@@ -9316,17 +9323,17 @@
             return {
               handled: true,
               ok: true,
-              strategy: "grok-streaming-pending-sanitized-file-handoff"
+              strategy: streamingPlan.pendingAttach.strategy
             };
           }
-          showFileProcessingError("Raw file upload blocked", {
+          showFileProcessingError(streamingPlan.pendingAttach.queueFailureTitle, {
             site: processingSite,
-            reason: "grok_pending_queue_failed"
+            reason: streamingPlan.pendingAttach.queueFailureReason
           });
           return blockStreamingLocalFile(
             event,
-            "Raw file upload blocked",
-            "LeakGuard sanitized the large file but could not queue Grok pending attach."
+            streamingPlan.pendingAttach.queueFailureTitle,
+            streamingPlan.pendingAttach.queueFailureMessage
           );
         }
 
@@ -9345,24 +9352,24 @@
           trySanitizedHandoff: () =>
             handOffSanitizedLocalFile(event, input, streamResult.sanitizedFile, context),
           shouldSkipFallback: () => context === "file-input" && isFirefoxRuntime() && isGeminiHost(),
-          skipFallbackReason: "firefox_gemini_file_input_replacement_failed",
+          skipFallbackReason: streamingPlan.genericAttach.skipFallbackReason,
           insertFallbackText: () => driver.insertSanitizedText(payload, { event, input, context, driver }),
-          fileStrategy: "streaming-sanitized-file-handoff",
-          textStrategy: "streaming-sanitized-text-fallback"
+          fileStrategy: streamingPlan.genericAttach.fileStrategy,
+          textStrategy: streamingPlan.genericAttach.textStrategy
         });
         const handoffClassification = globalThis.PWM.FileAttachPipeline.classifyPostHandoffResult({
           handoffResult,
           context,
-          defaultSuccessStrategy: "streaming-sanitized-file-handoff",
-          failureReason: "streaming_sanitized_handoff_failed",
+          defaultSuccessStrategy: streamingPlan.genericAttach.defaultSuccessStrategy,
+          failureReason: streamingPlan.genericAttach.failureReason,
           treatCancellation: false
         });
         if (handoffClassification.ok) {
           const disposition = globalThis.PWM.FileAttachPipeline.classifyFileAttachDisposition({
             handoffClassification,
             context,
-            forceDmzAttached: true,
-            forceAttachedBadge: true
+            forceDmzAttached: streamingPlan.dispositionOptions.forceDmzAttached,
+            forceAttachedBadge: streamingPlan.dispositionOptions.forceAttachedBadge
           });
           if (disposition.shouldSetDmzAttached) {
             setDmzOverlayState(disposition.dmzStatus, disposition.dmzMode);
@@ -9389,9 +9396,8 @@
         }
         return blockStreamingLocalFile(
           event,
-          "Raw file upload blocked",
-          handoffResult.message ||
-            "LeakGuard blocked raw file upload. Sanitized streaming file handoff failed."
+          streamingPlan.genericAttach.failureTitle,
+          handoffResult.message || streamingPlan.genericAttach.failureMessage
         );
       }
 
