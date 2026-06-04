@@ -44,6 +44,10 @@ const fileHandoffFlowSource = fs.readFileSync(
   path.join(repoRoot, "src/content/file_handoff_flow.js"),
   "utf8"
 );
+const fileAttachPipelineSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/files/fileAttachPipeline.js"),
+  "utf8"
+);
 
 function extractFunctionSource(source, name) {
   const match = source.match(new RegExp(`(?:async\\s+)?function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n  \\}`));
@@ -505,7 +509,8 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
     "local file handling should fall back to sanitized composer text only after supported file redaction and failed sanitized handoff"
   );
   assert.ok(
-    fileInsertSource.includes("sanitized_file_handoff_failed") &&
+    (fileInsertSource.includes("sanitized_file_handoff_failed") ||
+      fileAttachPipelineSource.includes("sanitized_file_handoff_failed")) &&
       fileInsertSource.includes("LeakGuard blocked raw file upload. Sanitized file handoff failed"),
     "local file handoff failure should block raw upload with a clear local message"
   );

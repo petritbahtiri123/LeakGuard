@@ -9428,7 +9428,15 @@
       return true;
     }
 
-    const optimizedStatus = sizeInfo.zone === "optimized";
+    const shouldSkipTextFallback = context === "file-input" && isFirefoxRuntime() && isGeminiHost();
+    const preflightPlan = globalThis.PWM.FileAttachPipeline.classifyFileAttachPreflightPlan({
+      context,
+      sizeZone: sizeInfo.zone,
+      usesDmzOverlay: getCurrentHandoffDriver()?.usesDmzOverlay === true,
+      skipTextFallback: shouldSkipTextFallback,
+      allowPendingFallback: context === "drop"
+    });
+    const optimizedStatus = preflightPlan.optimizedStatus.shouldShow;
     if (optimizedStatus) {
       showLocalPayloadOptimizationStatus(sizeInfo);
     }
@@ -9437,21 +9445,27 @@
     let result;
     let sanitizedFile;
     try {
-      if (context === "drop" && getCurrentHandoffDriver()?.usesDmzOverlay) {
-        setDmzOverlayState("Redacting...", "redacting");
+      if (preflightPlan.sanitizationStatus.shouldSetDmzRedacting) {
+        setDmzOverlayState(
+          preflightPlan.sanitizationStatus.dmzStatus,
+          preflightPlan.sanitizationStatus.dmzMode
+        );
       }
       analysis = analyzeText(localFile.text);
       updateFileProcessingOverlay({
         site: processingSite,
-        status: "Sanitizing file locally...",
-        progress: "",
-        blocking: true
+        status: preflightPlan.sanitizationStatus.processingStatus,
+        progress: preflightPlan.sanitizationStatus.processingProgress,
+        blocking: preflightPlan.sanitizationStatus.processingBlocking
       });
       result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
       sanitizedFile = createSanitizedTextFile(localFile.file, result.redactedText);
     } catch (error) {
       if (optimizedStatus) {
-        clearLocalPayloadOptimizationStatus(sizeInfo, "failed");
+        clearLocalPayloadOptimizationStatus(
+          sizeInfo,
+          preflightPlan.optimizedStatus.cleanupOnSanitizationFailure
+        );
       }
       debugReveal("file-handoff:redaction-failed", {
         context,
@@ -9485,14 +9499,14 @@
       redactedLength: result.redactedText.length
     });
     const driver = getCurrentHandoffDriver();
-    if (context === "drop" && driver.usesDmzOverlay) {
-      setDmzOverlayState("Sanitized file ready", "ready");
+    if (preflightPlan.handoffStatus.shouldSetDmzReady) {
+      setDmzOverlayState(preflightPlan.handoffStatus.dmzStatus, preflightPlan.handoffStatus.dmzMode);
     }
     updateFileProcessingOverlay({
       site: processingSite,
-      status: "Preparing sanitized upload...",
-      progress: "Complete",
-      blocking: true
+      status: preflightPlan.handoffStatus.processingStatus,
+      progress: preflightPlan.handoffStatus.processingProgress,
+      blocking: preflightPlan.handoffStatus.processingBlocking
     });
 
     const payload = driver.preparePayload(sanitizedFile, result.redactedText, {
@@ -9505,12 +9519,14 @@
       tryDropHandoff: () =>
         driver.handoff(payload, { event, input, context, driver, composerResolved: true }),
       trySanitizedHandoff: () => handOffSanitizedLocalFile(event, input, sanitizedFile, context),
-      shouldSkipFallback: () => context === "file-input" && isFirefoxRuntime() && isGeminiHost(),
-      skipFallbackReason: "firefox_gemini_file_input_replacement_failed",
+      shouldSkipFallback: () => shouldSkipTextFallback,
+      skipFallbackReason: preflightPlan.attachFlowOptions.skipFallbackReason,
       insertFallbackText: () => driver.insertSanitizedText(payload, { event, input, context, driver }),
-      allowPendingFallback: context === "drop" && Boolean(sanitizedFile),
-      defaultSuccessStrategy: "sanitized-file-handoff",
-      failureReason: "sanitized_file_handoff_failed",
+      allowPendingFallback: preflightPlan.attachFlowOptions.allowPendingFallback && Boolean(sanitizedFile),
+      defaultSuccessStrategy: preflightPlan.attachFlowOptions.defaultSuccessStrategy,
+      failureReason: preflightPlan.attachFlowOptions.failureReason,
+      fileStrategy: preflightPlan.attachFlowOptions.fileStrategy,
+      textStrategy: preflightPlan.attachFlowOptions.textStrategy,
       usesDmzOverlay: driver.usesDmzOverlay === true,
       getPendingAttachFallbackOptions: (handoffClassification) => {
         const pendingAdapter = getFileHandoffAdapterForLocation();
@@ -9529,7 +9545,10 @@
     if (attachFlow.action !== "success") {
       if (attachFlow.action === "cancelled") {
         if (optimizedStatus) {
-          clearLocalPayloadOptimizationStatus(sizeInfo, "cancelled");
+          clearLocalPayloadOptimizationStatus(
+            sizeInfo,
+            preflightPlan.optimizedStatus.cleanupOnAttachCancellation
+          );
         }
         hideProcessing(handoffClassification.hideProcessingReason);
         return {
@@ -9540,7 +9559,7 @@
       }
 
       if (optimizedStatus) {
-        clearLocalPayloadOptimizationStatus(sizeInfo, "failed");
+        clearLocalPayloadOptimizationStatus(sizeInfo, preflightPlan.optimizedStatus.cleanupOnAttachFailure);
       }
       const pendingAdapter = attachFlow.pendingAttachOptions?.pendingAdapter;
       const pendingFallbackDecision = attachFlow.pendingFallbackDecision || {};
@@ -9590,7 +9609,7 @@
     }
 
     if (optimizedStatus) {
-      clearLocalPayloadOptimizationStatus(sizeInfo, "complete");
+      clearLocalPayloadOptimizationStatus(sizeInfo, preflightPlan.optimizedStatus.cleanupOnAttachSuccess);
     }
     const disposition = attachFlow.disposition;
     if (disposition.shouldSetDmzAttached) {
