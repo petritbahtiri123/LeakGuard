@@ -212,6 +212,50 @@
     };
   }
 
+  function classifyFileAttachPreflightPlan(options = {}) {
+    const context = options.context || "";
+    const sizeZone = options.sizeZone || "";
+    const usesDmzOverlay = options.usesDmzOverlay === true;
+    const shouldUseDropDmz = context === "drop" && usesDmzOverlay;
+    const skipTextFallback = options.skipTextFallback === true;
+    const allowPendingFallback = options.allowPendingFallback === true;
+
+    return {
+      shouldContinueSanitizedFlow: sizeZone !== "blocked",
+      optimizedStatus: {
+        shouldShow: sizeZone === "optimized",
+        cleanupOnSanitizationFailure: "failed",
+        cleanupOnAttachFailure: "failed",
+        cleanupOnAttachCancellation: "cancelled",
+        cleanupOnAttachSuccess: "complete"
+      },
+      sanitizationStatus: {
+        shouldSetDmzRedacting: shouldUseDropDmz,
+        dmzStatus: "Redacting...",
+        dmzMode: "redacting",
+        processingStatus: "Sanitizing file locally...",
+        processingProgress: "",
+        processingBlocking: true
+      },
+      handoffStatus: {
+        shouldSetDmzReady: shouldUseDropDmz,
+        dmzStatus: "Sanitized file ready",
+        dmzMode: "ready",
+        processingStatus: "Preparing sanitized upload...",
+        processingProgress: "Complete",
+        processingBlocking: true
+      },
+      attachFlowOptions: {
+        allowPendingFallback,
+        defaultSuccessStrategy: "sanitized-file-handoff",
+        failureReason: "sanitized_file_handoff_failed",
+        skipFallbackReason: skipTextFallback ? "firefox_gemini_file_input_replacement_failed" : "",
+        fileStrategy: "sanitized-file-handoff",
+        textStrategy: "sanitized-text-fallback"
+      }
+    };
+  }
+
   async function runSanitizedFileAttachFlow(options = {}) {
     const context = options.context || "";
     const handoffResult = await runSanitizedPayloadHandoffOrder({
@@ -310,6 +354,7 @@
     classifyPostHandoffResult,
     classifyFileAttachDisposition,
     classifyPendingAttachFallbackDecision,
+    classifyFileAttachPreflightPlan,
     runSanitizedFileAttachFlow,
     runSanitizedPayloadHandoffOrder
   };

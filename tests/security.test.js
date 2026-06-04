@@ -398,7 +398,8 @@ function testLocalFilePasteDoesNotExposeRawFileContent() {
     "local file paste/drop should create sanitized in-memory files and use native upload adapters for site file drops"
   );
   assert.ok(
-    localFileSource.includes("sanitized_file_handoff_failed") &&
+    (localFileSource.includes("sanitized_file_handoff_failed") ||
+      fileAttachPipelineSource.includes("sanitized_file_handoff_failed")) &&
       fileHandoffFlowSource.includes("handoffSanitizedPayload") &&
       fileHandoffFlowSource.includes("downloadSanitizedFileFallback") &&
       fileHandoffFlowSource.includes("formatSanitizedFileFallbackText(payload)") &&
@@ -503,8 +504,9 @@ function testFileAttachPipelineStaysPureAndContentOwnsFileAttachSideEffects() {
   }
 
   assert.ok(
-    fileAttachPipelineSource.includes("classifyPendingAttachFallbackDecision") &&
+      fileAttachPipelineSource.includes("classifyPendingAttachFallbackDecision") &&
       fileAttachPipelineSource.includes("classifyFileAttachDisposition") &&
+      fileAttachPipelineSource.includes("classifyFileAttachPreflightPlan") &&
       fileAttachPipelineSource.includes("runSanitizedPayloadHandoffOrder") &&
       fileAttachPipelineSource.includes("runSanitizedFileAttachFlow"),
     "FileAttachPipeline should remain limited to data construction, classification, and injected callbacks"

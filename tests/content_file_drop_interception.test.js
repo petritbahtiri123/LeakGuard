@@ -4654,6 +4654,141 @@ function testFileAttachPipelineClassifiesPendingAttachFallbackDecision() {
   );
 }
 
+function testFileAttachPipelinePreflightPlanNormalSanitizedAttachStatus() {
+  const plan = globalThis.PWM.FileAttachPipeline.classifyFileAttachPreflightPlan({
+    context: "drop",
+    sizeZone: "normal",
+    usesDmzOverlay: true,
+    allowPendingFallback: true
+  });
+
+  assert.deepStrictEqual(plan.sanitizationStatus, {
+    shouldSetDmzRedacting: true,
+    dmzStatus: "Redacting...",
+    dmzMode: "redacting",
+    processingStatus: "Sanitizing file locally...",
+    processingProgress: "",
+    processingBlocking: true
+  });
+  assert.deepStrictEqual(plan.handoffStatus, {
+    shouldSetDmzReady: true,
+    dmzStatus: "Sanitized file ready",
+    dmzMode: "ready",
+    processingStatus: "Preparing sanitized upload...",
+    processingProgress: "Complete",
+    processingBlocking: true
+  });
+  assert.deepStrictEqual(plan.attachFlowOptions, {
+    allowPendingFallback: true,
+    defaultSuccessStrategy: "sanitized-file-handoff",
+    failureReason: "sanitized_file_handoff_failed",
+    skipFallbackReason: "",
+    fileStrategy: "sanitized-file-handoff",
+    textStrategy: "sanitized-text-fallback"
+  });
+  assert.strictEqual(plan.shouldContinueSanitizedFlow, true);
+  assert.strictEqual(plan.optimizedStatus.shouldShow, false);
+}
+
+function testFileAttachPipelinePreflightPlanSkipFallbackStatus() {
+  const plan = globalThis.PWM.FileAttachPipeline.classifyFileAttachPreflightPlan({
+    context: "file-input",
+    sizeZone: "normal",
+    usesDmzOverlay: true,
+    skipTextFallback: true,
+    allowPendingFallback: false
+  });
+
+  assert.strictEqual(plan.sanitizationStatus.shouldSetDmzRedacting, false);
+  assert.strictEqual(plan.handoffStatus.shouldSetDmzReady, false);
+  assert.deepStrictEqual(plan.attachFlowOptions, {
+    allowPendingFallback: false,
+    defaultSuccessStrategy: "sanitized-file-handoff",
+    failureReason: "sanitized_file_handoff_failed",
+    skipFallbackReason: "firefox_gemini_file_input_replacement_failed",
+    fileStrategy: "sanitized-file-handoff",
+    textStrategy: "sanitized-text-fallback"
+  });
+}
+
+function testFileAttachPipelinePreflightPlanCleanupLabelsRemainStable() {
+  const optimizedPlan = globalThis.PWM.FileAttachPipeline.classifyFileAttachPreflightPlan({
+    context: "drop",
+    sizeZone: "optimized"
+  });
+  const blockedPlan = globalThis.PWM.FileAttachPipeline.classifyFileAttachPreflightPlan({
+    context: "drop",
+    sizeZone: "blocked"
+  });
+
+  assert.deepStrictEqual(optimizedPlan.optimizedStatus, {
+    shouldShow: true,
+    cleanupOnSanitizationFailure: "failed",
+    cleanupOnAttachFailure: "failed",
+    cleanupOnAttachCancellation: "cancelled",
+    cleanupOnAttachSuccess: "complete"
+  });
+  assert.strictEqual(blockedPlan.shouldContinueSanitizedFlow, false);
+  assert.strictEqual(blockedPlan.optimizedStatus.shouldShow, false);
+}
+
+function testFileAttachPipelinePreflightPlanReturnsPlainDataOnly() {
+  const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
+  const originalBrowser = Object.getOwnPropertyDescriptor(globalThis, "browser");
+  const originalChrome = Object.getOwnPropertyDescriptor(globalThis, "chrome");
+  const originalPwmKeys = Object.keys(globalThis.PWM).sort();
+
+  try {
+    Object.defineProperty(globalThis, "document", {
+      configurable: true,
+      get() {
+        throw new Error("preflight plan must not access document");
+      }
+    });
+    Object.defineProperty(globalThis, "browser", {
+      configurable: true,
+      get() {
+        throw new Error("preflight plan must not access browser");
+      }
+    });
+    Object.defineProperty(globalThis, "chrome", {
+      configurable: true,
+      get() {
+        throw new Error("preflight plan must not access chrome");
+      }
+    });
+
+    const plan = globalThis.PWM.FileAttachPipeline.classifyFileAttachPreflightPlan({
+      context: "drop",
+      sizeZone: "optimized",
+      usesDmzOverlay: true,
+      skipTextFallback: true,
+      allowPendingFallback: true
+    });
+    const serialized = JSON.stringify(plan);
+
+    assert.deepStrictEqual(JSON.parse(serialized), plan);
+    assert.strictEqual(serialized.includes("function"), false);
+    assert.deepStrictEqual(Object.keys(globalThis.PWM).sort(), originalPwmKeys);
+  } finally {
+    if (originalDocument) {
+      Object.defineProperty(globalThis, "document", originalDocument);
+    } else {
+      delete globalThis.document;
+    }
+    if (originalBrowser) {
+      Object.defineProperty(globalThis, "browser", originalBrowser);
+    } else {
+      delete globalThis.browser;
+    }
+    if (originalChrome) {
+      Object.defineProperty(globalThis, "chrome", originalChrome);
+    } else {
+      delete globalThis.chrome;
+    }
+  }
+}
+
 async function testFileAttachPipelineOrchestratorPreservesCallbackOrder() {
   const order = [];
   const result = await globalThis.PWM.FileAttachPipeline.runSanitizedFileAttachFlow({
@@ -12013,6 +12148,10 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   testFileAttachPipelineForcedStreamingDispositionPreservesLegacyUiPlan();
   testFileAttachPipelineClassifiesPostHandoffFailures();
   testFileAttachPipelineClassifiesPendingAttachFallbackDecision();
+  testFileAttachPipelinePreflightPlanNormalSanitizedAttachStatus();
+  testFileAttachPipelinePreflightPlanSkipFallbackStatus();
+  testFileAttachPipelinePreflightPlanCleanupLabelsRemainStable();
+  testFileAttachPipelinePreflightPlanReturnsPlainDataOnly();
   await testFileAttachPipelineOrchestratorPreservesCallbackOrder();
   await testFileAttachPipelineOrchestratorClassifiesSuccessDisposition();
   await testFileAttachPipelineOrchestratorClassifiesPendingEligiblePath();
