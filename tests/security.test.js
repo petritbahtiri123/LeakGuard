@@ -9,6 +9,10 @@ require(path.join(repoRoot, "src/shared/placeholders.js"));
 require(path.join(repoRoot, "src/shared/sessionMapStore.js"));
 require(path.join(repoRoot, "src/content/diagnostics/safeSnapshots.js"));
 const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
+const responseObserverSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/rehydration/responseObserver.js"),
+  "utf8"
+);
 const fileHandoffFlowSource = fs.readFileSync(
   path.join(repoRoot, "src/content/file_handoff_flow.js"),
   "utf8"
@@ -561,7 +565,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const staticScripts = baseManifest.content_scripts[0].js;
   const dynamicScripts = Array.from(
     backgroundSource.matchAll(
-      /"([^"]+(?:fileLimits|fileScanner|file_paste_helpers|file_handoff_state|file_handoff_pending|file_handoff_flow|rewriteVerificationText|fileTransferPolicy|hostMatching|chatgptAdapter|openaiAdapter|geminiAdapter|claudeAdapter|grokAdapter|xAdapter|index|safeSnapshots|fileAttachPipeline|placeholderRehydrator|content)\.js)"/g
+      /"([^"]+(?:fileLimits|fileScanner|file_paste_helpers|file_handoff_state|file_handoff_pending|file_handoff_flow|rewriteVerificationText|fileTransferPolicy|hostMatching|chatgptAdapter|openaiAdapter|geminiAdapter|claudeAdapter|grokAdapter|xAdapter|index|safeSnapshots|fileAttachPipeline|placeholderRehydrator|responseObserver|content)\.js)"/g
     )
   ).map((match) => match[1]);
   const adapterScripts = [
@@ -587,6 +591,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const staticSafeSnapshots = staticScripts.indexOf("content/diagnostics/safeSnapshots.js");
   const staticFileAttachPipeline = staticScripts.indexOf("content/files/fileAttachPipeline.js");
   const staticPlaceholderRehydrator = staticScripts.indexOf("content/rehydration/placeholderRehydrator.js");
+  const staticResponseObserver = staticScripts.indexOf("content/rehydration/responseObserver.js");
   const staticContent = staticScripts.indexOf("content/content.js");
   const dynamicFileLimits = dynamicScripts.indexOf("shared/fileLimits.js");
   const dynamicFileScanner = dynamicScripts.indexOf("shared/fileScanner.js");
@@ -601,6 +606,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const dynamicSafeSnapshots = dynamicScripts.indexOf("content/diagnostics/safeSnapshots.js");
   const dynamicFileAttachPipeline = dynamicScripts.indexOf("content/files/fileAttachPipeline.js");
   const dynamicPlaceholderRehydrator = dynamicScripts.indexOf("content/rehydration/placeholderRehydrator.js");
+  const dynamicResponseObserver = dynamicScripts.indexOf("content/rehydration/responseObserver.js");
   const dynamicContent = dynamicScripts.indexOf("content/content.js");
 
   assert.ok(
@@ -617,6 +623,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       staticSafeSnapshots > -1 &&
       staticFileAttachPipeline > -1 &&
       staticPlaceholderRehydrator > -1 &&
+      staticResponseObserver > -1 &&
       staticContent > -1,
     "static manifest should include file limits, scanner, file paste helper, file handoff helpers, adapter helpers, pure helpers, and content script"
   );
@@ -634,6 +641,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       dynamicSafeSnapshots > -1 &&
       dynamicFileAttachPipeline > -1 &&
       dynamicPlaceholderRehydrator > -1 &&
+      dynamicResponseObserver > -1 &&
       dynamicContent > -1,
     "dynamic injection should include file limits, scanner, file paste helper, file handoff helpers, adapter helpers, pure helpers, and content script"
   );
@@ -657,7 +665,8 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       staticAdapterIndexes.at(-1) < staticSafeSnapshots &&
       staticSafeSnapshots < staticFileAttachPipeline &&
       staticFileAttachPipeline < staticPlaceholderRehydrator &&
-      staticPlaceholderRehydrator < staticContent,
+      staticPlaceholderRehydrator < staticResponseObserver &&
+      staticResponseObserver < staticContent,
     "static manifest file paste order should load dependencies before content.js"
   );
   assert.ok(
@@ -674,7 +683,8 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       dynamicAdapterIndexes.at(-1) < dynamicSafeSnapshots &&
       dynamicSafeSnapshots < dynamicFileAttachPipeline &&
       dynamicFileAttachPipeline < dynamicPlaceholderRehydrator &&
-      dynamicPlaceholderRehydrator < dynamicContent,
+      dynamicPlaceholderRehydrator < dynamicResponseObserver &&
+      dynamicResponseObserver < dynamicContent,
     "dynamic injection file paste order should load dependencies before content.js"
   );
 }
@@ -768,36 +778,36 @@ function testRevealNeverInjectsHostDomContainers() {
 
 function testHostPageHydrationRequiresPlausibleSessionPlaceholders() {
   assert.ok(
-    contentSource.includes("function shouldHydratePlaceholder"),
-    "content script should gate placeholder hydration on plausible current-session state"
+    contentSource.includes("placeholderCount: currentPublicState.placeholderCount"),
+    "content script should inject only safe public placeholder counts into host-page hydration"
   );
   assert.ok(
-    contentSource.includes("currentPublicState.placeholderCount"),
-    "host-page hydration should rely only on safe public placeholder counts"
+    responseObserverSource.includes("tokenizePlaceholderText(normalizedText, options)"),
+    "response observer should delegate placeholder trust decisions to injected tokenizer options"
   );
 }
 
 function testPlaceholderRehydrationStaysBoundedOnLargeDomMutations() {
-  const observerSource = extractFunctionSource(contentSource, "startRehydrationObserver");
+  const observerSource = extractFunctionSource(responseObserverSource, "startRehydrationObserver");
   const urlChangeSource = extractFunctionSource(contentSource, "handleUrlChange");
 
   assert.ok(
-    observerSource.includes("const containsPlaceholder = PLACEHOLDER_TOKEN_REGEX.test(normalizedText);") &&
+    observerSource.includes("const containsPlaceholder = placeholderTokenRegex.test(normalizedText);") &&
       observerSource.includes("if (!containsPlaceholder) return;") &&
       observerSource.indexOf("if (!containsPlaceholder) return;") <
-        observerSource.indexOf("rehydrateTree(node);"),
+        observerSource.indexOf("rehydrateTree(node, options);"),
     "added element subtrees should be skipped before TreeWalker scanning when they contain no placeholders"
   );
   assert.ok(
-    contentSource.includes(".pwm-modal-backdrop, .pwm-secret, form, textarea") &&
-      contentSource.includes("[role='textbox']") &&
-      contentSource.includes("[contenteditable='true']"),
+    responseObserverSource.includes(".pwm-modal-backdrop, .pwm-secret, form, textarea") &&
+      responseObserverSource.includes("[role='textbox']") &&
+      responseObserverSource.includes("[contenteditable='true']"),
     "already hydrated placeholders and editable composers should be excluded from page-DOM rehydration"
   );
   assert.ok(
     urlChangeSource.includes("if (location.href === currentUrl) return;") &&
       urlChangeSource.indexOf("if (location.href === currentUrl) return;") <
-        urlChangeSource.indexOf("rehydrateTree(document.body);"),
+        urlChangeSource.indexOf("ResponseObserver.rehydrateTree(document.body"),
     "URL-change polling should return before full-body rehydration when the URL is unchanged"
   );
 }
