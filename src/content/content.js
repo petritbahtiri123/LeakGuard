@@ -17,7 +17,8 @@
     FilePasteHelpers,
     createFileHandoffState,
     createFileHandoffPending,
-    createFileHandoffFlow
+    createFileHandoffFlow,
+    PlaceholderRehydrator
   } = globalThis.PWM;
   const {
     normalizeComposerText,
@@ -45,6 +46,11 @@
   const FileScanner = globalThis.PWM?.FileScanner || {};
   const StreamingFileRedactor = globalThis.PWM?.StreamingFileRedactor || {};
   const FileLimits = globalThis.PWM?.FileLimits || {};
+  const {
+    placeholderSessionIndex,
+    isPlaceholderTrustedForSession,
+    tokenizePlaceholderText: tokenizeRehydrationPlaceholderText
+  } = PlaceholderRehydrator;
 
   const CHATGPT_COMPOSER_SELECTORS = [
     "#prompt-textarea",
@@ -10639,73 +10645,15 @@
   }
 
   function tokenizePlaceholderText(text) {
-    const input = normalizeVisiblePlaceholders(text);
-    const segments = [];
-    let lastIndex = 0;
-    let match;
-    const regex = new RegExp(PLACEHOLDER_TOKEN_REGEX.source, "g");
-
-    while ((match = regex.exec(input)) !== null) {
-      const placeholder = match[0];
-
-      if (match.index > lastIndex) {
-        segments.push({
-          type: "text",
-          value: input.slice(lastIndex, match.index)
-        });
-      }
-
-      if (shouldHydratePlaceholder(placeholder)) {
-        segments.push({
-          type: "secret",
-          placeholder
-        });
-      } else {
-        segments.push({
-          type: "text",
-          value: placeholder
-        });
-      }
-
-      lastIndex = match.index + placeholder.length;
-    }
-
-    if (lastIndex < input.length) {
-      segments.push({
-        type: "text",
-        value: input.slice(lastIndex)
-      });
-    }
-
-    return segments.length ? segments : [{ type: "text", value: input }];
-  }
-
-  function placeholderSessionIndex(placeholder) {
-    const pwmMatch = /^\[PWM_(\d+)\]$/.exec(String(placeholder || ""));
-    if (pwmMatch) {
-      return Number(pwmMatch[1]);
-    }
-
-    const semanticMatch = /^\[(?:NET_(\d+)|PUB_HOST_(\d+))(?:_SUB_\d+)*(?:_(?:HOST_\d+|GW|VIP|DNS))?\]$/.exec(
-      String(placeholder || "")
-    );
-
-    if (!semanticMatch) {
-      return null;
-    }
-
-    return Number(semanticMatch[1] || semanticMatch[2] || 0);
+    return tokenizeRehydrationPlaceholderText(text, {
+      normalizeVisiblePlaceholders,
+      placeholderTokenRegex: PLACEHOLDER_TOKEN_REGEX,
+      placeholderCount: currentPublicState.placeholderCount
+    });
   }
 
   function shouldHydratePlaceholder(placeholder) {
-    const count = Number(currentPublicState.placeholderCount || 0);
-    const index = placeholderSessionIndex(placeholder);
-
-    if (!count || !Number.isFinite(index)) {
-      return false;
-    }
-
-    return index >= 1 && index <= count;
+    return isPlaceholderTrustedForSession(placeholder, currentPublicState.placeholderCount);
   }
 
   function hydrateTextNode(node) {
