@@ -176,6 +176,7 @@ function stripContentDebugDiagnostics(targetRoot) {
 
   source = source
     .replace(/^\s*emitDebug:\s*debugReveal,\r?\n/gm, "")
+    .replace(/^\s*debug:\s*debugReveal,\r?\n/gm, "")
     .replace(/\bdebugLogSnapshot\s*\(/g, "false && leakGuardBuildNoop(")
     .replace(/\bdebugReveal\s*\(/g, "false && leakGuardBuildNoop(")
     .replace(/\blogFailureDetails\s*\(/g, "false && leakGuardBuildNoop(")

@@ -357,6 +357,7 @@ async function run() {
   const safeSnapshotsIndex = contentScripts.indexOf("content/diagnostics/safeSnapshots.js");
   const fileAttachPipelineIndex = contentScripts.indexOf("content/files/fileAttachPipeline.js");
   const placeholderRehydratorIndex = contentScripts.indexOf("content/rehydration/placeholderRehydrator.js");
+  const responseObserverIndex = contentScripts.indexOf("content/rehydration/responseObserver.js");
   const contentIndex = contentScripts.indexOf("content/content.js");
 
   assert.ok(knownSecretReuseIndex > -1, "content scripts should include known-secret reuse helpers");
@@ -378,6 +379,7 @@ async function run() {
   assert.ok(safeSnapshotsIndex > -1, "content scripts should include safe snapshot helpers");
   assert.ok(fileAttachPipelineIndex > -1, "content scripts should include file attach pipeline helpers");
   assert.ok(placeholderRehydratorIndex > -1, "content scripts should include placeholder rehydration helpers");
+  assert.ok(responseObserverIndex > -1, "content scripts should include response observer helpers");
   const adapterOrderAligned = adapterIndexes.every(
     (index, offset) => offset === 0 || adapterIndexes[offset - 1] < index
   );
@@ -396,7 +398,8 @@ async function run() {
       adapterIndexes.at(-1) < safeSnapshotsIndex &&
       safeSnapshotsIndex < fileAttachPipelineIndex &&
       fileAttachPipelineIndex < placeholderRehydratorIndex &&
-      placeholderRehydratorIndex < contentIndex,
+      placeholderRehydratorIndex < responseObserverIndex &&
+      responseObserverIndex < contentIndex,
     "file scanner, streaming redactor, file paste helper, file handoff, pure helper, adapter, and content script injection order should stay aligned"
   );
   assert.strictEqual(

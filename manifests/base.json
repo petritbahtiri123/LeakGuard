@@ -83,6 +83,7 @@
         "content/diagnostics/safeSnapshots.js",
         "content/files/fileAttachPipeline.js",
         "content/rehydration/placeholderRehydrator.js",
+        "content/rehydration/responseObserver.js",
         "content/content.js"
       ],
       "css": ["content/overlay.css"],

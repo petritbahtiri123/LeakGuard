@@ -18,7 +18,8 @@
     createFileHandoffState,
     createFileHandoffPending,
     createFileHandoffFlow,
-    PlaceholderRehydrator
+    PlaceholderRehydrator,
+    ResponseObserver
   } = globalThis.PWM;
   const {
     normalizeComposerText,
@@ -48,7 +49,6 @@
   const FileLimits = globalThis.PWM?.FileLimits || {};
   const {
     placeholderSessionIndex,
-    isPlaceholderTrustedForSession,
     tokenizePlaceholderText: tokenizeRehydrationPlaceholderText
   } = PlaceholderRehydrator;
 
@@ -10635,121 +10635,27 @@
     return span;
   }
 
-  function shouldSkipHydration(node) {
-    const parent = node.parentElement;
-    if (!parent) return true;
-
-    return !!parent.closest(
-      ".pwm-modal-backdrop, .pwm-secret, form, textarea, [role='textbox'], [contenteditable='true']"
-    );
-  }
-
-  function tokenizePlaceholderText(text) {
-    return tokenizeRehydrationPlaceholderText(text, {
+  function getResponseObserverOptions() {
+    return {
+      document,
+      MutationObserver,
+      Node,
+      NodeFilter,
       normalizeVisiblePlaceholders,
       placeholderTokenRegex: PLACEHOLDER_TOKEN_REGEX,
-      placeholderCount: currentPublicState.placeholderCount
-    });
-  }
-
-  function shouldHydratePlaceholder(placeholder) {
-    return isPlaceholderTrustedForSession(placeholder, currentPublicState.placeholderCount);
-  }
-
-  function hydrateTextNode(node) {
-    const text = node.nodeValue;
-    const normalizedText = normalizeVisiblePlaceholders(text);
-    if (!normalizedText || !PLACEHOLDER_TOKEN_REGEX.test(normalizedText)) return;
-    PLACEHOLDER_TOKEN_REGEX.lastIndex = 0;
-    if (shouldSkipHydration(node)) return;
-
-    const parent = node.parentElement;
-    if (!parent) return;
-
-    const segments = tokenizePlaceholderText(normalizedText);
-    if (segments.length === 1 && segments[0].type === "text") return;
-
-    debugReveal("rehydrate:text-node", {
-      parentTag: parent.tagName,
-      placeholderCount: segments.filter((segment) => segment.type === "secret").length
-    });
-
-    const fragment = document.createDocumentFragment();
-
-    for (const segment of segments) {
-      if (segment.type === "text") {
-        fragment.appendChild(document.createTextNode(segment.value));
-      } else {
-        fragment.appendChild(createSecretSpan(segment.placeholder));
+      placeholderCount: currentPublicState.placeholderCount,
+      tokenizePlaceholderText: (text, options) =>
+        tokenizeRehydrationPlaceholderText(text, {
+          ...options,
+          placeholderCount: currentPublicState.placeholderCount
+        }),
+      createSecretSpan,
+      debug: debugReveal,
+      getObserver: () => rehydrateObserver,
+      setObserver: (observer) => {
+        rehydrateObserver = observer;
       }
-    }
-
-    parent.replaceChild(fragment, node);
-  }
-
-  function rehydrateTree(root) {
-    if (!root) return;
-
-    if (root.nodeType === Node.TEXT_NODE) {
-      hydrateTextNode(root);
-      return;
-    }
-
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    const nodes = [];
-
-    while (walker.nextNode()) {
-      const node = walker.currentNode;
-      const normalizedText = normalizeVisiblePlaceholders(node.nodeValue || "");
-      if (normalizedText && PLACEHOLDER_TOKEN_REGEX.test(normalizedText)) {
-        nodes.push(node);
-      }
-      PLACEHOLDER_TOKEN_REGEX.lastIndex = 0;
-    }
-
-    nodes.forEach(hydrateTextNode);
-  }
-
-  function startRehydrationObserver() {
-    if (rehydrateObserver || !document.body) return;
-
-    rehydrateObserver = new MutationObserver((mutations) => {
-      for (const mutation of mutations) {
-        if (mutation.type === "characterData" && mutation.target?.nodeType === Node.TEXT_NODE) {
-          const normalizedText = normalizeVisiblePlaceholders(mutation.target.nodeValue || "");
-          debugReveal("rehydrate:character-data", {
-            parentTag: mutation.target.parentElement?.tagName || null,
-            containsPlaceholder: PLACEHOLDER_TOKEN_REGEX.test(normalizedText)
-          });
-          PLACEHOLDER_TOKEN_REGEX.lastIndex = 0;
-          hydrateTextNode(mutation.target);
-        }
-
-        mutation.addedNodes.forEach((node) => {
-          if (node.nodeType === Node.TEXT_NODE) {
-            hydrateTextNode(node);
-          } else if (node.nodeType === Node.ELEMENT_NODE) {
-            const normalizedText = normalizeVisiblePlaceholders(node.textContent || "");
-            const containsPlaceholder = PLACEHOLDER_TOKEN_REGEX.test(normalizedText);
-            debugReveal("rehydrate:element-added", {
-              tagName: node.tagName,
-              containsPlaceholder
-            });
-            PLACEHOLDER_TOKEN_REGEX.lastIndex = 0;
-            if (!containsPlaceholder) return;
-            rehydrateTree(node);
-          }
-        });
-      }
-    });
-
-    rehydrateObserver.observe(document.body, {
-      childList: true,
-      characterData: true,
-      subtree: true
-    });
-
-    rehydrateTree(document.body);
+    };
   }
 
   async function handleUrlChange() {
@@ -10761,7 +10667,7 @@
     clearPendingGrokSanitizedFileHandoff("navigation");
     clearAllRiskSessionState();
     await initState();
-    rehydrateTree(document.body);
+    ResponseObserver.rehydrateTree(document.body, getResponseObserverOptions());
     refreshBadgeFromCurrentInput();
     setBadge("Chat route changed");
     hideBadgeSoon(1400);
@@ -10903,7 +10809,7 @@
     bindFileDragEvents(document.body, (event) => {
       maybeHandleDrop(event).catch(handleContentError);
     });
-    startRehydrationObserver();
+    ResponseObserver.startRehydrationObserver(getResponseObserverOptions());
     if (isTopFrame) {
       refreshBadgeFromCurrentInput();
     }
