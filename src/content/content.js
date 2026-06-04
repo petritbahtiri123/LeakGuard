@@ -19,7 +19,8 @@
     createFileHandoffPending,
     createFileHandoffFlow,
     PlaceholderRehydrator,
-    ResponseObserver
+    ResponseObserver,
+    RevealController
   } = globalThis.PWM;
   const {
     normalizeComposerText,
@@ -10600,39 +10601,22 @@
     }
   }
 
-  function createSecretSpan(placeholder) {
-    const span = document.createElement("span");
-    const tones = ["aqua", "amber", "violet", "rose", "emerald"];
-    const index = placeholderSessionIndex(placeholder);
-    span.className = "pwm-secret";
-    span.dataset.pwmTone = tones[index ? (index - 1) % tones.length : 0];
-    span.textContent = placeholder;
-    span.tabIndex = 0;
-    span.setAttribute("role", "button");
-    span.setAttribute("aria-label", "LeakGuard redacted sensitive content. Open secure reveal in LeakGuard.");
-
-    const activate = (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-
-      openRevealInExtensionUi(placeholder).catch((error) => {
-        debugReveal("reveal:panel-error", {
-          placeholder,
-          error: error?.message || String(error)
-        });
-        setBadge("Secure reveal unavailable");
-        hideBadgeSoon(2400);
-      });
-    };
-
-    span.addEventListener("click", activate);
-    span.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        activate(event);
-      }
+  function handleRevealActivationError(placeholder, error) {
+    debugReveal("reveal:panel-error", {
+      placeholder,
+      error: error?.message || String(error)
     });
+    setBadge("Secure reveal unavailable");
+    hideBadgeSoon(2400);
+  }
 
-    return span;
+  function getRevealControllerOptions() {
+    return {
+      document,
+      placeholderSessionIndex,
+      openReveal: openRevealInExtensionUi,
+      onRevealError: handleRevealActivationError
+    };
   }
 
   function getResponseObserverOptions() {
@@ -10649,7 +10633,7 @@
           ...options,
           placeholderCount: currentPublicState.placeholderCount
         }),
-      createSecretSpan,
+      createSecretSpan: (placeholder) => RevealController.createSecretSpan(placeholder, getRevealControllerOptions()),
       debug: debugReveal,
       getObserver: () => rehydrateObserver,
       setObserver: (observer) => {

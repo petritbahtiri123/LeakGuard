@@ -14,6 +14,7 @@ const testFiles = [
   "tests/composer_helpers.test.js",
   "tests/placeholder_rehydrator.test.js",
   "tests/response_observer.test.js",
+  "tests/reveal_controller.test.js",
   "tests/typed_interception.test.js",
   "tests/file_drag_guard.test.js",
   "tests/content_allow_once_interaction.test.js",
