@@ -561,7 +561,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const staticScripts = baseManifest.content_scripts[0].js;
   const dynamicScripts = Array.from(
     backgroundSource.matchAll(
-      /"([^"]+(?:fileLimits|fileScanner|file_paste_helpers|file_handoff_state|file_handoff_pending|file_handoff_flow|rewriteVerificationText|fileTransferPolicy|hostMatching|chatgptAdapter|openaiAdapter|geminiAdapter|claudeAdapter|grokAdapter|xAdapter|index|safeSnapshots|fileAttachPipeline|content)\.js)"/g
+      /"([^"]+(?:fileLimits|fileScanner|file_paste_helpers|file_handoff_state|file_handoff_pending|file_handoff_flow|rewriteVerificationText|fileTransferPolicy|hostMatching|chatgptAdapter|openaiAdapter|geminiAdapter|claudeAdapter|grokAdapter|xAdapter|index|safeSnapshots|fileAttachPipeline|placeholderRehydrator|content)\.js)"/g
     )
   ).map((match) => match[1]);
   const adapterScripts = [
@@ -586,6 +586,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const staticAdapterIndexes = adapterScripts.map((script) => staticScripts.indexOf(script));
   const staticSafeSnapshots = staticScripts.indexOf("content/diagnostics/safeSnapshots.js");
   const staticFileAttachPipeline = staticScripts.indexOf("content/files/fileAttachPipeline.js");
+  const staticPlaceholderRehydrator = staticScripts.indexOf("content/rehydration/placeholderRehydrator.js");
   const staticContent = staticScripts.indexOf("content/content.js");
   const dynamicFileLimits = dynamicScripts.indexOf("shared/fileLimits.js");
   const dynamicFileScanner = dynamicScripts.indexOf("shared/fileScanner.js");
@@ -599,6 +600,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const dynamicAdapterIndexes = adapterScripts.map((script) => dynamicScripts.indexOf(script));
   const dynamicSafeSnapshots = dynamicScripts.indexOf("content/diagnostics/safeSnapshots.js");
   const dynamicFileAttachPipeline = dynamicScripts.indexOf("content/files/fileAttachPipeline.js");
+  const dynamicPlaceholderRehydrator = dynamicScripts.indexOf("content/rehydration/placeholderRehydrator.js");
   const dynamicContent = dynamicScripts.indexOf("content/content.js");
 
   assert.ok(
@@ -614,6 +616,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       staticAdapterIndexes.every((index) => index > -1) &&
       staticSafeSnapshots > -1 &&
       staticFileAttachPipeline > -1 &&
+      staticPlaceholderRehydrator > -1 &&
       staticContent > -1,
     "static manifest should include file limits, scanner, file paste helper, file handoff helpers, adapter helpers, pure helpers, and content script"
   );
@@ -630,6 +633,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       dynamicAdapterIndexes.every((index) => index > -1) &&
       dynamicSafeSnapshots > -1 &&
       dynamicFileAttachPipeline > -1 &&
+      dynamicPlaceholderRehydrator > -1 &&
       dynamicContent > -1,
     "dynamic injection should include file limits, scanner, file paste helper, file handoff helpers, adapter helpers, pure helpers, and content script"
   );
@@ -652,7 +656,8 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       staticAdapterOrderAligned &&
       staticAdapterIndexes.at(-1) < staticSafeSnapshots &&
       staticSafeSnapshots < staticFileAttachPipeline &&
-      staticFileAttachPipeline < staticContent,
+      staticFileAttachPipeline < staticPlaceholderRehydrator &&
+      staticPlaceholderRehydrator < staticContent,
     "static manifest file paste order should load dependencies before content.js"
   );
   assert.ok(
@@ -668,7 +673,8 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       dynamicAdapterOrderAligned &&
       dynamicAdapterIndexes.at(-1) < dynamicSafeSnapshots &&
       dynamicSafeSnapshots < dynamicFileAttachPipeline &&
-      dynamicFileAttachPipeline < dynamicContent,
+      dynamicFileAttachPipeline < dynamicPlaceholderRehydrator &&
+      dynamicPlaceholderRehydrator < dynamicContent,
     "dynamic injection file paste order should load dependencies before content.js"
   );
 }

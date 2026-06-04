@@ -82,6 +82,7 @@
         "content/adapters/index.js",
         "content/diagnostics/safeSnapshots.js",
         "content/files/fileAttachPipeline.js",
+        "content/rehydration/placeholderRehydrator.js",
         "content/content.js"
       ],
       "css": ["content/overlay.css"],
