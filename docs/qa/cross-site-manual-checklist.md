@@ -2,6 +2,8 @@
 
 Use this checklist for manual LeakGuard verification on protected AI composer sites.
 
+For the focused post-PR 4I file attach checkpoint, use `docs/qa/file-attach-manual-checkpoint-after-pr4i.md`.
+
 Sites:
 - ChatGPT
 - Gemini
