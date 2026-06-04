@@ -68,9 +68,9 @@ Top-level metrics from the current tree:
 
 The roadmap should be implemented as small PRs with no runtime behavior changes unless a PR explicitly says otherwise. Keep the current content-script global/IIFE loading model unless a separate build-system PR proves a module/bundler migration is safe for Chrome and Firefox MV3.
 
-### Current status after PR 4I
+### Current status after PR 5D
 
-As of PR 4I, PR 1 through PR 3 are substantially implemented. PR 4 has made strong progress through small behavior-preserving slices:
+As of PR 5D, PR 1 through PR 3 are substantially implemented. PR 4 has made strong progress through small behavior-preserving slices:
 - PR 4A added the `src/content/files/fileAttachPipeline.js` shell.
 - PR 4B pinned file attach behavior with focused regression coverage.
 - PR 4C extracted `runSanitizedPayloadHandoffOrder()`.
@@ -85,7 +85,11 @@ As of PR 4I, PR 1 through PR 3 are substantially implemented. PR 4 has made stro
 
 `maybeHandleLocalFileInsert()` still remains in `src/content/content.js` and should not be fully moved yet. It intentionally owns event consumption, raw blocking/pass-through decisions, local file reads, streaming redaction, browser/file-input behavior, pending attach queue mutation, fallback insertion, UI, badge, overlay updates, fail-closed handling, and provider-specific Gemini/Grok glue.
 
-Remaining file attach work is mostly side-effectful and needs a separate design pass before more extraction. PR 5 response rehydration extraction should not start until the file attach side-effect boundaries have been reviewed. PR 6 debug logger extraction has not started. PR 7 dead-code removal has not started and should remain blocked until production call-graph evidence, focused coverage, and manual browser QA are stronger.
+Remaining file attach work is mostly side-effectful and needs a separate design pass before more extraction.
+
+PR 5 response rehydration modularization is now substantially implemented. Response placeholder parsing/trust/tokenization lives in `src/content/rehydration/placeholderRehydrator.js`, DOM hydration and the MutationObserver shell live in `src/content/rehydration/responseObserver.js`, and placeholder chip/span activation lives in `src/content/rehydration/revealController.js`. Raw secret reveal behavior was not moved into the page DOM: `content.js` still owns secure reveal policy checks, popup opening, badge fallback, route-change behavior, observer startup timing, and high-risk integration points.
+
+The next roadmap task is PR 6 debug logger audit, not implementation-first extraction. PR 7 dead-code removal has not started and should remain blocked until production call-graph evidence, focused coverage, and manual browser QA are stronger.
 
 Next safe step: do not do another blind extraction. Prefer either a manual browser QA checkpoint for file attach flows or a short design note that maps the remaining file attach side-effect boundaries and ownership rules. When running browser validation, run `npm run smoke:chrome` and `npm run qa:browser` sequentially because they can conflict on shared Chrome build/temp state.
 
@@ -267,6 +271,12 @@ Expected benefit:
 - The highest-risk 524-line function becomes a traceable state machine with explicit stages.
 
 ### PR 5: Extract response rehydration pipeline
+
+Status after PR 5D:
+- Substantially implemented through dedicated rehydration modules: `placeholderRehydrator.js`, `responseObserver.js`, and `revealController.js`.
+- Placeholder parsing/trust/tokenization, DOM hydration/observer behavior, and placeholder chip activation are extracted behind the existing content-script global/IIFE loading model.
+- Raw secret reveal values still do not enter page DOM, and raw reveal handling remains outside the host page.
+- `content.js` still owns secure reveal policy checks, popup opening, badge fallback, route-change behavior, observer startup timing, and other high-risk integration points.
 
 Goal:
 - Move placeholder hydration, response observer, and reveal controller out of `content.js`.
