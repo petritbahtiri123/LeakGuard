@@ -505,7 +505,8 @@ function testFileAttachPipelineStaysPureAndContentOwnsFileAttachSideEffects() {
   assert.ok(
     fileAttachPipelineSource.includes("classifyPendingAttachFallbackDecision") &&
       fileAttachPipelineSource.includes("classifyFileAttachDisposition") &&
-      fileAttachPipelineSource.includes("runSanitizedPayloadHandoffOrder"),
+      fileAttachPipelineSource.includes("runSanitizedPayloadHandoffOrder") &&
+      fileAttachPipelineSource.includes("runSanitizedFileAttachFlow"),
     "FileAttachPipeline should remain limited to data construction, classification, and injected callbacks"
   );
 }

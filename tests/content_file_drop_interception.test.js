@@ -4654,6 +4654,210 @@ function testFileAttachPipelineClassifiesPendingAttachFallbackDecision() {
   );
 }
 
+async function testFileAttachPipelineOrchestratorPreservesCallbackOrder() {
+  const order = [];
+  const result = await globalThis.PWM.FileAttachPipeline.runSanitizedFileAttachFlow({
+    context: "file-input",
+    tryDropHandoff: async () => {
+      throw new Error("non-drop orchestrator path must not call drop handoff");
+    },
+    trySanitizedHandoff: async () => {
+      order.push("sanitized-file-handoff");
+      return false;
+    },
+    shouldSkipFallback: () => {
+      order.push("fallback-gate");
+      return false;
+    },
+    insertFallbackText: async () => {
+      order.push("sanitized-text-fallback");
+      return true;
+    },
+    getPendingAttachFallbackOptions: () => {
+      throw new Error("successful text fallback must not ask for pending attach options");
+    }
+  });
+
+  assert.deepStrictEqual(order, [
+    "sanitized-file-handoff",
+    "fallback-gate",
+    "sanitized-text-fallback"
+  ]);
+  assert.strictEqual(result.action, "success");
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.strategy, "sanitized-text-fallback");
+  assert.strictEqual(result.handoffClassification.stage, "text");
+  assert.strictEqual(result.disposition.successStatus, "Sanitized content inserted.");
+}
+
+async function testFileAttachPipelineOrchestratorClassifiesSuccessDisposition() {
+  const result = await globalThis.PWM.FileAttachPipeline.runSanitizedFileAttachFlow({
+    context: "drop",
+    usesDmzOverlay: true,
+    tryDropHandoff: async () => ({
+      ok: true,
+      stage: "file",
+      strategy: "chatgpt-sanitized-file-handoff"
+    }),
+    getPendingAttachFallbackOptions: () => {
+      throw new Error("successful file attach must not ask for pending attach options");
+    }
+  });
+
+  assert.strictEqual(result.action, "success");
+  assert.strictEqual(result.handled, true);
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.strategy, "chatgpt-sanitized-file-handoff");
+  assert.strictEqual(result.disposition.shouldSetDmzAttached, true);
+  assert.strictEqual(result.disposition.shouldScheduleDmzCleanup, true);
+  assert.strictEqual(result.disposition.shouldShowAttachedBadge, true);
+}
+
+async function testFileAttachPipelineOrchestratorClassifiesPendingEligiblePath() {
+  const order = [];
+  let pendingQueueMutated = false;
+  const result = await globalThis.PWM.FileAttachPipeline.runSanitizedFileAttachFlow({
+    context: "drop",
+    allowPendingFallback: true,
+    tryDropHandoff: async () => {
+      order.push("drop-handoff");
+      return {
+        ok: false,
+        stage: "failed",
+        reason: "sanitized_payload_handoff_failed"
+      };
+    },
+    getPendingAttachFallbackOptions: (handoffClassification) => {
+      order.push("pending-options");
+      assert.strictEqual(handoffClassification.shouldContinueFallback, true);
+      return {
+        pendingAttachEnabled: true,
+        adapterId: "gemini",
+        pendingAdapter: { id: "gemini" },
+        mutatePendingQueue: () => {
+          pendingQueueMutated = true;
+        }
+      };
+    }
+  });
+
+  assert.deepStrictEqual(order, ["drop-handoff", "pending-options"]);
+  assert.strictEqual(pendingQueueMutated, false);
+  assert.strictEqual(result.action, "pending");
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.strategy, "gemini-pending-sanitized-file-handoff");
+  assert.strictEqual(result.pendingAttachOptions.pendingAdapter.id, "gemini");
+  assert.strictEqual(result.pendingFallbackDecision.shouldAttemptPendingFallback, true);
+}
+
+async function testFileAttachPipelineOrchestratorClassifiesFailClosedPath() {
+  const result = await globalThis.PWM.FileAttachPipeline.runSanitizedFileAttachFlow({
+    context: "drop",
+    allowPendingFallback: true,
+    tryDropHandoff: async () => ({
+      ok: false,
+      stage: "failed",
+      reason: "sanitized_payload_handoff_failed",
+      message: "handoff rejected"
+    }),
+    getPendingAttachFallbackOptions: () => ({
+      pendingAttachEnabled: false,
+      adapterId: "chatgpt"
+    })
+  });
+
+  assert.strictEqual(result.action, "fail-closed");
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.reason, "sanitized_file_handoff_failed");
+  assert.strictEqual(result.pendingFallbackDecision.shouldAttemptPendingFallback, false);
+  assert.strictEqual(result.handoffResult.message, "handoff rejected");
+  assert.strictEqual(result.handoffClassification.shouldFailProcessing, true);
+}
+
+async function testFileAttachPipelineOrchestratorPreservesCancellationPath() {
+  const result = await globalThis.PWM.FileAttachPipeline.runSanitizedFileAttachFlow({
+    context: "file-input",
+    allowPendingFallback: true,
+    trySanitizedHandoff: async () => false,
+    insertFallbackText: async () => "cancelled",
+    getPendingAttachFallbackOptions: () => {
+      throw new Error("cancelled sanitized text fallback must not ask for pending attach options");
+    }
+  });
+
+  assert.strictEqual(result.action, "cancelled");
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.reason, "sanitized_text_cancelled");
+  assert.strictEqual(result.handoffClassification.shouldHideProcessing, true);
+  assert.strictEqual(result.handoffClassification.shouldFailProcessing, false);
+}
+
+async function testFileAttachPipelineOrchestratorDoesNotTouchDomBrowserGlobalsOrPendingQueues() {
+  const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
+  const originalBrowser = Object.getOwnPropertyDescriptor(globalThis, "browser");
+  const originalChrome = Object.getOwnPropertyDescriptor(globalThis, "chrome");
+  const originalPwmKeys = Object.keys(globalThis.PWM).sort();
+  let pendingQueueMutated = false;
+
+  try {
+    Object.defineProperty(globalThis, "document", {
+      configurable: true,
+      get() {
+        throw new Error("orchestrator must not access document");
+      }
+    });
+    Object.defineProperty(globalThis, "browser", {
+      configurable: true,
+      get() {
+        throw new Error("orchestrator must not access browser");
+      }
+    });
+    Object.defineProperty(globalThis, "chrome", {
+      configurable: true,
+      get() {
+        throw new Error("orchestrator must not access chrome");
+      }
+    });
+
+    const result = await globalThis.PWM.FileAttachPipeline.runSanitizedFileAttachFlow({
+      context: "drop",
+      allowPendingFallback: true,
+      tryDropHandoff: async () => ({
+        ok: false,
+        stage: "failed",
+        reason: "sanitized_payload_handoff_failed"
+      }),
+      getPendingAttachFallbackOptions: () => ({
+        pendingAttachEnabled: true,
+        adapterId: "grok",
+        mutatePendingQueue: () => {
+          pendingQueueMutated = true;
+        }
+      })
+    });
+
+    assert.strictEqual(result.action, "pending");
+    assert.strictEqual(pendingQueueMutated, false);
+    assert.deepStrictEqual(Object.keys(globalThis.PWM).sort(), originalPwmKeys);
+  } finally {
+    if (originalDocument) {
+      Object.defineProperty(globalThis, "document", originalDocument);
+    } else {
+      delete globalThis.document;
+    }
+    if (originalBrowser) {
+      Object.defineProperty(globalThis, "browser", originalBrowser);
+    } else {
+      delete globalThis.browser;
+    }
+    if (originalChrome) {
+      Object.defineProperty(globalThis, "chrome", originalChrome);
+    } else {
+      delete globalThis.chrome;
+    }
+  }
+}
+
 function testFileAttachPipelineProcessingStageControlsDelegateExactly() {
   const calls = [];
   const controls = globalThis.PWM.FileAttachPipeline.createProcessingStageControls({
@@ -11809,6 +12013,12 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   testFileAttachPipelineForcedStreamingDispositionPreservesLegacyUiPlan();
   testFileAttachPipelineClassifiesPostHandoffFailures();
   testFileAttachPipelineClassifiesPendingAttachFallbackDecision();
+  await testFileAttachPipelineOrchestratorPreservesCallbackOrder();
+  await testFileAttachPipelineOrchestratorClassifiesSuccessDisposition();
+  await testFileAttachPipelineOrchestratorClassifiesPendingEligiblePath();
+  await testFileAttachPipelineOrchestratorClassifiesFailClosedPath();
+  await testFileAttachPipelineOrchestratorPreservesCancellationPath();
+  await testFileAttachPipelineOrchestratorDoesNotTouchDomBrowserGlobalsOrPendingQueues();
   testFileAttachPipelineProcessingStageControlsDelegateExactly();
   testGenericFileHandoffHelpersAndDiagnosticsExist();
   testFileProcessingOverlayCssExists();
