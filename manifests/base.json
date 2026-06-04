@@ -84,6 +84,7 @@
         "content/files/fileAttachPipeline.js",
         "content/rehydration/placeholderRehydrator.js",
         "content/rehydration/responseObserver.js",
+        "content/rehydration/revealController.js",
         "content/content.js"
       ],
       "css": ["content/overlay.css"],

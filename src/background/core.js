@@ -72,6 +72,7 @@ const CONTENT_SCRIPT_FILES = [
   "content/files/fileAttachPipeline.js",
   "content/rehydration/placeholderRehydrator.js",
   "content/rehydration/responseObserver.js",
+  "content/rehydration/revealController.js",
   "content/content.js"
 ];
 const CONTENT_STYLE_FILES = ["content/overlay.css"];

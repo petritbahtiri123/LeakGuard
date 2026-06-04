@@ -13,6 +13,10 @@ const responseObserverSource = fs.readFileSync(
   path.join(repoRoot, "src/content/rehydration/responseObserver.js"),
   "utf8"
 );
+const revealControllerSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/rehydration/revealController.js"),
+  "utf8"
+);
 const fileHandoffFlowSource = fs.readFileSync(
   path.join(repoRoot, "src/content/file_handoff_flow.js"),
   "utf8"
@@ -343,7 +347,7 @@ async function testSecureRevealRemainsBoundedToRequestSessionAndExtensionUi() {
 }
 
 function testPlaceholderLabelsDoNotExposeRawValues() {
-  const createSecretSpanSource = extractFunctionSource(contentSource, "createSecretSpan");
+  const createSecretSpanSource = extractFunctionSource(revealControllerSource, "createSecretSpan");
   const renderRevealContextSource = extractFunctionSource(popupSource, "renderRevealContext");
 
   assert.ok(
@@ -565,7 +569,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const staticScripts = baseManifest.content_scripts[0].js;
   const dynamicScripts = Array.from(
     backgroundSource.matchAll(
-      /"([^"]+(?:fileLimits|fileScanner|file_paste_helpers|file_handoff_state|file_handoff_pending|file_handoff_flow|rewriteVerificationText|fileTransferPolicy|hostMatching|chatgptAdapter|openaiAdapter|geminiAdapter|claudeAdapter|grokAdapter|xAdapter|index|safeSnapshots|fileAttachPipeline|placeholderRehydrator|responseObserver|content)\.js)"/g
+      /"([^"]+(?:fileLimits|fileScanner|file_paste_helpers|file_handoff_state|file_handoff_pending|file_handoff_flow|rewriteVerificationText|fileTransferPolicy|hostMatching|chatgptAdapter|openaiAdapter|geminiAdapter|claudeAdapter|grokAdapter|xAdapter|index|safeSnapshots|fileAttachPipeline|placeholderRehydrator|responseObserver|revealController|content)\.js)"/g
     )
   ).map((match) => match[1]);
   const adapterScripts = [
@@ -592,6 +596,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const staticFileAttachPipeline = staticScripts.indexOf("content/files/fileAttachPipeline.js");
   const staticPlaceholderRehydrator = staticScripts.indexOf("content/rehydration/placeholderRehydrator.js");
   const staticResponseObserver = staticScripts.indexOf("content/rehydration/responseObserver.js");
+  const staticRevealController = staticScripts.indexOf("content/rehydration/revealController.js");
   const staticContent = staticScripts.indexOf("content/content.js");
   const dynamicFileLimits = dynamicScripts.indexOf("shared/fileLimits.js");
   const dynamicFileScanner = dynamicScripts.indexOf("shared/fileScanner.js");
@@ -607,6 +612,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const dynamicFileAttachPipeline = dynamicScripts.indexOf("content/files/fileAttachPipeline.js");
   const dynamicPlaceholderRehydrator = dynamicScripts.indexOf("content/rehydration/placeholderRehydrator.js");
   const dynamicResponseObserver = dynamicScripts.indexOf("content/rehydration/responseObserver.js");
+  const dynamicRevealController = dynamicScripts.indexOf("content/rehydration/revealController.js");
   const dynamicContent = dynamicScripts.indexOf("content/content.js");
 
   assert.ok(
@@ -624,6 +630,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       staticFileAttachPipeline > -1 &&
       staticPlaceholderRehydrator > -1 &&
       staticResponseObserver > -1 &&
+      staticRevealController > -1 &&
       staticContent > -1,
     "static manifest should include file limits, scanner, file paste helper, file handoff helpers, adapter helpers, pure helpers, and content script"
   );
@@ -642,6 +649,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       dynamicFileAttachPipeline > -1 &&
       dynamicPlaceholderRehydrator > -1 &&
       dynamicResponseObserver > -1 &&
+      dynamicRevealController > -1 &&
       dynamicContent > -1,
     "dynamic injection should include file limits, scanner, file paste helper, file handoff helpers, adapter helpers, pure helpers, and content script"
   );
@@ -666,7 +674,8 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       staticSafeSnapshots < staticFileAttachPipeline &&
       staticFileAttachPipeline < staticPlaceholderRehydrator &&
       staticPlaceholderRehydrator < staticResponseObserver &&
-      staticResponseObserver < staticContent,
+      staticResponseObserver < staticRevealController &&
+      staticRevealController < staticContent,
     "static manifest file paste order should load dependencies before content.js"
   );
   assert.ok(
@@ -684,7 +693,8 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       dynamicSafeSnapshots < dynamicFileAttachPipeline &&
       dynamicFileAttachPipeline < dynamicPlaceholderRehydrator &&
       dynamicPlaceholderRehydrator < dynamicResponseObserver &&
-      dynamicResponseObserver < dynamicContent,
+      dynamicResponseObserver < dynamicRevealController &&
+      dynamicRevealController < dynamicContent,
     "dynamic injection file paste order should load dependencies before content.js"
   );
 }

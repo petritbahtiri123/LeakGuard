@@ -6,6 +6,10 @@ const { pathToFileURL } = require("url");
 const repoRoot = path.join(__dirname, "..");
 const readme = fs.readFileSync(path.join(repoRoot, "README.md"), "utf8");
 const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
+const revealControllerSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/rehydration/revealController.js"),
+  "utf8"
+);
 const overlaySource = fs.readFileSync(path.join(repoRoot, "src/content/overlay.css"), "utf8");
 const popupHtml = fs.readFileSync(path.join(repoRoot, "src/popup/popup.html"), "utf8");
 const popupJs = fs.readFileSync(path.join(repoRoot, "src/popup/popup.js"), "utf8");
@@ -124,7 +128,7 @@ function testPanelAndManagementUiAreWired() {
 
 function testHydratedPlaceholdersStayVisibleAcrossThemes() {
   assert.ok(
-    contentSource.includes("span.dataset.pwmTone"),
+    revealControllerSource.includes("span.dataset.pwmTone"),
     "hydrated placeholder chips should receive deterministic tone attributes"
   );
   assert.ok(

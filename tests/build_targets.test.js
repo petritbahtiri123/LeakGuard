@@ -358,6 +358,7 @@ async function run() {
   const fileAttachPipelineIndex = contentScripts.indexOf("content/files/fileAttachPipeline.js");
   const placeholderRehydratorIndex = contentScripts.indexOf("content/rehydration/placeholderRehydrator.js");
   const responseObserverIndex = contentScripts.indexOf("content/rehydration/responseObserver.js");
+  const revealControllerIndex = contentScripts.indexOf("content/rehydration/revealController.js");
   const contentIndex = contentScripts.indexOf("content/content.js");
 
   assert.ok(knownSecretReuseIndex > -1, "content scripts should include known-secret reuse helpers");
@@ -380,6 +381,7 @@ async function run() {
   assert.ok(fileAttachPipelineIndex > -1, "content scripts should include file attach pipeline helpers");
   assert.ok(placeholderRehydratorIndex > -1, "content scripts should include placeholder rehydration helpers");
   assert.ok(responseObserverIndex > -1, "content scripts should include response observer helpers");
+  assert.ok(revealControllerIndex > -1, "content scripts should include reveal controller helpers");
   const adapterOrderAligned = adapterIndexes.every(
     (index, offset) => offset === 0 || adapterIndexes[offset - 1] < index
   );
@@ -399,7 +401,8 @@ async function run() {
       safeSnapshotsIndex < fileAttachPipelineIndex &&
       fileAttachPipelineIndex < placeholderRehydratorIndex &&
       placeholderRehydratorIndex < responseObserverIndex &&
-      responseObserverIndex < contentIndex,
+      responseObserverIndex < revealControllerIndex &&
+      revealControllerIndex < contentIndex,
     "file scanner, streaming redactor, file paste helper, file handoff, pure helper, adapter, and content script injection order should stay aligned"
   );
   assert.strictEqual(
