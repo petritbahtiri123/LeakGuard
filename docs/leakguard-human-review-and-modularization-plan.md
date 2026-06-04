@@ -46,7 +46,7 @@ Top-level metrics from the current tree:
 | File path | Function or area | Approximate size / complexity | Why it is risky | Likely bugs | Safe to modularize? | Suggested target module |
 | --- | --- | --- | --- | --- | --- | --- |
 | `src/content/content.js` | Overall content runtime | 11,480 lines combining bootstrap, policy, UI, input interception, site adapters, file handoff, rehydration, and diagnostics | One change can cross event timing, security boundaries, browser compatibility, and site-specific selectors. | Raw send after failed rewrite, duplicate events, missed composer, modal loops, leaked debug payloads, Firefox/Chrome drift. | Yes, but only incrementally. | `src/content/bootstrap.js`, `src/content/runtime/runtimeMessenger.js`, `src/content/input/*`, `src/content/ui/*` |
-| `src/content/content.js` | `maybeHandleLocalFileInsert()` | 524 lines starting at line 9632 | Central fail-closed file ingress path. It handles transfer policy, event consumption, file read, streaming, redaction, adapter handoff, fallback, messaging, and cleanup. | Raw file pass-through after attempted sanitization, duplicate sanitized upload, huge text insertion, missing cleanup on cancel/error. | Yes, after tests are pinned. | `src/content/files/fileAttachPipeline.js` |
+| `src/content/content.js` | `maybeHandleLocalFileInsert()` | About 552 lines starting near line 9093; now mostly a side-effect coordinator after PR 4A-4I | Central fail-closed file ingress path. It handles transfer policy, event consumption, file read, streaming, redaction, adapter handoff, fallback, messaging, and cleanup. | Raw file pass-through after attempted sanitization, duplicate sanitized upload, huge text insertion, missing cleanup on cancel/error. | Only for small pure/dependency-injected slices; do not fully move yet. | `src/content/files/fileAttachPipeline.js` |
 | `src/content/content.js` | Paste/beforeinput/drop/file-input flow | `maybeHandleBeforeInput()` 217 lines, `maybeHandlePaste()` 171, `maybeHandleDrop()` 74, `maybeHandleFileInputChange()` 120 | Browser event ordering differs by site and browser. File, text, and generated attachment paths overlap. | Raw paste lands before rewrite, selection/caret loss, double insertion, missed Firefox event shape. | Yes, staged. | `src/content/input/beforeInputInterceptor.js`, `pasteInterceptor.js`, `dropInterceptor.js` |
 | `src/content/content.js` | Submit/send/typed rewrite flow | `maybeHandleSubmit()` 183 lines, `maybeHandleFallbackSendKey()` 219, `maybeHandleTypedSecrets()` 236 | This is the last protection boundary before send. It mixes policy, analysis, redaction, modal decisions, and rewrite verification. | Send proceeds with raw secret, Allow Once reopens, policy order bug, stale analysis after editor changed. | Partially; keep policy order stable. | `src/content/input/submitGuard.js`, `typedScanController.js` |
 | `src/content/content.js` | Rewrite verification | `evaluateComposerVerificationCandidates()` 160, `verifyComposerRewriteSafe()` 68, `applyComposerText()` 111, `rewriteComposerTransactionally()` 70 | Correctness depends on multiple DOM text views and raw-secret absence. | False failure modal, accepting partial rewrite, line-collapse bugs, raw+placeholder duplicate. | Yes, as pure-ish verifier plus DOM writer wrapper. | `src/content/input/rewriteVerifier.js`, `editorWriter.js` |
@@ -68,21 +68,26 @@ Top-level metrics from the current tree:
 
 The roadmap should be implemented as small PRs with no runtime behavior changes unless a PR explicitly says otherwise. Keep the current content-script global/IIFE loading model unless a separate build-system PR proves a module/bundler migration is safe for Chrome and Firefox MV3.
 
-### Current status after PR 4F
+### Current status after PR 4I
 
-As of PR 4F, PR 1 through PR 3 are substantially implemented. PR 4 is partially implemented through small behavior-preserving slices:
+As of PR 4I, PR 1 through PR 3 are substantially implemented. PR 4 has made strong progress through small behavior-preserving slices:
 - PR 4A added the `src/content/files/fileAttachPipeline.js` shell.
 - PR 4B pinned file attach behavior with focused regression coverage.
 - PR 4C extracted `runSanitizedPayloadHandoffOrder()`.
 - PR 4D extracted `classifyPostHandoffResult()`.
 - PR 4E extracted `classifyFileAttachDisposition()`.
 - PR 4F extracted `classifyPendingAttachFallbackDecision()`.
+- PR 4G extracted `runSanitizedFileAttachFlow()`.
+- PR 4H extracted `classifyFileAttachPreflightPlan()`.
+- PR 4I extracted `classifyStreamingAttachPlan()`.
 
-`maybeHandleLocalFileInsert()` still remains in `src/content/content.js` and still owns the dangerous side effects: event consumption, raw blocking, file reads, streaming redaction, fallback insertion, pending attach queueing, browser/file-input behavior, and UI, badge, overlay, and fail-closed side effects.
+`FileAttachPipeline` now contains pure/dependency-injected helpers for sanitized payload metadata, processing-stage controls, handoff ordering, post-handoff classification, disposition planning, pending fallback classification, sanitized attach orchestration, preflight/status planning, and streaming attach planning.
 
-PR 5 response rehydration extraction has not started. PR 6 debug logger extraction has not started. PR 7 dead-code removal has not started and should remain blocked until production call-graph evidence, focused coverage, and manual browser QA are stronger.
+`maybeHandleLocalFileInsert()` still remains in `src/content/content.js` and should not be fully moved yet. It intentionally owns event consumption, raw blocking/pass-through decisions, local file reads, streaming redaction, browser/file-input behavior, pending attach queue mutation, fallback insertion, UI, badge, overlay updates, fail-closed handling, and provider-specific Gemini/Grok glue.
 
-Next safe step: do not start PR 5 yet. Continue PR 4 only if another small pure helper exists; otherwise pause PR 4 and run a manual browser QA / human review checkpoint before moving more side-effectful file attach code.
+Remaining file attach work is mostly side-effectful and needs a separate design pass before more extraction. PR 5 response rehydration extraction should not start until the file attach side-effect boundaries have been reviewed. PR 6 debug logger extraction has not started. PR 7 dead-code removal has not started and should remain blocked until production call-graph evidence, focused coverage, and manual browser QA are stronger.
+
+Next safe step: do not do another blind extraction. Prefer either a manual browser QA checkpoint for file attach flows or a short design note that maps the remaining file attach side-effect boundaries and ownership rules. When running browser validation, run `npm run smoke:chrome` and `npm run qa:browser` sequentially because they can conflict on shared Chrome build/temp state.
 
 ### PR 1: Extract constants, labels, and lightweight helpers only
 
