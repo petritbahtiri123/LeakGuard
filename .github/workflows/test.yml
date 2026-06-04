@@ -60,7 +60,7 @@ jobs:
 
       - name: Upload supply-chain reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: supply-chain-reports
           path: artifacts/supply-chain/
@@ -78,7 +78,7 @@ jobs:
 
       - name: Upload runtime size report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: runtime-size-report
           path: artifacts/runtime-budgets/
@@ -96,7 +96,7 @@ jobs:
 
       - name: Upload browser smoke timings
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: browser-smoke-timings
           path: artifacts/runtime-budgets/smoke-timings.jsonl

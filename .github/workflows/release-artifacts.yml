@@ -43,7 +43,7 @@ jobs:
         run: npm run release:artifacts
 
       - name: Upload release packages and checksums
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: leakguard-release-artifacts
           path: |
