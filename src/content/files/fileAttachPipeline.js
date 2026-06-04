@@ -256,6 +256,62 @@
     };
   }
 
+  function classifyStreamingAttachPlan(options = {}) {
+    const context = options.context || "";
+    const isGeminiDrop = options.isGeminiDrop === true;
+    const isGrokDrop = options.isGrokDrop === true;
+    const streamResultAction = options.streamResultAction || "";
+    const hasSanitizedFile = options.hasSanitizedFile === true;
+    const provider = isGeminiDrop ? "gemini" : isGrokDrop ? "grok" : "";
+
+    return {
+      shouldContinueStreamingAttach: streamResultAction === "redacted" && hasSanitizedFile,
+      blockedResult: {
+        shouldBlock: streamResultAction === "blocked",
+        reason: "streaming_file_blocked"
+      },
+      failedResult: {
+        shouldBlock: streamResultAction !== "blocked" && (streamResultAction !== "redacted" || !hasSanitizedFile),
+        reason: "streaming_file_redaction_failed",
+        title: "Raw file upload blocked",
+        message: "LeakGuard blocked raw file upload because streaming redaction failed."
+      },
+      preparingStatus: {
+        processingStatus: "Preparing sanitized upload...",
+        processingProgress: "Complete",
+        processingBlocking: true
+      },
+      pendingAttach: {
+        shouldAttempt: provider !== "",
+        provider,
+        detailsStage: provider ? `${provider}:streaming-pending-user-upload-input` : "",
+        strategy: provider ? `${provider}-streaming-pending-sanitized-file-handoff` : "",
+        queueFailureReason: provider ? `${provider}_pending_queue_failed` : "",
+        queueFailureTitle: "Raw file upload blocked",
+        queueFailureMessage:
+          provider === "gemini"
+            ? "LeakGuard sanitized the large file but could not queue Gemini pending attach."
+            : provider === "grok"
+              ? "LeakGuard sanitized the large file but could not queue Grok pending attach."
+              : ""
+      },
+      genericAttach: {
+        shouldAttempt: provider === "",
+        fileStrategy: "streaming-sanitized-file-handoff",
+        textStrategy: "streaming-sanitized-text-fallback",
+        defaultSuccessStrategy: "streaming-sanitized-file-handoff",
+        failureReason: "streaming_sanitized_handoff_failed",
+        skipFallbackReason: "firefox_gemini_file_input_replacement_failed",
+        failureTitle: "Raw file upload blocked",
+        failureMessage: "LeakGuard blocked raw file upload. Sanitized streaming file handoff failed."
+      },
+      dispositionOptions: {
+        forceDmzAttached: true,
+        forceAttachedBadge: true
+      }
+    };
+  }
+
   async function runSanitizedFileAttachFlow(options = {}) {
     const context = options.context || "";
     const handoffResult = await runSanitizedPayloadHandoffOrder({
@@ -355,6 +411,7 @@
     classifyFileAttachDisposition,
     classifyPendingAttachFallbackDecision,
     classifyFileAttachPreflightPlan,
+    classifyStreamingAttachPlan,
     runSanitizedFileAttachFlow,
     runSanitizedPayloadHandoffOrder
   };

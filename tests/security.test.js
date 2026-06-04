@@ -507,6 +507,7 @@ function testFileAttachPipelineStaysPureAndContentOwnsFileAttachSideEffects() {
       fileAttachPipelineSource.includes("classifyPendingAttachFallbackDecision") &&
       fileAttachPipelineSource.includes("classifyFileAttachDisposition") &&
       fileAttachPipelineSource.includes("classifyFileAttachPreflightPlan") &&
+      fileAttachPipelineSource.includes("classifyStreamingAttachPlan") &&
       fileAttachPipelineSource.includes("runSanitizedPayloadHandoffOrder") &&
       fileAttachPipelineSource.includes("runSanitizedFileAttachFlow"),
     "FileAttachPipeline should remain limited to data construction, classification, and injected callbacks"
