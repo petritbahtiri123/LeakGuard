@@ -212,6 +212,97 @@
     };
   }
 
+  async function runSanitizedFileAttachFlow(options = {}) {
+    const context = options.context || "";
+    const handoffResult = await runSanitizedPayloadHandoffOrder({
+      context,
+      tryDropHandoff: options.tryDropHandoff,
+      trySanitizedHandoff: options.trySanitizedHandoff,
+      shouldSkipFallback: options.shouldSkipFallback,
+      skipFallbackReason: options.skipFallbackReason,
+      insertFallbackText: options.insertFallbackText,
+      fileStrategy: options.fileStrategy,
+      textStrategy: options.textStrategy,
+      failedReason: options.failedReason
+    });
+    const handoffClassification = classifyPostHandoffResult({
+      handoffResult,
+      context,
+      allowPendingFallback: options.allowPendingFallback === true,
+      defaultSuccessStrategy: options.defaultSuccessStrategy || "sanitized-file-handoff",
+      failureReason: options.failureReason || "sanitized_file_handoff_failed",
+      cancellationReason: options.cancellationReason,
+      treatCancellation: options.treatCancellation
+    });
+
+    if (!handoffClassification.ok) {
+      if (handoffClassification.reason === (options.cancellationReason || "sanitized_text_cancelled")) {
+        return {
+          action: "cancelled",
+          handled: handoffClassification.handled,
+          ok: false,
+          reason: handoffClassification.reason,
+          handoffResult,
+          handoffClassification
+        };
+      }
+
+      const getPendingAttachFallbackOptions =
+        typeof options.getPendingAttachFallbackOptions === "function"
+          ? options.getPendingAttachFallbackOptions
+          : () => ({});
+      const pendingOptions = getPendingAttachFallbackOptions(handoffClassification) || {};
+      const pendingFallbackDecision = classifyPendingAttachFallbackDecision({
+        handoffClassification,
+        pendingAttachEnabled: pendingOptions.pendingAttachEnabled === true,
+        adapterId: pendingOptions.adapterId
+      });
+
+      if (pendingFallbackDecision.shouldAttemptPendingFallback) {
+        return {
+          action: "pending",
+          handled: handoffClassification.handled,
+          ok: true,
+          strategy: pendingFallbackDecision.strategy,
+          reason: pendingFallbackDecision.reason,
+          pendingFallbackDecision,
+          pendingAttachOptions: pendingOptions,
+          handoffResult,
+          handoffClassification
+        };
+      }
+
+      return {
+        action: "fail-closed",
+        handled: handoffClassification.handled,
+        ok: false,
+        reason: handoffClassification.reason,
+        pendingFallbackDecision,
+        pendingAttachOptions: pendingOptions,
+        handoffResult,
+        handoffClassification
+      };
+    }
+
+    const disposition = classifyFileAttachDisposition({
+      handoffClassification,
+      context,
+      usesDmzOverlay: options.usesDmzOverlay === true,
+      forceDmzAttached: options.forceDmzAttached === true,
+      forceAttachedBadge: options.forceAttachedBadge === true
+    });
+
+    return {
+      action: "success",
+      handled: handoffClassification.handled,
+      ok: true,
+      strategy: handoffClassification.strategy,
+      disposition,
+      handoffResult,
+      handoffClassification
+    };
+  }
+
   root.PWM.FileAttachPipeline = {
     originalFileMetadataFromLocalFile,
     createSanitizedPayload,
@@ -219,6 +310,7 @@
     classifyPostHandoffResult,
     classifyFileAttachDisposition,
     classifyPendingAttachFallbackDecision,
+    runSanitizedFileAttachFlow,
     runSanitizedPayloadHandoffOrder
   };
 

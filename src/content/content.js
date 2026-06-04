@@ -9500,50 +9500,52 @@
       analysis,
       result
     });
-    const handoffResult = await globalThis.PWM.FileAttachPipeline.runSanitizedPayloadHandoffOrder({
+    const attachFlow = await globalThis.PWM.FileAttachPipeline.runSanitizedFileAttachFlow({
       context,
       tryDropHandoff: () =>
         driver.handoff(payload, { event, input, context, driver, composerResolved: true }),
       trySanitizedHandoff: () => handOffSanitizedLocalFile(event, input, sanitizedFile, context),
       shouldSkipFallback: () => context === "file-input" && isFirefoxRuntime() && isGeminiHost(),
       skipFallbackReason: "firefox_gemini_file_input_replacement_failed",
-      insertFallbackText: () => driver.insertSanitizedText(payload, { event, input, context, driver })
-    });
-    const handoffClassification = globalThis.PWM.FileAttachPipeline.classifyPostHandoffResult({
-      handoffResult,
-      context,
+      insertFallbackText: () => driver.insertSanitizedText(payload, { event, input, context, driver }),
       allowPendingFallback: context === "drop" && Boolean(sanitizedFile),
       defaultSuccessStrategy: "sanitized-file-handoff",
-      failureReason: "sanitized_file_handoff_failed"
+      failureReason: "sanitized_file_handoff_failed",
+      usesDmzOverlay: driver.usesDmzOverlay === true,
+      getPendingAttachFallbackOptions: (handoffClassification) => {
+        const pendingAdapter = getFileHandoffAdapterForLocation();
+        return {
+          pendingAdapter,
+          pendingAttachEnabled:
+            handoffClassification.shouldContinueFallback &&
+            isFileHandoffAdapterPendingAttachEnabled(pendingAdapter),
+          adapterId: pendingAdapter?.id
+        };
+      }
     });
+    const handoffResult = attachFlow.handoffResult;
+    const handoffClassification = attachFlow.handoffClassification;
 
-    if (!handoffClassification.ok) {
-      if (handoffClassification.reason === "sanitized_text_cancelled") {
+    if (attachFlow.action !== "success") {
+      if (attachFlow.action === "cancelled") {
         if (optimizedStatus) {
           clearLocalPayloadOptimizationStatus(sizeInfo, "cancelled");
         }
         hideProcessing(handoffClassification.hideProcessingReason);
         return {
-          handled: handoffClassification.handled,
+          handled: attachFlow.handled,
           ok: false,
-          reason: handoffClassification.reason
+          reason: attachFlow.reason
         };
       }
 
       if (optimizedStatus) {
         clearLocalPayloadOptimizationStatus(sizeInfo, "failed");
       }
-      const pendingAdapter = getFileHandoffAdapterForLocation();
-      const pendingFallbackDecision =
-        globalThis.PWM.FileAttachPipeline.classifyPendingAttachFallbackDecision({
-          handoffClassification,
-          pendingAttachEnabled:
-            handoffClassification.shouldContinueFallback &&
-            isFileHandoffAdapterPendingAttachEnabled(pendingAdapter),
-          adapterId: pendingAdapter?.id
-        });
+      const pendingAdapter = attachFlow.pendingAttachOptions?.pendingAdapter;
+      const pendingFallbackDecision = attachFlow.pendingFallbackDecision || {};
       if (
-        pendingFallbackDecision.shouldAttemptPendingFallback &&
+        attachFlow.action === "pending" &&
         queuePendingSanitizedFileHandoff(
           pendingAdapter,
           event,
@@ -9559,14 +9561,14 @@
         hideProcessing("pending");
         hideDmzOverlay();
         return {
-          handled: handoffClassification.handled,
+          handled: attachFlow.handled,
           ok: true,
-          strategy: pendingFallbackDecision.strategy
+          strategy: attachFlow.strategy
         };
       }
       debugReveal("file-handoff:fail-closed", {
         context,
-        reason: handoffClassification.reason,
+        reason: attachFlow.reason,
         sanitizedFile: describeFileForDebug(sanitizedFile)
       });
       if (handoffClassification.shouldFailProcessing) {
@@ -9581,20 +9583,16 @@
       );
       refreshBadgeFromCurrentInput();
       return {
-        handled: handoffClassification.handled,
+        handled: attachFlow.handled,
         ok: false,
-        reason: handoffClassification.reason
+        reason: attachFlow.reason
       };
     }
 
     if (optimizedStatus) {
       clearLocalPayloadOptimizationStatus(sizeInfo, "complete");
     }
-    const disposition = globalThis.PWM.FileAttachPipeline.classifyFileAttachDisposition({
-      handoffClassification,
-      context,
-      usesDmzOverlay: driver.usesDmzOverlay === true
-    });
+    const disposition = attachFlow.disposition;
     if (disposition.shouldSetDmzAttached) {
       setDmzOverlayState(disposition.dmzStatus, disposition.dmzMode);
     }
