@@ -5496,10 +5496,6 @@
     }
   }
 
-  function originalFileMetadataFromLocalFile(localFile) {
-    return globalThis.PWM.FileAttachPipeline.originalFileMetadataFromLocalFile(localFile);
-  }
-
   function createSanitizedPayload(sanitizedFile, redactedText, localFile, analysis, result) {
     return globalThis.PWM.FileAttachPipeline.createSanitizedPayload(
       sanitizedFile,
@@ -5508,10 +5504,6 @@
       analysis,
       result
     );
-  }
-
-  function createGeminiSanitizedPayload(sanitizedFile, redactedText, localFile, analysis, result) {
-    return createSanitizedPayload(sanitizedFile, redactedText, localFile, analysis, result);
   }
 
   function fallbackLanguageFromFileName(fileName) {
