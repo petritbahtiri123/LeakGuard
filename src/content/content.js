@@ -463,14 +463,7 @@
   }
 
   function isDebugEnabled() {
-    try {
-      return (
-        window.localStorage?.getItem("pwm:debug") === "1" ||
-        window.sessionStorage?.getItem("pwm:debug") === "1"
-      );
-    } catch {
-      return false;
-    }
+    return Boolean(globalThis.PWM?.DebugLogger?.isDebugEnabled?.({ root: window }));
   }
 
   function summarizeDebugText(text) {
@@ -508,16 +501,11 @@
     if (!isDebugEnabled()) return;
 
     const snapshot = collectComposerDebugSnapshot(input, expected, writeText);
-    console.groupCollapsed(`[PWM] ${label}`);
-    console.log(snapshot);
-    console.groupEnd();
+    globalThis.PWM?.DebugLogger?.debugSnapshot?.(label, snapshot, { root: window });
   }
 
   function debugReveal(label, payload) {
-    if (!isDebugEnabled()) return;
-    console.groupCollapsed(`[PWM] ${label}`);
-    console.log(payload);
-    console.groupEnd();
+    globalThis.PWM?.DebugLogger?.debugEvent?.(label, payload, { root: window });
   }
 
   function getSafeElementAttribute(el, name) {

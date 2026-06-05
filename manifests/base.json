@@ -85,6 +85,7 @@
         "content/rehydration/placeholderRehydrator.js",
         "content/rehydration/responseObserver.js",
         "content/rehydration/revealController.js",
+        "content/diagnostics/debugLogger.js",
         "content/content.js"
       ],
       "css": ["content/overlay.css"],

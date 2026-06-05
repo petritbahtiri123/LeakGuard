@@ -199,6 +199,24 @@ function stripContentDebugDiagnostics(targetRoot) {
   fs.writeFileSync(contentPath, source);
 }
 
+function stripDebugLoggerDiagnostics(targetRoot) {
+  const loggerPath = path.join(targetRoot, "content", "diagnostics", "debugLogger.js");
+  fs.writeFileSync(
+    loggerPath,
+    `(function () {
+  const root = typeof globalThis !== "undefined" ? globalThis : window;
+  root.PWM = root.PWM || {};
+  root.PWM.DebugLogger = {
+    isDebugEnabled: () => false,
+    sanitizeDebugPayload: () => ({ type: "debug-disabled" }),
+    debugEvent: () => {},
+    debugSnapshot: () => {}
+  };
+})();
+`
+  );
+}
+
 function stripSourceMappingUrls(targetRoot) {
   const sourceMapPattern = /(?:\/\/[#@]\s*sourceMappingURL=.*|\/\*[#@]\s*sourceMappingURL=[\s\S]*?\*\/)/g;
   for (const file of walkFiles(targetRoot)) {
@@ -333,6 +351,7 @@ function buildTarget(browser, mode = "consumer") {
   }
 
   stripContentDebugDiagnostics(targetRoot);
+  stripDebugLoggerDiagnostics(targetRoot);
   copyOnnxRuntime(targetRoot);
   stripSourceMappingUrls(targetRoot);
   assertNoReleaseSourceMaps(targetRoot);
