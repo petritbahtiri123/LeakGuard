@@ -58,8 +58,12 @@ function walkFiles(rootDir) {
 
 function assertReleaseArtifactsAreSanitized(results) {
   const sourceContent = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
+  const debugLoggerSource = fs.readFileSync(
+    path.join(repoRoot, "src/content/diagnostics/debugLogger.js"),
+    "utf8"
+  );
   assert.ok(
-    sourceContent.includes("debugReveal") && sourceContent.includes("pwm:debug"),
+    sourceContent.includes("debugReveal") && debugLoggerSource.includes("pwm:debug"),
     "developer source diagnostics should remain available outside release builds"
   );
 
@@ -102,6 +106,25 @@ function assertReleaseArtifactsAreSanitized(results) {
           `${result.target} release ${relativeContentScript} should not contain ${banned}`
         );
       }
+    }
+
+    const debugLoggerSource = fs.readFileSync(
+      path.join(result.targetRoot, "content/diagnostics/debugLogger.js"),
+      "utf8"
+    );
+    for (const banned of [
+      "pwm:debug",
+      "console.groupCollapsed",
+      "console.groupEnd",
+      "console.log",
+      "localStorage",
+      "sessionStorage"
+    ]) {
+      assert.strictEqual(
+        debugLoggerSource.includes(banned),
+        false,
+        `${result.target} release debug logger should not contain ${banned}`
+      );
     }
   }
 }
@@ -359,6 +382,7 @@ async function run() {
   const placeholderRehydratorIndex = contentScripts.indexOf("content/rehydration/placeholderRehydrator.js");
   const responseObserverIndex = contentScripts.indexOf("content/rehydration/responseObserver.js");
   const revealControllerIndex = contentScripts.indexOf("content/rehydration/revealController.js");
+  const debugLoggerIndex = contentScripts.indexOf("content/diagnostics/debugLogger.js");
   const contentIndex = contentScripts.indexOf("content/content.js");
 
   assert.ok(knownSecretReuseIndex > -1, "content scripts should include known-secret reuse helpers");
@@ -382,6 +406,7 @@ async function run() {
   assert.ok(placeholderRehydratorIndex > -1, "content scripts should include placeholder rehydration helpers");
   assert.ok(responseObserverIndex > -1, "content scripts should include response observer helpers");
   assert.ok(revealControllerIndex > -1, "content scripts should include reveal controller helpers");
+  assert.ok(debugLoggerIndex > -1, "content scripts should include raw-safe debug logger helpers");
   const adapterOrderAligned = adapterIndexes.every(
     (index, offset) => offset === 0 || adapterIndexes[offset - 1] < index
   );
@@ -402,7 +427,8 @@ async function run() {
       fileAttachPipelineIndex < placeholderRehydratorIndex &&
       placeholderRehydratorIndex < responseObserverIndex &&
       responseObserverIndex < revealControllerIndex &&
-      revealControllerIndex < contentIndex,
+      revealControllerIndex < debugLoggerIndex &&
+      debugLoggerIndex < contentIndex,
     "file scanner, streaming redactor, file paste helper, file handoff, pure helper, adapter, and content script injection order should stay aligned"
   );
   assert.strictEqual(
