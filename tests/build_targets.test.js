@@ -370,6 +370,7 @@ async function run() {
   const adapterScripts = [
     "content/adapters/chatgptAdapter.js",
     "content/adapters/openaiAdapter.js",
+    "content/adapters/geminiDiagnosticsAdapter.js",
     "content/adapters/geminiAdapter.js",
     "content/adapters/claudeAdapter.js",
     "content/adapters/grokAdapter.js",

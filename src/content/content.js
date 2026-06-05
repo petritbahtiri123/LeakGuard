@@ -496,6 +496,29 @@
     globalThis.PWM?.DebugLogger?.debugEvent?.(label, payload, { root: window });
   }
 
+  function getGeminiDiagnosticsAdapter() {
+    return globalThis.PWM?.SiteAdapters?.GeminiDiagnosticsAdapter || null;
+  }
+
+  function runGeminiUiDiagnostics(reason = "") {
+    if (!isGeminiHost() || !isDebugEnabled()) return false;
+    const diagnostics = getGeminiDiagnosticsAdapter();
+    if (!diagnostics?.scanGeminiUi) return false;
+    try {
+      debugReveal("gemini-diagnostics:ui-map", {
+        reason,
+        ...diagnostics.scanGeminiUi(document)
+      });
+      return true;
+    } catch (error) {
+      debugReveal("gemini-diagnostics:ui-map-failed", {
+        reason,
+        errorName: error?.name || "Error"
+      });
+      return false;
+    }
+  }
+
   function normalizeFileDebugString(value) {
     return String(value || "")
       .toLowerCase()
@@ -10947,6 +10970,7 @@
     if (isTopFrame) {
       refreshBadgeFromCurrentInput();
     }
+    runGeminiUiDiagnostics("body-ready");
   }
 
   async function boot() {
@@ -10954,6 +10978,7 @@
     await initState();
     finishBodyReadyBoot();
     installNavigationWatchers();
+    runGeminiUiDiagnostics("boot");
 
     if (!document.body) {
       document.addEventListener("DOMContentLoaded", finishBodyReadyBoot, { once: true });

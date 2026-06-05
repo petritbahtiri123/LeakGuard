@@ -7,6 +7,7 @@ const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.j
 const adapterSourceFiles = [
   "src/content/adapters/chatgptAdapter.js",
   "src/content/adapters/openaiAdapter.js",
+  "src/content/adapters/geminiDiagnosticsAdapter.js",
   "src/content/adapters/geminiAdapter.js",
   "src/content/adapters/claudeAdapter.js",
   "src/content/adapters/grokAdapter.js",
@@ -39,12 +40,14 @@ require(path.join(repoRoot, "src/content/files/fileTransferPolicy.js"));
 require(path.join(repoRoot, "src/content/adapters/hostMatching.js"));
 require(path.join(repoRoot, "src/content/adapters/chatgptAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/openaiAdapter.js"));
+require(path.join(repoRoot, "src/content/adapters/geminiDiagnosticsAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/geminiAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/claudeAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/grokAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/xAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/index.js"));
 require(path.join(repoRoot, "src/content/diagnostics/safeSnapshots.js"));
+require(path.join(repoRoot, "src/content/diagnostics/debugLogger.js"));
 require(path.join(repoRoot, "src/content/files/fileAttachPipeline.js"));
 require(path.join(repoRoot, "src/content/file_handoff_flow.js"));
 require(path.join(repoRoot, "src/shared/fileScanner.js"));
@@ -1720,16 +1723,29 @@ function createHandoffHarness({
   const shadowHosts = shadowInputs.map((input) => ({
     shadowRoot: {
       querySelectorAll(selector) {
-        if (selector === "input[type='file']") return [input];
+        if (
+          selector === "input[type='file']" ||
+          selector === 'input[type="file"]' ||
+          selector === 'input[type="file"][name="Filedata"]' ||
+          selector === 'input[type="file"][multiple]'
+        ) {
+          return [input];
+        }
       if (
         selector === 'button[aria-label="Add files"]' ||
         selector === 'button[aria-label="Open upload file menu"]' ||
+        selector === 'button[aria-label*="upload" i]' ||
+        selector === 'button[aria-label*="attach" i]' ||
+        selector === 'button[aria-label*="add" i]' ||
         selector === 'button[data-test-id="local-images-files-uploader-button"]' ||
         selector === 'button[role="menuitem"][aria-label*="Upload files"]' ||
         selector === "button.upload-card-button" ||
         selector === "mat-icon.upload-icon" ||
         selector === '[role="button"][aria-label*="add files" i]' ||
           selector === '[role="button"][aria-label*="upload" i]' ||
+          selector === '[role="button"][aria-label*="attach" i]' ||
+          selector === "[data-test-id*='upload' i]" ||
+          selector === "[data-test-id*='attach' i]" ||
           selector === 'button[aria-label*="upload" i]' ||
           selector === 'button[aria-label*="file" i]' ||
           selector === 'button[aria-label*="attach" i]' ||
@@ -1831,7 +1847,14 @@ function createHandoffHarness({
     },
     querySelectorAll(selector) {
       stats.documentQueries += 1;
-      if (selector === "input[type='file']") return fileInputs;
+      if (
+        selector === "input[type='file']" ||
+        selector === 'input[type="file"]' ||
+        selector === 'input[type="file"][name="Filedata"]' ||
+        selector === 'input[type="file"][multiple]'
+      ) {
+        return fileInputs;
+      }
       if (
         selector === ".cdk-overlay-container" ||
         selector === ".cdk-overlay-pane" ||
@@ -1862,9 +1885,15 @@ function createHandoffHarness({
       if (
         selector === 'button[aria-label="Add files"]' ||
         selector === 'button[aria-label="Open upload file menu"]' ||
+        selector === 'button[aria-label*="upload" i]' ||
+        selector === 'button[aria-label*="attach" i]' ||
+        selector === 'button[aria-label*="add" i]' ||
         selector === "button.upload-card-button" ||
         selector === '[role="button"][aria-label*="add files" i]' ||
         selector === '[role="button"][aria-label*="upload" i]' ||
+        selector === '[role="button"][aria-label*="attach" i]' ||
+        selector === "[data-test-id*='upload' i]" ||
+        selector === "[data-test-id*='attach' i]" ||
         selector === 'button[aria-label*="upload" i]' ||
         selector === 'button[aria-label*="file" i]' ||
         selector === 'button[aria-label*="attach" i]' ||
@@ -2542,6 +2571,288 @@ async function testGeminiDropUsesDiscoveredFileInputHandoff() {
     debugEvents.some((entry) => entry.label === "file-handoff:assignment-success"),
     "expected Gemini file upload handoff to assign sanitized file input"
   );
+}
+
+function createDiagnosticsElement({
+  tagName = "button",
+  ariaLabel = "",
+  role = "",
+  text = "",
+  type = "",
+  name = "",
+  className = "",
+  href = "",
+  download = "",
+  multiple = false,
+  hidden = false,
+  disabled = false,
+  dataTestId = ""
+} = {}) {
+  return {
+    nodeType: 1,
+    tagName: String(tagName).toUpperCase(),
+    ariaLabel,
+    role,
+    innerText: text,
+    textContent: text,
+    type,
+    name,
+    className,
+    href,
+    multiple,
+    hidden,
+    disabled,
+    getAttribute(attributeName) {
+      if (attributeName === "aria-label") return ariaLabel;
+      if (attributeName === "role") return role;
+      if (attributeName === "type") return type;
+      if (attributeName === "name") return name;
+      if (attributeName === "class") return className;
+      if (attributeName === "contenteditable") return role === "textbox" ? "true" : "";
+      if (attributeName === "href") return href;
+      if (attributeName === "download") return download;
+      if (attributeName === "data-test-id") return dataTestId;
+      return "";
+    },
+    hasAttribute(attributeName) {
+      if (attributeName === "download") return download !== "";
+      if (attributeName === "data-test-id") return dataTestId !== "";
+      return false;
+    },
+    matches(selector) {
+      const lowerLabel = ariaLabel.toLowerCase();
+      const lowerTestId = dataTestId.toLowerCase();
+      if (selector === 'button[aria-label="Open upload file menu"]') {
+        return this.tagName === "BUTTON" && ariaLabel === "Open upload file menu";
+      }
+      if (selector === 'button[aria-label*="upload" i]') {
+        return this.tagName === "BUTTON" && lowerLabel.includes("upload");
+      }
+      if (selector === 'button[aria-label*="attach" i]') {
+        return this.tagName === "BUTTON" && lowerLabel.includes("attach");
+      }
+      if (selector === 'button[aria-label*="add" i]') {
+        return this.tagName === "BUTTON" && lowerLabel.includes("add");
+      }
+      if (selector === '[role="button"][aria-label*="upload" i]') {
+        return role === "button" && lowerLabel.includes("upload");
+      }
+      if (selector === '[role="button"][aria-label*="attach" i]') {
+        return role === "button" && lowerLabel.includes("attach");
+      }
+      if (selector === "button.upload-card-button") {
+        return this.tagName === "BUTTON" && /\bupload-card-button\b/.test(className);
+      }
+      if (selector === "mat-icon.upload-icon") {
+        return this.tagName === "MAT-ICON" && /\bupload-icon\b/.test(className);
+      }
+      if (selector === "[data-test-id*='upload' i]") return lowerTestId.includes("upload");
+      if (selector === "[data-test-id*='attach' i]") return lowerTestId.includes("attach");
+      if (selector === 'rich-textarea [contenteditable="true"]') return this.tagName === "RICH-TEXTAREA";
+      if (selector === '[contenteditable="true"][role="textbox"]') {
+        return this.getAttribute("contenteditable") === "true" && role === "textbox";
+      }
+      if (selector === '[role="textbox"][aria-label*="prompt" i]') {
+        return role === "textbox" && lowerLabel.includes("prompt");
+      }
+      if (selector === '[role="textbox"][aria-label*="message" i]') {
+        return role === "textbox" && lowerLabel.includes("message");
+      }
+      if (selector === "div.ql-editor") return this.tagName === "DIV" && /\bql-editor\b/.test(className);
+      if (selector === "textarea") return this.tagName === "TEXTAREA";
+      if (selector === '[role="menuitem"]') return role === "menuitem";
+      if (selector === '[role="option"]') return role === "option";
+      if (selector === ".cdk-overlay-pane button") return this.tagName === "BUTTON" && /\bcdk-overlay-pane\b/.test(className);
+      if (selector === ".mat-mdc-menu-panel button") return this.tagName === "BUTTON" && /\bmat-mdc-menu-panel\b/.test(className);
+      if (selector === "mat-bottom-sheet-container button") {
+        return this.tagName === "BUTTON" && /\bmat-bottom-sheet-container\b/.test(className);
+      }
+      if (selector === '[aria-label*="file" i]') return lowerLabel.includes("file");
+      if (selector === '[aria-label*="more uploads" i]') return lowerLabel.includes("more uploads");
+      if (selector === 'input[type="file"][name="Filedata"]') return type === "file" && name === "Filedata";
+      if (selector === 'input[type="file"][multiple]') return type === "file" && multiple;
+      if (selector === 'input[type="file"]') return type === "file";
+      if (selector === "[data-drop-target]") return dataTestId === "drop-target";
+      if (selector === "[data-upload-drop-target]") return dataTestId === "upload-drop-target";
+      if (selector === "[aria-label*='drop' i]") return lowerLabel.includes("drop");
+      if (selector === "[aria-label*='upload' i]") return lowerLabel.includes("upload");
+      if (selector === ".drop-zone") return /\bdrop-zone\b/.test(className);
+      if (selector === ".upload-drop-zone") return /\bupload-drop-zone\b/.test(className);
+      if (selector === "images-files-uploader") return this.tagName === "IMAGES-FILES-UPLOADER";
+      if (selector === "a[download]") return this.tagName === "A" && download !== "";
+      if (selector === 'a[href^="blob:"]') return this.tagName === "A" && href.startsWith("blob:");
+      if (selector === 'a[href^="data:"][download]') return this.tagName === "A" && href.startsWith("data:") && download !== "";
+      if (selector === 'button[aria-label*="download" i]') {
+        return this.tagName === "BUTTON" && lowerLabel.includes("download");
+      }
+      if (selector === '[role="button"][aria-label*="download" i]') {
+        return role === "button" && lowerLabel.includes("download");
+      }
+      if (selector === '[data-test-id*="download" i]') return lowerTestId.includes("download");
+      if (selector === "*") return true;
+      return false;
+    },
+    querySelectorAll() {
+      return [];
+    }
+  };
+}
+
+function createDiagnosticsRoot(elements) {
+  return {
+    querySelectorAll(selector) {
+      if (selector === "*") return elements;
+      return elements.filter((element) => element.matches?.(selector));
+    }
+  };
+}
+
+function testGeminiDiagnosticsDetectsNewPillPrompt() {
+  const diagnostics = globalThis.PWM.SiteAdapters.GeminiDiagnosticsAdapter;
+  const prompt = createDiagnosticsElement({
+    tagName: "div",
+    role: "textbox",
+    ariaLabel: "Enter a prompt here",
+    className: "ql-editor gemini-pill-input"
+  });
+
+  const result = diagnostics.scanGeminiUi(createDiagnosticsRoot([prompt]));
+
+  assert.strictEqual(result.summary.promptEditor, 1);
+  assert.strictEqual(result.categories.promptEditor[0].tagName, "div");
+  assert.strictEqual(result.categories.promptEditor[0].ariaLabel, "Enter a prompt here");
+}
+
+function testGeminiDiagnosticsDetectsPlusMenu() {
+  const diagnostics = globalThis.PWM.SiteAdapters.GeminiDiagnosticsAdapter;
+  const uploadButton = createDiagnosticsElement({
+    tagName: "button",
+    ariaLabel: "Add files",
+    dataTestId: "gemini-upload-menu-button"
+  });
+
+  const result = diagnostics.scanGeminiUi(createDiagnosticsRoot([uploadButton]));
+
+  assert.strictEqual(result.summary.plusUploadButton, 1);
+  assert.strictEqual(result.categories.plusUploadButton[0].ariaLabel, "Add files");
+}
+
+function testGeminiDiagnosticsDetectsMoreUploadsMenuAndDropTarget() {
+  const diagnostics = globalThis.PWM.SiteAdapters.GeminiDiagnosticsAdapter;
+  const moreUploads = createDiagnosticsElement({
+    tagName: "button",
+    role: "menuitem",
+    ariaLabel: "More Uploads",
+    className: "mat-mdc-menu-panel"
+  });
+  const dropTarget = createDiagnosticsElement({
+    tagName: "div",
+    role: "button",
+    ariaLabel: "Drop files to upload",
+    className: "upload-drop-zone"
+  });
+
+  const result = diagnostics.scanGeminiUi(createDiagnosticsRoot([moreUploads, dropTarget]));
+
+  assert.ok(result.summary.uploadOption >= 1);
+  assert.ok(result.summary.dropTarget >= 1);
+  assert.ok(result.categories.uploadOption.some((entry) => entry.ariaLabel === "More Uploads"));
+  assert.ok(result.categories.dropTarget.some((entry) => entry.ariaLabel === "Drop files to upload"));
+}
+
+function testGeminiDiagnosticsDetectsHiddenFileInput() {
+  const diagnostics = globalThis.PWM.SiteAdapters.GeminiDiagnosticsAdapter;
+  const fileInput = createDiagnosticsElement({
+    tagName: "input",
+    type: "file",
+    name: "Filedata",
+    hidden: true,
+    multiple: true
+  });
+
+  const result = diagnostics.scanGeminiUi(createDiagnosticsRoot([fileInput]));
+
+  assert.strictEqual(result.summary.fileInput, 1);
+  assert.strictEqual(result.categories.fileInput[0].input.multiple, true);
+  assert.strictEqual(result.categories.fileInput[0].state.hidden, true);
+}
+
+function testGeminiDiagnosticsDetectsBlobDownloadWithoutRawMetadata() {
+  const diagnostics = globalThis.PWM.SiteAdapters.GeminiDiagnosticsAdapter;
+  const rawSecret = "GeminiGeneratedSecretDownload12345";
+  const blobLink = createDiagnosticsElement({
+    tagName: "a",
+    href: `blob:https://gemini.google.com/${rawSecret}`,
+    download: `${rawSecret}.env`,
+    text: `Download ${rawSecret}`
+  });
+  const downloadButton = createDiagnosticsElement({
+    tagName: "button",
+    ariaLabel: "Download generated file",
+    dataTestId: "download-generated-file"
+  });
+
+  const result = diagnostics.scanGeminiUi(createDiagnosticsRoot([blobLink, downloadButton]));
+  const serialized = JSON.stringify(result);
+
+  assert.strictEqual(result.summary.generatedDownload, 2);
+  assert.ok(result.categories.generatedDownload.some((candidate) => candidate.hrefScheme === "blob"));
+  assert.strictEqual(serialized.includes(rawSecret), false);
+}
+
+function testGeminiDiagnosticsRunnerIsDebugGated() {
+  const debugEvents = [];
+  const fakeWindow = {
+    localStorage: {
+      enabled: false,
+      getItem(key) {
+        return key === "pwm:debug" && this.enabled ? "1" : null;
+      }
+    },
+    sessionStorage: { getItem: () => null }
+  };
+  const fakeGlobal = {
+    PWM: {
+      DebugLogger: globalThis.PWM.DebugLogger,
+      HostMatching: globalThis.PWM.HostMatching,
+      SiteAdapters: {
+        GeminiDiagnosticsAdapter: {
+          scanGeminiUi: () => ({
+            summary: { promptEditor: 1 },
+            categories: { promptEditor: [{ tagName: "div" }] }
+          })
+        }
+      }
+    }
+  };
+  const factory = new Function(
+    "globalThis",
+    "window",
+    "document",
+    "location",
+    "debugReveal",
+    [
+      extractFunctionSource(contentSource, "isDebugEnabled"),
+      extractFunctionSource(contentSource, "isGeminiHost"),
+      extractFunctionSource(contentSource, "getGeminiDiagnosticsAdapter"),
+      extractFunctionSource(contentSource, "runGeminiUiDiagnostics"),
+      "return { runGeminiUiDiagnostics };"
+    ].join("\n\n")
+  );
+  const { runGeminiUiDiagnostics } = factory(
+    fakeGlobal,
+    fakeWindow,
+    {},
+    { hostname: "gemini.google.com" },
+    (label, payload) => debugEvents.push({ label, payload })
+  );
+
+  assert.strictEqual(runGeminiUiDiagnostics("disabled"), false);
+  assert.strictEqual(debugEvents.length, 0);
+  fakeWindow.localStorage.enabled = true;
+  assert.strictEqual(runGeminiUiDiagnostics("enabled"), true);
+  assert.strictEqual(debugEvents.length, 1);
+  assert.strictEqual(debugEvents[0].label, "gemini-diagnostics:ui-map");
 }
 
 async function testGeminiStreamingHandoffUsesDiscoveredFileInput() {
@@ -12456,6 +12767,12 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testSanitizedFileHandoffDropIsIgnored();
   await testComposerTargetDropStillPassesComposer();
   await testGeminiDropUsesDiscoveredFileInputHandoff();
+  testGeminiDiagnosticsDetectsNewPillPrompt();
+  testGeminiDiagnosticsDetectsPlusMenu();
+  testGeminiDiagnosticsDetectsMoreUploadsMenuAndDropTarget();
+  testGeminiDiagnosticsDetectsHiddenFileInput();
+  testGeminiDiagnosticsDetectsBlobDownloadWithoutRawMetadata();
+  testGeminiDiagnosticsRunnerIsDebugGated();
   await testGeminiStreamingHandoffUsesDiscoveredFileInput();
   await testGeminiDropNeverClicksUploadFlowWhenInputAppearsAfterClick();
   await testGeminiDropNeverClicksExistingOverlayMenuItem();
