@@ -373,6 +373,7 @@
     documentRef: document,
     dispatchSanitizedFileEvent,
     downloadGeminiSanitizedFileFallback,
+    assignSafeFileAttachErrorMetadata,
     emitDebug: debugReveal,
     findGeminiFileInput,
     formatSanitizedFileFallbackText,
@@ -507,6 +508,11 @@
     return Boolean(text) && text.length <= 96 && !/[\\/]/.test(text) && !/[?#@]/.test(text);
   }
 
+  function isSafeFileDebugErrorCode(value) {
+    const text = String(value || "");
+    return Boolean(text) && text.length <= 48 && /^[A-Z0-9_:-]+$/i.test(text);
+  }
+
   function getFileDebugExtension(fileMeta) {
     const rawName = String(fileMeta?.name || "");
     if (!isSafeFileDebugToken(rawName) || rawName.includes("..")) return "";
@@ -560,6 +566,37 @@
     };
   }
 
+  function describeSafeFileAttachErrorMetadata(errorLike) {
+    if (!errorLike) return null;
+    const errorName = isSafeFileDebugToken(errorLike?.name) ? String(errorLike.name).slice(0, 48) : "Error";
+    const rawMessage =
+      typeof errorLike?.message === "string"
+        ? errorLike.message
+        : typeof errorLike === "string"
+          ? errorLike
+          : "";
+    const code = errorLike?.code;
+    const metadata = {
+      errorName,
+      messageLength: rawMessage.length
+    };
+    if (isSafeFileDebugErrorCode(code)) {
+      metadata.codeIfSafe = String(code).slice(0, 48);
+    }
+    return metadata;
+  }
+
+  function assignSafeFileAttachErrorMetadata(target, errorLike) {
+    if (!target || typeof target !== "object") return;
+    const metadata = describeSafeFileAttachErrorMetadata(errorLike);
+    if (!metadata) return;
+    target.errorName = metadata.errorName;
+    target.messageLength = metadata.messageLength;
+    if (metadata.codeIfSafe) {
+      target.codeIfSafe = metadata.codeIfSafe;
+    }
+  }
+
   function copySafeFileDebugScalar(output, key, value) {
     if (value === null || typeof value === "boolean") {
       output[key] = value;
@@ -585,14 +622,21 @@
       "changeEventDispatched",
       "chunks",
       "context",
+      "codeIfSafe",
+      "driver",
+      "errorName",
       "fastMaxBytes",
+      "failureReason",
       "findingsCount",
       "hardBlockBytes",
+      "handoffStage",
       "host",
       "hostname",
       "inputEventDispatched",
       "maxBytes",
+      "messageLength",
       "outcome",
+      "provider",
       "reason",
       "rendered",
       "site",
@@ -619,6 +663,10 @@
     if (source.originalFile) output.originalFile = describeSafeFileDebugMetadata(source.originalFile);
     if (source.input) output.input = describeSafeFileInputDebugMetadata(source.input);
     if (source.adapter) output.adapter = describeSafeFileHandoffAdapterDebugMetadata(source.adapter);
+    if (source.error) {
+      const errorMetadata = describeSafeFileAttachErrorMetadata(source.error);
+      if (errorMetadata) Object.assign(output, errorMetadata);
+    }
     if (Array.isArray(source.files)) {
       output.fileCount = source.files.length;
       output.files = source.files.map(describeSafeFileDebugMetadata).filter(Boolean);
@@ -4242,8 +4290,7 @@
       return Number(transfer.files?.length || 0) > 0 ? transfer : null;
     } catch (error) {
       if (details) {
-        details.errorMessage = error?.message || String(error);
-        details.errorStack = error?.stack || "";
+        assignSafeFileAttachErrorMetadata(details, error);
       }
       return null;
     }
@@ -5569,8 +5616,7 @@
       return Number(transfer.files?.length || 0) === sanitizedFiles.length ? transfer : null;
     } catch (error) {
       if (details) {
-        details.errorMessage = error?.message || String(error);
-        details.errorStack = error?.stack || "";
+        assignSafeFileAttachErrorMetadata(details, error);
       }
       return null;
     }
@@ -6313,7 +6359,7 @@
         finish(null);
       } catch (error) {
         details.failureReason = "prime_upload_target_failed";
-        details.errorMessage = error?.message || String(error || "");
+        assignSafeFileAttachErrorMetadata(details, error);
         finish(null);
       }
     })();
@@ -6666,8 +6712,7 @@
     } catch (error) {
       if (details) {
         details.failureReason = "sanitized_download_read_failed";
-        details.errorMessage = error?.message || String(error);
-        details.errorStack = error?.stack || "";
+        assignSafeFileAttachErrorMetadata(details, error);
       }
       return false;
     }
@@ -6683,7 +6728,7 @@
       if (!response?.ok) {
         if (details) {
           details.failureReason = "sanitized_download_failed";
-          details.errorMessage = response?.error || "Background download request failed.";
+          assignSafeFileAttachErrorMetadata(details, response?.error || "Background download request failed.");
         }
         return false;
       }
@@ -6704,8 +6749,7 @@
     } catch (error) {
       if (details) {
         details.failureReason = "sanitized_download_failed";
-        details.errorMessage = error?.message || String(error);
-        details.errorStack = error?.stack || "";
+        assignSafeFileAttachErrorMetadata(details, error);
       }
       return false;
     }
@@ -6717,19 +6761,15 @@
 
   function logSanitizedFileHandoffFailure(details, error) {
     const payload = {
-      ...(details || {}),
-      errorMessage: details?.errorMessage || error?.message || (error ? String(error) : ""),
-      errorStack: details?.errorStack || error?.stack || ""
+      ...(details || {})
     };
-    try {
-      debugReveal("sanitized-file-handoff:failed", payload);
-    } catch {
-      // Diagnostics must never affect blocking behavior.
+    if (error) {
+      assignSafeFileAttachErrorMetadata(payload, error);
     }
     try {
-      console.error("[LeakGuard] sanitized file handoff failed", payload, error || "");
+      debugFileAttachMetadata("sanitized-file-handoff:failed", payload);
     } catch {
-      // Ignore console failures in host-controlled environments.
+      // Diagnostics must never affect blocking behavior.
     }
   }
 
@@ -8569,8 +8609,7 @@
     } catch (error) {
       if (details) {
         details.failureReason = "input_assignment_or_event_dispatch_failed";
-        details.errorMessage = error?.message || String(error);
-        details.errorStack = error?.stack || "";
+        assignSafeFileAttachErrorMetadata(details, error);
       }
       debugReveal("file-handoff:assignment-failure", {
         input: describeFileInputForDebug(fileInput, "resolved"),
@@ -9599,9 +9638,9 @@
           preflightPlan.optimizedStatus.cleanupOnSanitizationFailure
         );
       }
-      debugReveal("file-handoff:redaction-failed", {
+      debugFileAttachMetadata("file-handoff:redaction-failed", {
         context,
-        error: error?.message || String(error)
+        error
       });
       if (context === "drop" && getCurrentHandoffDriver()?.usesDmzOverlay) {
         setDmzOverlayState("Raw file blocked", "failed");

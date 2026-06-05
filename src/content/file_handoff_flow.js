@@ -17,6 +17,7 @@
       documentRef = typeof document !== "undefined" ? document : null,
       dispatchSanitizedFileEvent = () => false,
       downloadGeminiSanitizedFileFallback = async () => false,
+      assignSafeFileAttachErrorMetadata = noop,
       emitDebug = noop,
       findGeminiFileInput = () => ({ fileInput: null }),
       formatSanitizedFileFallbackText = () => "",
@@ -171,8 +172,7 @@
       } catch (error) {
         if (details) {
           details.failureReason = "sanitized_download_read_failed";
-          details.errorMessage = error?.message || String(error);
-          details.errorStack = error?.stack || "";
+          assignSafeFileAttachErrorMetadata(details, error);
         }
         return false;
       }
@@ -187,7 +187,7 @@
         if (!response?.ok) {
           if (details) {
             details.failureReason = "sanitized_download_failed";
-            details.errorMessage = response?.error || "Background download request failed.";
+            assignSafeFileAttachErrorMetadata(details, response?.error || "Background download request failed.");
           }
           return false;
         }
@@ -205,8 +205,7 @@
       } catch (error) {
         if (details) {
           details.failureReason = "sanitized_download_failed";
-          details.errorMessage = error?.message || String(error);
-          details.errorStack = error?.stack || "";
+          assignSafeFileAttachErrorMetadata(details, error);
         }
         return false;
       }
