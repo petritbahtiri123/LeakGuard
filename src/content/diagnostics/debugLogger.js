@@ -188,11 +188,59 @@
     debugEvent(label, snapshot, options);
   }
 
+  function summarizeDebugText(text, options = {}) {
+    const normalizeText =
+      typeof options.normalizeText === "function" ? options.normalizeText : (value) => String(value || "");
+    const normalizeVisiblePlaceholders =
+      typeof options.normalizeVisiblePlaceholders === "function"
+        ? options.normalizeVisiblePlaceholders
+        : (value) => String(value || "");
+    const normalized = normalizeText(normalizeVisiblePlaceholders(text));
+    const placeholderTokenRegex = options.placeholderTokenRegex || /\[[A-Z_]+_\d+\]/g;
+    const matches = normalized.match(new RegExp(placeholderTokenRegex.source, "g")) || [];
+
+    return {
+      length: normalized.length,
+      lineCount: normalized ? normalized.split("\n").length : 0,
+      placeholderCount: matches.length
+    };
+  }
+
+  function collectComposerDebugSnapshot(input, expected, writeText, options = {}) {
+    const getInputText = typeof options.getInputText === "function" ? options.getInputText : () => "";
+    const normalizeText =
+      typeof options.normalizeText === "function" ? options.normalizeText : (value) => String(value || "");
+    const normalizeEditorInnerText =
+      typeof options.normalizeEditorInnerText === "function" ? options.normalizeEditorInnerText : normalizeText;
+    const normalizedExpected = normalizeText(expected);
+    const normalizedWriteText = typeof writeText === "string" ? normalizeText(writeText) : normalizedExpected;
+    const actual = getInputText(input);
+    const innerText = normalizeText(input?.innerText || "");
+    const snapshotOptions = {
+      normalizeText,
+      normalizeVisiblePlaceholders: options.normalizeVisiblePlaceholders,
+      placeholderTokenRegex: options.placeholderTokenRegex
+    };
+
+    return {
+      expected: summarizeDebugText(normalizedExpected, snapshotOptions),
+      writeText: summarizeDebugText(normalizedWriteText, snapshotOptions),
+      getInputText: summarizeDebugText(actual, snapshotOptions),
+      innerText: summarizeDebugText(innerText, snapshotOptions),
+      normalizedInnerText: summarizeDebugText(normalizeEditorInnerText(input?.innerText || ""), snapshotOptions),
+      textContent: summarizeDebugText(input?.textContent || "", snapshotOptions),
+      actualMatchesExpected: actual === normalizedExpected,
+      actualMatchesWriteText: actual === normalizedWriteText
+    };
+  }
+
   root.PWM.DebugLogger = {
     isDebugEnabled,
     sanitizeDebugPayload,
     debugEvent,
-    debugSnapshot
+    debugSnapshot,
+    summarizeDebugText,
+    collectComposerDebugSnapshot
   };
 
   if (typeof module !== "undefined" && module.exports) {

@@ -180,6 +180,20 @@ function createOptions({ document, placeholderCount = 1, createdSpans = [] } = {
   };
 }
 
+function assertDebugPayloadsAreMetadataOnly(events, rawText) {
+  const serialized = JSON.stringify(events);
+  assert.strictEqual(serialized.includes(rawText), false, "debug payloads must not include raw text");
+  for (const event of events) {
+    assert.ok(event.label.startsWith("rehydrate:"), "rehydration debug labels should be stable");
+    for (const value of Object.values(event.payload)) {
+      assert.ok(
+        value == null || ["boolean", "number", "string"].includes(typeof value),
+        "rehydration debug payload values should stay scalar metadata"
+      );
+    }
+  }
+}
+
 function testShouldSkipHydration() {
   for (const [label, parent] of [
     ["modal", element("div", { class: "pwm-modal-backdrop" }, [])],
@@ -294,11 +308,41 @@ function testStartRehydrationObserverKeepsBoundedAddedElementScan() {
   assert.strictEqual(doc.walkCount, walksAfterInitialHydration + 1, "placeholder-like added elements should be tree-walked");
 }
 
+function testRehydrationDebugPayloadsStayMetadataOnly() {
+  FakeMutationObserver.lastCallback = null;
+  const events = [];
+  let observerState = null;
+  const rawText = "raw response text [PWM_1] RawSecretABCDE12345";
+  const body = element("body", {}, []);
+  const doc = new FakeDocument(body);
+  const options = {
+    ...createOptions({ document: doc, placeholderCount: 1 }),
+    debug: (label, payload) => events.push({ label, payload }),
+    getObserver: () => observerState,
+    setObserver: (observer) => {
+      observerState = observer;
+    }
+  };
+
+  ResponseObserver.startRehydrationObserver(options);
+  FakeMutationObserver.lastCallback([
+    {
+      type: "childList",
+      addedNodes: [element("div", {}, [text(rawText)])]
+    }
+  ]);
+
+  assert.ok(events.some((event) => event.label === "rehydrate:element-added"));
+  assert.ok(events.some((event) => event.label === "rehydrate:text-node"));
+  assertDebugPayloadsAreMetadataOnly(events, rawText);
+}
+
 testShouldSkipHydration();
 testHydrateTextNodeCreatesInjectedSpansForTrustedPlaceholders();
 testHydrateTextNodeLeavesUnknownPlaceholdersPlain();
 testRehydrateTreeDoesNothingWithoutPlaceholders();
 testRehydrateTreeHydratesOnlyEligibleTextNodes();
 testStartRehydrationObserverKeepsBoundedAddedElementScan();
+testRehydrationDebugPayloadsStayMetadataOnly();
 
 console.log("PASS response observer DOM hydration regressions");

@@ -467,34 +467,21 @@
   }
 
   function summarizeDebugText(text) {
-    const normalized = normalizeComposerText(normalizeVisiblePlaceholders(text));
-    const matches = normalized.match(new RegExp(PLACEHOLDER_TOKEN_REGEX.source, "g")) || [];
-
-    return {
-      length: normalized.length,
-      lineCount: normalized ? normalized.split("\n").length : 0,
-      placeholderCount: matches.length
-    };
+    return globalThis.PWM.DebugLogger.summarizeDebugText(text, {
+      normalizeText: normalizeComposerText,
+      normalizeVisiblePlaceholders,
+      placeholderTokenRegex: PLACEHOLDER_TOKEN_REGEX
+    });
   }
 
   function collectComposerDebugSnapshot(input, expected, writeText) {
-    const actual = getInputText(input);
-    const normalizedExpected = normalizeComposerText(expected);
-    const normalizedWriteText =
-      typeof writeText === "string" ? normalizeComposerText(writeText) : normalizedExpected;
-    const innerText = normalizeComposerText(input?.innerText || "");
-    const normalizedInnerText = normalizeEditorInnerText(input?.innerText || "");
-
-    return {
-      expected: summarizeDebugText(normalizedExpected),
-      writeText: summarizeDebugText(normalizedWriteText),
-      getInputText: summarizeDebugText(actual),
-      innerText: summarizeDebugText(innerText),
-      normalizedInnerText: summarizeDebugText(normalizedInnerText),
-      textContent: summarizeDebugText(input?.textContent || ""),
-      actualMatchesExpected: actual === normalizedExpected,
-      actualMatchesWriteText: actual === normalizedWriteText
-    };
+    return globalThis.PWM.DebugLogger.collectComposerDebugSnapshot(input, expected, writeText, {
+      getInputText,
+      normalizeText: normalizeComposerText,
+      normalizeEditorInnerText,
+      normalizeVisiblePlaceholders,
+      placeholderTokenRegex: PLACEHOLDER_TOKEN_REGEX
+    });
   }
 
   function debugLogSnapshot(label, input, expected, writeText) {
@@ -506,6 +493,10 @@
 
   function debugReveal(label, payload) {
     globalThis.PWM?.DebugLogger?.debugEvent?.(label, payload, { root: window });
+  }
+
+  function debugResponseRehydration(label, payload) {
+    globalThis.PWM?.DebugLogger?.debugEvent?.(label, payload || {}, { root: window });
   }
 
   function getSafeElementAttribute(el, name) {
@@ -1757,7 +1748,7 @@
   }
 
   function debugRewriteVerification(label, payload) {
-    debugReveal(label, payload || {});
+    globalThis.PWM?.DebugLogger?.debugEvent?.(label, payload || {}, { root: window });
   }
 
   function evaluateComposerVerificationCandidates({ candidates, expectedText, originalText, findings, context }) {
@@ -10622,7 +10613,7 @@
           placeholderCount: currentPublicState.placeholderCount
         }),
       createSecretSpan: (placeholder) => RevealController.createSecretSpan(placeholder, getRevealControllerOptions()),
-      debug: debugReveal,
+      debug: debugResponseRehydration,
       getObserver: () => rehydrateObserver,
       setObserver: (observer) => {
         rehydrateObserver = observer;
