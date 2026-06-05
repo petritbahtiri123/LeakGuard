@@ -68,9 +68,18 @@ Top-level metrics from the current tree:
 
 The roadmap should be implemented as small PRs with no runtime behavior changes unless a PR explicitly says otherwise. Keep the current content-script global/IIFE loading model unless a separate build-system PR proves a module/bundler migration is safe for Chrome and Firefox MV3.
 
-### Current status after PR 5D
+### Final modularization checkpoint after PR 7B
 
-As of PR 5D, PR 1 through PR 3 are substantially implemented. PR 4 has made strong progress through small behavior-preserving slices:
+As of PR 7B, PR 1 through PR 7B are complete. The modularization work stayed intentionally sliced and behavior-preserving:
+- Shared constants/messages extraction is complete.
+- Pure utility extraction is complete.
+- Site adapter extraction is complete.
+- File attach pipeline helper extraction is complete through safe PR slices.
+- Response rehydration modularization is complete.
+- Raw-safe debug logger shell, migration, and sanitization are complete.
+- Tiny evidence-backed dead-code cleanup is complete. PR 7B removed only two unused wrapper helpers.
+
+PR 4 landed through small behavior-preserving slices:
 - PR 4A added the `src/content/files/fileAttachPipeline.js` shell.
 - PR 4B pinned file attach behavior with focused regression coverage.
 - PR 4C extracted `runSanitizedPayloadHandoffOrder()`.
@@ -95,11 +104,32 @@ Current PR 6 status after PR 6F:
 - Low-risk file attach metadata debug paths have migrated through safe allowlisted metadata schemas.
 - Risky file attach failure diagnostics now emit safe metadata only, and raw `Error`, full message, and stack logging was removed from sanitized handoff failure paths.
 - File attach behavior was not changed by the debug migration work.
-- Detector/classifier warning policy remains deferred as separate work.
 
-PR 7 dead-code removal has not started and should remain blocked until production call-graph evidence, focused coverage, and manual browser QA are stronger.
+Still deferred:
+- Gemini editor-drop helper cluster cleanup.
+- `insertGeminiLocalFileText()` cleanup.
+- Provider-specific pending attach consolidation.
+- Detector/classifier warning policy.
+- Any broader dead-code deletion.
 
-Next safe step: do not do another blind extraction. Prefer either a manual browser QA checkpoint for file attach flows or a short design note that maps the remaining file attach side-effect boundaries and ownership rules. When running browser validation, run `npm run smoke:chrome` and `npm run qa:browser` sequentially because they can conflict on shared Chrome build/temp state.
+Manual QA checklist before release:
+- ChatGPT typed prompt redaction.
+- ChatGPT paste redaction.
+- ChatGPT file attach redaction.
+- Gemini typed prompt redaction.
+- Gemini paste redaction.
+- Gemini drag/drop file attach.
+- Gemini fallback insertion.
+- Grok file attach.
+- Claude typed/paste if supported.
+- Secure reveal placeholder click/keyboard.
+- Protected-site disable/re-enable.
+- Scanner redacted download and JSON report.
+- Chrome smoke.
+- Firefox smoke.
+- Edge smoke if available.
+
+Next safe step: do not do another blind extraction. Prefer manual browser QA for file attach flows before revisiting the deferred Gemini editor-drop helpers, pending attach consolidation, or any broader dead-code deletion. When running browser validation, run `npm run smoke:chrome` and `npm run qa:browser` sequentially because they can conflict on shared Chrome build/temp state.
 
 ### PR 1: Extract constants, labels, and lightweight helpers only
 
