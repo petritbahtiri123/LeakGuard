@@ -89,7 +89,15 @@ Remaining file attach work is mostly side-effectful and needs a separate design 
 
 PR 5 response rehydration modularization is now substantially implemented. Response placeholder parsing/trust/tokenization lives in `src/content/rehydration/placeholderRehydrator.js`, DOM hydration and the MutationObserver shell live in `src/content/rehydration/responseObserver.js`, and placeholder chip/span activation lives in `src/content/rehydration/revealController.js`. Raw secret reveal behavior was not moved into the page DOM: `content.js` still owns secure reveal policy checks, popup opening, badge fallback, route-change behavior, observer startup timing, and high-risk integration points.
 
-The next roadmap task is PR 6 debug logger audit, not implementation-first extraction. PR 7 dead-code removal has not started and should remain blocked until production call-graph evidence, focused coverage, and manual browser QA are stronger.
+Current PR 6 status after PR 6F:
+- A central raw-safe debug logger shell exists at `src/content/diagnostics/debugLogger.js`.
+- Low-risk summarized rewrite and response rehydration debug paths have migrated to `PWM.DebugLogger`.
+- Low-risk file attach metadata debug paths have migrated through safe allowlisted metadata schemas.
+- Risky file attach failure diagnostics now emit safe metadata only, and raw `Error`, full message, and stack logging was removed from sanitized handoff failure paths.
+- File attach behavior was not changed by the debug migration work.
+- Detector/classifier warning policy remains deferred as separate work.
+
+PR 7 dead-code removal has not started and should remain blocked until production call-graph evidence, focused coverage, and manual browser QA are stronger.
 
 Next safe step: do not do another blind extraction. Prefer either a manual browser QA checkpoint for file attach flows or a short design note that maps the remaining file attach side-effect boundaries and ownership rules. When running browser validation, run `npm run smoke:chrome` and `npm run qa:browser` sequentially because they can conflict on shared Chrome build/temp state.
 
@@ -314,6 +322,13 @@ Expected benefit:
 - Response hydration becomes auditable independently from input interception.
 
 ### PR 6: Extract debug and diagnostic logging helpers
+
+Status after PR 6F:
+- `globalThis.PWM.DebugLogger` exists as the central raw-safe debug logger shell.
+- Low-risk summarized debug paths and low-risk file attach metadata paths have migrated.
+- Sanitized file handoff failure diagnostics now route through safe metadata only; raw `Error`, full message, and stack logging was removed from those paths.
+- Detector/classifier warning policy remains intentionally deferred.
+- PR 7 dead-code removal remains blocked until stronger evidence and manual QA.
 
 Goal:
 - Normalize safe debug events and make troubleshooting easier without increasing raw-data exposure.
