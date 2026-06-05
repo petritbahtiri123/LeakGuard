@@ -168,6 +168,7 @@ function stripContentDebugDiagnostics(targetRoot) {
   for (const functionName of [
     "debugLogSnapshot",
     "debugReveal",
+    "debugFileAttachMetadata",
     "debugResponseRehydration",
     "debugRewriteVerification",
     "logFailureDetails",
@@ -183,6 +184,7 @@ function stripContentDebugDiagnostics(targetRoot) {
     .replace(/^\s*debug:\s*debugRewriteVerification,?\r?\n/gm, "")
     .replace(/\bdebugLogSnapshot\s*\(/g, "false && leakGuardBuildNoop(")
     .replace(/\bdebugReveal\s*\(/g, "false && leakGuardBuildNoop(")
+    .replace(/\bdebugFileAttachMetadata\s*\(/g, "false && leakGuardBuildNoop(")
     .replace(/\bdebugResponseRehydration\s*\(/g, "false && leakGuardBuildNoop(")
     .replace(/\bdebugRewriteVerification\s*\(/g, "false && leakGuardBuildNoop(")
     .replace(/\blogFailureDetails\s*\(/g, "false && leakGuardBuildNoop(")
@@ -192,6 +194,7 @@ function stripContentDebugDiagnostics(targetRoot) {
     "pwm:debug",
     "debugLogSnapshot",
     "debugReveal",
+    "debugFileAttachMetadata",
     "debugResponseRehydration",
     "debugRewriteVerification",
     "console.group(",

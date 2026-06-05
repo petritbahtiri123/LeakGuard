@@ -238,6 +238,7 @@ function fileHandoffAdapterHarnessSource() {
     extractFunctionSource(contentSource, "getFileHandoffAdapterForLocation"),
     extractFunctionSource(contentSource, "isFileHandoffAdapterPendingAttachEnabled"),
     extractFunctionSource(contentSource, "describeFileHandoffAdapter"),
+    ...fileAttachDebugMetadataHarnessSource(),
     extractFunctionSource(contentSource, "debugFileHandoffAdapterSelected"),
     extractFunctionSource(contentSource, "candidateMatchesAnySelector"),
     extractFunctionSource(contentSource, "getAdapterUploadClickCandidates"),
@@ -255,6 +256,21 @@ function fileHandoffAdapterHarnessSource() {
 
 function contentDebugEventsHarnessSource() {
   return [extractConstSource(contentSource, "CONTENT_DEBUG_EVENTS")];
+}
+
+function fileAttachDebugMetadataHarnessSource() {
+  return [
+    extractFunctionSource(contentSource, "normalizeFileDebugString"),
+    extractFunctionSource(contentSource, "isSafeFileDebugToken"),
+    extractFunctionSource(contentSource, "getFileDebugExtension"),
+    extractFunctionSource(contentSource, "getFileDebugMimeCategory"),
+    extractFunctionSource(contentSource, "describeSafeFileDebugMetadata"),
+    extractFunctionSource(contentSource, "describeSafeFileInputDebugMetadata"),
+    extractFunctionSource(contentSource, "describeSafeFileHandoffAdapterDebugMetadata"),
+    extractFunctionSource(contentSource, "copySafeFileDebugScalar"),
+    extractFunctionSource(contentSource, "createSafeFileAttachDebugPayload"),
+    extractFunctionSource(contentSource, "debugFileAttachMetadata")
+  ];
 }
 
 function createAdapterRegistryForTest() {
@@ -4049,6 +4065,101 @@ function testFileAttachPipelineCreatesSanitizedPayloadMetadata() {
     }
   ]);
   assert.strictEqual(payload.findingCount, 2);
+}
+
+function testFileAttachDebugMetadataSchemaFiltersUnsafePayloads() {
+  const debugEvents = [];
+  const helpers = Function(
+    "debugReveal",
+    [
+      ...fileAttachDebugMetadataHarnessSource(),
+      "return { createSafeFileAttachDebugPayload, debugFileAttachMetadata };"
+    ].join("\n")
+  )((label, details) => debugEvents.push({ label, details }));
+
+  const rawSecret = "LeakGuardFileApiKey1234567890";
+  const payload = helpers.createSafeFileAttachDebugPayload({
+    action: "redacted",
+    bytesProcessed: 42,
+    totalBytes: 84,
+    rawText: `API_KEY=${rawSecret}`,
+    redactedText: "API_KEY=[PWM_1]",
+    text: `API_KEY=${rawSecret}`,
+    file: {
+      name: "C:\\Users\\person\\token-fixture.env",
+      type: "text/plain",
+      size: 42,
+      supportedText: true
+    },
+    sanitizedFile: {
+      name: "service.env",
+      type: "text/plain",
+      size: 24,
+      sanitized: true
+    },
+    input: {
+      tag: "INPUT",
+      source: "pending-gemini-file-input",
+      className: "raw-class-should-not-log",
+      accept: ".env",
+      filesLength: 1
+    },
+    event: { type: "drop" },
+    dataTransfer: { files: ["raw-file-object"] },
+    error: new Error(`full message ${rawSecret}`)
+  });
+
+  assert.deepStrictEqual(Object.keys(payload).sort(), [
+    "action",
+    "bytesProcessed",
+    "file",
+    "input",
+    "sanitizedFile",
+    "totalBytes"
+  ]);
+  assert.deepStrictEqual(payload.file, {
+    sizeBytes: 42,
+    extension: "",
+    category: "text",
+    mimeCategory: "text",
+    supportedText: true,
+    sanitized: false
+  });
+  assert.deepStrictEqual(payload.sanitizedFile, {
+    sizeBytes: 24,
+    extension: "env",
+    category: "env",
+    mimeCategory: "text",
+    supportedText: false,
+    sanitized: true
+  });
+  const serialized = JSON.stringify(payload);
+  assert.strictEqual(serialized.includes(rawSecret), false);
+  assert.strictEqual(serialized.includes("rawText"), false);
+  assert.strictEqual(serialized.includes("redactedText"), false);
+  assert.strictEqual(serialized.includes("token-fixture.env"), false);
+  assert.strictEqual(serialized.includes("raw-class-should-not-log"), false);
+
+  helpers.debugFileAttachMetadata("streaming-redaction:progress", {
+    bytesProcessed: 12,
+    totalBytes: 24,
+    file: { name: "/tmp/token-fixture.txt", type: "text/plain", size: 24 }
+  });
+  assert.deepStrictEqual(debugEvents[0], {
+    label: "streaming-redaction:progress",
+    details: {
+      bytesProcessed: 12,
+      totalBytes: 24,
+      file: {
+        sizeBytes: 24,
+        extension: "",
+        category: "text",
+        mimeCategory: "text",
+        supportedText: false,
+        sanitized: false
+      }
+    }
+  });
 }
 
 async function testSanitizedPayloadFallbackOrderRemainsStable() {
@@ -12291,6 +12402,7 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testPendingCleanupErrorsClearStateAndLogMetadataOnly();
   testFileHandoffAdapterRegistryCoversSupportedSites();
   testFileAttachPipelineCreatesSanitizedPayloadMetadata();
+  testFileAttachDebugMetadataSchemaFiltersUnsafePayloads();
   await testSanitizedPayloadFallbackOrderRemainsStable();
   await testFileAttachPipelineDropUsesInjectedHandoffOnly();
   await testFileAttachPipelineNonDropAttemptsFileBeforeTextFallback();
