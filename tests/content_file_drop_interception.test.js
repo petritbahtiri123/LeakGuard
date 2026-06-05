@@ -262,11 +262,14 @@ function fileAttachDebugMetadataHarnessSource() {
   return [
     extractFunctionSource(contentSource, "normalizeFileDebugString"),
     extractFunctionSource(contentSource, "isSafeFileDebugToken"),
+    extractFunctionSource(contentSource, "isSafeFileDebugErrorCode"),
     extractFunctionSource(contentSource, "getFileDebugExtension"),
     extractFunctionSource(contentSource, "getFileDebugMimeCategory"),
     extractFunctionSource(contentSource, "describeSafeFileDebugMetadata"),
     extractFunctionSource(contentSource, "describeSafeFileInputDebugMetadata"),
     extractFunctionSource(contentSource, "describeSafeFileHandoffAdapterDebugMetadata"),
+    extractFunctionSource(contentSource, "describeSafeFileAttachErrorMetadata"),
+    extractFunctionSource(contentSource, "assignSafeFileAttachErrorMetadata"),
     extractFunctionSource(contentSource, "copySafeFileDebugScalar"),
     extractFunctionSource(contentSource, "createSafeFileAttachDebugPayload"),
     extractFunctionSource(contentSource, "debugFileAttachMetadata")
@@ -435,6 +438,10 @@ function fileHandoffFlowHarnessSource(options = {}) {
         typeof downloadGeminiSanitizedFileFallback === "function"
           ? downloadGeminiSanitizedFileFallback
           : async () => false,
+      assignSafeFileAttachErrorMetadata:
+        typeof assignSafeFileAttachErrorMetadata === "function"
+          ? assignSafeFileAttachErrorMetadata
+          : () => {},
       emitDebug: debugReveal,
       findGeminiFileInput:
         typeof findGeminiFileInput === "function" ? findGeminiFileInput : () => ({ fileInput: null }),
@@ -2642,13 +2649,20 @@ async function testGeminiDropNeverClicksUploadFlowWhenInputAppearsAfterClick() {
   assert.strictEqual(overlayItems.length, 0);
   assert.strictEqual(fileInputs.length, 0);
   assert.strictEqual(fallbackDrops.length, 0);
-  assert.strictEqual(consoleErrors.length, 1);
+  assert.strictEqual(consoleErrors.length, 0);
   assert.strictEqual(runtimeMessages.length, 0);
   assert.strictEqual(sanitizedFile.text.includes(rawSecret), false);
   assert.ok(sanitizedFile.text.includes("[PWM_1]"));
   assert.ok(
     debugEvents.some((entry) => entry.label === "file-handoff:gemini-input-not-found"),
     "expected legacy Gemini drop handoff to fail closed without opening the upload picker"
+  );
+  assert.ok(
+    debugEvents.some(
+      (entry) =>
+        entry.label === "sanitized-file-handoff:failed" &&
+        entry.payload.failureReason === "no_file_input_without_opening_picker"
+    )
   );
 }
 
@@ -2670,6 +2684,7 @@ async function testGeminiDropNeverClicksExistingOverlayMenuItem() {
     handOffGeminiSanitizedFileUpload,
     fallbackDrops,
     consoleErrors,
+    debugEvents,
     runtimeMessages
   } = createHandoffHarness({
     overlayItems: [overlayItem]
@@ -2685,8 +2700,15 @@ async function testGeminiDropNeverClicksExistingOverlayMenuItem() {
   assert.strictEqual(handedOff, false);
   assert.deepStrictEqual(overlayItem.events, []);
   assert.strictEqual(fallbackDrops.length, 0);
-  assert.strictEqual(consoleErrors.length, 1);
+  assert.strictEqual(consoleErrors.length, 0);
   assert.strictEqual(runtimeMessages.length, 0);
+  assert.ok(
+    debugEvents.some(
+      (entry) =>
+        entry.label === "sanitized-file-handoff:failed" &&
+        entry.payload.failureReason === "no_file_input_without_opening_picker"
+    )
+  );
 }
 
 async function testGeminiDropGhostIngressAttachesSanitizedFileAfterVisibleUploadFlow() {
@@ -4112,11 +4134,15 @@ function testFileAttachDebugMetadataSchemaFiltersUnsafePayloads() {
   assert.deepStrictEqual(Object.keys(payload).sort(), [
     "action",
     "bytesProcessed",
+    "errorName",
     "file",
     "input",
+    "messageLength",
     "sanitizedFile",
     "totalBytes"
   ]);
+  assert.strictEqual(payload.errorName, "Error");
+  assert.ok(payload.messageLength > 0);
   assert.deepStrictEqual(payload.file, {
     sizeBytes: 42,
     extension: "",
@@ -4139,6 +4165,7 @@ function testFileAttachDebugMetadataSchemaFiltersUnsafePayloads() {
   assert.strictEqual(serialized.includes("redactedText"), false);
   assert.strictEqual(serialized.includes("token-fixture.env"), false);
   assert.strictEqual(serialized.includes("raw-class-should-not-log"), false);
+  assert.strictEqual(serialized.includes("full message"), false);
 
   helpers.debugFileAttachMetadata("streaming-redaction:progress", {
     bytesProcessed: 12,
@@ -4160,6 +4187,85 @@ function testFileAttachDebugMetadataSchemaFiltersUnsafePayloads() {
       }
     }
   });
+}
+
+function testSanitizedFileHandoffFailureLogsSafeErrorMetadataOnly() {
+  const debugEvents = [];
+  const consoleErrors = [];
+  const helpers = Function(
+    "debugReveal",
+    "console",
+    [
+      ...fileAttachDebugMetadataHarnessSource(),
+      extractFunctionSource(contentSource, "logSanitizedFileHandoffFailure"),
+      "return { logSanitizedFileHandoffFailure };"
+    ].join("\n")
+  )(
+    (label, payload) => debugEvents.push({ label, payload }),
+    { error: (...args) => consoleErrors.push(args) }
+  );
+
+  const rawSecret = "LeakGuardFailureApiKey1234567890";
+  const error = new Error(`failed reading C:\\Users\\person\\token-fixture.env with ${rawSecret}`);
+  error.name = "NotAllowedError";
+  error.code = "E_SAFE_CODE";
+  error.stack = `STACK ${rawSecret}`;
+
+  helpers.logSanitizedFileHandoffFailure(
+    {
+      stage: "failed",
+      strategy: "sanitized-file-handoff",
+      context: "drop",
+      provider: "gemini",
+      hostname: "gemini.google.com",
+      failureReason: "sanitized_download_read_failed",
+      rawText: `API_KEY=${rawSecret}`,
+      redactedText: "API_KEY=[PWM_1]",
+      sanitizedPayload: {
+        rawText: `API_KEY=${rawSecret}`,
+        redactedText: "API_KEY=[PWM_1]"
+      },
+      errorMessage: error.message,
+      errorStack: error.stack,
+      sanitizedFile: {
+        name: "C:\\Users\\person\\token-fixture.env",
+        type: "text/plain",
+        size: 99
+      }
+    },
+    error
+  );
+
+  assert.deepStrictEqual(consoleErrors, []);
+  assert.strictEqual(debugEvents.length, 1);
+  assert.strictEqual(debugEvents[0].label, "sanitized-file-handoff:failed");
+  assert.deepStrictEqual(debugEvents[0].payload, {
+    codeIfSafe: "e_safe_code",
+    context: "drop",
+    errorName: "notallowederror",
+    failureReason: "sanitized_download_read_failed",
+    hostname: "gemini.google.com",
+    messageLength: error.message.length,
+    provider: "gemini",
+    sanitizedFile: {
+      sizeBytes: 99,
+      extension: "",
+      category: "text",
+      mimeCategory: "text",
+      supportedText: false,
+      sanitized: false
+    },
+    stage: "failed",
+    strategy: "sanitized-file-handoff"
+  });
+
+  const serialized = JSON.stringify(debugEvents);
+  assert.strictEqual(serialized.includes(rawSecret), false);
+  assert.strictEqual(serialized.includes("token-fixture.env"), false);
+  assert.strictEqual(serialized.includes("STACK"), false);
+  assert.strictEqual(serialized.includes("rawText"), false);
+  assert.strictEqual(serialized.includes("redactedText"), false);
+  assert.strictEqual(serialized.includes(error.message), false);
 }
 
 async function testSanitizedPayloadFallbackOrderRemainsStable() {
@@ -6284,8 +6390,14 @@ async function testGeminiSanitizedDownloadFailureFailsClosed() {
 
   assert.strictEqual(handedOff, false);
   assert.strictEqual(fallbackDrops.length, 0);
-  assert.strictEqual(consoleErrors.length, 1);
-  assert.strictEqual(consoleErrors[0][1].failureReason, "no_file_input_without_opening_picker");
+  assert.strictEqual(consoleErrors.length, 0);
+  assert.ok(
+    debugEvents.some(
+      (entry) =>
+        entry.label === "sanitized-file-handoff:failed" &&
+        entry.payload.failureReason === "no_file_input_without_opening_picker"
+    )
+  );
   assert.strictEqual(JSON.stringify(debugEvents).includes("API_KEY=[PWM_1]"), false);
 }
 
@@ -6515,11 +6627,11 @@ async function testGeminiUploadOverlayFailureLogsMetadataOnly() {
   assert.deepStrictEqual(uploadTrigger.events, []);
   assert.strictEqual(overlayItems.length, 0);
   assert.strictEqual(fallbackDrops.length, 0);
-  assert.strictEqual(consoleErrors.length, 1);
+  assert.strictEqual(consoleErrors.length, 0);
   assert.strictEqual(hasPendingGeminiSanitizedFileHandoff(sanitizedFile), false);
   const failed = debugEvents.find((entry) => entry.label === "sanitized-file-handoff:failed");
   assert.ok(failed, "expected metadata-only failure breadcrumb");
-  assert.strictEqual(failed.payload.sanitizedFile.size, 26213285);
+  assert.strictEqual(failed.payload.sanitizedFile.sizeBytes, 26213285);
   const serialized = JSON.stringify(failed.payload);
   assert.strictEqual(serialized.includes(rawSecret), false);
   assert.ok(
@@ -12403,6 +12515,7 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   testFileHandoffAdapterRegistryCoversSupportedSites();
   testFileAttachPipelineCreatesSanitizedPayloadMetadata();
   testFileAttachDebugMetadataSchemaFiltersUnsafePayloads();
+  testSanitizedFileHandoffFailureLogsSafeErrorMetadataOnly();
   await testSanitizedPayloadFallbackOrderRemainsStable();
   await testFileAttachPipelineDropUsesInjectedHandoffOnly();
   await testFileAttachPipelineNonDropAttemptsFileBeforeTextFallback();
