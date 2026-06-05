@@ -117,6 +117,19 @@ assert.doesNotThrow(() =>
 }
 
 {
+  const sanitized = DebugLogger.sanitizeDebugPayload({
+    filename: "C:\\Users\\person\\token-fixture.txt",
+    relative: "../secrets/token-fixture.txt",
+    posix: "/tmp/token-fixture.txt",
+    url: "https://user:pass@example.test/path/token-fixture.txt"
+  });
+  const serialized = JSON.stringify(sanitized);
+  assert.strictEqual(serialized.includes("token-fixture.txt"), false);
+  assert.strictEqual(serialized.includes("user:pass"), false);
+  assert.deepStrictEqual(Object.keys(sanitized.filename).sort(), ["length", "lineCount", "redacted", "type"]);
+}
+
+{
   const consoleSink = createConsoleSink();
   const rawSecret = "password=SuperSecretTokenValue1234567890";
   DebugLogger.debugEvent(

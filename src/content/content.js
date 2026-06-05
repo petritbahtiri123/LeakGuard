@@ -495,6 +495,146 @@
     globalThis.PWM?.DebugLogger?.debugEvent?.(label, payload, { root: window });
   }
 
+  function normalizeFileDebugString(value) {
+    return String(value || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9_.:-]+/g, "-")
+      .slice(0, 96);
+  }
+
+  function isSafeFileDebugToken(value) {
+    const text = String(value || "");
+    return Boolean(text) && text.length <= 96 && !/[\\/]/.test(text) && !/[?#@]/.test(text);
+  }
+
+  function getFileDebugExtension(fileMeta) {
+    const rawName = String(fileMeta?.name || "");
+    if (!isSafeFileDebugToken(rawName) || rawName.includes("..")) return "";
+    const match = /\.([a-z0-9]{1,12})$/i.exec(rawName);
+    return match ? match[1].toLowerCase() : "";
+  }
+
+  function getFileDebugMimeCategory(fileMeta) {
+    const type = String(fileMeta?.type || "").toLowerCase();
+    if (!type || /[\\/?#@]/.test(type)) return "";
+    return type.split("/")[0].replace(/[^a-z0-9.+-]/g, "").slice(0, 32);
+  }
+
+  function describeSafeFileDebugMetadata(fileMeta) {
+    if (!fileMeta || typeof fileMeta !== "object") return null;
+    const extension = getFileDebugExtension(fileMeta);
+    const mimeCategory = getFileDebugMimeCategory(fileMeta);
+    const sizeBytes = Number(fileMeta.size ?? fileMeta.sizeBytes ?? 0) || 0;
+    return {
+      sizeBytes,
+      extension,
+      category: extension || mimeCategory || "unknown",
+      mimeCategory,
+      supportedText: Boolean(fileMeta.supportedText),
+      sanitized: Boolean(fileMeta.sanitized)
+    };
+  }
+
+  function describeSafeFileInputDebugMetadata(inputMeta) {
+    if (!inputMeta || typeof inputMeta !== "object") return null;
+    return {
+      tag: normalizeFileDebugString(inputMeta.tag || "input"),
+      source: normalizeFileDebugString(inputMeta.source),
+      disabled: Boolean(inputMeta.disabled),
+      hidden: Boolean(inputMeta.hidden),
+      multiple: Boolean(inputMeta.multiple),
+      filesLength: Number(inputMeta.filesLength || 0) || 0
+    };
+  }
+
+  function describeSafeFileHandoffAdapterDebugMetadata(adapter) {
+    if (!adapter || typeof adapter !== "object") return null;
+    return {
+      id: normalizeFileDebugString(adapter.id),
+      siteLabel: normalizeFileDebugString(adapter.siteLabel || adapter.id),
+      hostCount: Array.isArray(adapter.hosts) ? adapter.hosts.length : 0,
+      supportsDirectDropReplay: Boolean(adapter.supportsDirectDropReplay),
+      supportsPendingAttach: Boolean(adapter.supportsPendingAttach),
+      supportsTrustedAttachButton: Boolean(adapter.supportsTrustedAttachButton),
+      pendingAttachEnabled: Boolean(adapter.pendingAttachEnabled)
+    };
+  }
+
+  function copySafeFileDebugScalar(output, key, value) {
+    if (value === null || typeof value === "boolean") {
+      output[key] = value;
+      return;
+    }
+    if (typeof value === "number") {
+      output[key] = Number.isFinite(value) ? value : 0;
+      return;
+    }
+    if (typeof value !== "string") return;
+    const normalized = normalizeFileDebugString(value);
+    if (normalized) output[key] = normalized;
+  }
+
+  function createSafeFileAttachDebugPayload(payload = {}) {
+    const source = payload && typeof payload === "object" ? payload : {};
+    const output = {};
+    const scalarKeys = new Set([
+      "action",
+      "blocking",
+      "bytes",
+      "bytesProcessed",
+      "changeEventDispatched",
+      "chunks",
+      "context",
+      "fastMaxBytes",
+      "findingsCount",
+      "hardBlockBytes",
+      "host",
+      "hostname",
+      "inputEventDispatched",
+      "maxBytes",
+      "outcome",
+      "reason",
+      "rendered",
+      "site",
+      "stage",
+      "strategy",
+      "totalBytes"
+    ]);
+
+    for (const key of scalarKeys) {
+      if (Object.prototype.hasOwnProperty.call(source, key)) {
+        copySafeFileDebugScalar(output, key, source[key]);
+      }
+    }
+
+    if (source.progress && typeof source.progress === "object") {
+      output.progress = {
+        bytesProcessed: Number(source.progress.bytesProcessed || 0) || 0,
+        totalBytes: Number(source.progress.totalBytes || 0) || 0,
+        chunks: Number(source.progress.chunks || 0) || 0
+      };
+    }
+    if (source.file) output.file = describeSafeFileDebugMetadata(source.file);
+    if (source.sanitizedFile) output.sanitizedFile = describeSafeFileDebugMetadata(source.sanitizedFile);
+    if (source.originalFile) output.originalFile = describeSafeFileDebugMetadata(source.originalFile);
+    if (source.input) output.input = describeSafeFileInputDebugMetadata(source.input);
+    if (source.adapter) output.adapter = describeSafeFileHandoffAdapterDebugMetadata(source.adapter);
+    if (Array.isArray(source.files)) {
+      output.fileCount = source.files.length;
+      output.files = source.files.map(describeSafeFileDebugMetadata).filter(Boolean);
+    }
+    if (Array.isArray(source.events)) {
+      output.events = source.events.map(normalizeFileDebugString).filter(Boolean).slice(0, 8);
+      output.eventCount = output.events.length;
+    }
+
+    return output;
+  }
+
+  function debugFileAttachMetadata(label, payload) {
+    debugReveal(label, createSafeFileAttachDebugPayload(payload));
+  }
+
   function debugResponseRehydration(label, payload) {
     globalThis.PWM?.DebugLogger?.debugEvent?.(label, payload || {}, { root: window });
   }
@@ -1098,7 +1238,7 @@
     }
 
     if (typeof document?.createElement !== "function" || !document.documentElement?.appendChild) {
-      debugReveal(CONTENT_DEBUG_EVENTS.FILE_UI_PROCESSING_SHOWN, {
+      debugFileAttachMetadata(CONTENT_DEBUG_EVENTS.FILE_UI_PROCESSING_SHOWN, {
         site,
         rendered: false,
         blocking,
@@ -1143,7 +1283,7 @@
     fileProcessingStatusEl.textContent = status;
     fileProcessingProgressEl.textContent = progressText;
 
-    debugReveal(CONTENT_DEBUG_EVENTS.FILE_UI_PROCESSING_SHOWN, {
+    debugFileAttachMetadata(CONTENT_DEBUG_EVENTS.FILE_UI_PROCESSING_SHOWN, {
       site,
       rendered: true,
       blocking,
@@ -1206,7 +1346,7 @@
       }
     }
 
-    debugReveal("file-ui:processing-hidden", {
+    debugFileAttachMetadata("file-ui:processing-hidden", {
       site,
       reason,
       rendered: Boolean(overlay)
@@ -1269,7 +1409,7 @@
     pendingAttachPromptSite = "";
     if (!prompt) {
       if (site) {
-        debugReveal("file-ui:pending-prompt-cleared", {
+        debugFileAttachMetadata("file-ui:pending-prompt-cleared", {
           site,
           reason,
           rendered: false
@@ -1289,7 +1429,7 @@
         // Best-effort cleanup only.
       }
     }
-    debugReveal("file-ui:pending-prompt-cleared", {
+    debugFileAttachMetadata("file-ui:pending-prompt-cleared", {
       site: site || getFileProcessingSiteId(),
       reason,
       rendered: true
@@ -1354,7 +1494,7 @@
         sanitizedFile: describeFileForDebug(sanitizedFile)
       });
       if (label === "attach-clicked") {
-        debugReveal("file-handoff:pending-user-attach-clicked", {
+        debugFileAttachMetadata("file-handoff:pending-user-attach-clicked", {
           site,
           adapter: describeFileHandoffAdapter(selectedAdapter),
           sanitizedFile: describeFileForDebug(sanitizedFile)
@@ -1374,13 +1514,13 @@
         rendered: false,
         sanitizedFile: describeFileForDebug(sanitizedFile)
       });
-      debugReveal(CONTENT_DEBUG_EVENTS.FILE_HANDOFF_PENDING_PROMPT_SHOWN, {
+      debugFileAttachMetadata(CONTENT_DEBUG_EVENTS.FILE_HANDOFF_PENDING_PROMPT_SHOWN, {
         site,
         rendered: false,
         adapter: describeFileHandoffAdapter(selectedAdapter),
         sanitizedFile: describeFileForDebug(sanitizedFile)
       });
-      debugReveal(CONTENT_DEBUG_EVENTS.FILE_UI_PENDING_PROMPT_SHOWN, {
+      debugFileAttachMetadata(CONTENT_DEBUG_EVENTS.FILE_UI_PENDING_PROMPT_SHOWN, {
         site,
         rendered: false,
         sanitizedFile: describeFileForDebug(sanitizedFile)
@@ -1462,13 +1602,13 @@
       rendered: true,
       sanitizedFile: describeFileForDebug(sanitizedFile)
     });
-    debugReveal(CONTENT_DEBUG_EVENTS.FILE_HANDOFF_PENDING_PROMPT_SHOWN, {
+    debugFileAttachMetadata(CONTENT_DEBUG_EVENTS.FILE_HANDOFF_PENDING_PROMPT_SHOWN, {
       site,
       rendered: true,
       adapter: describeFileHandoffAdapter(selectedAdapter),
       sanitizedFile: describeFileForDebug(sanitizedFile)
     });
-    debugReveal(CONTENT_DEBUG_EVENTS.FILE_UI_PENDING_PROMPT_SHOWN, {
+    debugFileAttachMetadata(CONTENT_DEBUG_EVENTS.FILE_UI_PENDING_PROMPT_SHOWN, {
       site,
       rendered: true,
       sanitizedFile: describeFileForDebug(sanitizedFile)
@@ -1491,7 +1631,7 @@
   }
 
   function showLocalPayloadOptimizationStatus(sizeInfo) {
-    debugReveal("local-payload:optimization-started", {
+    debugFileAttachMetadata("local-payload:optimization-started", {
       bytes: sizeInfo?.bytes || 0,
       fastMaxBytes: LOCAL_TEXT_FAST_MAX_BYTES,
       optimizedMaxBytes: LOCAL_TEXT_OPTIMIZED_MAX_BYTES
@@ -1500,7 +1640,7 @@
   }
 
   function clearLocalPayloadOptimizationStatus(sizeInfo, outcome = "complete") {
-    debugReveal("local-payload:optimization-finished", {
+    debugFileAttachMetadata("local-payload:optimization-finished", {
       outcome,
       bytes: sizeInfo?.bytes || 0
     });
@@ -1514,7 +1654,7 @@
 
   function blockLargeLocalTextPayload(event, sizeInfo) {
     consumeInterceptionEvent(event);
-    debugReveal("local-payload:blocked", {
+    debugFileAttachMetadata("local-payload:blocked", {
       bytes: sizeInfo?.bytes || 0,
       hardBlockBytes: LOCAL_TEXT_HARD_BLOCK_BYTES
     });
@@ -1531,7 +1671,7 @@
   }
 
   function showStreamingRedactionStatus(fileInfo) {
-    debugReveal("streaming-redaction:started", {
+    debugFileAttachMetadata("streaming-redaction:started", {
       file: describeFileForDebug(fileInfo),
       maxBytes: LARGE_TEXT_STREAMING_MAX_BYTES
     });
@@ -1546,7 +1686,7 @@
   function updateStreamingRedactionProgress(progress) {
     const processed = Number(progress?.bytesProcessed || 0);
     const total = Number(progress?.totalBytes || 0);
-    debugReveal("streaming-redaction:progress", {
+    debugFileAttachMetadata("streaming-redaction:progress", {
       bytesProcessed: processed,
       totalBytes: total
     });
@@ -1561,7 +1701,7 @@
   }
 
   function clearStreamingRedactionStatus(result) {
-    debugReveal("streaming-redaction:finished", {
+    debugFileAttachMetadata("streaming-redaction:finished", {
       action: result?.action || "unknown",
       bytesProcessed: result?.bytesProcessed || 0,
       findingsCount: result?.findingsCount || 0
@@ -4274,7 +4414,7 @@
   }
 
   function debugFileHandoffAdapterSelected(adapter, reason = "") {
-    debugReveal("file-handoff:adapter-selected", {
+    debugFileAttachMetadata("file-handoff:adapter-selected", {
       reason,
       host: location?.hostname || "",
       adapter: describeFileHandoffAdapter(adapter)
@@ -8415,7 +8555,7 @@
       );
       events.push("change");
       if (details) details.changeEventDispatched = true;
-      debugReveal("file-handoff:assignment-success", {
+      debugFileAttachMetadata("file-handoff:assignment-success", {
         input: describeFileInputForDebug(fileInput, "resolved"),
         files: Array.from(fileInput.files || []).map(describeFileForDebug),
         events

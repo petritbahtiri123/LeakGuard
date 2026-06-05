@@ -11,6 +11,7 @@
   const SECRET_TEXT_PATTERN =
     /(?:bearer\s+[a-z0-9._~+/=-]+|api[_-]?key|authorization|cookie|password|secret|token|sk-[a-z0-9_-]{12,}|AKIA[0-9A-Z]{16})/i;
   const HIGH_ENTROPY_PATTERN = /[A-Za-z0-9+/=_-]{24,}/;
+  const PATH_LIKE_PATTERN = /(?:[A-Za-z]:[\\/]|\.{1,2}[\\/]|[\\/][^\\/]+[\\/]|[\\/][^\\/]+\.[A-Za-z0-9]{1,12}(?:$|[?#]))/;
 
   function getOption(options, name, fallback) {
     return Object.prototype.hasOwnProperty.call(options || {}, name) ? options[name] : fallback;
@@ -45,6 +46,7 @@
     return SAFE_LABEL_PATTERN.test(value) &&
       !SECRET_TEXT_PATTERN.test(value) &&
       !HIGH_ENTROPY_PATTERN.test(value) &&
+      !PATH_LIKE_PATTERN.test(value) &&
       !hasUrlCredentials(value);
   }
 
@@ -60,7 +62,11 @@
   function summarizeString(value, keyName = "", options = {}) {
     const text = String(value);
     const sensitiveKey = SENSITIVE_KEY_PATTERN.test(String(keyName || ""));
-    const suspicious = SECRET_TEXT_PATTERN.test(text) || HIGH_ENTROPY_PATTERN.test(text) || hasUrlCredentials(text);
+    const suspicious =
+      SECRET_TEXT_PATTERN.test(text) ||
+      HIGH_ENTROPY_PATTERN.test(text) ||
+      PATH_LIKE_PATTERN.test(text) ||
+      hasUrlCredentials(text);
     const preserveSafeStrings = getOption(options, "preserveSafeStrings", true);
 
     if (!sensitiveKey && !suspicious && preserveSafeStrings && isSafeLabel(text)) {
