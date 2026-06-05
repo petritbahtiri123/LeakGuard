@@ -168,6 +168,8 @@ function stripContentDebugDiagnostics(targetRoot) {
   for (const functionName of [
     "debugLogSnapshot",
     "debugReveal",
+    "debugResponseRehydration",
+    "debugRewriteVerification",
     "logFailureDetails",
     "logFileInterception"
   ]) {
@@ -177,8 +179,12 @@ function stripContentDebugDiagnostics(targetRoot) {
   source = source
     .replace(/^\s*emitDebug:\s*debugReveal,\r?\n/gm, "")
     .replace(/^\s*debug:\s*debugReveal,\r?\n/gm, "")
+    .replace(/^\s*debug:\s*debugResponseRehydration,\r?\n/gm, "")
+    .replace(/^\s*debug:\s*debugRewriteVerification,?\r?\n/gm, "")
     .replace(/\bdebugLogSnapshot\s*\(/g, "false && leakGuardBuildNoop(")
     .replace(/\bdebugReveal\s*\(/g, "false && leakGuardBuildNoop(")
+    .replace(/\bdebugResponseRehydration\s*\(/g, "false && leakGuardBuildNoop(")
+    .replace(/\bdebugRewriteVerification\s*\(/g, "false && leakGuardBuildNoop(")
     .replace(/\blogFailureDetails\s*\(/g, "false && leakGuardBuildNoop(")
     .replace(/\blogFileInterception\s*\(/g, "false && leakGuardBuildNoop(");
 
@@ -186,6 +192,8 @@ function stripContentDebugDiagnostics(targetRoot) {
     "pwm:debug",
     "debugLogSnapshot",
     "debugReveal",
+    "debugResponseRehydration",
+    "debugRewriteVerification",
     "console.group(",
     "console.groupCollapsed(",
     "console.groupEnd(",
@@ -210,7 +218,13 @@ function stripDebugLoggerDiagnostics(targetRoot) {
     isDebugEnabled: () => false,
     sanitizeDebugPayload: () => ({ type: "debug-disabled" }),
     debugEvent: () => {},
-    debugSnapshot: () => {}
+    debugSnapshot: () => {},
+    summarizeDebugText: (text) => ({
+      length: String(text || "").length,
+      lineCount: String(text || "") ? String(text || "").split("\\n").length : 0,
+      placeholderCount: (String(text || "").match(/\\[[A-Z_]+_\\d+\\]/g) || []).length
+    }),
+    collectComposerDebugSnapshot: () => ({})
   };
 })();
 `

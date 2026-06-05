@@ -740,6 +740,8 @@ function createRewriteVerificationHarness(overrides = {}) {
       "const suppressFollowupInputScan = deps.suppressFollowupInputScan;",
       "const writePlainTextToContentEditablePreservingNewlines = deps.writePlainTextToContentEditablePreservingNewlines;",
       "const analyzeText = deps.analyzeText;",
+      "const window = {};",
+      "globalThis.PWM.DebugLogger = { ...(globalThis.PWM.DebugLogger || {}), debugEvent: (label, payload) => deps.logs.push({ label, payload }) };",
       "function debugReveal(label, payload) { deps.logs.push({ label, payload }); }",
       extractFunctionSource(contentSource, "normalizeVerificationText"),
       extractFunctionSource(contentSource, "normalizeLooseVerificationText"),
