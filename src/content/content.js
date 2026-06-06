@@ -314,6 +314,8 @@
     getFileListMetadataSignature,
     markSanitizedFileHandoff,
     deleteSanitizedFileHandoffMark,
+    getSanitizedFileInputHandoffSuppression,
+    suppressSanitizedFileInputHandoffEvent,
     shouldSuppressSanitizedFileReprocessing,
     isFileUnavailableLocalFileResult,
     getFileUnavailableAfterHandoffSuppression,
