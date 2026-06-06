@@ -645,6 +645,8 @@
       "bytes",
       "bytesProcessed",
       "changeEventDispatched",
+      "chipCountAfter",
+      "chipCountBefore",
       "chunks",
       "context",
       "codeIfSafe",
@@ -658,6 +660,8 @@
       "host",
       "hostname",
       "inputEventDispatched",
+      "inputFilesAccepted",
+      "inputFilesCleared",
       "maxBytes",
       "messageLength",
       "outcome",
@@ -5576,6 +5580,11 @@
       { rawInsertedText: payload.rawText || "" }
     );
     if (inserted === true) {
+      debugFileAttachMetadata("gemini:fallback-text-inserted", {
+        hostname: location.hostname || "",
+        stage: "text",
+        sanitizedFile: describeFileForDebug(payload?.sanitizedFile)
+      });
       setGeminiDmzOverlayState("Inserted sanitized content", "inserted");
     }
     return inserted;
@@ -6704,6 +6713,8 @@
       inputFilesAssignmentSucceeded: false,
       inputEventDispatched: false,
       changeEventDispatched: false,
+      chipCountBefore: 0,
+      chipCountAfter: 0,
       failureReason: "",
       errorMessage: "",
       errorStack: ""
@@ -8415,6 +8426,79 @@
     return selected;
   }
 
+  function countGeminiAttachmentIndicators() {
+    if (!isGeminiHost()) return 0;
+    const selectors = [
+      "images-files-uploader",
+      "file-preview",
+      "attachment-chip",
+      "mat-chip",
+      "[data-test-id*='attachment' i]",
+      "[data-test-id*='upload' i]",
+      "[aria-label*='attachment' i]",
+      "[aria-label*='uploaded' i]",
+      "[aria-label*='uploading' i]",
+      "[aria-label*='file attached' i]",
+      "[role='progressbar']"
+    ];
+    const roots = [];
+    collectRootsWithOpenShadow(document, roots, new WeakSet(), null);
+    const seen = new WeakSet();
+    let count = 0;
+    for (const scanRoot of roots) {
+      for (const selector of selectors) {
+        try {
+          scanRoot.querySelectorAll?.(selector).forEach((candidate) => {
+            if (!candidate || seen.has(candidate)) return;
+            seen.add(candidate);
+            count += 1;
+          });
+        } catch {
+          // Case-insensitive selectors may not parse in every runtime; keep validation best-effort.
+        }
+      }
+    }
+    return count;
+  }
+
+  async function waitForGeminiAttachmentIndicators(previousCount = 0, timeoutMs = 450) {
+    let count = countGeminiAttachmentIndicators();
+    if (count > previousCount) return count;
+    if (typeof MutationObserver !== "function") return count;
+
+    return await new Promise((resolve) => {
+      let settled = false;
+      let observer = null;
+      let timeoutId = 0;
+      const finish = (force = false) => {
+        if (settled) return;
+        count = countGeminiAttachmentIndicators();
+        if (count <= previousCount && !force) return;
+        settled = true;
+        if (observer) {
+          try {
+            observer.disconnect();
+          } catch {
+            // Best-effort cleanup only.
+          }
+        }
+        if (timeoutId) clearTimeout(timeoutId);
+        resolve(count);
+      };
+      try {
+        observer = new MutationObserver(() => finish(false));
+        observer.observe(document.documentElement || document, {
+          childList: true,
+          subtree: true
+        });
+      } catch {
+        observer = null;
+      }
+      setTimeout(() => finish(false), 0);
+      timeoutId = setTimeout(() => finish(true), timeoutMs);
+    });
+  }
+
   function discoverFileInputForHandoff(event, input) {
     const candidates = [];
     const seen = new WeakSet();
@@ -8640,6 +8724,59 @@
       }
       return false;
     }
+  }
+
+  async function handOffGeminiSanitizedFileInput(fileInput, transfer, details, sanitizedFile) {
+    const chipCountBefore = countGeminiAttachmentIndicators();
+    if (details) details.chipCountBefore = chipCountBefore;
+    const assigned = handOffSanitizedFileInput(fileInput, transfer, {
+      dispatchInput: true,
+      details
+    });
+    const inputFilesAccepted = Number(fileInput?.files?.length || 0) > 0;
+    const chipCountAfter = inputFilesAccepted
+      ? countGeminiAttachmentIndicators()
+      : await waitForGeminiAttachmentIndicators(chipCountBefore, GEMINI_UPLOAD_INPUT_WAIT_MS);
+    const inputFilesCleared = !inputFilesAccepted && details?.inputFilesAssignmentSucceeded === true;
+    if (details) {
+      details.chipCountAfter = chipCountAfter;
+      details.inputFilesAccepted = inputFilesAccepted;
+      details.inputFilesCleared = inputFilesCleared;
+    }
+
+    debugFileAttachMetadata("gemini:handoff-events-dispatched", {
+      hostname: location.hostname || "",
+      stage: details?.handoffStage || "gemini:file-input-assignment",
+      inputEventDispatched: Boolean(details?.inputEventDispatched),
+      changeEventDispatched: Boolean(details?.changeEventDispatched),
+      inputFilesAccepted,
+      inputFilesCleared,
+      sanitizedFile: describeFileForDebug(sanitizedFile)
+    });
+
+    if (chipCountAfter > chipCountBefore) {
+      debugFileAttachMetadata("gemini:attachment-chip-detected", {
+        hostname: location.hostname || "",
+        stage: "dom-validation",
+        chipCountBefore,
+        chipCountAfter,
+        sanitizedFile: describeFileForDebug(sanitizedFile)
+      });
+    }
+
+    if (inputFilesCleared && chipCountAfter > chipCountBefore) {
+      debugFileAttachMetadata("gemini:handoff-accepted-input-cleared", {
+        hostname: location.hostname || "",
+        stage: "dom-validation",
+        chipCountBefore,
+        chipCountAfter,
+        inputFilesCleared: true,
+        sanitizedFile: describeFileForDebug(sanitizedFile)
+      });
+      return true;
+    }
+
+    return assigned;
   }
 
   function isForbiddenGeminiUploadButton(candidate) {
@@ -8932,10 +9069,13 @@
     if (cachedFileInput) {
       details.handoffStage = "gemini:cached-input";
       details.fileInputCountBeforeClick = 1;
-      const assigned = handOffSanitizedFileInput(cachedFileInput, transfer, {
-        dispatchInput: true,
-        details
+      debugFileAttachMetadata("gemini:file-input-discovered", {
+        hostname: location.hostname || "",
+        stage: details.handoffStage,
+        input: describeFileInputForDebug(cachedFileInput, "gemini-cached-input"),
+        sanitizedFile: describeFileForDebug(sanitizedFile)
       });
+      const assigned = await handOffGeminiSanitizedFileInput(cachedFileInput, transfer, details, sanitizedFile);
       if (!assigned) {
         logSanitizedFileHandoffFailure(details);
       }
@@ -8958,6 +9098,12 @@
       (event?.type !== "drop" || handoffOptions.allowUploadUiClick === true);
 
     if (!fileInput && mayClickGeminiUploadUi) {
+      debugFileAttachMetadata("gemini:upload-menu-open-attempt", {
+        hostname: location.hostname || "",
+        stage: "gemini:ghost-ingress-menu-open",
+        foundTopUploadTrigger: Boolean(uploadTrigger),
+        sanitizedFile: describeFileForDebug(sanitizedFile)
+      });
       const result = await waitForGeminiGhostIngressFileInput(event, input, details, sanitizedFile);
       discovery = result.discovery;
       fileInput = result.fileInput;
@@ -8971,6 +9117,12 @@
         lastDiscoveredFileInput = fileInput;
         fileDragDiscoveryCompleted = true;
         fileDragDiscoveryScheduled = false;
+        debugFileAttachMetadata("gemini:file-input-after-menu", {
+          hostname: location.hostname || "",
+          stage: details.handoffStage,
+          input: describeFileInputForDebug(fileInput, "gemini-file-input-after-menu"),
+          sanitizedFile: describeFileForDebug(sanitizedFile)
+        });
         return true;
       }
     } else if (!fileInput) {
@@ -9000,6 +9152,12 @@
         openShadowRootCount: details.openShadowRootCount,
         sanitizedFile: describeFileForDebug(sanitizedFile)
       });
+      debugFileAttachMetadata("gemini:handoff-failed-no-input", {
+        hostname: location.hostname || "",
+        stage: details.handoffStage,
+        reason: details.failureReason,
+        sanitizedFile: describeFileForDebug(sanitizedFile)
+      });
       if (shouldQueueFirefoxGeminiPendingSanitizedFileHandoff(event, sanitizedFile, details)) {
         const originalFailureReason = details.failureReason;
         const originalHandoffStage = details.handoffStage;
@@ -9026,10 +9184,13 @@
     }
 
     details.handoffStage = "gemini:file-input-assignment";
-    const assigned = handOffSanitizedFileInput(fileInput, transfer, {
-      dispatchInput: true,
-      details
+    debugFileAttachMetadata(fileInput === discovery.fileInput ? "gemini:file-input-discovered" : "gemini:file-input-after-menu", {
+      hostname: location.hostname || "",
+      stage: details.handoffStage,
+      input: describeFileInputForDebug(fileInput, "gemini-file-input"),
+      sanitizedFile: describeFileForDebug(sanitizedFile)
     });
+    const assigned = await handOffGeminiSanitizedFileInput(fileInput, transfer, details, sanitizedFile);
     if (!assigned) {
       logSanitizedFileHandoffFailure(details);
     }
