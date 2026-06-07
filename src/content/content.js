@@ -9240,48 +9240,6 @@
     return "";
   }
 
-  async function insertGeminiLocalFileText(event, input, redactedText, options) {
-    options = options || {};
-    if (!isGeminiHost()) {
-      return false;
-    }
-
-    if (!(await confirmGeminiLargeSanitizedTextInsertion(redactedText, "gemini-file-text"))) {
-      setBadge("Sanitized text insertion cancelled");
-      hideBadgeSoon(3200);
-      refreshBadgeFromCurrentInput();
-      return "cancelled";
-    }
-
-    const editor = resolveGeminiFallbackEditor(event, input);
-    if (editor) {
-      return applyGeminiEditorText(editor, String(redactedText || ""), "gemini-file-text", {
-        skipLargeConfirmation: true,
-        rawInsertedText: options.rawInsertedText || ""
-      });
-    }
-
-    const targetInput = input || findComposer(event?.target) || findComposer(document.activeElement);
-    if (!targetInput) {
-      debugReveal("file-handoff:gemini-text-direct-unavailable", {
-        context: event?.type || "",
-        reason: "composer_not_found"
-      });
-      return false;
-    }
-
-    const originalText = getInputText(targetInput);
-    const selection = getSelectionOffsets(targetInput);
-    return applyPasteDecision(
-      targetInput,
-      originalText,
-      selection,
-      String(redactedText || ""),
-      "gemini-file-text",
-      { rawInsertedText: options.rawInsertedText || "" }
-    );
-  }
-
   async function maybeHandleLocalFileInsert(event, input, dataTransfer, context) {
     if (
       !extensionRuntimeAvailable ||

@@ -1377,7 +1377,6 @@ function createHarness(overrides = {}) {
       ...fileHandoffFlowHarnessSource({ includeLegacyLocalFile: false }),
       extractFunctionSource(contentSource, "isForbiddenGeminiUploadButton"),
       extractFunctionSource(contentSource, "isAllowedGeminiUploadMenuOpener"),
-      extractFunctionSource(contentSource, "insertGeminiLocalFileText"),
       extractFunctionSource(contentSource, "maybeHandleLocalFileInsert"),
       extractFunctionSource(contentSource, "maybeHandlePaste"),
       extractFunctionSource(contentSource, "maybeHandleDrop"),

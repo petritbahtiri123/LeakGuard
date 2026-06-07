@@ -40,7 +40,6 @@ const contentScriptHarnessBaseline = exactNames([
   "hasGeminiSanitizedDownloadFallback",
   "hasPendingGrokSanitizedFileHandoff",
   "hostMatchesFileHandoffAdapter",
-  "insertGeminiLocalFileText",
   "isClaudeHost",
   "isHighConfidenceRewriteFinding",
   "isOpenAiChatHost",
