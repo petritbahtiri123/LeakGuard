@@ -12,7 +12,9 @@
     "report:osv": "node scripts/generate-osv-report.mjs",
     "report:sizes": "node scripts/generate-runtime-size-report.mjs",
     "scan:repo-secrets": "node scripts/repository-secret-scan.mjs",
-    "test": "npm run prepare:build && node scripts/run-tests.mjs",
+    "deadcode": "knip",
+    "lint:unused": "eslint .",
+    "test": "npm run lint:unused && npm run deadcode && npm run prepare:build && node scripts/run-tests.mjs",
     "qa:browser": "npm run build:chrome && node tests/browser/extension_qa_harness.test.mjs",
     "test:release": "npm test && npm run docs:check-links && npm run smoke:firefox && npm run qa:browser",
     "smoke:chrome": "npm run build:chrome && node tests/browser/chrome_smoke.test.mjs",
@@ -35,6 +37,9 @@
     "build:all": "npm run prepare:build && node scripts/build-all.mjs"
   },
   "devDependencies": {
+    "eslint": "^10.4.1",
+    "globals": "^17.6.0",
+    "knip": "^6.16.1",
     "sharp": "^0.34.5",
     "yazl": "^3.3.1"
   },
