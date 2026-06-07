@@ -1653,6 +1653,7 @@ function createHandoffHarness({
   uploadTriggers = [],
   hiddenTriggers = [],
   overlayItems = [],
+  attachmentIndicators = [],
   documentRemoveEventListenerThrows = false,
   sendRuntimeMessage = async (message) => ({ ok: true, downloadId: 77 })
 } = {}) {
@@ -1901,6 +1902,21 @@ function createHandoffHarness({
       ) {
         return uploadTriggers;
       }
+      if (
+        selector === "images-files-uploader" ||
+        selector === "file-preview" ||
+        selector === "attachment-chip" ||
+        selector === "mat-chip" ||
+        selector === "[data-test-id*='attachment' i]" ||
+        selector === "[data-test-id*='upload' i]" ||
+        selector === "[aria-label*='attachment' i]" ||
+        selector === "[aria-label*='uploaded' i]" ||
+        selector === "[aria-label*='uploading' i]" ||
+        selector === "[aria-label*='file attached' i]" ||
+        selector === "[role='progressbar']"
+      ) {
+        return attachmentIndicators;
+      }
       if (selector === "*") return shadowHosts;
       return [];
     }
@@ -2098,10 +2114,13 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "isRejectedGeminiUploadMenuItem"),
       extractFunctionSource(contentSource, "scoreGeminiUploadMenuItem"),
       extractFunctionSource(contentSource, "discoverGeminiUploadOverlayItem"),
+      extractFunctionSource(contentSource, "countGeminiAttachmentIndicators"),
+      extractFunctionSource(contentSource, "waitForGeminiAttachmentIndicators"),
       extractFunctionSource(contentSource, "discoverFileInputForHandoff"),
       extractFunctionSource(contentSource, "resolveFileInputForHandoff"),
       extractFunctionSource(contentSource, "waitForGeminiUploadMenuInput"),
       extractFunctionSource(contentSource, "handOffSanitizedFileInput"),
+      extractFunctionSource(contentSource, "handOffGeminiSanitizedFileInput"),
       extractFunctionSource(contentSource, "readSanitizedFileTextForFallback"),
       extractFunctionSource(contentSource, "isForbiddenGeminiUploadButton"),
       extractFunctionSource(contentSource, "isAllowedGeminiUploadMenuOpener"),
@@ -6879,6 +6898,67 @@ async function testGeminiNonDropUploadFlowMayClickWhenInputAppearsAfterClick() {
     debugEvents.some((entry) => entry.label === "file-handoff:assignment-success"),
     "expected non-drop Gemini file upload handoff to assign the dynamically-created input"
   );
+}
+
+async function testGeminiUploadAcceptsChipIncreaseWhenInputFilesClear() {
+  const rawSecret = "LeakGuardUploadApiKey1234567890";
+  const attachmentIndicators = [];
+  const sanitizedFile = {
+    name: "cleared-after-accept.env",
+    type: "text/plain",
+    size: 28,
+    text: "API_KEY=[PWM_1]"
+  };
+  const fileInput = createFileInput({ source: "light-dom", name: "Filedata", multiple: true });
+  const originalDispatchEvent = fileInput.dispatchEvent.bind(fileInput);
+  fileInput.dispatchEvent = (event) => {
+    const result = originalDispatchEvent(event);
+    if (event.type === "change") {
+      attachmentIndicators.push({ nodeType: 1, tagName: "MAT-CHIP" });
+      fileInput.files = [];
+    }
+    return result;
+  };
+  const { handOffGeminiSanitizedFileUpload, debugEvents, fallbackDrops, runtimeMessages } =
+    createHandoffHarness({
+      fileInputs: [fileInput],
+      attachmentIndicators
+    });
+  const event = {
+    type: "file-input",
+    target: { nodeType: 1, tagName: "DIV", dispatchEvent: () => true },
+    dataTransfer: createDataTransfer({
+      files: [
+        {
+          name: "raw-local-name.env",
+          type: "text/plain",
+          size: 64,
+          text: `API_KEY=${rawSecret}`
+        }
+      ]
+    })
+  };
+
+  const handedOff = await handOffGeminiSanitizedFileUpload(event, null, sanitizedFile);
+
+  assert.strictEqual(handedOff, true);
+  assert.deepStrictEqual(fileInput.events, ["input", "change"]);
+  assert.deepStrictEqual(Array.from(fileInput.files || []), []);
+  assert.strictEqual(fallbackDrops.length, 0);
+  assert.strictEqual(runtimeMessages.length, 0);
+  assert.ok(debugEvents.some((entry) => entry.label === "gemini:attachment-chip-detected"));
+  assert.ok(debugEvents.some((entry) => entry.label === "gemini:handoff-accepted-input-cleared"));
+  assert.ok(debugEvents.some((entry) => entry.label === "gemini:handoff-events-dispatched"));
+
+  const serializedDebug = JSON.stringify(debugEvents);
+  assert.strictEqual(serializedDebug.includes(rawSecret), false);
+  assert.strictEqual(serializedDebug.includes("raw-local-name.env"), false);
+  assert.strictEqual(serializedDebug.includes("cleared-after-accept.env"), false);
+  assert.strictEqual(serializedDebug.includes("MAT-CHIP"), false);
+  assert.strictEqual(serializedDebug.includes("ariaLabel"), false);
+  assert.strictEqual(serializedDebug.includes("className"), false);
+  assert.strictEqual(serializedDebug.includes("selector"), false);
+  assert.strictEqual(serializedDebug.includes("errorStack"), false);
 }
 
 async function testGeminiUploadOverlayFailureLogsMetadataOnly() {
@@ -12888,6 +12968,7 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   testGeminiHiddenUploadToolsRejectedAsNormalMenuOpener();
   testGeminiHiddenSelectorOnlyUsesDedicatedActivator();
   await testGeminiUploadMenuDirectInputStillWorks();
+  await testGeminiUploadAcceptsChipIncreaseWhenInputFilesClear();
   await testGeminiUploadButtonHandoffDispatchesInputAndChange();
   await testGeminiLargeFileInputWithoutComposerUsesStreamingSanitizedHandoff();
   await testNonGeminiFileInputWithoutComposerStillIgnored();
