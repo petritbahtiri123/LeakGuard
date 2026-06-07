@@ -1150,14 +1150,6 @@
     dmzOverlayStatusEl = null;
   }
 
-  function clearGeminiDmzOverlayTimer() {
-    clearDmzOverlayTimer();
-  }
-
-  function hideGeminiDmzOverlay() {
-    hideDmzOverlay();
-  }
-
   function setDmzOverlayState(message, state = "") {
     if (!getCurrentHandoffDriver()?.usesDmzOverlay) return;
     if (!dmzOverlayEl) {
@@ -1249,10 +1241,6 @@
     } catch {
       // CSS fallback is best-effort; interception still fails closed.
     }
-  }
-
-  function showGeminiDmzOverlay() {
-    return showDmzOverlay();
   }
 
   function getFileProcessingSiteId(site = "") {
@@ -2833,10 +2821,6 @@
     );
     refreshBadgeFromCurrentInput();
     return true;
-  }
-
-  function getFindings(text) {
-    return analyzeText(text).findings;
   }
 
   async function applyNormalizedComposerRewrite(input, originalText, context) {
@@ -4762,12 +4746,6 @@
     };
   }
 
-  async function redactGeminiEditorText(text) {
-    const analysis = analyzeText(String(text || ""));
-    const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
-    return String(result.redactedText || "");
-  }
-
   function placeGeminiEditorCaretAtEnd(editor) {
     try {
       const selection = window.getSelection?.();
@@ -5339,120 +5317,6 @@
     await showMessageModal(
       "Raw paste blocked",
       "LeakGuard blocked raw pasted content because sanitized insertion failed."
-    );
-    refreshBadgeFromCurrentInput();
-    return true;
-  }
-
-  function listGeminiDropFiles(dataTransfer) {
-    return Array.from(dataTransfer?.files || []).filter(Boolean);
-  }
-
-  function isSupportedGeminiTextFile(file) {
-    return classifyLocalFile(file).action === "scan";
-  }
-
-  async function readGeminiTextFile(file) {
-    if (!isSupportedGeminiTextFile(file) || typeof file?.text !== "function") {
-      return {
-        ok: false,
-        message: LOCAL_FILE_UNSUPPORTED_WARNING
-      };
-    }
-
-    if (Number(file?.size || 0) > LARGE_TEXT_STREAMING_MAX_BYTES) {
-      return {
-        ok: false,
-        code: "file_too_large",
-        message: STREAMING_BLOCK_MESSAGE
-      };
-    }
-
-    if (Number(file?.size || 0) > LOCAL_TEXT_HARD_BLOCK_BYTES) {
-      return {
-        ok: false,
-        code: "streaming_required",
-        sourceFile: file,
-        file: {
-          name: file?.name || "",
-          type: file?.type || "text/plain",
-          sizeBytes: Number(file?.size || 0)
-        },
-        message: LOCAL_FILE_STREAMING_REQUIRED_MESSAGE
-      };
-    }
-
-    try {
-      return {
-        ok: true,
-        text: await file.text()
-      };
-    } catch {
-      return {
-        ok: false,
-        message: "LeakGuard could not read this local file, so nothing was attached."
-      };
-    }
-  }
-
-  async function maybeHandleGeminiEditorDrop(event) {
-    const editor = resolveGeminiFallbackEditor(event, null);
-    if (!editor || typeof readLocalTextFileFromDataTransfer !== "function") {
-      return false;
-    }
-
-    const files = listLocalTransferFiles(event?.dataTransfer);
-    if (files.length !== 1) {
-      return false;
-    }
-
-    const fileSize = Number(files[0]?.size || 0);
-    if (fileSize > GEMINI_AUTO_INSERT_TEXT_LIMIT) {
-      return false;
-    }
-
-    noteActiveRiskEditor(editor);
-    const localFile = await readLocalTextFileFromDataTransfer(event.dataTransfer);
-    if (!localFile.handled) {
-      setBadge("Raw file blocked");
-      hideBadgeSoon(4200);
-      await showMessageModal(
-        "Raw file blocked",
-        localFile.message || "LeakGuard blocked raw file upload because local scanning failed."
-      );
-      refreshBadgeFromCurrentInput();
-      return true;
-    }
-
-    if (!localFile.ok) {
-      return false;
-    }
-
-    if (getLocalTextPayloadByteLength(localFile.text, localFile.file?.sizeBytes) > GEMINI_AUTO_INSERT_TEXT_LIMIT) {
-      return false;
-    }
-
-    try {
-      const analysis = analyzeText(localFile.text);
-      const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
-      const applied = await applyGeminiEditorText(editor, result.redactedText, "gemini-file-drop", {
-        skipLargeConfirmation: true
-      });
-      if (applied === true) {
-        setBadge("Sanitized file text inserted.");
-        hideBadgeSoon(3200);
-        refreshBadgeFromCurrentInput();
-        return true;
-      }
-    } catch (error) {
-      handleContentError(error);
-    }
-
-    setBadge("Raw file upload blocked");
-    hideBadgeSoon(4200);
-    await showMessageModal(
-      "Raw file upload blocked",
-      "LeakGuard blocked raw file upload because sanitized Gemini drop insertion failed."
     );
     refreshBadgeFromCurrentInput();
     return true;

@@ -644,7 +644,6 @@
   root.PWM.loadPolicy = loadPolicy;
   root.PWM.getPolicySummary = getPolicySummary;
   root.PWM.invalidatePolicyCache = invalidatePolicyCache;
-  root.PWM.matchPolicyPattern = matchPattern;
   root.PWM.evaluateDestinationPolicy = evaluateDestinationPolicy;
   root.PWM.shouldBlockDestination = shouldBlockDestination;
   root.PWM.summarizePolicy = summarizePolicy;

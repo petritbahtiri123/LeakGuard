@@ -1260,7 +1260,6 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "resolveGeminiEditorTarget"),
       extractFunctionSource(contentSource, "findGeminiEditorCandidateInRoot"),
       extractFunctionSource(contentSource, "resolveGeminiFallbackEditor"),
-      extractFunctionSource(contentSource, "redactGeminiEditorText"),
       extractFunctionSource(contentSource, "settleComposer"),
       extractFunctionSource(contentSource, "readStableComposerText"),
       extractFunctionSource(contentSource, "suppressFollowupInputScan"),
@@ -1284,10 +1283,6 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "applyGeminiEditorText"),
       extractFunctionSource(contentSource, "blockGeminiEditorRawContent"),
       extractFunctionSource(contentSource, "maybeHandleGeminiEditorPaste"),
-      extractFunctionSource(contentSource, "listGeminiDropFiles"),
-      extractFunctionSource(contentSource, "isSupportedGeminiTextFile"),
-      extractFunctionSource(contentSource, "readGeminiTextFile"),
-      extractFunctionSource(contentSource, "maybeHandleGeminiEditorDrop"),
       extractFunctionSource(contentSource, "markSanitizedFileHandoffEvent"),
       extractFunctionSource(contentSource, "createSanitizedDataTransfer"),
       extractFunctionSource(contentSource, "createSanitizedDataTransferForHandoff"),
@@ -2549,6 +2544,31 @@ async function testComposerTargetDropStillPassesComposer() {
   assert.strictEqual(calls.textFallbacks.length, 1);
   assert.strictEqual(calls.textFallbacks[0].input, composer);
   assert.strictEqual(calls.textFallbacks[0].context, "file-text-fallback");
+}
+
+function testProductionGeminiDropPathDoesNotUseLegacyEditorDropHandler() {
+  const maybeHandleDropSource = extractFunctionSource(contentSource, "maybeHandleDrop");
+  const bindEventsSource = extractFunctionSource(contentSource, "bindEvents");
+  const bindFileDragEventsSource = extractFunctionSource(contentSource, "bindFileDragEvents");
+
+  assert.strictEqual(
+    maybeHandleDropSource.includes("maybeHandleGeminiEditorDrop"),
+    false,
+    "production drop handling should not depend on the legacy Gemini editor-drop helper"
+  );
+  assert.strictEqual(
+    bindEventsSource.includes("maybeHandleGeminiEditorDrop"),
+    false,
+    "registered drop listeners should not route through the legacy Gemini editor-drop helper"
+  );
+  assert.ok(
+    bindEventsSource.includes("maybeHandleDrop(event).catch(handleContentError)"),
+    "drop listeners should route through the active file-handoff drop handler"
+  );
+  assert.ok(
+    bindFileDragEventsSource.includes('root.addEventListener("drop", onFileDrop'),
+    "bound file drag roots should use the injected production drop callback"
+  );
 }
 
 async function testGeminiDropUsesDiscoveredFileInputHandoff() {
@@ -12846,6 +12866,7 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testNonFileDragoverIsIgnored();
   await testSanitizedFileHandoffDropIsIgnored();
   await testComposerTargetDropStillPassesComposer();
+  testProductionGeminiDropPathDoesNotUseLegacyEditorDropHandler();
   await testGeminiDropUsesDiscoveredFileInputHandoff();
   testGeminiDiagnosticsDetectsNewPillPrompt();
   testGeminiDiagnosticsDetectsPlusMenu();

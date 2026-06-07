@@ -282,7 +282,6 @@
 
   root.PWM.scoreAiCandidate = scoreAiCandidate;
   root.PWM.extractAiCandidates = extractAiCandidates;
-  root.PWM.overlapsAnyAiCandidateRange = overlapsAnyRange;
   root.PWM.AiCandidateGate = { scoreAiCandidate, extractAiCandidates, overlapsAnyRange };
 
   if (typeof module !== "undefined" && module.exports) {
