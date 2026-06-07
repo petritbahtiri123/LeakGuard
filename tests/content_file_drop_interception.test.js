@@ -1650,7 +1650,7 @@ function createHandoffHarness({
   overlayItems = [],
   attachmentIndicators = [],
   documentRemoveEventListenerThrows = false,
-  sendRuntimeMessage = async (message) => ({ ok: true, downloadId: 77 })
+  sendRuntimeMessage = async (_message) => ({ ok: true, downloadId: 77 })
 } = {}) {
   const debugEvents = [];
   const consoleErrors = [];
@@ -2963,7 +2963,6 @@ async function testGeminiDropNeverClicksUploadFlowWhenInputAppearsAfterClick() {
     debugEvents,
     fallbackDrops,
     consoleErrors,
-    badges,
     runtimeMessages
   } = createHandoffHarness({
     fileInputs,
@@ -7712,7 +7711,7 @@ async function testGeminiQlEditorPastePauseInsertsRawText() {
   const { maybeHandlePaste, calls } = createHarness({
     location: { hostname: "gemini.google.com" },
     isProtectionPauseActiveAfterPolicy: () => true,
-    promptForSensitiveContentDecision: async (findings, mode, _policy, input, normalizedText) => {
+    promptForSensitiveContentDecision: async (_findings, _mode, _policy, _input, _normalizedText) => {
       throw new Error("paused Gemini paste should not prompt");
     },
     document: {
@@ -10019,7 +10018,7 @@ async function testFirefoxGeminiDropUsesPendingAttachHookAfterRedaction() {
       calls.redactions.push({ text, findings, options });
       return { redactedText: "API_KEY=[PWM_1]" };
     },
-    handOffGeminiSanitizedFileUpload: (event, input, sanitizedFile, options) => {
+    handOffGeminiSanitizedFileUpload: (event, input, sanitizedFile, _options) => {
       calls.handoffs.push({ event, input, sanitizedFile, context: "gemini-file-input" });
       throw new Error("Firefox Gemini drop should use pending attach hooks instead of automatic handoff");
     }
@@ -12001,7 +12000,7 @@ async function testGeminiHiddenFileDropUsesSnapshotThenSanitizedTextFallback() {
     },
     document: {
       activeElement: editor,
-      execCommand(command, _showUi, value) {
+      execCommand(_command, _showUi, _value) {
         return false;
       }
     }
@@ -12982,6 +12981,8 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testSanitizedHandoffSignatureExpiresBeforeSameMetadataUserFile();
   testGeminiUploadHandoffDoesNotRedispatchSyntheticDrop();
   testSanitizedDownloadBackgroundHookExists();
+  testUrlChangeClearsPendingGeminiHandoff();
+  testExtensionInvalidationClearsPendingGeminiHandoff();
   testGeminiUploadDiscoveryDoesNotRequireMaterialClassSelectors();
   await testGeminiNonDropUploadFlowMayClickWhenInputAppearsAfterClick();
   await testGeminiUploadOverlayFailureLogsMetadataOnly();

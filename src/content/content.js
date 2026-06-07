@@ -310,14 +310,11 @@
   });
   const {
     sanitizedFileInputHandoffs,
-    getFileMetadataSignature,
     getFileListMetadataSignature,
     markSanitizedFileHandoff,
     deleteSanitizedFileHandoffMark,
     getSanitizedFileInputHandoffSuppression,
     suppressSanitizedFileInputHandoffEvent,
-    shouldSuppressSanitizedFileReprocessing,
-    isFileUnavailableLocalFileResult,
     getFileUnavailableAfterHandoffSuppression,
     suppressFileUnavailableAfterHandoff,
     suppressStaleHandoffErrorAfterSuccess,
@@ -355,7 +352,6 @@
   const {
     createPendingAttachEvent,
     queuePendingSanitizedFileHandoff,
-    attemptPendingSanitizedFileHandoff,
     clearPendingSanitizedFileHandoff,
     attachPendingSanitizedFileWithTrustedActivation,
     insertPendingSanitizedFileText,
@@ -408,14 +404,9 @@
     tryGeminiSanitizedFileAttach
   });
   const {
-    isFileOnlySanitizedPayload,
-    isSafeSanitizedPayload,
     handOffSanitizedLocalFile,
-    tryRealFileInputSanitizedFileAttach,
-    insertSanitizedPayloadText,
     downloadSanitizedFileFallback,
-    getCurrentHandoffDriver,
-    handoffSanitizedPayload
+    getCurrentHandoffDriver
   } = fileHandoffFlow;
 
   function isExtensionContextInvalidatedError(error) {
@@ -2406,7 +2397,7 @@
     }
   }
 
-  function resolveDecisionAction(action, policy) {
+  function resolveDecisionAction(action, _policy) {
     return action === "redact" ? "redact" : "cancel";
   }
 
@@ -2882,7 +2873,7 @@
     container.appendChild(row);
   }
 
-  function showDecisionModal(findings, mode, options = {}) {
+  function showDecisionModal(findings, mode, _options = {}) {
     if (modalOpen) {
       return Promise.resolve({ action: "cancel" });
     }
@@ -3889,17 +3880,11 @@
     const next = spliceSelectionText(originalText, selection, insertedText);
     let firefoxEarlyAnalysis = null;
     let firefoxEarlyRelevantFindings = [];
-    let firefoxEarlyRelevantSecretFindings = [];
     let firefoxEarlyPlaceholderNormalizationChanged = false;
     if (isFirefoxRuntime()) {
       firefoxEarlyAnalysis = analyzeText(next.text);
       firefoxEarlyRelevantFindings = selectFindingsOverlappingInsertion(
         firefoxEarlyAnalysis.findings,
-        selection,
-        insertedText
-      );
-      firefoxEarlyRelevantSecretFindings = selectFindingsOverlappingInsertion(
-        firefoxEarlyAnalysis.secretFindings,
         selection,
         insertedText
       );
@@ -9775,7 +9760,6 @@
         clearLocalPayloadOptimizationStatus(sizeInfo, preflightPlan.optimizedStatus.cleanupOnAttachFailure);
       }
       const pendingAdapter = attachFlow.pendingAttachOptions?.pendingAdapter;
-      const pendingFallbackDecision = attachFlow.pendingFallbackDecision || {};
       if (
         attachFlow.action === "pending" &&
         queuePendingSanitizedFileHandoff(

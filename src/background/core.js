@@ -18,7 +18,6 @@ const {
   invalidatePolicyCache,
   ext,
   supportsDynamicContentScripts,
-  supportsStorageSession,
   getSessionStorageArea
 } = globalThis.PWM;
 

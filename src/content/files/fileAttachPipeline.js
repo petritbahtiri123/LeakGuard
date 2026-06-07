@@ -257,7 +257,6 @@
   }
 
   function classifyStreamingAttachPlan(options = {}) {
-    const context = options.context || "";
     const isGeminiDrop = options.isGeminiDrop === true;
     const isGrokDrop = options.isGrokDrop === true;
     const streamResultAction = options.streamResultAction || "";

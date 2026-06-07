@@ -342,7 +342,7 @@ function toPem(label, derBytes) {
   return `-----BEGIN ${label}-----\n${base64}\n-----END ${label}-----\n`;
 }
 
-async function startHttpsChatGptServer(tempDir) {
+async function startHttpsChatGptServer(_tempDir) {
   const tls = createSelfSignedCertificate();
   const server = https.createServer(tls, (request, response) => {
     response.writeHead(200, {
