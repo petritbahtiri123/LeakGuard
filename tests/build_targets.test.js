@@ -378,6 +378,7 @@ async function run() {
     "content/adapters/index.js"
   ];
   const adapterIndexes = adapterScripts.map((script) => contentScripts.indexOf(script));
+  const geminiFallbackWriterIndex = contentScripts.indexOf("content/adapters/geminiFallbackWriter.js");
   const safeSnapshotsIndex = contentScripts.indexOf("content/diagnostics/safeSnapshots.js");
   const fileAttachPipelineIndex = contentScripts.indexOf("content/files/fileAttachPipeline.js");
   const placeholderRehydratorIndex = contentScripts.indexOf("content/rehydration/placeholderRehydrator.js");
@@ -402,6 +403,7 @@ async function run() {
   assert.ok(fileTransferPolicyIndex > -1, "content scripts should include file transfer policy helpers");
   assert.ok(hostMatchingIndex > -1, "content scripts should include host matching helpers");
   assert.ok(adapterIndexes.every((index) => index > -1), "content scripts should include site adapter helpers");
+  assert.ok(geminiFallbackWriterIndex > -1, "content scripts should include Gemini fallback writer helpers");
   assert.ok(safeSnapshotsIndex > -1, "content scripts should include safe snapshot helpers");
   assert.ok(fileAttachPipelineIndex > -1, "content scripts should include file attach pipeline helpers");
   assert.ok(placeholderRehydratorIndex > -1, "content scripts should include placeholder rehydration helpers");
@@ -423,7 +425,8 @@ async function run() {
       fileTransferPolicyIndex < hostMatchingIndex &&
       hostMatchingIndex < adapterIndexes[0] &&
       adapterOrderAligned &&
-      adapterIndexes.at(-1) < safeSnapshotsIndex &&
+      adapterIndexes.at(-1) < geminiFallbackWriterIndex &&
+      geminiFallbackWriterIndex < safeSnapshotsIndex &&
       safeSnapshotsIndex < fileAttachPipelineIndex &&
       fileAttachPipelineIndex < placeholderRehydratorIndex &&
       placeholderRehydratorIndex < responseObserverIndex &&

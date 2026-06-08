@@ -56,6 +56,7 @@
     "src/content/adapters/grokAdapter.js",
     "src/content/adapters/xAdapter.js",
     "src/content/adapters/index.js",
+    "src/content/adapters/geminiFallbackWriter.js",
     "src/content/diagnostics/safeSnapshots.js",
     "src/content/files/fileAttachPipeline.js",
     "src/content/rehydration/placeholderRehydrator.js",

@@ -44,6 +44,10 @@ const fileHandoffFlowSource = fs.readFileSync(
   path.join(repoRoot, "src/content/file_handoff_flow.js"),
   "utf8"
 );
+const geminiFallbackWriterSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/adapters/geminiFallbackWriter.js"),
+  "utf8"
+);
 const fileAttachPipelineSource = fs.readFileSync(
   path.join(repoRoot, "src/content/files/fileAttachPipeline.js"),
   "utf8"
@@ -500,7 +504,8 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   );
   assert.ok(
     contentSource.includes("async function applySanitizedTextFallback") &&
-      contentSource.includes("async function applyGeminiSanitizedTextFallback") &&
+      geminiFallbackWriterSource.includes("async function applyGeminiSanitizedTextFallback") &&
+      contentSource.includes("createGeminiFallbackWriter") &&
       contentSource.includes("Sanitized content inserted as text because the site did not accept a sanitized file upload.") &&
       contentSource.includes("Sanitized content inserted as text because Gemini rejected sanitized file upload.") &&
       !contentSource.includes("async function applyLocalFileRedactedText") &&

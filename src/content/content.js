@@ -358,6 +358,36 @@
     downloadPendingSanitizedFile,
     cancelPendingSanitizedFileAttach
   } = fileHandoffPending;
+  const geminiFallbackWriter = globalThis.PWM.GeminiFallbackWriter.createGeminiFallbackWriter({
+    applyPasteDecision,
+    confirmGeminiLargeSanitizedTextInsertion,
+    contentDebugEvents: CONTENT_DEBUG_EVENTS,
+    describeFileForDebug,
+    documentRef: document,
+    emitDebug: debugReveal,
+    emitFileAttachMetadata: debugFileAttachMetadata,
+    findComposer,
+    formatSanitizedFileFallbackText,
+    geminiSanitizedTextFallbackMessage: GEMINI_SANITIZED_TEXT_FALLBACK_MESSAGE,
+    getInputText,
+    getSelectionOffsets,
+    hideBadgeSoon,
+    insertGeminiEditorText,
+    isGeminiHost,
+    locationRef: location,
+    normalizeComposerText,
+    refreshBadgeFromCurrentInput,
+    resolveGeminiFallbackEditor,
+    rewriteComposerTransactionally,
+    setBadge,
+    setGeminiDmzOverlayState,
+    showMessageModal
+  });
+  const {
+    applyGeminiEditorText,
+    applyGeminiSanitizedTextFallback,
+    insertGeminiSanitizedText
+  } = geminiFallbackWriter;
   const fileHandoffFlow = createFileHandoffFlow({
     applySanitizedTextFallback,
     buildSanitizedDownloadFileName,
@@ -5088,84 +5118,6 @@
     }
   }
 
-  async function applyGeminiEditorText(editor, sanitizedText, context, options) {
-    const applyOptions = options || {};
-    const rawInsertedText =
-      typeof applyOptions.rawInsertedText === "string"
-        ? normalizeComposerText(applyOptions.rawInsertedText)
-        : "";
-    if (
-      !applyOptions.skipLargeConfirmation &&
-      !(await confirmGeminiLargeSanitizedTextInsertion(sanitizedText, context))
-    ) {
-      setBadge("Sanitized text insertion cancelled");
-      hideBadgeSoon(3200);
-      refreshBadgeFromCurrentInput();
-      return "cancelled";
-    }
-
-    if (rawInsertedText && getInputText(editor).includes(rawInsertedText)) {
-      const currentText = getInputText(editor);
-      const rawIndex = currentText.indexOf(rawInsertedText);
-      const desiredText =
-        rawIndex >= 0
-          ? `${currentText.slice(0, rawIndex)}${normalizeComposerText(sanitizedText)}${currentText.slice(rawIndex + rawInsertedText.length)}`
-          : normalizeComposerText(sanitizedText);
-      const applied = await rewriteComposerTransactionally(
-        editor,
-        rawInsertedText,
-        desiredText,
-        context,
-        { caretOffset: rawIndex >= 0 ? rawIndex + normalizeComposerText(sanitizedText).length : undefined }
-      );
-
-      if (applied.ok) {
-        setBadge("Content redacted");
-        hideBadgeSoon();
-        refreshBadgeFromCurrentInput();
-        return true;
-      }
-    }
-
-    if (insertGeminiEditorText(editor, sanitizedText, { rawInsertedText })) {
-      if (rawInsertedText && getInputText(editor).includes(rawInsertedText)) {
-        const applied = await rewriteComposerTransactionally(
-          editor,
-          rawInsertedText,
-          normalizeComposerText(sanitizedText),
-          context,
-          { caretOffset: normalizeComposerText(sanitizedText).length }
-        );
-        if (!applied.ok) {
-          return false;
-        }
-      }
-      setBadge("Content redacted");
-      hideBadgeSoon();
-      refreshBadgeFromCurrentInput();
-      return true;
-    }
-
-    const originalText = getInputText(editor);
-    const selection = getSelectionOffsets(editor);
-    const inserted = await applyPasteDecision(
-      editor,
-      originalText,
-      selection,
-      String(sanitizedText || ""),
-      context,
-      { rawInsertedText }
-    );
-
-    if (inserted) {
-      setBadge("Content redacted");
-      hideBadgeSoon();
-      refreshBadgeFromCurrentInput();
-    }
-
-    return inserted;
-  }
-
   async function confirmGeminiLargeSanitizedTextInsertion(sanitizedText, context) {
     const redactedLength = String(sanitizedText || "").length;
     if (redactedLength <= GEMINI_AUTO_INSERT_TEXT_LIMIT) return true;
@@ -5412,31 +5364,6 @@
 
   function formatGeminiSanitizedFileFallbackText(payload) {
     return formatSanitizedFileFallbackText(payload);
-  }
-
-  async function insertGeminiSanitizedText(payload, event, input) {
-    if (!isGeminiHost()) return false;
-    if (!String(payload?.redactedText || "").trim()) {
-      debugReveal("file-handoff:gemini-empty-text-fallback-blocked", {
-        reason: "empty_sanitized_text"
-      });
-      return false;
-    }
-    const inserted = await applyGeminiSanitizedTextFallback(
-      event,
-      input,
-      formatSanitizedFileFallbackText(payload),
-      { rawInsertedText: payload.rawText || "" }
-    );
-    if (inserted === true) {
-      debugFileAttachMetadata("gemini:fallback-text-inserted", {
-        hostname: location.hostname || "",
-        stage: "text",
-        sanitizedFile: describeFileForDebug(payload?.sanitizedFile)
-      });
-      setGeminiDmzOverlayState("Inserted sanitized content", "inserted");
-    }
-    return inserted;
   }
 
   async function tryGeminiSanitizedFileAttach(payload, event, input) {
@@ -9097,78 +9024,6 @@
     });
     logSanitizedFileHandoffFailure(details);
     return false;
-  }
-
-  async function applyGeminiSanitizedTextFallback(event, input, redactedText, options) {
-    options = options || {};
-    if (!isGeminiHost()) {
-      return false;
-    }
-
-    if (!(await confirmGeminiLargeSanitizedTextInsertion(redactedText, "file-text-fallback"))) {
-      setBadge("Sanitized text insertion cancelled");
-      hideBadgeSoon(3200);
-      refreshBadgeFromCurrentInput();
-      return "cancelled";
-    }
-
-    const editor = resolveGeminiFallbackEditor(event, input);
-    if (editor) {
-      const inserted = await applyGeminiEditorText(
-        editor,
-        String(redactedText || ""),
-        "file-text-fallback",
-        {
-          skipLargeConfirmation: true,
-          rawInsertedText: options.rawInsertedText || ""
-        }
-      );
-      if (inserted) {
-        setBadge(GEMINI_SANITIZED_TEXT_FALLBACK_MESSAGE);
-        hideBadgeSoon(5200);
-        await showMessageModal("Sanitized content inserted as text", GEMINI_SANITIZED_TEXT_FALLBACK_MESSAGE);
-        refreshBadgeFromCurrentInput();
-        return true;
-      }
-    }
-
-    const targetInput = input || findComposer(event?.target) || findComposer(document.activeElement);
-    if (!targetInput) {
-      debugReveal(CONTENT_DEBUG_EVENTS.FILE_HANDOFF_TEXT_FALLBACK_UNAVAILABLE, {
-        context: event?.type || "",
-        reason: "composer_not_found"
-      });
-      return false;
-    }
-
-    const originalText = getInputText(targetInput);
-    const selection = getSelectionOffsets(targetInput);
-    const inserted = await applyPasteDecision(
-      targetInput,
-      originalText,
-      selection,
-      String(redactedText || ""),
-      "file-text-fallback",
-      { rawInsertedText: options.rawInsertedText || "" }
-    );
-
-    if (!inserted) {
-      debugReveal(CONTENT_DEBUG_EVENTS.FILE_HANDOFF_TEXT_FALLBACK_FAILED, {
-        context: event?.type || "",
-        reason: "composer_rewrite_failed"
-      });
-      return false;
-    }
-
-    debugReveal(CONTENT_DEBUG_EVENTS.FILE_HANDOFF_TEXT_FALLBACK_SUCCESS, {
-      context: event?.type || "",
-      redactedLength: String(redactedText || "").length
-    });
-    setBadge(GEMINI_SANITIZED_TEXT_FALLBACK_MESSAGE);
-    hideBadgeSoon(5200);
-    await showMessageModal("Sanitized content inserted as text", GEMINI_SANITIZED_TEXT_FALLBACK_MESSAGE);
-    refreshBadgeFromCurrentInput();
-    return true;
   }
 
   async function applySanitizedTextFallback(event, input, redactedText, options) {

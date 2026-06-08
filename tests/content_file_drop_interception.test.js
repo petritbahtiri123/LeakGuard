@@ -46,6 +46,7 @@ require(path.join(repoRoot, "src/content/adapters/claudeAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/grokAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/xAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/index.js"));
+require(path.join(repoRoot, "src/content/adapters/geminiFallbackWriter.js"));
 require(path.join(repoRoot, "src/content/diagnostics/safeSnapshots.js"));
 require(path.join(repoRoot, "src/content/diagnostics/debugLogger.js"));
 require(path.join(repoRoot, "src/content/files/fileAttachPipeline.js"));
@@ -1280,7 +1281,6 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "confirmGeminiLargeSanitizedTextInsertion"),
       extractFunctionSource(contentSource, "applyComposerText"),
       extractFunctionSource(contentSource, "rewriteComposerTransactionally"),
-      extractFunctionSource(contentSource, "applyGeminiEditorText"),
       extractFunctionSource(contentSource, "blockGeminiEditorRawContent"),
       extractFunctionSource(contentSource, "maybeHandleGeminiEditorPaste"),
       extractFunctionSource(contentSource, "markSanitizedFileHandoffEvent"),
@@ -1325,7 +1325,6 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "geminiFallbackLanguageFromFileName"),
       extractFunctionSource(contentSource, "formatSanitizedFileFallbackText"),
       extractFunctionSource(contentSource, "formatGeminiSanitizedFileFallbackText"),
-      extractFunctionSource(contentSource, "insertGeminiSanitizedText"),
       extractFunctionSource(contentSource, "tryGeminiSanitizedFileAttach"),
       extractFunctionSource(contentSource, "collectFileInputsFromAncestry"),
       extractFunctionSource(contentSource, "collectFileHandoffElementsFromRoot"),
@@ -1371,9 +1370,37 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "handOffPrimedGeminiFirefoxUploadTarget"),
       extractFunctionSource(contentSource, "tryFirefoxGeminiFileInputBridge"),
       extractFunctionSource(contentSource, "buildSanitizedDownloadFileName"),
-      extractFunctionSource(contentSource, "applyGeminiSanitizedTextFallback"),
       extractFunctionSource(contentSource, "applySanitizedTextFallback"),
       extractFunctionSource(contentSource, "readSanitizedFileTextForFallback"),
+      `const {
+        applyGeminiEditorText,
+        applyGeminiSanitizedTextFallback,
+        insertGeminiSanitizedText
+      } = globalThis.PWM.GeminiFallbackWriter.createGeminiFallbackWriter({
+        applyPasteDecision,
+        confirmGeminiLargeSanitizedTextInsertion,
+        contentDebugEvents: CONTENT_DEBUG_EVENTS,
+        describeFileForDebug,
+        documentRef: document,
+        emitDebug: debugReveal,
+        emitFileAttachMetadata: debugFileAttachMetadata,
+        findComposer,
+        formatSanitizedFileFallbackText,
+        geminiSanitizedTextFallbackMessage: GEMINI_SANITIZED_TEXT_FALLBACK_MESSAGE,
+        getInputText,
+        getSelectionOffsets,
+        hideBadgeSoon,
+        insertGeminiEditorText,
+        isGeminiHost,
+        locationRef: location,
+        normalizeComposerText,
+        refreshBadgeFromCurrentInput,
+        resolveGeminiFallbackEditor,
+        rewriteComposerTransactionally,
+        setBadge,
+        setGeminiDmzOverlayState,
+        showMessageModal
+      });`,
       ...fileHandoffFlowHarnessSource({ includeLegacyLocalFile: false }),
       extractFunctionSource(contentSource, "isForbiddenGeminiUploadButton"),
       extractFunctionSource(contentSource, "isAllowedGeminiUploadMenuOpener"),
