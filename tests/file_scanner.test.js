@@ -15,6 +15,7 @@ require(path.join(repoRoot, "src/shared/placeholderAllocator.js"));
 require(path.join(repoRoot, "src/shared/knownSecretReuse.js"));
 require(path.join(repoRoot, "src/shared/transformOutboundPrompt.js"));
 require(path.join(repoRoot, "src/shared/fileLimits.js"));
+require(path.join(repoRoot, "src/shared/fileTypeRegistry.js"));
 require(path.join(repoRoot, "src/shared/fileScanner.js"));
 
 const {
@@ -170,6 +171,37 @@ function testUnsupportedExtensionsRejected() {
 
   assert.strictEqual(classifyFileForTextScan({ fileName: "sample.bin" }).kind, "known_unsupported");
   assert.strictEqual(classifyFileForTextScan({ fileName: "sample.bin" }).action, "allow");
+}
+
+function testPlannedUnsupportedExtensionsAreNotParsed() {
+  for (const [extension, family] of [
+    [".pdf", "document"],
+    [".docx", "document"],
+    [".xlsx", "document"],
+    [".png", "image"],
+    [".jpg", "image"],
+    [".jpeg", "image"],
+    [".webp", "image"]
+  ]) {
+    const classification = classifyFileForTextScan({
+      fileName: `sample${extension}`,
+      mimeType: "text/plain"
+    });
+    assert.strictEqual(classification.kind, "planned_unsupported", `${extension} should be planned`);
+    assert.strictEqual(classification.status, "planned_unsupported");
+    assert.strictEqual(classification.family, family);
+    assert.strictEqual(classification.action, "allow");
+    assert.strictEqual(classification.supported, false);
+
+    const validation = validateFileForTextScan({
+      fileName: `sample${extension}`,
+      mimeType: "text/plain",
+      sizeBytes: 8,
+      buffer: bufferFromText("content")
+    });
+    assert.strictEqual(validation.ok, false, `${extension} should not be parsed`);
+    assert.strictEqual(validation.code, "unsupported_binary_or_document");
+  }
 }
 
 function testGenericMimeRequiresSupportedExtension() {
@@ -424,6 +456,7 @@ function testLineColumnMapping() {
 
 testSupportedExtensionsAccepted();
 testUnsupportedExtensionsRejected();
+testPlannedUnsupportedExtensionsAreNotParsed();
 testGenericMimeRequiresSupportedExtension();
 testUtf8DecodeFailureRejected();
 testNullHeavyContentRejected();

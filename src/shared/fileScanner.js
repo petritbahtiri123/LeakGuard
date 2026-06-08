@@ -2,6 +2,7 @@
   const root = typeof globalThis !== "undefined" ? globalThis : window;
   root.PWM = root.PWM || {};
   const FileLimits = root.PWM.FileLimits || {};
+  const FileTypeRegistry = root.PWM.FileTypeRegistry || {};
 
   const LOCAL_TEXT_FAST_MAX_BYTES =
     Number(FileLimits.LOCAL_TEXT_FAST_MAX_BYTES) || 2 * 1024 * 1024;
@@ -34,7 +35,7 @@
   const UNSUPPORTED_COMPOSER_FILE_MESSAGE =
     FileLimits.UNSUPPORTED_COMPOSER_FILE_MESSAGE ||
     "LeakGuard did not scan or redact this file. Unsupported file types such as PDF, DOCX, images, archives, executables, and binary files are not protected in this release. Normal upload may continue through the site.";
-  const SUPPORTED_TEXT_EXTENSIONS = new Set([
+  const SUPPORTED_TEXT_EXTENSIONS = FileTypeRegistry.SUPPORTED_TEXT_EXTENSIONS || new Set([
     ".txt",
     ".md",
     ".markdown",
@@ -77,8 +78,11 @@
     ".php",
     ".sql"
   ]);
-  const SUPPORTED_TEXT_BASENAMES = new Set(["dockerfile", "makefile"]);
+  const SUPPORTED_TEXT_BASENAMES =
+    FileTypeRegistry.SUPPORTED_TEXT_BASENAMES || new Set(["dockerfile", "makefile"]);
   const PASS_THROUGH_UNSUPPORTED_EXTENSIONS = new Set([
+    ...(FileTypeRegistry.PLANNED_DOCUMENT_EXTENSIONS || [".pdf", ".docx", ".xlsx"]),
+    ...(FileTypeRegistry.PLANNED_IMAGE_EXTENSIONS || [".png", ".jpg", ".jpeg", ".webp"]),
     ".pdf",
     ".doc",
     ".docx",
@@ -112,10 +116,12 @@
   ]);
 
   function normalizeFileName(fileName) {
+    if (FileTypeRegistry.normalizeFileName) return FileTypeRegistry.normalizeFileName(fileName);
     return String(fileName || "").split(/[\\/]/).pop() || "";
   }
 
   function getFileExtension(fileName) {
+    if (FileTypeRegistry.getFileExtension) return FileTypeRegistry.getFileExtension(fileName);
     const name = normalizeFileName(fileName).toLowerCase();
     if (!name) return "";
     if (name === ".env") return ".env";
@@ -126,15 +132,19 @@
   }
 
   function getFileBasename(fileName) {
+    if (FileTypeRegistry.getFileBasename) return FileTypeRegistry.getFileBasename(fileName);
     return normalizeFileName(fileName).toLowerCase();
   }
 
   function normalizeMimeType(mimeType) {
+    if (FileTypeRegistry.normalizeMimeType) return FileTypeRegistry.normalizeMimeType(mimeType);
     return String(mimeType || "").split(";")[0].trim().toLowerCase();
   }
 
   function isSupportedTextFile(fileName, mimeType) {
-    void mimeType;
+    if (FileTypeRegistry.isSupportedTextFileType) {
+      return FileTypeRegistry.isSupportedTextFileType({ fileName, mimeType });
+    }
     if (SUPPORTED_TEXT_BASENAMES.has(getFileBasename(fileName))) return true;
     const extension = getFileExtension(fileName);
     if (!SUPPORTED_TEXT_EXTENSIONS.has(extension)) return false;
@@ -142,19 +152,36 @@
   }
 
   function classifyFileForTextScan({ fileName, mimeType } = {}) {
-    const extension = getFileExtension(fileName);
-    if (isSupportedTextFile(fileName, mimeType)) {
+    const registryClassification = FileTypeRegistry.classifyFileType
+      ? FileTypeRegistry.classifyFileType({ fileName, mimeType })
+      : null;
+    const extension = registryClassification?.extension || getFileExtension(fileName);
+    if (registryClassification?.supported || isSupportedTextFile(fileName, mimeType)) {
       return {
         kind: "text",
+        status: "supported",
         action: "scan",
         supported: true,
         extension
       };
     }
 
+    if (registryClassification?.status === "planned_unsupported") {
+      return {
+        kind: "planned_unsupported",
+        status: "planned_unsupported",
+        family: registryClassification.family,
+        action: "allow",
+        supported: false,
+        extension,
+        message: UNSUPPORTED_COMPOSER_FILE_MESSAGE
+      };
+    }
+
     if (PASS_THROUGH_UNSUPPORTED_EXTENSIONS.has(extension)) {
       return {
         kind: "known_unsupported",
+        status: "unsupported",
         action: "allow",
         supported: false,
         extension,
@@ -164,6 +191,7 @@
 
     return {
       kind: "unknown",
+      status: "unsupported",
       action: "allow",
       supported: false,
       extension,
@@ -510,6 +538,7 @@
     UNSUPPORTED_COMPOSER_FILE_MESSAGE,
     getFileExtension,
     getFileBasename,
+    normalizeMimeType,
     classifyFileForTextScan,
     isSupportedTextFile,
     validateFileForTextScan,

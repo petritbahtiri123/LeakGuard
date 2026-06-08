@@ -13,7 +13,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { findExecutable } from "./chrome_smoke.test.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -21,6 +21,9 @@ const repoRoot = path.resolve(__dirname, "../..");
 const sourceExtensionDir = path.join(repoRoot, "dist", "chrome");
 const qaTimeoutMs = Number(process.env.LEAKGUARD_BROWSER_QA_TIMEOUT_MS || 60000);
 const cdpTimeoutMs = Number(process.env.LEAKGUARD_BROWSER_QA_CDP_TIMEOUT_MS || 30000);
+const cleanupDelayMs = Number(process.env.LEAKGUARD_BROWSER_QA_CLEANUP_DELAY_MS || 500);
+const cleanupMaxRetries = Number(process.env.LEAKGUARD_BROWSER_QA_CLEANUP_RETRIES || 10);
+const cleanupRetryDelayMs = Number(process.env.LEAKGUARD_BROWSER_QA_CLEANUP_RETRY_DELAY_MS || 300);
 
 const syntheticSecrets = {
   openAi: ["sk-proj", "A".repeat(48)].join("-"),
@@ -303,6 +306,86 @@ async function waitForBrowserExit(child, timeoutMs = 5000) {
     new Promise((resolve) => child.once("exit", resolve)),
     new Promise((resolve) => setTimeout(resolve, timeoutMs))
   ]);
+}
+
+function assertHarnessTempDir(tempDir) {
+  const resolvedTempDir = path.resolve(tempDir);
+  const resolvedOsTempDir = path.resolve(os.tmpdir());
+  const relativeToTemp = path.relative(resolvedOsTempDir, resolvedTempDir);
+  const isInsideOsTemp =
+    relativeToTemp && !relativeToTemp.startsWith("..") && !path.isAbsolute(relativeToTemp);
+  const basename = path.basename(resolvedTempDir);
+
+  if (!isInsideOsTemp || !/^leakguard-(?:chrome|edge)-qa-/.test(basename)) {
+    throw new Error(`Refusing to remove non-harness temp dir: ${tempDir}`);
+  }
+}
+
+async function closeBrowserTargets(connection, diagnostics = console) {
+  if (!connection) return;
+  let targets = [];
+  try {
+    const response = await connection.send("Target.getTargets");
+    targets = response.targetInfos || [];
+  } catch (error) {
+    diagnostics.warn(`Browser QA cleanup warning: failed to list targets before close: ${error.message}`);
+    return;
+  }
+
+  const pageTargets = targets.filter((target) => target.type === "page" && target.targetId);
+  for (const target of pageTargets) {
+    await connection.send("Target.closeTarget", { targetId: target.targetId }).catch((error) => {
+      diagnostics.warn(`Browser QA cleanup warning: failed to close target ${target.targetId}: ${error.message}`);
+    });
+  }
+}
+
+async function cleanupBrowserQaRun({
+  browserName,
+  tempDir,
+  connection = null,
+  child = null,
+  harnessServer = null,
+  behaviorChecksPassed = false,
+  diagnostics = console,
+  rmFn = fs.promises.rm,
+  cleanupDelayMs: waitBeforeRemoveMs = cleanupDelayMs,
+  maxRetries = cleanupMaxRetries,
+  retryDelay = cleanupRetryDelayMs
+}) {
+  assertHarnessTempDir(tempDir);
+  const label = `${browserName} browser QA cleanup`;
+  diagnostics.log(
+    `${label}: tempDir=${tempDir} maxRetries=${maxRetries} retryDelay=${retryDelay}ms behaviorChecksPassed=${behaviorChecksPassed}`
+  );
+
+  await closeBrowserTargets(connection, diagnostics);
+  await connection?.send("Browser.close").catch(() => {});
+  await connection?.close().catch(() => {});
+  await waitForBrowserExit(child, 3000);
+  if (child && child.exitCode === null && child.signalCode === null) {
+    diagnostics.warn(`${label}: spawned browser process still running; terminating pid=${child.pid || "unknown"}`);
+    child.kill();
+    await waitForBrowserExit(child, 3000);
+  }
+  await harnessServer?.close().catch((error) => {
+    diagnostics.warn(`${label}: harness server close warning: ${error.message}`);
+  });
+  await delay(waitBeforeRemoveMs);
+
+  try {
+    await rmFn(tempDir, { recursive: true, force: true, maxRetries, retryDelay });
+    diagnostics.log(`${label}: final cleanup status=removed`);
+    return { removed: true, warningOnly: false };
+  } catch (error) {
+    const message = `${label}: final cleanup status=not-removed tempDir=${tempDir} behaviorChecksPassed=${behaviorChecksPassed} error=${error.message}`;
+    if (behaviorChecksPassed && ["EPERM", "EBUSY", "ENOTEMPTY"].includes(error.code)) {
+      diagnostics.warn(message);
+      return { removed: false, warningOnly: true, error };
+    }
+    diagnostics.warn(message);
+    throw error;
+  }
 }
 
 async function attachToTarget(connection, targetId) {
@@ -918,6 +1001,7 @@ async function runBrowserQa({ browserName, executable }) {
   let harnessServer = null;
   let browserProcess = null;
   let connection = null;
+  let behaviorChecksPassed = false;
   try {
     harnessServer = await startHarnessServer();
     browserProcess = launchBrowser({ executable, extensionDir, profileDir, browserName });
@@ -946,20 +1030,20 @@ async function runBrowserQa({ browserName, executable }) {
       `${browserName} browser QA: protected-site lifecycle, prompt redaction, reveal, refresh, scanner exports, unsupported file`
     );
 
+    behaviorChecksPassed = true;
     return { browserName, extensionId, product: version.product, prompt, scanner };
   } catch (error) {
     if (browserProcess?.stderr?.()) console.error(browserProcess.stderr());
     throw error;
   } finally {
-    await connection?.send("Browser.close").catch(() => {});
-    await connection?.close().catch(() => {});
-    await waitForBrowserExit(browserProcess?.child, 3000);
-    if (browserProcess?.child && browserProcess.child.exitCode === null && browserProcess.child.signalCode === null) {
-      browserProcess.child.kill();
-      await waitForBrowserExit(browserProcess.child, 3000);
-    }
-    await harnessServer?.close().catch(() => {});
-    fs.rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    await cleanupBrowserQaRun({
+      browserName,
+      tempDir,
+      connection,
+      child: browserProcess?.child,
+      harnessServer,
+      behaviorChecksPassed
+    });
   }
 }
 
@@ -976,7 +1060,16 @@ async function main() {
   console.log("PASS extension browser QA harness");
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+}
+
+export {
+  assertHarnessTempDir,
+  cleanupBrowserQaRun,
+  closeBrowserTargets,
+  runBrowserQa
+};

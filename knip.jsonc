@@ -36,6 +36,7 @@
     "src/shared/transformOutboundPromptWithAi.js",
     "src/shared/redactor.js",
     "src/shared/fileLimits.js",
+    "src/shared/fileTypeRegistry.js",
     "src/shared/fileScanner.js",
     "src/shared/streamingFileRedactor.js",
     "src/shared/protected_sites.js",

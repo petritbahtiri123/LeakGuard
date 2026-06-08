@@ -48,6 +48,7 @@ const CONTENT_SCRIPT_FILES = [
   "shared/transformOutboundPromptWithAi.js",
   "shared/redactor.js",
   "shared/fileLimits.js",
+  "shared/fileTypeRegistry.js",
   "shared/fileScanner.js",
   "shared/streamingFileRedactor.js",
   "shared/protected_sites.js",

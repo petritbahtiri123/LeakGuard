@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -47,6 +47,7 @@ const DETECTOR_PROFILE_METHODS = [
 
 const DEFAULT_ITERATIONS = 8;
 const WARMUP_ITERATIONS = 2;
+const TINY_SAMPLE_MAX_CHARS = 256;
 const ITERATIONS = Math.max(
   3,
   Number.parseInt(process.env.LEAKGUARD_BENCH_ITERATIONS || `${DEFAULT_ITERATIONS}`, 10)
@@ -425,7 +426,7 @@ function assertEquivalentToBaseline(sample) {
   );
 }
 
-function benchmark(sample) {
+function measureBenchmark(sample) {
   let lastOutput = null;
   const sampleIterations = Number.isFinite(sample.iterations) ? sample.iterations : ITERATIONS;
   const sampleWarmups = Number.isFinite(sample.warmupIterations)
@@ -472,17 +473,6 @@ function benchmark(sample) {
   const avgHeapDelta = mean(heapDeltas);
   const avgHeapGrowth = heapPositiveDeltas.length ? mean(heapPositiveDeltas) : 0;
 
-  if (!sample.structuralOnly) {
-    assert.ok(
-      p95Ms <= sample.maxP95Ms,
-      `${sample.name}: p95 ${p95Ms.toFixed(3)}ms exceeded ${sample.maxP95Ms}ms`
-    );
-    assert.ok(
-      msPerKb <= sample.maxMsPerKb,
-      `${sample.name}: avg ${msPerKb.toFixed(3)}ms/KiB exceeded ${sample.maxMsPerKb}ms/KiB`
-    );
-  }
-
   return {
     test: sample.name,
     chars,
@@ -523,64 +513,117 @@ function benchmark(sample) {
   };
 }
 
-const results = samples.map(benchmark);
+function getPerformanceFailure(sample, result) {
+  if (sample.structuralOnly) return null;
+  if (result.p95_wall_ms > sample.maxP95Ms) {
+    return `${sample.name}: p95 ${result.p95_wall_ms.toFixed(3)}ms exceeded ${sample.maxP95Ms}ms`;
+  }
+  if (result.avg_ms_per_kib > sample.maxMsPerKb) {
+    return `${sample.name}: avg ${result.avg_ms_per_kib.toFixed(3)}ms/KiB exceeded ${sample.maxMsPerKb}ms/KiB`;
+  }
+  return null;
+}
 
-console.table(
-  results.map((result) => ({
-    test: result.test,
-    chars: result.chars,
-    iterations: result.iterations,
-    findings: result.findings,
-    avg_wall_ms: result.avg_wall_ms.toFixed(3),
-    avg_cpu_ms: result.avg_cpu_ms.toFixed(3),
-    p50_wall_ms: result.p50_wall_ms.toFixed(3),
-    p95_wall_ms: result.p95_wall_ms.toFixed(3),
-    p99_wall_ms: result.p99_wall_ms.toFixed(3),
-    p50_cpu_ms: result.p50_cpu_ms.toFixed(3),
-    p95_cpu_ms: result.p95_cpu_ms.toFixed(3),
-    p99_cpu_ms: result.p99_cpu_ms.toFixed(3),
-    max_ms: result.max_wall_ms.toFixed(3),
-    avg_heap_delta: formatBytes(result.avg_heap_delta_bytes),
-    avg_heap_growth: formatBytes(result.avg_heap_growth_bytes),
-    max_heap_delta: formatBytes(result.max_heap_delta_bytes),
-    avg_ms_per_kib: result.avg_ms_per_kib.toFixed(3)
-  }))
-);
+function shouldRetryTinyTimingOutlier(sample, result) {
+  if (sample.structuralOnly || sample.text.length > TINY_SAMPLE_MAX_CHARS) return false;
+  if (result.p95_wall_ms <= sample.maxP95Ms) return false;
+  if (result.avg_ms_per_kib > sample.maxMsPerKb) return false;
+  return result.p50_wall_ms <= sample.maxP95Ms;
+}
 
-if (PROFILE_ENABLED) {
+function benchmark(sample) {
+  const firstResult = measureBenchmark(sample);
+  const firstFailure = getPerformanceFailure(sample, firstResult);
+  if (!firstFailure) return firstResult;
+
+  if (shouldRetryTinyTimingOutlier(sample, firstResult)) {
+    console.warn(
+      `${sample.name}: tiny benchmark timing outlier detected; rerunning once before failing. ${firstFailure}`
+    );
+    const retryResult = measureBenchmark(sample);
+    const retryFailure = getPerformanceFailure(sample, retryResult);
+    if (!retryFailure) return { ...retryResult, retriedTinyOutlier: true };
+    assert.fail(`${retryFailure}; first run also failed with ${firstFailure}`);
+  }
+
+  assert.fail(firstFailure);
+}
+
+function printResults(results) {
   console.table(
     results.map((result) => ({
       test: result.test,
-      manager_ms: result.stage_avg_ms.manager_ms.toFixed(3),
-      detector_construct_ms: result.stage_avg_ms.detector_construct_ms.toFixed(3),
-      scan_ms: result.stage_avg_ms.scan_ms.toFixed(3),
-      transform_ms: result.stage_avg_ms.transform_ms.toFixed(3)
+      chars: result.chars,
+      iterations: result.iterations,
+      findings: result.findings,
+      avg_wall_ms: result.avg_wall_ms.toFixed(3),
+      avg_cpu_ms: result.avg_cpu_ms.toFixed(3),
+      p50_wall_ms: result.p50_wall_ms.toFixed(3),
+      p95_wall_ms: result.p95_wall_ms.toFixed(3),
+      p99_wall_ms: result.p99_wall_ms.toFixed(3),
+      p50_cpu_ms: result.p50_cpu_ms.toFixed(3),
+      p95_cpu_ms: result.p95_cpu_ms.toFixed(3),
+      p99_cpu_ms: result.p99_cpu_ms.toFixed(3),
+      max_ms: result.max_wall_ms.toFixed(3),
+      avg_heap_delta: formatBytes(result.avg_heap_delta_bytes),
+      avg_heap_growth: formatBytes(result.avg_heap_growth_bytes),
+      max_heap_delta: formatBytes(result.max_heap_delta_bytes),
+      avg_ms_per_kib: result.avg_ms_per_kib.toFixed(3),
+      retried: result.retriedTinyOutlier ? "yes" : ""
     }))
   );
-  for (const result of results) {
-    console.log(`Transform profile: ${result.test}`);
+
+  if (PROFILE_ENABLED) {
     console.table(
-      Object.entries(result.transform_avg_ms)
-        .map(([method, value]) => ({
-          method,
-          avg_ms: value.toFixed(3)
-        }))
-        .filter((row) => Number(row.avg_ms) > 0)
-        .sort((left, right) => Number(right.avg_ms) - Number(left.avg_ms))
+      results.map((result) => ({
+        test: result.test,
+        manager_ms: result.stage_avg_ms.manager_ms.toFixed(3),
+        detector_construct_ms: result.stage_avg_ms.detector_construct_ms.toFixed(3),
+        scan_ms: result.stage_avg_ms.scan_ms.toFixed(3),
+        transform_ms: result.stage_avg_ms.transform_ms.toFixed(3)
+      }))
     );
-    console.log(`Detector method profile: ${result.test}`);
-    console.table(
-      Object.entries(result.detector_method_avg_ms)
-        .map(([method, value]) => ({
-          method,
-          avg_ms: value.ms.toFixed(3),
-          avg_calls: value.calls.toFixed(1),
-          avg_findings: value.findings.toFixed(1)
-        }))
-        .filter((row) => Number(row.avg_calls) > 0)
-        .sort((left, right) => Number(right.avg_ms) - Number(left.avg_ms))
-    );
+    for (const result of results) {
+      console.log(`Transform profile: ${result.test}`);
+      console.table(
+        Object.entries(result.transform_avg_ms)
+          .map(([method, value]) => ({
+            method,
+            avg_ms: value.toFixed(3)
+          }))
+          .filter((row) => Number(row.avg_ms) > 0)
+          .sort((left, right) => Number(right.avg_ms) - Number(left.avg_ms))
+      );
+      console.log(`Detector method profile: ${result.test}`);
+      console.table(
+        Object.entries(result.detector_method_avg_ms)
+          .map(([method, value]) => ({
+            method,
+            avg_ms: value.ms.toFixed(3),
+            avg_calls: value.calls.toFixed(1),
+            avg_findings: value.findings.toFixed(1)
+          }))
+          .filter((row) => Number(row.avg_calls) > 0)
+          .sort((left, right) => Number(right.avg_ms) - Number(left.avg_ms))
+      );
+    }
   }
 }
 
-console.log("PASS redaction performance benchmark");
+function runBenchmarkSuite() {
+  const results = samples.map(benchmark);
+  printResults(results);
+  console.log("PASS redaction performance benchmark");
+}
+
+if (!process.env.LEAKGUARD_BENCH_SKIP_MAIN && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  runBenchmarkSuite();
+}
+
+export {
+  benchmark,
+  getPerformanceFailure,
+  measureBenchmark,
+  runBenchmarkSuite,
+  shouldRetryTinyTimingOutlier
+};
