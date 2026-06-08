@@ -349,8 +349,6 @@
   function hasAssignmentFalseProseContext(text, start, end, key) {
     const input = String(text || "");
     const lineStart = input.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
-    const lineEndIndex = input.indexOf("\n", Math.max(0, end));
-    const lineEnd = lineEndIndex >= 0 ? lineEndIndex : input.length;
     const beforeRaw = input.slice(lineStart, Math.max(lineStart, start));
     const normalizedKey = normalizeAssignmentKey(key);
     const falseContextPattern =

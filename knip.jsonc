@@ -1,0 +1,98 @@
+{
+  "$schema": "./node_modules/knip/schema-jsonc.json",
+  "include": ["files", "exports", "dependencies", "devDependencies"],
+  "entry": [
+    "package.json",
+    "scripts/**/*.mjs",
+    "tests/**/*.js",
+    "tests/**/*.mjs",
+    "tests/fixtures.json",
+    "manifests/**/*.json",
+    "config/**/*.json",
+
+    // MV3 background entry points. Chrome starts the service worker; Firefox
+    // loads the overlay script list from manifests/firefox*.json.
+    "src/background/service_worker.js",
+    "src/background/core.js",
+
+    // Manifest-declared content scripts. These are classic scripts loaded in
+    // order, so Knip cannot discover the global PWM registrations via imports.
+    "src/content/file_drag_guard.js",
+    "src/compat/browser_api.js",
+    "src/compat/platform.js",
+    "src/shared/entropy.js",
+    "src/shared/patterns.js",
+    "src/shared/ai/classifier.js",
+    "src/shared/aiCandidateGate.js",
+    "src/shared/detector.js",
+    "src/shared/placeholders.js",
+    "src/shared/ipClassification.js",
+    "src/shared/ipDetection.js",
+    "src/shared/networkHierarchy.js",
+    "src/shared/placeholderAllocator.js",
+    "src/shared/sessionMapStore.js",
+    "src/shared/knownSecretReuse.js",
+    "src/shared/transformOutboundPrompt.js",
+    "src/shared/transformOutboundPromptWithAi.js",
+    "src/shared/redactor.js",
+    "src/shared/fileLimits.js",
+    "src/shared/fileScanner.js",
+    "src/shared/streamingFileRedactor.js",
+    "src/shared/protected_sites.js",
+    "src/shared/policy.js",
+    "src/content/composer_helpers.js",
+    "src/content/file_paste_helpers.js",
+    "src/content/file_handoff_state.js",
+    "src/content/file_handoff_pending.js",
+    "src/content/file_handoff_flow.js",
+    "src/content/input/rewriteVerificationText.js",
+    "src/content/files/fileTransferPolicy.js",
+    "src/content/adapters/hostMatching.js",
+    "src/content/adapters/chatgptAdapter.js",
+    "src/content/adapters/openaiAdapter.js",
+    "src/content/adapters/geminiDiagnosticsAdapter.js",
+    "src/content/adapters/geminiAdapter.js",
+    "src/content/adapters/claudeAdapter.js",
+    "src/content/adapters/grokAdapter.js",
+    "src/content/adapters/xAdapter.js",
+    "src/content/adapters/index.js",
+    "src/content/adapters/geminiFallbackWriter.js",
+    "src/content/diagnostics/safeSnapshots.js",
+    "src/content/files/fileAttachPipeline.js",
+    "src/content/rehydration/placeholderRehydrator.js",
+    "src/content/rehydration/responseObserver.js",
+    "src/content/rehydration/revealController.js",
+    "src/content/diagnostics/debugLogger.js",
+    "src/content/bootstrap/eventBindings.js",
+    "src/content/content.js",
+    "src/content/overlay.css",
+
+    // Extension pages are loaded from manifests, popup navigation, or tests;
+    // their scripts are browser classic scripts, not module imports.
+    "src/popup/popup.html",
+    "src/popup/popup.css",
+    "src/popup/popup.js",
+    "src/options/options.html",
+    "src/options/options.css",
+    "src/options/options.js",
+    "src/scanner/scanner.html",
+    "src/scanner/scanner.css",
+    "src/scanner/scanner.js",
+    "src/ui/reveal_panel.html",
+    "src/ui/reveal_panel.css",
+    "src/ui/reveal_panel.js"
+  ],
+  "project": [
+    "src/**/*.{js,html,css}",
+    "tests/**/*.{js,mjs,json,txt}",
+    "scripts/**/*.mjs",
+    "manifests/**/*.json",
+    "config/**/*.json",
+    "*.config.mjs"
+  ],
+  "ignoreDependencies": [
+    // The build and prepare scripts copy ONNX Runtime browser assets from
+    // node_modules by path; there is no static JS import for Knip to follow.
+    "onnxruntime-web"
+  ]
+}

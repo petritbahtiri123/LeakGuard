@@ -79,14 +79,6 @@
     }
   }
 
-  function hasAttr(element, name) {
-    try {
-      return Boolean(element?.hasAttribute?.(name));
-    } catch {
-      return false;
-    }
-  }
-
   function safeText(value) {
     const text = String(value || "").replace(/\s+/g, " ").trim().slice(0, 120);
     if (!text) return "";

@@ -179,6 +179,7 @@ function stripContentDebugDiagnostics(targetRoot) {
 
   source = source
     .replace(/^\s*emitDebug:\s*debugReveal,\r?\n/gm, "")
+    .replace(/^\s*emitFileAttachMetadata:\s*debugFileAttachMetadata,\r?\n/gm, "")
     .replace(/^\s*debug:\s*debugReveal,\r?\n/gm, "")
     .replace(/^\s*debug:\s*debugResponseRehydration,\r?\n/gm, "")
     .replace(/^\s*debug:\s*debugRewriteVerification,?\r?\n/gm, "")

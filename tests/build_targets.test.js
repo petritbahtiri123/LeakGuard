@@ -378,12 +378,14 @@ async function run() {
     "content/adapters/index.js"
   ];
   const adapterIndexes = adapterScripts.map((script) => contentScripts.indexOf(script));
+  const geminiFallbackWriterIndex = contentScripts.indexOf("content/adapters/geminiFallbackWriter.js");
   const safeSnapshotsIndex = contentScripts.indexOf("content/diagnostics/safeSnapshots.js");
   const fileAttachPipelineIndex = contentScripts.indexOf("content/files/fileAttachPipeline.js");
   const placeholderRehydratorIndex = contentScripts.indexOf("content/rehydration/placeholderRehydrator.js");
   const responseObserverIndex = contentScripts.indexOf("content/rehydration/responseObserver.js");
   const revealControllerIndex = contentScripts.indexOf("content/rehydration/revealController.js");
   const debugLoggerIndex = contentScripts.indexOf("content/diagnostics/debugLogger.js");
+  const contentEventBindingsIndex = contentScripts.indexOf("content/bootstrap/eventBindings.js");
   const contentIndex = contentScripts.indexOf("content/content.js");
 
   assert.ok(knownSecretReuseIndex > -1, "content scripts should include known-secret reuse helpers");
@@ -402,12 +404,14 @@ async function run() {
   assert.ok(fileTransferPolicyIndex > -1, "content scripts should include file transfer policy helpers");
   assert.ok(hostMatchingIndex > -1, "content scripts should include host matching helpers");
   assert.ok(adapterIndexes.every((index) => index > -1), "content scripts should include site adapter helpers");
+  assert.ok(geminiFallbackWriterIndex > -1, "content scripts should include Gemini fallback writer helpers");
   assert.ok(safeSnapshotsIndex > -1, "content scripts should include safe snapshot helpers");
   assert.ok(fileAttachPipelineIndex > -1, "content scripts should include file attach pipeline helpers");
   assert.ok(placeholderRehydratorIndex > -1, "content scripts should include placeholder rehydration helpers");
   assert.ok(responseObserverIndex > -1, "content scripts should include response observer helpers");
   assert.ok(revealControllerIndex > -1, "content scripts should include reveal controller helpers");
   assert.ok(debugLoggerIndex > -1, "content scripts should include raw-safe debug logger helpers");
+  assert.ok(contentEventBindingsIndex > -1, "content scripts should include content event binding helpers");
   const adapterOrderAligned = adapterIndexes.every(
     (index, offset) => offset === 0 || adapterIndexes[offset - 1] < index
   );
@@ -423,13 +427,15 @@ async function run() {
       fileTransferPolicyIndex < hostMatchingIndex &&
       hostMatchingIndex < adapterIndexes[0] &&
       adapterOrderAligned &&
-      adapterIndexes.at(-1) < safeSnapshotsIndex &&
+      adapterIndexes.at(-1) < geminiFallbackWriterIndex &&
+      geminiFallbackWriterIndex < safeSnapshotsIndex &&
       safeSnapshotsIndex < fileAttachPipelineIndex &&
       fileAttachPipelineIndex < placeholderRehydratorIndex &&
       placeholderRehydratorIndex < responseObserverIndex &&
       responseObserverIndex < revealControllerIndex &&
       revealControllerIndex < debugLoggerIndex &&
-      debugLoggerIndex < contentIndex,
+      debugLoggerIndex < contentEventBindingsIndex &&
+      contentEventBindingsIndex < contentIndex,
     "file scanner, streaming redactor, file paste helper, file handoff, pure helper, adapter, and content script injection order should stay aligned"
   );
   assert.strictEqual(

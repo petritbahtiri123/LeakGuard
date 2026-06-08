@@ -86,10 +86,6 @@
     return output;
   }
 
-  function overlapsAnyRange(candidate, ranges) {
-    return ranges.some((range) => candidate.start < range.end && candidate.end > range.start);
-  }
-
   function buildNetworkReplacements(text, manager, mode) {
     const normalizedMode = normalizeTransformMode(mode);
     const detected = detectIpCandidates(text).filter((candidate) =>

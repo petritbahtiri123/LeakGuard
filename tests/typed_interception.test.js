@@ -44,8 +44,16 @@ const fileHandoffFlowSource = fs.readFileSync(
   path.join(repoRoot, "src/content/file_handoff_flow.js"),
   "utf8"
 );
+const geminiFallbackWriterSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/adapters/geminiFallbackWriter.js"),
+  "utf8"
+);
 const fileAttachPipelineSource = fs.readFileSync(
   path.join(repoRoot, "src/content/files/fileAttachPipeline.js"),
+  "utf8"
+);
+const contentEventBindingsSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/bootstrap/eventBindings.js"),
   "utf8"
 );
 
@@ -396,9 +404,9 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
     "content script should bind a beforeinput listener for early typed interception"
   );
   assert.ok(
-    contentSource.includes('"drop"') &&
-      contentSource.includes('"dragenter"') &&
-      contentSource.includes('"dragover"') &&
+    contentEventBindingsSource.includes('"drop"') &&
+      contentEventBindingsSource.includes('"dragenter"') &&
+      contentEventBindingsSource.includes('"dragover"') &&
       contentSource.includes('"change"') &&
       contentSource.includes("readLocalTextFileFromDataTransfer") &&
       contentSource.includes("createSanitizedTextFile"),
@@ -433,10 +441,16 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   assert.ok(
     contentSource.includes("function bindFileDragEvents") &&
       contentSource.includes("fileDragEventRoots") &&
+      contentSource.includes("ContentEventBindings.bindFileDragRoot") &&
       contentSource.includes("bindFileDragEvents(window, onFileDrop)") &&
       contentSource.includes("bindFileDragEvents(document, onFileDrop)") &&
       contentSource.includes("bindFileDragEvents(document.documentElement, onFileDrop)") &&
-      contentSource.includes("bindFileDragEvents(document.body, onFileDrop)"),
+      contentSource.includes("bindFileDragEvents(document.body, onFileDrop)") &&
+      contentEventBindingsSource.includes("eventRoots?.has(rootTarget)") &&
+      contentEventBindingsSource.includes('rootTarget.addEventListener("dragenter", options.onFileDrag') &&
+      contentEventBindingsSource.includes('rootTarget.addEventListener("dragover", options.onFileDrag') &&
+      contentEventBindingsSource.includes('rootTarget.addEventListener("drop", options.onFileDrop') &&
+      contentEventBindingsSource.includes('rootTarget.addEventListener("dragend", options.onDragEnd'),
     "file drag/drop interception should bind at window, document, and DOM-root capture before nested targets"
   );
   assert.ok(
@@ -500,7 +514,8 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   );
   assert.ok(
     contentSource.includes("async function applySanitizedTextFallback") &&
-      contentSource.includes("async function applyGeminiSanitizedTextFallback") &&
+      geminiFallbackWriterSource.includes("async function applyGeminiSanitizedTextFallback") &&
+      contentSource.includes("createGeminiFallbackWriter") &&
       contentSource.includes("Sanitized content inserted as text because the site did not accept a sanitized file upload.") &&
       contentSource.includes("Sanitized content inserted as text because Gemini rejected sanitized file upload.") &&
       !contentSource.includes("async function applyLocalFileRedactedText") &&
