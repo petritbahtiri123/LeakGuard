@@ -163,6 +163,7 @@ function assertPackageContentsAreRuntimeOnly(result) {
     "scanner/scanner.js",
     "shared/fileLimits.js",
     "shared/fileTypeRegistry.js",
+    "shared/fileExtractors.js",
     "shared/fileScanner.js",
     "vendor/onnxruntime/ort.wasm.min.js",
     "ai/models/leakguard_secret_classifier.features.json",
@@ -360,6 +361,7 @@ async function run() {
   const redactorIndex = contentScripts.indexOf("shared/redactor.js");
   const fileLimitsIndex = contentScripts.indexOf("shared/fileLimits.js");
   const fileTypeRegistryIndex = contentScripts.indexOf("shared/fileTypeRegistry.js");
+  const fileExtractorsIndex = contentScripts.indexOf("shared/fileExtractors.js");
   const fileScannerIndex = contentScripts.indexOf("shared/fileScanner.js");
   const streamingRedactorIndex = contentScripts.indexOf("shared/streamingFileRedactor.js");
   const filePasteHelperIndex = contentScripts.indexOf("content/file_paste_helpers.js");
@@ -398,6 +400,7 @@ async function run() {
   assert.ok(fileScannerIndex > -1, "content scripts should include shared file scanner helpers");
   assert.ok(fileLimitsIndex > -1, "content scripts should include shared file limit constants");
   assert.ok(fileTypeRegistryIndex > -1, "content scripts should include shared file type registry helpers");
+  assert.ok(fileExtractorsIndex > -1, "content scripts should include shared file extractor helpers");
   assert.ok(streamingRedactorIndex > -1, "content scripts should include streaming file redactor helpers");
   assert.ok(filePasteHelperIndex > -1, "content scripts should include local file paste helpers");
   assert.ok(fileHandoffStateIndex > -1, "content scripts should include file handoff state helpers");
@@ -420,7 +423,8 @@ async function run() {
   );
   assert.ok(
     fileLimitsIndex < fileTypeRegistryIndex &&
-      fileTypeRegistryIndex < fileScannerIndex &&
+      fileTypeRegistryIndex < fileExtractorsIndex &&
+      fileExtractorsIndex < fileScannerIndex &&
       fileScannerIndex < streamingRedactorIndex &&
       streamingRedactorIndex < filePasteHelperIndex &&
       filePasteHelperIndex < fileHandoffStateIndex &&

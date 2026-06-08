@@ -574,7 +574,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const staticScripts = baseManifest.content_scripts[0].js;
   const dynamicScripts = Array.from(
     backgroundSource.matchAll(
-      /"([^"]+(?:fileLimits|fileTypeRegistry|fileScanner|file_paste_helpers|file_handoff_state|file_handoff_pending|file_handoff_flow|rewriteVerificationText|fileTransferPolicy|hostMatching|chatgptAdapter|openaiAdapter|geminiDiagnosticsAdapter|geminiAdapter|claudeAdapter|grokAdapter|xAdapter|index|geminiFallbackWriter|safeSnapshots|fileAttachPipeline|placeholderRehydrator|responseObserver|revealController|debugLogger|eventBindings|content)\.js)"/g
+      /"([^"]+(?:fileLimits|fileTypeRegistry|fileExtractors|fileScanner|file_paste_helpers|file_handoff_state|file_handoff_pending|file_handoff_flow|rewriteVerificationText|fileTransferPolicy|hostMatching|chatgptAdapter|openaiAdapter|geminiDiagnosticsAdapter|geminiAdapter|claudeAdapter|grokAdapter|xAdapter|index|geminiFallbackWriter|safeSnapshots|fileAttachPipeline|placeholderRehydrator|responseObserver|revealController|debugLogger|eventBindings|content)\.js)"/g
     )
   ).map((match) => match[1]);
   const adapterScripts = [
@@ -589,6 +589,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
 
   const staticFileLimits = staticScripts.indexOf("shared/fileLimits.js");
   const staticFileTypeRegistry = staticScripts.indexOf("shared/fileTypeRegistry.js");
+  const staticFileExtractors = staticScripts.indexOf("shared/fileExtractors.js");
   const staticFileScanner = staticScripts.indexOf("shared/fileScanner.js");
   const staticFilePaste = staticScripts.indexOf("content/file_paste_helpers.js");
   const staticFileHandoffState = staticScripts.indexOf("content/file_handoff_state.js");
@@ -609,6 +610,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const staticContent = staticScripts.indexOf("content/content.js");
   const dynamicFileLimits = dynamicScripts.indexOf("shared/fileLimits.js");
   const dynamicFileTypeRegistry = dynamicScripts.indexOf("shared/fileTypeRegistry.js");
+  const dynamicFileExtractors = dynamicScripts.indexOf("shared/fileExtractors.js");
   const dynamicFileScanner = dynamicScripts.indexOf("shared/fileScanner.js");
   const dynamicFilePaste = dynamicScripts.indexOf("content/file_paste_helpers.js");
   const dynamicFileHandoffState = dynamicScripts.indexOf("content/file_handoff_state.js");
@@ -631,6 +633,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   assert.ok(
     staticFileLimits > -1 &&
       staticFileTypeRegistry > -1 &&
+      staticFileExtractors > -1 &&
       staticFileScanner > -1 &&
       staticFilePaste > -1 &&
       staticFileHandoffState > -1 &&
@@ -654,6 +657,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   assert.ok(
     dynamicFileLimits > -1 &&
       dynamicFileTypeRegistry > -1 &&
+      dynamicFileExtractors > -1 &&
       dynamicFileScanner > -1 &&
       dynamicFilePaste > -1 &&
       dynamicFileHandoffState > -1 &&
@@ -682,7 +686,8 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   );
   assert.ok(
     staticFileLimits < staticFileTypeRegistry &&
-      staticFileTypeRegistry < staticFileScanner &&
+      staticFileTypeRegistry < staticFileExtractors &&
+      staticFileExtractors < staticFileScanner &&
       staticFileScanner < staticFilePaste &&
       staticFilePaste < staticFileHandoffState &&
       staticFileHandoffState < staticFileHandoffPending &&
@@ -705,7 +710,8 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   );
   assert.ok(
     dynamicFileLimits < dynamicFileTypeRegistry &&
-      dynamicFileTypeRegistry < dynamicFileScanner &&
+      dynamicFileTypeRegistry < dynamicFileExtractors &&
+      dynamicFileExtractors < dynamicFileScanner &&
       dynamicFileScanner < dynamicFilePaste &&
       dynamicFilePaste < dynamicFileHandoffState &&
       dynamicFileHandoffState < dynamicFileHandoffPending &&

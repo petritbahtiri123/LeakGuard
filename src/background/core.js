@@ -49,6 +49,7 @@ const CONTENT_SCRIPT_FILES = [
   "shared/redactor.js",
   "shared/fileLimits.js",
   "shared/fileTypeRegistry.js",
+  "shared/fileExtractors.js",
   "shared/fileScanner.js",
   "shared/streamingFileRedactor.js",
   "shared/protected_sites.js",
