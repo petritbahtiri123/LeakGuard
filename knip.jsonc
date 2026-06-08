@@ -63,6 +63,7 @@
     "src/content/rehydration/responseObserver.js",
     "src/content/rehydration/revealController.js",
     "src/content/diagnostics/debugLogger.js",
+    "src/content/bootstrap/eventBindings.js",
     "src/content/content.js",
     "src/content/overlay.css",
 

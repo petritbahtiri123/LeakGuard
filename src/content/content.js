@@ -10684,20 +10684,13 @@
   }
 
   function bindFileDragEvents(root, onFileDrop) {
-    if (!root || typeof root.addEventListener !== "function" || fileDragEventRoots.has(root)) {
-      return;
-    }
-
-    fileDragEventRoots.add(root);
-    if (fileDragGuard?.bind) {
-      fileDragGuard.bind(root);
-      return;
-    }
-
-    root.addEventListener("dragenter", maybeHandleFileDrag, { capture: true, passive: false });
-    root.addEventListener("dragover", maybeHandleFileDrag, { capture: true, passive: false });
-    root.addEventListener("drop", onFileDrop, { capture: true, passive: false });
-    root.addEventListener("dragend", clearFileDragSession, { capture: true, passive: false });
+    globalThis.PWM.ContentEventBindings.bindFileDragRoot(root, {
+      eventRoots: fileDragEventRoots,
+      fileDragGuard,
+      onFileDrag: maybeHandleFileDrag,
+      onFileDrop,
+      onDragEnd: clearFileDragSession
+    });
   }
 
   function bindEvents() {

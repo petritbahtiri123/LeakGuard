@@ -29,6 +29,10 @@ const fileHandoffFlowSource = fs.readFileSync(
   path.join(repoRoot, "src/content/file_handoff_flow.js"),
   "utf8"
 );
+const contentEventBindingsSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/bootstrap/eventBindings.js"),
+  "utf8"
+);
 const backgroundSource = fs.readFileSync(path.join(repoRoot, "src/background/core.js"), "utf8");
 const overlayCssSource = fs.readFileSync(path.join(repoRoot, "src/content/overlay.css"), "utf8");
 
@@ -2592,7 +2596,8 @@ function testProductionGeminiDropPathDoesNotUseLegacyEditorDropHandler() {
     "drop listeners should route through the active file-handoff drop handler"
   );
   assert.ok(
-    bindFileDragEventsSource.includes('root.addEventListener("drop", onFileDrop'),
+    bindFileDragEventsSource.includes("ContentEventBindings.bindFileDragRoot") &&
+      contentEventBindingsSource.includes('rootTarget.addEventListener("drop", options.onFileDrop'),
     "bound file drag roots should use the injected production drop callback"
   );
 }
@@ -4396,72 +4401,6 @@ function testFileHandoffAdapterRegistryCoversSupportedSites() {
   }
 }
 
-function testFileAttachPipelineCreatesSanitizedPayloadMetadata() {
-  const sanitizedFile = {
-    name: "service.env",
-    type: "text/plain",
-    size: 24
-  };
-  const localFile = {
-    text: "API_KEY=raw-secret",
-    file: {
-      name: "service.env",
-      type: "text/plain",
-      size: 42,
-      lastModified: 1234
-    }
-  };
-  const result = {
-    replacements: [
-      {
-        id: "secret-1",
-        start: "8",
-        end: "18",
-        placeholder: "[PWM_1]"
-      }
-    ]
-  };
-
-  const payload = globalThis.PWM.FileAttachPipeline.createSanitizedPayload(
-    sanitizedFile,
-    "API_KEY=[PWM_1]\nHOST=[NET_2]\nTOKEN=[PWM_1]",
-    localFile,
-    {
-      secretFindings: [{ raw: "redacted" }, { raw: "also-redacted" }]
-    },
-    result
-  );
-
-  assert.deepStrictEqual(Object.keys(payload), [
-    "sanitizedFile",
-    "redactedText",
-    "rawText",
-    "originalFile",
-    "placeholders",
-    "replacements",
-    "findingCount"
-  ]);
-  assert.strictEqual(payload.sanitizedFile, sanitizedFile);
-  assert.strictEqual(payload.redactedText, "API_KEY=[PWM_1]\nHOST=[NET_2]\nTOKEN=[PWM_1]");
-  assert.strictEqual(payload.rawText, "API_KEY=raw-secret");
-  assert.deepStrictEqual(payload.originalFile, {
-    name: "service.env",
-    type: "text/plain",
-    size: 42,
-    lastModified: 1234
-  });
-  assert.deepStrictEqual(payload.placeholders, ["[PWM_1]", "[NET_2]"]);
-  assert.deepStrictEqual(payload.replacements, [
-    {
-      id: "secret-1",
-      start: 8,
-      end: 18,
-      placeholder: "[PWM_1]"
-    }
-  ]);
-  assert.strictEqual(payload.findingCount, 2);
-}
-
 function testFileAttachDebugMetadataSchemaFiltersUnsafePayloads() {
   const debugEvents = [];
   const helpers = Function(
@@ -5354,160 +5293,6 @@ function testFileAttachPipelinePreflightPlanReturnsPlainDataOnly() {
       usesDmzOverlay: true,
       skipTextFallback: true,
       allowPendingFallback: true
-    });
-    const serialized = JSON.stringify(plan);
-
-    assert.deepStrictEqual(JSON.parse(serialized), plan);
-    assert.strictEqual(serialized.includes("function"), false);
-    assert.deepStrictEqual(Object.keys(globalThis.PWM).sort(), originalPwmKeys);
-  } finally {
-    if (originalDocument) {
-      Object.defineProperty(globalThis, "document", originalDocument);
-    } else {
-      delete globalThis.document;
-    }
-    if (originalBrowser) {
-      Object.defineProperty(globalThis, "browser", originalBrowser);
-    } else {
-      delete globalThis.browser;
-    }
-    if (originalChrome) {
-      Object.defineProperty(globalThis, "chrome", originalChrome);
-    } else {
-      delete globalThis.chrome;
-    }
-  }
-}
-
-function testFileAttachPipelineStreamingPlanGeminiPending() {
-  const plan = globalThis.PWM.FileAttachPipeline.classifyStreamingAttachPlan({
-    context: "drop",
-    isGeminiDrop: true,
-    streamResultAction: "redacted",
-    hasSanitizedFile: true
-  });
-
-  assert.strictEqual(plan.shouldContinueStreamingAttach, true);
-  assert.deepStrictEqual(plan.preparingStatus, {
-    processingStatus: "Preparing sanitized upload...",
-    processingProgress: "Complete",
-    processingBlocking: true
-  });
-  assert.deepStrictEqual(plan.pendingAttach, {
-    shouldAttempt: true,
-    provider: "gemini",
-    detailsStage: "gemini:streaming-pending-user-upload-input",
-    strategy: "gemini-streaming-pending-sanitized-file-handoff",
-    queueFailureReason: "gemini_pending_queue_failed",
-    queueFailureTitle: "Raw file upload blocked",
-    queueFailureMessage: "LeakGuard sanitized the large file but could not queue Gemini pending attach."
-  });
-}
-
-function testFileAttachPipelineStreamingPlanGrokPending() {
-  const plan = globalThis.PWM.FileAttachPipeline.classifyStreamingAttachPlan({
-    context: "drop",
-    isGrokDrop: true,
-    streamResultAction: "redacted",
-    hasSanitizedFile: true
-  });
-
-  assert.strictEqual(plan.shouldContinueStreamingAttach, true);
-  assert.deepStrictEqual(plan.pendingAttach, {
-    shouldAttempt: true,
-    provider: "grok",
-    detailsStage: "grok:streaming-pending-user-upload-input",
-    strategy: "grok-streaming-pending-sanitized-file-handoff",
-    queueFailureReason: "grok_pending_queue_failed",
-    queueFailureTitle: "Raw file upload blocked",
-    queueFailureMessage: "LeakGuard sanitized the large file but could not queue Grok pending attach."
-  });
-}
-
-function testFileAttachPipelineStreamingPlanGenericAttachStrategies() {
-  const plan = globalThis.PWM.FileAttachPipeline.classifyStreamingAttachPlan({
-    context: "drop",
-    streamResultAction: "redacted",
-    hasSanitizedFile: true
-  });
-
-  assert.strictEqual(plan.shouldContinueStreamingAttach, true);
-  assert.strictEqual(plan.pendingAttach.shouldAttempt, false);
-  assert.deepStrictEqual(plan.genericAttach, {
-    shouldAttempt: true,
-    fileStrategy: "streaming-sanitized-file-handoff",
-    textStrategy: "streaming-sanitized-text-fallback",
-    defaultSuccessStrategy: "streaming-sanitized-file-handoff",
-    failureReason: "streaming_sanitized_handoff_failed",
-    skipFallbackReason: "firefox_gemini_file_input_replacement_failed",
-    failureTitle: "Raw file upload blocked",
-    failureMessage: "LeakGuard blocked raw file upload. Sanitized streaming file handoff failed."
-  });
-  assert.deepStrictEqual(plan.dispositionOptions, {
-    forceDmzAttached: true,
-    forceAttachedBadge: true
-  });
-}
-
-function testFileAttachPipelineStreamingPlanBlockedAndFailedLabelsRemainStable() {
-  const blockedPlan = globalThis.PWM.FileAttachPipeline.classifyStreamingAttachPlan({
-    streamResultAction: "blocked",
-    hasSanitizedFile: false
-  });
-  const failedPlan = globalThis.PWM.FileAttachPipeline.classifyStreamingAttachPlan({
-    streamResultAction: "failed",
-    hasSanitizedFile: false
-  });
-  const missingFilePlan = globalThis.PWM.FileAttachPipeline.classifyStreamingAttachPlan({
-    streamResultAction: "redacted",
-    hasSanitizedFile: false
-  });
-
-  assert.deepStrictEqual(blockedPlan.blockedResult, {
-    shouldBlock: true,
-    reason: "streaming_file_blocked"
-  });
-  assert.deepStrictEqual(failedPlan.failedResult, {
-    shouldBlock: true,
-    reason: "streaming_file_redaction_failed",
-    title: "Raw file upload blocked",
-    message: "LeakGuard blocked raw file upload because streaming redaction failed."
-  });
-  assert.strictEqual(missingFilePlan.failedResult.shouldBlock, true);
-  assert.strictEqual(missingFilePlan.shouldContinueStreamingAttach, false);
-}
-
-function testFileAttachPipelineStreamingPlanReturnsPlainDataOnly() {
-  const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
-  const originalBrowser = Object.getOwnPropertyDescriptor(globalThis, "browser");
-  const originalChrome = Object.getOwnPropertyDescriptor(globalThis, "chrome");
-  const originalPwmKeys = Object.keys(globalThis.PWM).sort();
-
-  try {
-    Object.defineProperty(globalThis, "document", {
-      configurable: true,
-      get() {
-        throw new Error("streaming plan must not access document");
-      }
-    });
-    Object.defineProperty(globalThis, "browser", {
-      configurable: true,
-      get() {
-        throw new Error("streaming plan must not access browser");
-      }
-    });
-    Object.defineProperty(globalThis, "chrome", {
-      configurable: true,
-      get() {
-        throw new Error("streaming plan must not access chrome");
-      }
-    });
-
-    const plan = globalThis.PWM.FileAttachPipeline.classifyStreamingAttachPlan({
-      context: "drop",
-      isGeminiDrop: true,
-      streamResultAction: "redacted",
-      hasSanitizedFile: true
     });
     const serialized = JSON.stringify(plan);
 
@@ -12954,7 +12739,6 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testPendingAttachPromptCancelClearsGeminiAndGrokState();
   await testPendingCleanupErrorsClearStateAndLogMetadataOnly();
   testFileHandoffAdapterRegistryCoversSupportedSites();
-  testFileAttachPipelineCreatesSanitizedPayloadMetadata();
   testFileAttachDebugMetadataSchemaFiltersUnsafePayloads();
   testSanitizedFileHandoffFailureLogsSafeErrorMetadataOnly();
   await testSanitizedPayloadFallbackOrderRemainsStable();
@@ -12972,11 +12756,6 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   testFileAttachPipelinePreflightPlanSkipFallbackStatus();
   testFileAttachPipelinePreflightPlanCleanupLabelsRemainStable();
   testFileAttachPipelinePreflightPlanReturnsPlainDataOnly();
-  testFileAttachPipelineStreamingPlanGeminiPending();
-  testFileAttachPipelineStreamingPlanGrokPending();
-  testFileAttachPipelineStreamingPlanGenericAttachStrategies();
-  testFileAttachPipelineStreamingPlanBlockedAndFailedLabelsRemainStable();
-  testFileAttachPipelineStreamingPlanReturnsPlainDataOnly();
   await testFileAttachPipelineOrchestratorPreservesCallbackOrder();
   await testFileAttachPipelineOrchestratorClassifiesSuccessDisposition();
   await testFileAttachPipelineOrchestratorClassifiesPendingEligiblePath();

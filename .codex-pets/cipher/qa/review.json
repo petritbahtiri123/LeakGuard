@@ -1,0 +1,962 @@
+{
+  "ok": true,
+  "frames_root": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames",
+  "errors": [],
+  "warnings": [],
+  "rows": [
+    {
+      "state": "idle",
+      "expected_frames": 6,
+      "actual_frames": 6,
+      "extraction_method": "components",
+      "ok": true,
+      "errors": [],
+      "warnings": [],
+      "frames": [
+        {
+          "index": 0,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\idle\\00.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 18450,
+          "bbox": [
+            36,
+            5,
+            155,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 20
+        },
+        {
+          "index": 1,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\idle\\01.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 18298,
+          "bbox": [
+            37,
+            5,
+            155,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 14
+        },
+        {
+          "index": 2,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\idle\\02.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 19107,
+          "bbox": [
+            34,
+            5,
+            157,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 16
+        },
+        {
+          "index": 3,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\idle\\03.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 18430,
+          "bbox": [
+            37,
+            5,
+            154,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 10
+        },
+        {
+          "index": 4,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\idle\\04.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 18539,
+          "bbox": [
+            35,
+            5,
+            156,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 10
+        },
+        {
+          "index": 5,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\idle\\05.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 18357,
+          "bbox": [
+            36,
+            5,
+            155,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 12
+        }
+      ]
+    },
+    {
+      "state": "running-right",
+      "expected_frames": 8,
+      "actual_frames": 8,
+      "extraction_method": "components",
+      "ok": true,
+      "errors": [],
+      "warnings": [],
+      "frames": [
+        {
+          "index": 0,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\running-right\\00.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 19442,
+          "bbox": [
+            23,
+            5,
+            168,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 250
+        },
+        {
+          "index": 1,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\running-right\\01.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 19727,
+          "bbox": [
+            23,
+            5,
+            168,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 278
+        },
+        {
+          "index": 2,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\running-right\\02.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 19599,
+          "bbox": [
+            24,
+            5,
+            167,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 260
+        },
+        {
+          "index": 3,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\running-right\\03.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 17962,
+          "bbox": [
+            25,
+            5,
+            167,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 255
+        },
+        {
+          "index": 4,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\running-right\\04.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 18153,
+          "bbox": [
+            25,
+            5,
+            166,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 252
+        },
+        {
+          "index": 5,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\running-right\\05.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 20504,
+          "bbox": [
+            19,
+            5,
+            173,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 266
+        },
+        {
+          "index": 6,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\running-right\\06.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 18605,
+          "bbox": [
+            28,
+            5,
+            164,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 253
+        },
+        {
+          "index": 7,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\running-right\\07.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 20124,
+          "bbox": [
+            21,
+            5,
+            170,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 281
+        }
+      ]
+    },
+    {
+      "state": "running-left",
+      "expected_frames": 8,
+      "actual_frames": 8,
+      "extraction_method": "components",
+      "ok": true,
+      "errors": [],
+      "warnings": [],
+      "frames": [
+        {
+          "index": 0,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\running-left\\00.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 19442,
+          "bbox": [
+            23,
+            5,
+            168,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 250
+        },
+        {
+          "index": 1,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\running-left\\01.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 19701,
+          "bbox": [
+            24,
+            5,
+            167,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 253
+        },
+        {
+          "index": 2,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\running-left\\02.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 19544,
+          "bbox": [
+            25,
+            5,
+            166,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 258
+        },
+        {
+          "index": 3,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\running-left\\03.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 17905,
+          "bbox": [
+            26,
+            5,
+            165,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 242
+        },
+        {
+          "index": 4,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\running-left\\04.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 18153,
+          "bbox": [
+            25,
+            5,
+            166,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 252
+        },
+        {
+          "index": 5,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\running-left\\05.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 20552,
+          "bbox": [
+            14,
+            5,
+            178,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 296
+        },
+        {
+          "index": 6,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\running-left\\06.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 18605,
+          "bbox": [
+            28,
+            5,
+            164,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 253
+        },
+        {
+          "index": 7,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\running-left\\07.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 19983,
+          "bbox": [
+            24,
+            5,
+            167,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 255
+        }
+      ]
+    },
+    {
+      "state": "waving",
+      "expected_frames": 4,
+      "actual_frames": 4,
+      "extraction_method": "components",
+      "ok": true,
+      "errors": [],
+      "warnings": [],
+      "frames": [
+        {
+          "index": 0,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\waving\\00.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 20965,
+          "bbox": [
+            28,
+            5,
+            164,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 72
+        },
+        {
+          "index": 1,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\waving\\01.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 21277,
+          "bbox": [
+            21,
+            5,
+            170,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 68
+        },
+        {
+          "index": 2,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\waving\\02.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 21343,
+          "bbox": [
+            20,
+            5,
+            171,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 74
+        },
+        {
+          "index": 3,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\waving\\03.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 20763,
+          "bbox": [
+            25,
+            5,
+            167,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 79
+        }
+      ]
+    },
+    {
+      "state": "jumping",
+      "expected_frames": 5,
+      "actual_frames": 5,
+      "extraction_method": "components",
+      "ok": true,
+      "errors": [],
+      "warnings": [],
+      "frames": [
+        {
+          "index": 0,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\jumping\\00.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 23433,
+          "bbox": [
+            5,
+            12,
+            187,
+            196
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 265
+        },
+        {
+          "index": 1,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\jumping\\01.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 20204,
+          "bbox": [
+            10,
+            5,
+            182,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 206
+        },
+        {
+          "index": 2,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\jumping\\02.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 21613,
+          "bbox": [
+            12,
+            5,
+            180,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 275
+        },
+        {
+          "index": 3,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\jumping\\03.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 22378,
+          "bbox": [
+            7,
+            5,
+            184,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 256
+        },
+        {
+          "index": 4,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\jumping\\04.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 23789,
+          "bbox": [
+            5,
+            11,
+            187,
+            197
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 239
+        }
+      ]
+    },
+    {
+      "state": "failed",
+      "expected_frames": 8,
+      "actual_frames": 8,
+      "extraction_method": "components",
+      "ok": true,
+      "errors": [],
+      "warnings": [],
+      "frames": [
+        {
+          "index": 0,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\failed\\00.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 20227,
+          "bbox": [
+            31,
+            5,
+            161,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 197
+        },
+        {
+          "index": 1,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\failed\\01.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 20847,
+          "bbox": [
+            27,
+            5,
+            165,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 175
+        },
+        {
+          "index": 2,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\failed\\02.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 20631,
+          "bbox": [
+            28,
+            5,
+            164,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 202
+        },
+        {
+          "index": 3,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\failed\\03.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 21719,
+          "bbox": [
+            26,
+            5,
+            166,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 200
+        },
+        {
+          "index": 4,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\failed\\04.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 21742,
+          "bbox": [
+            24,
+            5,
+            167,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 225
+        },
+        {
+          "index": 5,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\failed\\05.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 21125,
+          "bbox": [
+            28,
+            5,
+            164,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 221
+        },
+        {
+          "index": 6,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\failed\\06.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 21075,
+          "bbox": [
+            28,
+            5,
+            164,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 221
+        },
+        {
+          "index": 7,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\failed\\07.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 20163,
+          "bbox": [
+            31,
+            5,
+            161,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 228
+        }
+      ]
+    },
+    {
+      "state": "waiting",
+      "expected_frames": 6,
+      "actual_frames": 6,
+      "extraction_method": "components",
+      "ok": true,
+      "errors": [],
+      "warnings": [],
+      "frames": [
+        {
+          "index": 0,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\waiting\\00.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 21166,
+          "bbox": [
+            27,
+            5,
+            165,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 221
+        },
+        {
+          "index": 1,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\waiting\\01.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 19954,
+          "bbox": [
+            33,
+            5,
+            159,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 199
+        },
+        {
+          "index": 2,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\waiting\\02.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 19859,
+          "bbox": [
+            32,
+            5,
+            159,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 228
+        },
+        {
+          "index": 3,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\waiting\\03.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 19498,
+          "bbox": [
+            33,
+            5,
+            158,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 217
+        },
+        {
+          "index": 4,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\waiting\\04.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 21695,
+          "bbox": [
+            25,
+            5,
+            166,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 244
+        },
+        {
+          "index": 5,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\waiting\\05.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 19515,
+          "bbox": [
+            34,
+            5,
+            157,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 240
+        }
+      ]
+    },
+    {
+      "state": "running",
+      "expected_frames": 6,
+      "actual_frames": 6,
+      "extraction_method": "components",
+      "ok": true,
+      "errors": [],
+      "warnings": [],
+      "frames": [
+        {
+          "index": 0,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\running\\00.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 22366,
+          "bbox": [
+            20,
+            5,
+            171,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 256
+        },
+        {
+          "index": 1,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\running\\01.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 22293,
+          "bbox": [
+            21,
+            5,
+            171,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 306
+        },
+        {
+          "index": 2,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\running\\02.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 25161,
+          "bbox": [
+            8,
+            5,
+            184,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 353
+        },
+        {
+          "index": 3,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\running\\03.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 21442,
+          "bbox": [
+            24,
+            5,
+            167,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 262
+        },
+        {
+          "index": 4,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\running\\04.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 22335,
+          "bbox": [
+            19,
+            5,
+            172,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 277
+        },
+        {
+          "index": 5,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\running\\05.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 23606,
+          "bbox": [
+            17,
+            5,
+            174,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 280
+        }
+      ]
+    },
+    {
+      "state": "review",
+      "expected_frames": 6,
+      "actual_frames": 6,
+      "extraction_method": "components",
+      "ok": true,
+      "errors": [],
+      "warnings": [],
+      "frames": [
+        {
+          "index": 0,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\review\\00.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 20038,
+          "bbox": [
+            33,
+            5,
+            159,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 144
+        },
+        {
+          "index": 1,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\review\\01.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 19891,
+          "bbox": [
+            33,
+            5,
+            158,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 154
+        },
+        {
+          "index": 2,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\review\\02.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 20346,
+          "bbox": [
+            29,
+            5,
+            162,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 150
+        },
+        {
+          "index": 3,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\review\\03.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 20133,
+          "bbox": [
+            31,
+            5,
+            161,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 175
+        },
+        {
+          "index": 4,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\review\\04.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 20566,
+          "bbox": [
+            28,
+            5,
+            164,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 133
+        },
+        {
+          "index": 5,
+          "file": "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher\\frames\\review\\05.png",
+          "width": 192,
+          "height": 208,
+          "nontransparent_pixels": 20616,
+          "bbox": [
+            29,
+            5,
+            162,
+            203
+          ],
+          "edge_pixels": 0,
+          "chroma_adjacent_pixels": 139
+        }
+      ]
+    }
+  ]
+}

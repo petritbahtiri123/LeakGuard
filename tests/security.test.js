@@ -574,7 +574,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const staticScripts = baseManifest.content_scripts[0].js;
   const dynamicScripts = Array.from(
     backgroundSource.matchAll(
-      /"([^"]+(?:fileLimits|fileScanner|file_paste_helpers|file_handoff_state|file_handoff_pending|file_handoff_flow|rewriteVerificationText|fileTransferPolicy|hostMatching|chatgptAdapter|openaiAdapter|geminiDiagnosticsAdapter|geminiAdapter|claudeAdapter|grokAdapter|xAdapter|index|geminiFallbackWriter|safeSnapshots|fileAttachPipeline|placeholderRehydrator|responseObserver|revealController|debugLogger|content)\.js)"/g
+      /"([^"]+(?:fileLimits|fileScanner|file_paste_helpers|file_handoff_state|file_handoff_pending|file_handoff_flow|rewriteVerificationText|fileTransferPolicy|hostMatching|chatgptAdapter|openaiAdapter|geminiDiagnosticsAdapter|geminiAdapter|claudeAdapter|grokAdapter|xAdapter|index|geminiFallbackWriter|safeSnapshots|fileAttachPipeline|placeholderRehydrator|responseObserver|revealController|debugLogger|eventBindings|content)\.js)"/g
     )
   ).map((match) => match[1]);
   const adapterScripts = [
@@ -604,6 +604,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const staticResponseObserver = staticScripts.indexOf("content/rehydration/responseObserver.js");
   const staticRevealController = staticScripts.indexOf("content/rehydration/revealController.js");
   const staticDebugLogger = staticScripts.indexOf("content/diagnostics/debugLogger.js");
+  const staticContentEventBindings = staticScripts.indexOf("content/bootstrap/eventBindings.js");
   const staticContent = staticScripts.indexOf("content/content.js");
   const dynamicFileLimits = dynamicScripts.indexOf("shared/fileLimits.js");
   const dynamicFileScanner = dynamicScripts.indexOf("shared/fileScanner.js");
@@ -622,6 +623,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const dynamicResponseObserver = dynamicScripts.indexOf("content/rehydration/responseObserver.js");
   const dynamicRevealController = dynamicScripts.indexOf("content/rehydration/revealController.js");
   const dynamicDebugLogger = dynamicScripts.indexOf("content/diagnostics/debugLogger.js");
+  const dynamicContentEventBindings = dynamicScripts.indexOf("content/bootstrap/eventBindings.js");
   const dynamicContent = dynamicScripts.indexOf("content/content.js");
 
   assert.ok(
@@ -642,6 +644,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       staticResponseObserver > -1 &&
       staticRevealController > -1 &&
       staticDebugLogger > -1 &&
+      staticContentEventBindings > -1 &&
       staticContent > -1,
     "static manifest should include file limits, scanner, file paste helper, file handoff helpers, adapter helpers, pure helpers, and content script"
   );
@@ -663,6 +666,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       dynamicResponseObserver > -1 &&
       dynamicRevealController > -1 &&
       dynamicDebugLogger > -1 &&
+      dynamicContentEventBindings > -1 &&
       dynamicContent > -1,
     "dynamic injection should include file limits, scanner, file paste helper, file handoff helpers, adapter helpers, pure helpers, and content script"
   );
@@ -690,7 +694,8 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       staticPlaceholderRehydrator < staticResponseObserver &&
       staticResponseObserver < staticRevealController &&
       staticRevealController < staticDebugLogger &&
-      staticDebugLogger < staticContent,
+      staticDebugLogger < staticContentEventBindings &&
+      staticContentEventBindings < staticContent,
     "static manifest file paste order should load dependencies before content.js"
   );
   assert.ok(
@@ -711,7 +716,8 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       dynamicPlaceholderRehydrator < dynamicResponseObserver &&
       dynamicResponseObserver < dynamicRevealController &&
       dynamicRevealController < dynamicDebugLogger &&
-      dynamicDebugLogger < dynamicContent,
+      dynamicDebugLogger < dynamicContentEventBindings &&
+      dynamicContentEventBindings < dynamicContent,
     "dynamic injection file paste order should load dependencies before content.js"
   );
 }

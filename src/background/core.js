@@ -75,6 +75,7 @@ const CONTENT_SCRIPT_FILES = [
   "content/rehydration/responseObserver.js",
   "content/rehydration/revealController.js",
   "content/diagnostics/debugLogger.js",
+  "content/bootstrap/eventBindings.js",
   "content/content.js"
 ];
 const CONTENT_STYLE_FILES = ["content/overlay.css"];
