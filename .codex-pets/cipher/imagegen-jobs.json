@@ -1,4 +1,4 @@
-{
+﻿{
     "schema_version":  1,
     "created_at":  "2026-06-08T19:49:57.854475+00:00",
     "run_dir":  "C:\\Users\\bajra\\OneDrive\\Documents\\Development\\LeakGuard\\LeakGuard\\.codex-pets\\cipher",
@@ -25,7 +25,7 @@
                  {
                      "id":  "idle",
                      "kind":  "row-strip",
-                     "status":  "complete",
+                     "status":  "pending",
                      "prompt_file":  "prompts/rows/idle.md",
                      "retry_prompt_file":  "prompts/row-retries/idle.md",
                      "input_images":  [
@@ -57,14 +57,12 @@
                                            },
                      "mirror_policy":  {
 
-                                       },
-                     "source_path":  "C:\\Users\\bajra\\.codex\\generated_images\\019ea8c5-5e8f-7bc3-89e8-ef6e5207feaf\\ig_02040f37a5db8c9b016a271d75e8e481918dbf0b119da6f80d.png",
-                     "completed_at":  "2026-06-08T19:53:17Z"
+                                       }
                  },
                  {
                      "id":  "running-right",
                      "kind":  "row-strip",
-                     "status":  "complete",
+                     "status":  "pending",
                      "prompt_file":  "prompts/rows/running-right.md",
                      "retry_prompt_file":  "prompts/row-retries/running-right.md",
                      "input_images":  [
@@ -96,14 +94,12 @@
                                            },
                      "mirror_policy":  {
 
-                                       },
-                     "source_path":  "C:\\Users\\bajra\\.codex\\generated_images\\019ea8c5-5e8f-7bc3-89e8-ef6e5207feaf\\ig_02040f37a5db8c9b016a271dba08b481918cf8b154a47e47b0.png",
-                     "completed_at":  "2026-06-08T19:54:54Z"
+                                       }
                  },
                  {
                      "id":  "running-left",
                      "kind":  "row-strip",
-                     "status":  "complete",
+                     "status":  "pending",
                      "prompt_file":  "prompts/rows/running-left.md",
                      "retry_prompt_file":  "prompts/row-retries/running-left.md",
                      "input_images":  [
@@ -148,27 +144,12 @@
                                            "derivation":  "framewise-horizontal-mirror-preserving-order",
                                            "requires_explicit_approval":  true,
                                            "fallback_generation_skill":  "$imagegen"
-                                       },
-                     "source_path":  "decoded\\running-right.png",
-                     "derived_from":  "running-right",
-                     "completed_at":  "2026-06-08T19:55:24.928479+00:00",
-                     "metadata":  {
-                                      "width":  2172,
-                                      "height":  724,
-                                      "mode":  "RGBA",
-                                      "format":  "PNG"
-                                  },
-                     "mirror_decision":  {
-                                             "approved":  true,
-                                             "approved_at":  "2026-06-08T19:55:24.928479+00:00",
-                                             "note":  "The rightward row uses symmetric body markings and a simple satchel that remains identity-consistent when flipped; frame order should be preserved by the script.",
-                                             "transform":  "framewise-horizontal-mirror-preserving-order"
-                                         }
+                                       }
                  },
                  {
                      "id":  "waving",
                      "kind":  "row-strip",
-                     "status":  "complete",
+                     "status":  "pending",
                      "prompt_file":  "prompts/rows/waving.md",
                      "retry_prompt_file":  "prompts/row-retries/waving.md",
                      "input_images":  [
@@ -200,14 +181,12 @@
                                            },
                      "mirror_policy":  {
 
-                                       },
-                     "source_path":  "C:\\Users\\bajra\\.codex\\generated_images\\019ea8c5-5e8f-7bc3-89e8-ef6e5207feaf\\ig_02040f37a5db8c9b016a271e35b25881918b2c51cc30843852.png",
-                     "completed_at":  "2026-06-08T19:56:43Z"
+                                       }
                  },
                  {
                      "id":  "jumping",
                      "kind":  "row-strip",
-                     "status":  "complete",
+                     "status":  "pending",
                      "prompt_file":  "prompts/rows/jumping.md",
                      "retry_prompt_file":  "prompts/row-retries/jumping.md",
                      "input_images":  [
@@ -239,14 +218,12 @@
                                            },
                      "mirror_policy":  {
 
-                                       },
-                     "source_path":  "C:\\Users\\bajra\\.codex\\generated_images\\019ea8c5-5e8f-7bc3-89e8-ef6e5207feaf\\ig_02040f37a5db8c9b016a271e88d52081919a9c710c2832fbcf.png",
-                     "completed_at":  "2026-06-08T19:57:51Z"
+                                       }
                  },
                  {
                      "id":  "failed",
                      "kind":  "row-strip",
-                     "status":  "complete",
+                     "status":  "pending",
                      "prompt_file":  "prompts/rows/failed.md",
                      "retry_prompt_file":  "prompts/row-retries/failed.md",
                      "input_images":  [
@@ -278,14 +255,12 @@
                                            },
                      "mirror_policy":  {
 
-                                       },
-                     "source_path":  "C:\\Users\\bajra\\.codex\\generated_images\\019ea8c5-5e8f-7bc3-89e8-ef6e5207feaf\\ig_02040f37a5db8c9b016a271f100edc81918513891ad430fdb6.png",
-                     "completed_at":  "2026-06-08T20:00:28Z"
+                                       }
                  },
                  {
                      "id":  "waiting",
                      "kind":  "row-strip",
-                     "status":  "complete",
+                     "status":  "pending",
                      "prompt_file":  "prompts/rows/waiting.md",
                      "retry_prompt_file":  "prompts/row-retries/waiting.md",
                      "input_images":  [
@@ -317,14 +292,12 @@
                                            },
                      "mirror_policy":  {
 
-                                       },
-                     "source_path":  "C:\\Users\\bajra\\.codex\\generated_images\\019ea8c5-5e8f-7bc3-89e8-ef6e5207feaf\\ig_02040f37a5db8c9b016a271f74f4988191867799dffacaeeab.png",
-                     "completed_at":  "2026-06-08T20:02:28Z"
+                                       }
                  },
                  {
                      "id":  "running",
                      "kind":  "row-strip",
-                     "status":  "complete",
+                     "status":  "pending",
                      "prompt_file":  "prompts/rows/running.md",
                      "retry_prompt_file":  "prompts/row-retries/running.md",
                      "input_images":  [
@@ -356,14 +329,12 @@
                                            },
                      "mirror_policy":  {
 
-                                       },
-                     "source_path":  "C:\\Users\\bajra\\.codex\\generated_images\\019ea8c5-5e8f-7bc3-89e8-ef6e5207feaf\\ig_02040f37a5db8c9b016a271fe8bf4c8191bf54dedc2d8ee69b.png",
-                     "completed_at":  "2026-06-08T20:03:43Z"
+                                       }
                  },
                  {
                      "id":  "review",
                      "kind":  "row-strip",
-                     "status":  "complete",
+                     "status":  "pending",
                      "prompt_file":  "prompts/rows/review.md",
                      "retry_prompt_file":  "prompts/row-retries/review.md",
                      "input_images":  [
@@ -395,9 +366,7 @@
                                            },
                      "mirror_policy":  {
 
-                                       },
-                     "source_path":  "C:\\Users\\bajra\\.codex\\generated_images\\019ea8c5-5e8f-7bc3-89e8-ef6e5207feaf\\ig_02040f37a5db8c9b016a2720396c688191b0510317512b2612.png",
-                     "completed_at":  "2026-06-08T20:05:02Z"
+                                       }
                  }
              ]
 }
