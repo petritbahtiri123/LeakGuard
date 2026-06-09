@@ -20,14 +20,14 @@
 
       <section class="scanner-grid">
         <section class="panel scan-panel">
-          <h2>Choose a text file</h2>
+          <h2>Choose a text file or text PDF</h2>
           <p class="copy">
-            Text-based files can be scanned and exported as redacted copies. PDF, DOCX, image, archive, executable, and binary-file redaction are not enabled in this release.
+            Text-based files and text PDFs can be scanned and exported as redacted copies. DOCX, image, archive, executable, binary-file, and scanned-image PDF redaction are not enabled in this release.
           </p>
 
           <label class="file-picker">
             <span>Local file</span>
-            <input id="file-input" type="file" accept=".txt,.env,.log,.json,.yaml,.yml,.xml,.csv,.md,.ini,.conf,.ps1,.sh,.py,.js,.ts,.html,.css,text/*,application/json,application/xml">
+            <input id="file-input" type="file" accept=".txt,.env,.log,.json,.yaml,.yml,.xml,.csv,.md,.ini,.conf,.ps1,.sh,.py,.js,.ts,.html,.css,.pdf,text/*,application/json,application/xml,application/pdf">
           </label>
 
           <div class="file-meta" id="file-meta" hidden>
@@ -90,6 +90,8 @@
     <script src="../shared/knownSecretReuse.js"></script>
     <script src="../shared/transformOutboundPrompt.js"></script>
     <script src="../shared/fileLimits.js"></script>
+    <script src="../shared/fileTypeRegistry.js"></script>
+    <script src="../shared/fileExtractors.js"></script>
     <script src="../shared/fileScanner.js"></script>
     <script src="scanner.js"></script>
   </body>

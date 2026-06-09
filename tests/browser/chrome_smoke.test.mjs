@@ -1331,10 +1331,16 @@ async function runScannerSmoke(connection, extensionId, tempDir) {
   await setFileInputFiles(connection, scanner.sessionId, "#file-input", [unsupportedPath]);
   const unsupported = await evaluate(connection, scanner.sessionId, `new Promise((resolve, reject) => {
     const started = Date.now();
+    let scanClicked = false;
     const timer = setInterval(() => {
       const status = document.querySelector('#status')?.textContent || '';
-      const scanDisabled = document.querySelector('#scan-btn')?.disabled;
-      if (/Unsupported (?:file types|formats)/.test(status) && scanDisabled) {
+      const scanBtn = document.querySelector('#scan-btn');
+      const scanDisabled = scanBtn?.disabled;
+      if (!scanClicked && scanBtn && !scanBtn.disabled) {
+        scanClicked = true;
+        scanBtn.click();
+      }
+      if (/could not find extractable text/i.test(status) && /OCR are not supported/i.test(status)) {
         clearInterval(timer);
         resolve({ status, scanDisabled });
       } else if (Date.now() - started > 10000) {
@@ -1353,8 +1359,8 @@ async function runScannerSmoke(connection, extensionId, tempDir) {
       }
     }, 50);
   })`);
-  assert.equal(unsupported.scanDisabled, true);
-  assert.match(unsupported.status, /Unsupported (?:file types|formats)/);
+  assert.match(unsupported.status, /could not find extractable text/i);
+  assert.match(unsupported.status, /OCR are not supported/i);
 }
 
 async function runChromiumSmoke(options = {}) {

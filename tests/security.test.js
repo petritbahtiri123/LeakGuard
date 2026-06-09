@@ -34,6 +34,15 @@ const filePasteHelperSource = fs.readFileSync(
   path.join(repoRoot, "src/content/file_paste_helpers.js"),
   "utf8"
 );
+const fileExtractorsSource = fs.readFileSync(
+  path.join(repoRoot, "src/shared/fileExtractors.js"),
+  "utf8"
+);
+const fileScannerSource = fs.readFileSync(
+  path.join(repoRoot, "src/shared/fileScanner.js"),
+  "utf8"
+);
+const scannerSource = fs.readFileSync(path.join(repoRoot, "src/scanner/scanner.js"), "utf8");
 const fileAttachPipelineSource = fs.readFileSync(
   path.join(repoRoot, "src/content/files/fileAttachPipeline.js"),
   "utf8"
@@ -569,6 +578,43 @@ function testFileSnapshotDebugPayloadsStayMetadataOnly() {
   );
 }
 
+function testPdfExtractionDoesNotWriteRawTextToDebugStorageOrAuditSurfaces() {
+  for (const [label, source] of [
+    ["fileExtractors", fileExtractorsSource],
+    ["fileScanner", fileScannerSource],
+    ["scanner page", scannerSource]
+  ]) {
+    assertNotIncludes(source, "localStorage", `${label} must not persist extracted PDF text to localStorage`);
+    assertNotIncludes(source, "sessionStorage", `${label} must not persist extracted PDF text to sessionStorage`);
+    assertNotIncludes(source, "chrome.storage", `${label} must not persist extracted PDF text to extension storage`);
+    assertNotIncludes(source, "browser.storage", `${label} must not persist extracted PDF text to extension storage`);
+    assertNotIncludes(source, "pwm:audit", `${label} must not write extracted PDF text to audit metadata`);
+  }
+
+  for (const [label, source] of [
+    ["fileExtractors", fileExtractorsSource],
+    ["fileScanner", fileScannerSource]
+  ]) {
+    assertNotIncludes(source, "console.log", `${label} must not log extracted PDF text`);
+    assertNotIncludes(source, "console.error", `${label} must not log extracted PDF extraction failures`);
+    assertNotIncludes(source, "debugReveal", `${label} must not send extracted PDF text to debug diagnostics`);
+    assertNotIncludes(source, "debugLogSnapshot", `${label} must not send extracted PDF text to debug diagnostics`);
+    assertNotIncludes(source, "debugFileAttachMetadata", `${label} must not send PDF text to file metadata debug logs`);
+  }
+
+  assert.ok(
+    scannerSource.includes("result.redactedPreview") &&
+      scannerSource.includes("finding.preview") &&
+      scannerSource.includes("buildSanitizedReport(currentScanResult)"),
+    "scanner DOM/report paths should use sanitized scanner outputs, not raw extracted PDF text directly"
+  );
+  assertNotIncludes(
+    scannerSource,
+    "downloadBlob(currentScanResult.redactedText",
+    "scanner downloads should not bypass the redacted-copy helper path"
+  );
+}
+
 function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const baseManifest = JSON.parse(fs.readFileSync(path.join(repoRoot, "manifests/base.json"), "utf8"));
   const staticScripts = baseManifest.content_scripts[0].js;
@@ -924,6 +970,7 @@ async function run() {
   testLocalFilePasteDoesNotExposeRawFileContent();
   testFileAttachPipelineStaysPureAndContentOwnsFileAttachSideEffects();
   testFileSnapshotDebugPayloadsStayMetadataOnly();
+  testPdfExtractionDoesNotWriteRawTextToDebugStorageOrAuditSurfaces();
   testStaticAndDynamicFilePasteInjectionOrderStaysAligned();
   testBackgroundDeterministicRescanBackstopExists();
   testContentPublicStateIsMinimized();

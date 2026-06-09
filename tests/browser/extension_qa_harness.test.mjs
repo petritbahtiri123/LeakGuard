@@ -58,6 +58,42 @@ const localProtectedSiteInput = "http://127.0.0.1";
 const localProtectedSiteId = "http://127.0.0.1";
 const localProtectedSitePermission = "http://127.0.0.1/*";
 
+function escapePdfText(text) {
+  return String(text)
+    .replace(/\\/g, "\\\\")
+    .replace(/\(/g, "\\(")
+    .replace(/\)/g, "\\)")
+    .replace(/\r/g, "\\r")
+    .replace(/\n/g, "\\n");
+}
+
+function makeQaPdf(text, options = {}) {
+  const stream = options.imageOnly
+    ? "q\n10 0 0 10 0 0 cm\n/Im1 Do\nQ\n"
+    : `BT\n/F1 12 Tf\n72 720 Td\n(${escapePdfText(text)}) Tj\nET\n`;
+  return Buffer.from([
+    "%PDF-1.4",
+    "1 0 obj",
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "endobj",
+    "2 0 obj",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "endobj",
+    "3 0 obj",
+    "<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>",
+    "endobj",
+    "4 0 obj",
+    `<< /Length ${stream.length} >>`,
+    "stream",
+    stream,
+    "endstream",
+    "endobj",
+    "trailer",
+    "<< /Root 1 0 R >>",
+    "%%EOF"
+  ].join("\n"));
+}
+
 function findChromeExecutable() {
   const localAppData = process.env.LOCALAPPDATA || "";
   const windowsCandidates =
@@ -966,30 +1002,87 @@ async function runScannerQa(connection, extensionId, tempDir) {
     "scanner reset"
   );
 
-  const unsupportedPath = path.join(tempDir, "leakguard-browser-qa.pdf");
-  fs.writeFileSync(unsupportedPath, "%PDF-1.7\nsynthetic unsupported file\n");
+  const textPdfPath = path.join(tempDir, "leakguard-browser-qa-text.pdf");
+  fs.writeFileSync(textPdfPath, makeQaPdf(`PDF_API_KEY=${syntheticSecrets.openAi}`));
+  await setFileInputFiles(connection, scanner.sessionId, "#file-input", [textPdfPath]);
+  const textPdf = await evaluate(
+    connection,
+    scanner.sessionId,
+    `new Promise((resolve, reject) => {
+      const rawSecret = ${JSON.stringify(syntheticSecrets.openAi)};
+      const started = Date.now();
+      let clicked = false;
+      const timer = setInterval(() => {
+        const preview = document.querySelector('#redacted-preview')?.textContent || '';
+        const status = document.querySelector('#status')?.textContent || '';
+        const scanButton = document.querySelector('#scan-btn');
+        if (!clicked && scanButton && !scanButton.disabled) {
+          clicked = true;
+          scanButton.click();
+        }
+        if (/Scan complete/i.test(status) && /PDF_API_KEY=\\[PWM_\\d+\\]/.test(preview)) {
+          clearInterval(timer);
+          resolve({
+            status,
+            hasRaw: preview.includes(rawSecret),
+            redacted: /PDF_API_KEY=\\[PWM_\\d+\\]/.test(preview)
+          });
+        } else if (Date.now() - started > 15000) {
+          clearInterval(timer);
+          reject(new Error('Timed out waiting for PDF scanner result: ' + JSON.stringify({
+            status,
+            scanDisabled: scanButton?.disabled,
+            preview
+          })));
+        }
+      }, 50);
+    })`
+  );
+  assert.equal(textPdf.hasRaw, false, "scanner PDF preview must not expose raw PDF secrets");
+  assert.equal(textPdf.redacted, true, "scanner should redact text PDF findings");
+
+  await evaluate(connection, scanner.sessionId, "document.querySelector('#clear-btn').click()");
+  await waitFor(
+    () => evaluate(connection, scanner.sessionId, "document.querySelector('#scan-btn')?.disabled"),
+    "scanner reset after text PDF"
+  );
+
+  const unsupportedPath = path.join(tempDir, "leakguard-browser-qa-image-only.pdf");
+  fs.writeFileSync(unsupportedPath, makeQaPdf("", { imageOnly: true }));
   await setFileInputFiles(connection, scanner.sessionId, "#file-input", [unsupportedPath]);
   const unsupported = await evaluate(
     connection,
     scanner.sessionId,
     `new Promise((resolve, reject) => {
       const started = Date.now();
+      let clicked = false;
       const timer = setInterval(() => {
         const status = document.querySelector('#status')?.textContent || '';
+        const preview = document.querySelector('#redacted-preview')?.textContent || '';
         const scanDisabled = document.querySelector('#scan-btn')?.disabled;
-        if (/Unsupported (?:file types|formats)/i.test(status) && scanDisabled) {
+        const scanButton = document.querySelector('#scan-btn');
+        if (!clicked && scanButton && !scanButton.disabled) {
+          clicked = true;
+          scanButton.click();
+        }
+        if (/could not find extractable text/i.test(status) && /OCR are not supported/i.test(status)) {
           clearInterval(timer);
-          resolve({ status, scanDisabled });
+          resolve({ status, scanDisabled, preview });
         } else if (Date.now() - started > 10000) {
           clearInterval(timer);
-          reject(new Error('Timed out waiting for unsupported warning: ' + status));
+          reject(new Error('Timed out waiting for unsupported PDF warning: ' + JSON.stringify({
+            status,
+            scanDisabled,
+            preview
+          })));
         }
       }, 50);
     })`
   );
-  assert.equal(unsupported.scanDisabled, true);
-  assert.match(unsupported.status, /Unsupported (?:file types|formats)/i);
-  return { supported, unsupported };
+  assert.match(unsupported.status, /could not find extractable text/i);
+  assert.match(unsupported.status, /OCR are not supported/i);
+  assert.equal(unsupported.preview, "");
+  return { supported, textPdf, unsupported };
 }
 
 async function runBrowserQa({ browserName, executable }) {

@@ -176,6 +176,11 @@ function assertPackageContentsAreRuntimeOnly(result) {
       `${result.target} package should include ${relativePath}`
     );
   });
+  const extractorBytes = fs.statSync(path.join(result.targetRoot, "shared/fileExtractors.js")).size;
+  assert.ok(
+    extractorBytes < 24000,
+    `${result.target} PDF extractor support should stay below the lightweight bundle budget`
+  );
 
   for (const file of files) {
     const relativePath = relativePackagePath(result.targetRoot, file);

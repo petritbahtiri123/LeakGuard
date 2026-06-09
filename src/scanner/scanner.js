@@ -1,5 +1,6 @@
 (function () {
   const scanner = globalThis.PWM?.FileScanner;
+  const extractors = globalThis.PWM?.FileExtractors;
 
   if (!scanner) {
     throw new Error("LeakGuard File Scanner failed to initialize.");
@@ -173,7 +174,12 @@
       };
     }
 
-    if (!scanner.isSupportedTextFile(file.name, file.type)) {
+    const routedExtraction = extractors?.routeFileExtractor?.({
+      fileName: file.name,
+      mimeType: file.type
+    });
+
+    if (!scanner.isSupportedTextFile(file.name, file.type) && routedExtraction?.kind !== "pdf") {
       return {
         ok: false,
         message: scanner.UNSUPPORTED_TEXT_RELEASE_MESSAGE
@@ -181,6 +187,24 @@
     }
 
     return { ok: true };
+  }
+
+  function formatExtractionFailureMessage(extraction) {
+    if (extraction?.kind !== "pdf") {
+      return extraction?.reason || "LeakGuard could not extract text from this file, so it was not scanned.";
+    }
+
+    const reason = extraction.reason || "";
+    if (reason === "pdf_encrypted") {
+      return "LeakGuard could not scan this encrypted PDF. Save an unencrypted text PDF and try again.";
+    }
+    if (reason === "pdf_malformed" || reason === "pdf_read_failed") {
+      return "LeakGuard could not read this PDF, so it was not scanned.";
+    }
+    if (reason === "pdf_text_too_large") {
+      return "LeakGuard extracted too much PDF text to scan safely in this release. Split the document and try again.";
+    }
+    return "LeakGuard could not find extractable text in this PDF. Scanned-image PDFs and OCR are not supported in this release.";
   }
 
   async function scanSelectedFile() {
@@ -196,27 +220,45 @@
     setStatus("Scanning locally...", "");
 
     const buffer = await selectedFile.arrayBuffer();
-    const validation = scanner.validateFileForTextScan({
+    const extraction = await extractors.prepareFileExtractionAsync({
       fileName: selectedFile.name,
       mimeType: selectedFile.type,
       sizeBytes: selectedFile.size,
       buffer
     });
 
-    if (!validation.ok) {
+    if (extraction.kind !== "pdf") {
+      const validation = scanner.validateFileForTextScan({
+        fileName: selectedFile.name,
+        mimeType: selectedFile.type,
+        sizeBytes: selectedFile.size,
+        buffer
+      });
+
+      if (!validation.ok) {
+        currentScanResult = null;
+        resultPanel.hidden = true;
+        setStatus(validation.message, "error");
+        scanBtn.disabled = false;
+        return;
+      }
+    }
+
+    if (!extraction.safeForScan) {
       currentScanResult = null;
       resultPanel.hidden = true;
-      setStatus(validation.message, "error");
+      setStatus(formatExtractionFailureMessage(extraction), "error");
       scanBtn.disabled = false;
       return;
     }
 
-    const text = scanner.decodeUtf8Text(buffer);
+    const text = extraction.kind === "pdf" ? extraction.text : scanner.decodeUtf8Text(buffer);
     const result = scanner.scanTextContent({
       fileName: selectedFile.name,
       mimeType: selectedFile.type,
-      sizeBytes: selectedFile.size,
+      sizeBytes: extraction.kind === "pdf" ? extraction.metadata.textLength : selectedFile.size,
       text,
+      extractedText: extraction.kind === "pdf",
       mode: "hide_public"
     });
 
@@ -239,6 +281,9 @@
 
   function redactedFileName(fileName) {
     const { base, extension } = splitFileName(fileName);
+    if (extension === ".pdf") {
+      return `${base}.redacted.txt`;
+    }
     return `${base}.redacted${extension}`;
   }
 

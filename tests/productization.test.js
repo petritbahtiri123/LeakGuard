@@ -250,6 +250,27 @@ function testDynamicSiteSupportIsDeclaredMinimally(manifest) {
   );
 }
 
+function testPdfScannerCopyStaysV1Scoped() {
+  assert.ok(
+    scannerHtml.includes("text file or text PDF") &&
+      scannerHtml.includes("Text-based files and text PDFs"),
+    "scanner UI should describe PDF support as text-PDF extraction only"
+  );
+  assert.ok(
+    scannerHtml.includes("scanned-image PDF redaction are not enabled"),
+    "scanner UI should explicitly avoid scanned-image PDF support claims"
+  );
+  assert.ok(
+    !/OCR|optical character recognition|image PDF support|full PDF/i.test(scannerHtml),
+    "scanner UI must not claim OCR, image-PDF support, or full PDF rebuild support"
+  );
+  assert.ok(
+    scannerJs.includes('extension === ".pdf"') &&
+      scannerJs.includes('extension: ".txt"'),
+    "scanner redacted exports for PDFs should be text files, not rebuilt PDFs"
+  );
+}
+
 function testPublishReadinessDocsCoverStorePrivacyAndQa() {
   assert.ok(
     storeListing.includes("Chrome Web Store") && storeListing.includes("Permission Justification"),
@@ -283,6 +304,7 @@ async function run() {
   testPendingAttachPromptDoesNotBlockPageClicks();
   testFileProcessingUiIsGenericAndProgressive();
   testDynamicSiteSupportIsDeclaredMinimally(manifest);
+  testPdfScannerCopyStaysV1Scoped();
   testPublishReadinessDocsCoverStorePrivacyAndQa();
   console.log("PASS productization static regressions");
 }

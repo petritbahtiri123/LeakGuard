@@ -413,7 +413,7 @@
     return String(text || "").length;
   }
 
-  function scanTextContent({ fileName, mimeType, sizeBytes, text, mode } = {}) {
+  function scanTextContent({ fileName, mimeType, sizeBytes, text, mode, extractedText = false } = {}) {
     const {
       Detector,
       PlaceholderManager,
@@ -425,14 +425,16 @@
     }
 
     const input = String(text || "");
-    const metadataValidation = validateFileForTextScan({
-      fileName,
-      mimeType,
-      sizeBytes
-    });
+    if (!extractedText) {
+      const metadataValidation = validateFileForTextScan({
+        fileName,
+        mimeType,
+        sizeBytes
+      });
 
-    if (!metadataValidation.ok) {
-      throw new Error(metadataValidation.message);
+      if (!metadataValidation.ok) {
+        throw new Error(metadataValidation.message);
+      }
     }
 
     const scannedAt = new Date().toISOString();
