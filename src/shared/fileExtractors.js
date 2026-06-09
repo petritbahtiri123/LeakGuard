@@ -579,7 +579,7 @@
     const pattern = new RegExp(`<${tagName}\\b[^>]*>([\\s\\S]*?)<\\/${tagName}>`, "gi");
     let match;
     while ((match = pattern.exec(xml))) {
-      const value = decodeXmlEntities(match[1].replace(/<[^>]+>/g, ""));
+      const value = decodeXmlEntities(match[1].replace(/[<>]/g, ""));
       if (value) values.push(value);
     }
     return values;
