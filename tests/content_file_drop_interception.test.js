@@ -5826,66 +5826,99 @@ async function testSmallFileInputShowsProcessingUiThenDirectAttachSuccess() {
   assert.strictEqual(JSON.stringify(calls.debugEvents).includes(rawSecret), false);
 }
 
-async function testDocumentFileInputUsesContentExtractionPipelineForSanitizedHandoff() {
-  const rawFile = createTextFile({
-    name: "report.pdf",
-    type: "application/pdf",
-    text: "PDF bytes"
-  });
-  const sanitizedFile = {
-    name: "report.redacted.txt",
-    type: "text/plain",
-    size: 18,
-    text: "API_KEY=[PWM_1]"
-  };
-  const fileInput = createFileInput();
-  fileInput.files = [rawFile];
-  const composer = {
-    tagName: "TEXTAREA",
-    text: "",
-    selection: { start: 0, end: 0 }
-  };
-  const pipelineCalls = [];
-  const { maybeHandleFileInputChange, calls } = createHarness({
-    location: { hostname: "chatgpt.com" },
-    findComposer: () => composer,
-    canExtractForAdapterHandoff: (file) => file?.name === "report.pdf",
-    processFileForAdapterHandoff: async ({ file, context }) => {
-      pipelineCalls.push({ file, context });
-      return {
-        status: "ready",
-        originalName: "report.pdf",
-        outputName: "report.redacted.txt",
-        outputKind: "redacted_text_file",
-        extractedKind: "pdf",
-        sanitizedText: sanitizedFile.text,
-        sanitizedFile,
-        metadata: {
-          scan: {
-            findingsCount: 1
-          }
-        },
-        warnings: [],
-        safeForUpload: true,
-        fallbackReason: ""
-      };
+async function testDocumentAndImageFileInputUseContentExtractionPipelineForSanitizedHandoff() {
+  const cases = [
+    {
+      fileName: "report.pdf",
+      type: "application/pdf",
+      rawText: "PDF bytes with raw secret",
+      outputName: "report.redacted.txt",
+      extractedKind: "pdf"
     },
-    readLocalTextFileFromDataTransfer: async () => {
-      throw new Error("document pipeline should bypass legacy text-file reader");
+    {
+      fileName: "brief.docx",
+      type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      rawText: "DOCX bytes with raw secret",
+      outputName: "brief.redacted.txt",
+      extractedKind: "docx"
+    },
+    {
+      fileName: "sheet.xlsx",
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      rawText: "XLSX bytes with raw secret",
+      outputName: "sheet.redacted.txt",
+      extractedKind: "xlsx"
+    },
+    {
+      fileName: "diagram-sk-proj-rawfilename.png",
+      type: "image/png",
+      rawText: "PNG bytes with raw filename secret",
+      outputName: "diagram-[PWM_1].redacted.txt",
+      extractedKind: "image_metadata"
     }
-  });
+  ];
 
-  await maybeHandleFileInputChange(createEvent({ type: "change", target: fileInput }).event);
+  for (const item of cases) {
+    const rawFile = createTextFile({
+      name: item.fileName,
+      type: item.type,
+      text: item.rawText
+    });
+    const sanitizedFile = {
+      name: item.outputName,
+      type: "text/plain",
+      size: 18,
+      text: "API_KEY=[PWM_1]"
+    };
+    const fileInput = createFileInput();
+    fileInput.files = [rawFile];
+    const composer = {
+      tagName: "TEXTAREA",
+      text: "",
+      selection: { start: 0, end: 0 }
+    };
+    const pipelineCalls = [];
+    const { maybeHandleFileInputChange, calls } = createHarness({
+      location: { hostname: "chatgpt.com" },
+      findComposer: () => composer,
+      canExtractForAdapterHandoff: (file) => file?.name === item.fileName,
+      processFileForAdapterHandoff: async ({ file, context }) => {
+        pipelineCalls.push({ file, context });
+        return {
+          status: "ready",
+          originalName: item.fileName,
+          outputName: item.outputName,
+          outputKind: "redacted_text_file",
+          extractedKind: item.extractedKind,
+          sanitizedText: sanitizedFile.text,
+          sanitizedFile,
+          metadata: {
+            scan: {
+              findingsCount: 1
+            }
+          },
+          warnings: item.extractedKind === "image_metadata" ? ["image_ocr_not_supported"] : [],
+          safeForUpload: true,
+          fallbackReason: ""
+        };
+      },
+      readLocalTextFileFromDataTransfer: async () => {
+        throw new Error(`${item.extractedKind} pipeline should bypass legacy text-file reader`);
+      }
+    });
 
-  assert.strictEqual(pipelineCalls.length, 1);
-  assert.strictEqual(pipelineCalls[0].file, rawFile);
-  assert.strictEqual(pipelineCalls[0].context, "file-input");
-  assert.strictEqual(calls.redactions.length, 0);
-  assert.strictEqual(calls.createdFiles.length, 0);
-  assert.strictEqual(calls.handoffs.length, 1);
-  assert.strictEqual(calls.handoffs[0].sanitizedFile, sanitizedFile);
-  assert.strictEqual(calls.handoffs[0].sanitizedFile.name, "report.redacted.txt");
-  assert.strictEqual(JSON.stringify(calls.debugEvents).includes("PDF bytes"), false);
+    await maybeHandleFileInputChange(createEvent({ type: "change", target: fileInput }).event);
+
+    assert.strictEqual(pipelineCalls.length, 1, `${item.extractedKind} should use content extraction pipeline`);
+    assert.strictEqual(pipelineCalls[0].file, rawFile);
+    assert.strictEqual(pipelineCalls[0].context, "file-input");
+    assert.strictEqual(calls.redactions.length, 0, `${item.extractedKind} should not double-redact sanitized output`);
+    assert.strictEqual(calls.createdFiles.length, 0, `${item.extractedKind} should reuse pipeline sanitized file`);
+    assert.strictEqual(calls.handoffs.length, 1, `${item.extractedKind} should hand off sanitized file`);
+    assert.strictEqual(calls.handoffs[0].sanitizedFile, sanitizedFile);
+    assert.strictEqual(calls.handoffs[0].sanitizedFile.name, item.outputName);
+    assert.strictEqual(JSON.stringify(calls.debugEvents).includes(item.rawText), false);
+  }
 }
 
 async function testUnsupportedFileReadFailureHidesProcessingUi() {
@@ -12838,7 +12871,7 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testSanitizedHandoffSignatureSuppressesDifferentInputRedispatch();
   await testSanitizedHandoffMixedRawFileDoesNotSuppressScan();
   await testSmallFileInputShowsProcessingUiThenDirectAttachSuccess();
-  await testDocumentFileInputUsesContentExtractionPipelineForSanitizedHandoff();
+  await testDocumentAndImageFileInputUseContentExtractionPipelineForSanitizedHandoff();
   await testUnsupportedFileReadFailureHidesProcessingUi();
   await testFileProcessingUiClearsAfterException();
   await testLocalFileDropProcessingUiClearsAfterException();

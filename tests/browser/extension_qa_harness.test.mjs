@@ -72,10 +72,11 @@ function makeQaPdf(text, options = {}) {
   const stream = options.imageOnly
     ? "q\n10 0 0 10 0 0 cm\n/Im1 Do\nQ\n"
     : `BT\n/F1 12 Tf\n72 720 Td\n(${escapePdfText(text)}) Tj\nET\n`;
+  const encryptMarker = options.encrypted ? "\n/Encrypt 6 0 R" : "";
   return Buffer.from([
     "%PDF-1.4",
     "1 0 obj",
-    "<< /Type /Catalog /Pages 2 0 R >>",
+    `<< /Type /Catalog /Pages 2 0 R${encryptMarker} >>`,
     "endobj",
     "2 0 obj",
     "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
@@ -1339,7 +1340,102 @@ async function runScannerQa(connection, extensionId, tempDir) {
   assert.match(unsupported.status, /could not find extractable text/i);
   assert.match(unsupported.status, /OCR are not supported/i);
   assert.equal(unsupported.preview, "");
-  return { supported, textPdf, textDocx, textXlsx, imageMetadata, unsupportedDocx, unsupported };
+
+  await evaluate(connection, scanner.sessionId, "document.querySelector('#clear-btn').click()");
+  await waitFor(
+    () => evaluate(connection, scanner.sessionId, "document.querySelector('#scan-btn')?.disabled"),
+    "scanner reset after unsupported PDF"
+  );
+
+  const encryptedPath = path.join(tempDir, "leakguard-browser-qa-encrypted.pdf");
+  fs.writeFileSync(encryptedPath, makeQaPdf(`PDF_ENCRYPTED_KEY=${syntheticSecrets.openAi}`, { encrypted: true }));
+  await setFileInputFiles(connection, scanner.sessionId, "#file-input", [encryptedPath]);
+  const encrypted = await evaluate(
+    connection,
+    scanner.sessionId,
+    `new Promise((resolve, reject) => {
+      const rawSecret = ${JSON.stringify(syntheticSecrets.openAi)};
+      const started = Date.now();
+      let clicked = false;
+      const timer = setInterval(() => {
+        const status = document.querySelector('#status')?.textContent || '';
+        const preview = document.querySelector('#redacted-preview')?.textContent || '';
+        const scanButton = document.querySelector('#scan-btn');
+        if (!clicked && scanButton && !scanButton.disabled) {
+          clicked = true;
+          scanButton.click();
+        }
+        if (/encrypted PDF/i.test(status)) {
+          clearInterval(timer);
+          resolve({ status, preview, hasRaw: preview.includes(rawSecret) || status.includes(rawSecret) });
+        } else if (Date.now() - started > 10000) {
+          clearInterval(timer);
+          reject(new Error('Timed out waiting for encrypted PDF warning: ' + JSON.stringify({
+            status,
+            scanDisabled: scanButton?.disabled,
+            preview
+          })));
+        }
+      }, 50);
+    })`
+  );
+  assert.match(encrypted.status, /encrypted PDF/i);
+  assert.equal(encrypted.preview, "");
+  assert.equal(encrypted.hasRaw, false, "encrypted PDF scanner warning must not expose raw PDF secrets");
+
+  await evaluate(connection, scanner.sessionId, "document.querySelector('#clear-btn').click()");
+  await waitFor(
+    () => evaluate(connection, scanner.sessionId, "document.querySelector('#scan-btn')?.disabled"),
+    "scanner reset after encrypted PDF"
+  );
+
+  const malformedPath = path.join(tempDir, "leakguard-browser-qa-malformed.pdf");
+  fs.writeFileSync(malformedPath, "not a pdf with PDF_MALFORMED_KEY=raw");
+  await setFileInputFiles(connection, scanner.sessionId, "#file-input", [malformedPath]);
+  const malformed = await evaluate(
+    connection,
+    scanner.sessionId,
+    `new Promise((resolve, reject) => {
+      const rawText = 'PDF_MALFORMED_KEY=raw';
+      const started = Date.now();
+      let clicked = false;
+      const timer = setInterval(() => {
+        const status = document.querySelector('#status')?.textContent || '';
+        const preview = document.querySelector('#redacted-preview')?.textContent || '';
+        const scanButton = document.querySelector('#scan-btn');
+        if (!clicked && scanButton && !scanButton.disabled) {
+          clicked = true;
+          scanButton.click();
+        }
+        if (/could not read this PDF/i.test(status)) {
+          clearInterval(timer);
+          resolve({ status, preview, hasRaw: preview.includes(rawText) || status.includes(rawText) });
+        } else if (Date.now() - started > 10000) {
+          clearInterval(timer);
+          reject(new Error('Timed out waiting for malformed PDF warning: ' + JSON.stringify({
+            status,
+            scanDisabled: scanButton?.disabled,
+            preview
+          })));
+        }
+      }, 50);
+    })`
+  );
+  assert.match(malformed.status, /could not read this PDF/i);
+  assert.equal(malformed.preview, "");
+  assert.equal(malformed.hasRaw, false, "malformed PDF scanner warning must not expose raw bytes");
+
+  return {
+    supported,
+    textPdf,
+    textDocx,
+    textXlsx,
+    imageMetadata,
+    unsupportedDocx,
+    unsupported,
+    encrypted,
+    malformed
+  };
 }
 
 async function runBrowserQa({ browserName, executable }) {
