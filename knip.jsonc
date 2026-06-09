@@ -49,6 +49,7 @@
     "src/content/file_handoff_flow.js",
     "src/content/input/rewriteVerificationText.js",
     "src/content/files/fileTransferPolicy.js",
+    "src/content/files/contentFileExtractionPipeline.js",
     "src/content/adapters/hostMatching.js",
     "src/content/adapters/chatgptAdapter.js",
     "src/content/adapters/openaiAdapter.js",

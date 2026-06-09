@@ -46,6 +46,10 @@
     createSanitizedTextFile
   } = FilePasteHelpers || {};
   const FileScanner = globalThis.PWM?.FileScanner || {};
+  const {
+    canExtractForAdapterHandoff,
+    processFileForAdapterHandoff
+  } = globalThis.PWM?.ContentFileExtractionPipeline || {};
   const StreamingFileRedactor = globalThis.PWM?.StreamingFileRedactor || {};
   const FileLimits = globalThis.PWM?.FileLimits || {};
   const {
@@ -9095,6 +9099,45 @@
     return "";
   }
 
+  function shouldUseContentFileExtractionPipeline(file) {
+    if (
+      !file ||
+      typeof canExtractForAdapterHandoff !== "function" ||
+      typeof processFileForAdapterHandoff !== "function"
+    ) {
+      return false;
+    }
+    if (typeof FileScanner.isSupportedTextFile === "function" && FileScanner.isSupportedTextFile(file.name, file.type)) {
+      return false;
+    }
+    return canExtractForAdapterHandoff(file);
+  }
+
+  function localFileFromContentExtractionResult(result) {
+    const fallbackReason = result?.fallbackReason || result?.status || "content_file_extraction_failed";
+    if (!result || result.status !== "ready" || !result.safeForUpload || !result.sanitizedFile) {
+      return {
+        handled: true,
+        ok: false,
+        code: fallbackReason,
+        message: "LeakGuard blocked raw file upload because local file extraction did not produce safe text."
+      };
+    }
+
+    return {
+      handled: true,
+      ok: true,
+      text: result.sanitizedText,
+      file: {
+        name: result.outputName,
+        extension: FileScanner.getFileExtension?.(result.outputName) || ".txt",
+        type: "text/plain",
+        sizeBytes: result.sanitizedText.length
+      },
+      contentExtraction: result
+    };
+  }
+
   async function maybeHandleLocalFileInsert(event, input, dataTransfer, context) {
     if (
       !extensionRuntimeAvailable ||
@@ -9109,8 +9152,13 @@
       return false;
     }
 
+    const localTransferFiles = listLocalTransferFiles(dataTransfer);
+    const contentExtractionFile =
+      localTransferFiles.length === 1 && shouldUseContentFileExtractionPipeline(localTransferFiles[0])
+        ? localTransferFiles[0]
+        : null;
     const transferPolicy = resolveLocalFileTransferPolicy(dataTransfer);
-    if (transferPolicy.action === "allow") {
+    if (transferPolicy.action === "allow" && !contentExtractionFile) {
       if (shouldBlockUnsupportedFileTransfer(transferPolicy)) {
         if (!event.defaultPrevented) {
           consumeInterceptionEvent(event);
@@ -9183,7 +9231,15 @@
     });
 
     try {
-    const localFile = await readLocalTextFileFromDataTransfer(dataTransfer);
+    const contentExtractionResult = contentExtractionFile
+      ? await processFileForAdapterHandoff({
+          file: contentExtractionFile,
+          context
+        })
+      : null;
+    const localFile = contentExtractionResult
+      ? localFileFromContentExtractionResult(contentExtractionResult)
+      : await readLocalTextFileFromDataTransfer(dataTransfer);
     if (context === "file-input") {
       logFileInterception("file scan result", {
         handled: Boolean(localFile.handled),
@@ -9469,8 +9525,24 @@
         progress: preflightPlan.sanitizationStatus.processingProgress,
         blocking: preflightPlan.sanitizationStatus.processingBlocking
       });
-      result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
-      sanitizedFile = createSanitizedTextFile(localFile.file, result.redactedText);
+      if (contentExtractionResult?.status === "ready") {
+        result = {
+          redactedText: contentExtractionResult.sanitizedText,
+          replacements: []
+        };
+        sanitizedFile = contentExtractionResult.sanitizedFile;
+        analysis = {
+          normalizedText: contentExtractionResult.sanitizedText,
+          secretFindings: Array.from(
+            { length: Number(contentExtractionResult.metadata?.scan?.findingsCount || 0) },
+            () => ({})
+          ),
+          findings: []
+        };
+      } else {
+        result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
+        sanitizedFile = createSanitizedTextFile(localFile.file, result.redactedText);
+      }
     } catch (error) {
       if (optimizedStatus) {
         clearLocalPayloadOptimizationStatus(

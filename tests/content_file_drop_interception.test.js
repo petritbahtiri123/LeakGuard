@@ -939,6 +939,7 @@ function createHarness(overrides = {}) {
     fileDragGuard: null,
     rawFileDropInterceptions: new WeakSet(),
     FilePasteHelpers: globalThis.PWM.FilePasteHelpers,
+    FileScanner: globalThis.PWM.FileScanner || {},
     StreamingFileRedactor: globalThis.PWM.StreamingFileRedactor || {},
     normalizeComposerText: globalThis.PWM.ComposerHelpers.normalizeComposerText,
     isTextArea: globalThis.PWM.ComposerHelpers.isTextArea,
@@ -988,6 +989,8 @@ function createHarness(overrides = {}) {
         }
       };
     },
+    canExtractForAdapterHandoff: () => false,
+    processFileForAdapterHandoff: async () => null,
     createSanitizedTextFile: (file, text) => {
       const sanitizedFile = { name: file.name, type: file.type, text };
       calls.createdFiles.push({ file, text, sanitizedFile });
@@ -1408,6 +1411,8 @@ function createHarness(overrides = {}) {
       ...fileHandoffFlowHarnessSource({ includeLegacyLocalFile: false }),
       extractFunctionSource(contentSource, "isForbiddenGeminiUploadButton"),
       extractFunctionSource(contentSource, "isAllowedGeminiUploadMenuOpener"),
+      extractFunctionSource(contentSource, "shouldUseContentFileExtractionPipeline"),
+      extractFunctionSource(contentSource, "localFileFromContentExtractionResult"),
       extractFunctionSource(contentSource, "maybeHandleLocalFileInsert"),
       extractFunctionSource(contentSource, "maybeHandlePaste"),
       extractFunctionSource(contentSource, "maybeHandleDrop"),
@@ -5819,6 +5824,68 @@ async function testSmallFileInputShowsProcessingUiThenDirectAttachSuccess() {
   assert.ok(fileInput.files[0]?.text?.includes("[PWM_1]"), "expected sanitized file assignment");
   assert.strictEqual(fileInput.files[0]?.text?.includes(rawSecret), false);
   assert.strictEqual(JSON.stringify(calls.debugEvents).includes(rawSecret), false);
+}
+
+async function testDocumentFileInputUsesContentExtractionPipelineForSanitizedHandoff() {
+  const rawFile = createTextFile({
+    name: "report.pdf",
+    type: "application/pdf",
+    text: "PDF bytes"
+  });
+  const sanitizedFile = {
+    name: "report.redacted.txt",
+    type: "text/plain",
+    size: 18,
+    text: "API_KEY=[PWM_1]"
+  };
+  const fileInput = createFileInput();
+  fileInput.files = [rawFile];
+  const composer = {
+    tagName: "TEXTAREA",
+    text: "",
+    selection: { start: 0, end: 0 }
+  };
+  const pipelineCalls = [];
+  const { maybeHandleFileInputChange, calls } = createHarness({
+    location: { hostname: "chatgpt.com" },
+    findComposer: () => composer,
+    canExtractForAdapterHandoff: (file) => file?.name === "report.pdf",
+    processFileForAdapterHandoff: async ({ file, context }) => {
+      pipelineCalls.push({ file, context });
+      return {
+        status: "ready",
+        originalName: "report.pdf",
+        outputName: "report.redacted.txt",
+        outputKind: "redacted_text_file",
+        extractedKind: "pdf",
+        sanitizedText: sanitizedFile.text,
+        sanitizedFile,
+        metadata: {
+          scan: {
+            findingsCount: 1
+          }
+        },
+        warnings: [],
+        safeForUpload: true,
+        fallbackReason: ""
+      };
+    },
+    readLocalTextFileFromDataTransfer: async () => {
+      throw new Error("document pipeline should bypass legacy text-file reader");
+    }
+  });
+
+  await maybeHandleFileInputChange(createEvent({ type: "change", target: fileInput }).event);
+
+  assert.strictEqual(pipelineCalls.length, 1);
+  assert.strictEqual(pipelineCalls[0].file, rawFile);
+  assert.strictEqual(pipelineCalls[0].context, "file-input");
+  assert.strictEqual(calls.redactions.length, 0);
+  assert.strictEqual(calls.createdFiles.length, 0);
+  assert.strictEqual(calls.handoffs.length, 1);
+  assert.strictEqual(calls.handoffs[0].sanitizedFile, sanitizedFile);
+  assert.strictEqual(calls.handoffs[0].sanitizedFile.name, "report.redacted.txt");
+  assert.strictEqual(JSON.stringify(calls.debugEvents).includes("PDF bytes"), false);
 }
 
 async function testUnsupportedFileReadFailureHidesProcessingUi() {
@@ -12771,6 +12838,7 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testSanitizedHandoffSignatureSuppressesDifferentInputRedispatch();
   await testSanitizedHandoffMixedRawFileDoesNotSuppressScan();
   await testSmallFileInputShowsProcessingUiThenDirectAttachSuccess();
+  await testDocumentFileInputUsesContentExtractionPipelineForSanitizedHandoff();
   await testUnsupportedFileReadFailureHidesProcessingUi();
   await testFileProcessingUiClearsAfterException();
   await testLocalFileDropProcessingUiClearsAfterException();

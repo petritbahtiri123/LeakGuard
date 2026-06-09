@@ -375,6 +375,7 @@ async function run() {
   const fileHandoffFlowIndex = contentScripts.indexOf("content/file_handoff_flow.js");
   const rewriteVerificationTextIndex = contentScripts.indexOf("content/input/rewriteVerificationText.js");
   const fileTransferPolicyIndex = contentScripts.indexOf("content/files/fileTransferPolicy.js");
+  const contentFileExtractionPipelineIndex = contentScripts.indexOf("content/files/contentFileExtractionPipeline.js");
   const hostMatchingIndex = contentScripts.indexOf("content/adapters/hostMatching.js");
   const adapterScripts = [
     "content/adapters/chatgptAdapter.js",
@@ -413,6 +414,10 @@ async function run() {
   assert.ok(fileHandoffFlowIndex > -1, "content scripts should include file handoff flow helpers");
   assert.ok(rewriteVerificationTextIndex > -1, "content scripts should include rewrite verification text helpers");
   assert.ok(fileTransferPolicyIndex > -1, "content scripts should include file transfer policy helpers");
+  assert.ok(
+    contentFileExtractionPipelineIndex > -1,
+    "content scripts should include content file extraction pipeline helpers"
+  );
   assert.ok(hostMatchingIndex > -1, "content scripts should include host matching helpers");
   assert.ok(adapterIndexes.every((index) => index > -1), "content scripts should include site adapter helpers");
   assert.ok(geminiFallbackWriterIndex > -1, "content scripts should include Gemini fallback writer helpers");
@@ -437,7 +442,8 @@ async function run() {
       fileHandoffPendingIndex < fileHandoffFlowIndex &&
       fileHandoffFlowIndex < rewriteVerificationTextIndex &&
       rewriteVerificationTextIndex < fileTransferPolicyIndex &&
-      fileTransferPolicyIndex < hostMatchingIndex &&
+      fileTransferPolicyIndex < contentFileExtractionPipelineIndex &&
+      contentFileExtractionPipelineIndex < hostMatchingIndex &&
       hostMatchingIndex < adapterIndexes[0] &&
       adapterOrderAligned &&
       adapterIndexes.at(-1) < geminiFallbackWriterIndex &&

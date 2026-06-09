@@ -620,7 +620,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const staticScripts = baseManifest.content_scripts[0].js;
   const dynamicScripts = Array.from(
     backgroundSource.matchAll(
-      /"([^"]+(?:fileLimits|fileTypeRegistry|fileExtractors|fileScanner|file_paste_helpers|file_handoff_state|file_handoff_pending|file_handoff_flow|rewriteVerificationText|fileTransferPolicy|hostMatching|chatgptAdapter|openaiAdapter|geminiDiagnosticsAdapter|geminiAdapter|claudeAdapter|grokAdapter|xAdapter|index|geminiFallbackWriter|safeSnapshots|fileAttachPipeline|placeholderRehydrator|responseObserver|revealController|debugLogger|eventBindings|content)\.js)"/g
+      /"([^"]+(?:fileLimits|fileTypeRegistry|fileExtractors|fileScanner|file_paste_helpers|file_handoff_state|file_handoff_pending|file_handoff_flow|rewriteVerificationText|fileTransferPolicy|contentFileExtractionPipeline|hostMatching|chatgptAdapter|openaiAdapter|geminiDiagnosticsAdapter|geminiAdapter|claudeAdapter|grokAdapter|xAdapter|index|geminiFallbackWriter|safeSnapshots|fileAttachPipeline|placeholderRehydrator|responseObserver|revealController|debugLogger|eventBindings|content)\.js)"/g
     )
   ).map((match) => match[1]);
   const adapterScripts = [
@@ -643,6 +643,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const staticFileHandoffFlow = staticScripts.indexOf("content/file_handoff_flow.js");
   const staticRewriteVerificationText = staticScripts.indexOf("content/input/rewriteVerificationText.js");
   const staticFileTransferPolicy = staticScripts.indexOf("content/files/fileTransferPolicy.js");
+  const staticContentFileExtractionPipeline = staticScripts.indexOf("content/files/contentFileExtractionPipeline.js");
   const staticHostMatching = staticScripts.indexOf("content/adapters/hostMatching.js");
   const staticAdapterIndexes = adapterScripts.map((script) => staticScripts.indexOf(script));
   const staticGeminiFallbackWriter = staticScripts.indexOf("content/adapters/geminiFallbackWriter.js");
@@ -664,6 +665,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const dynamicFileHandoffFlow = dynamicScripts.indexOf("content/file_handoff_flow.js");
   const dynamicRewriteVerificationText = dynamicScripts.indexOf("content/input/rewriteVerificationText.js");
   const dynamicFileTransferPolicy = dynamicScripts.indexOf("content/files/fileTransferPolicy.js");
+  const dynamicContentFileExtractionPipeline = dynamicScripts.indexOf("content/files/contentFileExtractionPipeline.js");
   const dynamicHostMatching = dynamicScripts.indexOf("content/adapters/hostMatching.js");
   const dynamicAdapterIndexes = adapterScripts.map((script) => dynamicScripts.indexOf(script));
   const dynamicGeminiFallbackWriter = dynamicScripts.indexOf("content/adapters/geminiFallbackWriter.js");
@@ -687,6 +689,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       staticFileHandoffFlow > -1 &&
       staticRewriteVerificationText > -1 &&
       staticFileTransferPolicy > -1 &&
+      staticContentFileExtractionPipeline > -1 &&
       staticHostMatching > -1 &&
       staticAdapterIndexes.every((index) => index > -1) &&
       staticGeminiFallbackWriter > -1 &&
@@ -711,6 +714,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       dynamicFileHandoffFlow > -1 &&
       dynamicRewriteVerificationText > -1 &&
       dynamicFileTransferPolicy > -1 &&
+      dynamicContentFileExtractionPipeline > -1 &&
       dynamicHostMatching > -1 &&
       dynamicAdapterIndexes.every((index) => index > -1) &&
       dynamicGeminiFallbackWriter > -1 &&
@@ -740,7 +744,8 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       staticFileHandoffPending < staticFileHandoffFlow &&
       staticFileHandoffFlow < staticRewriteVerificationText &&
       staticRewriteVerificationText < staticFileTransferPolicy &&
-      staticFileTransferPolicy < staticHostMatching &&
+      staticFileTransferPolicy < staticContentFileExtractionPipeline &&
+      staticContentFileExtractionPipeline < staticHostMatching &&
       staticHostMatching < staticAdapterIndexes[0] &&
       staticAdapterOrderAligned &&
       staticAdapterIndexes.at(-1) < staticGeminiFallbackWriter &&
@@ -764,7 +769,8 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       dynamicFileHandoffPending < dynamicFileHandoffFlow &&
       dynamicFileHandoffFlow < dynamicRewriteVerificationText &&
       dynamicRewriteVerificationText < dynamicFileTransferPolicy &&
-      dynamicFileTransferPolicy < dynamicHostMatching &&
+      dynamicFileTransferPolicy < dynamicContentFileExtractionPipeline &&
+      dynamicContentFileExtractionPipeline < dynamicHostMatching &&
       dynamicHostMatching < dynamicAdapterIndexes[0] &&
       dynamicAdapterOrderAligned &&
       dynamicAdapterIndexes.at(-1) < dynamicGeminiFallbackWriter &&
