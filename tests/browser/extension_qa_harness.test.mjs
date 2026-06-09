@@ -1215,6 +1215,54 @@ async function runScannerQa(connection, extensionId, tempDir) {
     "scanner reset after text XLSX"
   );
 
+  const imageSecretName = `image-${syntheticSecrets.openAi}.png`;
+  const imageSecretPath = path.join(tempDir, imageSecretName);
+  fs.writeFileSync(imageSecretPath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  await setFileInputFiles(connection, scanner.sessionId, "#file-input", [imageSecretPath]);
+  const imageMetadata = await evaluate(
+    connection,
+    scanner.sessionId,
+    `new Promise((resolve, reject) => {
+      const rawSecret = ${JSON.stringify(syntheticSecrets.openAi)};
+      const started = Date.now();
+      let clicked = false;
+      const timer = setInterval(() => {
+        const preview = document.querySelector('#redacted-preview')?.textContent || '';
+        const status = document.querySelector('#status')?.textContent || '';
+        const scanButton = document.querySelector('#scan-btn');
+        if (!clicked && scanButton && !scanButton.disabled) {
+          clicked = true;
+          scanButton.click();
+        }
+        if (/Scan complete/i.test(status) && /file_name=image-\\[PWM_\\d+\\]\\.png/.test(preview)) {
+          clearInterval(timer);
+          resolve({
+            status,
+            hasRaw: preview.includes(rawSecret),
+            redacted: /file_name=image-\\[PWM_\\d+\\]\\.png/.test(preview),
+            noOcrClaim: /visual_text_scanned=false/.test(preview)
+          });
+        } else if (Date.now() - started > 15000) {
+          clearInterval(timer);
+          reject(new Error('Timed out waiting for image metadata scanner result: ' + JSON.stringify({
+            status,
+            scanDisabled: scanButton?.disabled,
+            preview
+          })));
+        }
+      }, 50);
+    })`
+  );
+  assert.equal(imageMetadata.hasRaw, false, "scanner image metadata preview must not expose raw filename secrets");
+  assert.equal(imageMetadata.redacted, true, "scanner should redact image filename metadata findings");
+  assert.equal(imageMetadata.noOcrClaim, true, "scanner should mark visual text as unscanned");
+
+  await evaluate(connection, scanner.sessionId, "document.querySelector('#clear-btn').click()");
+  await waitFor(
+    () => evaluate(connection, scanner.sessionId, "document.querySelector('#scan-btn')?.disabled"),
+    "scanner reset after image metadata"
+  );
+
   const unsupportedDocxPath = path.join(tempDir, "leakguard-browser-qa-image-only.docx");
   fs.writeFileSync(unsupportedDocxPath, makeQaDocx("", { imageOnly: true }));
   await setFileInputFiles(connection, scanner.sessionId, "#file-input", [unsupportedDocxPath]);
@@ -1291,7 +1339,7 @@ async function runScannerQa(connection, extensionId, tempDir) {
   assert.match(unsupported.status, /could not find extractable text/i);
   assert.match(unsupported.status, /OCR are not supported/i);
   assert.equal(unsupported.preview, "");
-  return { supported, textPdf, textDocx, textXlsx, unsupportedDocx, unsupported };
+  return { supported, textPdf, textDocx, textXlsx, imageMetadata, unsupportedDocx, unsupported };
 }
 
 async function runBrowserQa({ browserName, executable }) {

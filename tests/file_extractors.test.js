@@ -248,23 +248,6 @@ function makeXlsx(options = {}) {
   return makeZip(entries);
 }
 
-function assertPlannedUnsupported(fileName, mimeType, expectedKind) {
-  const routed = routeFileExtractor({ fileName, mimeType });
-  const result = prepareFileExtraction({
-    fileName,
-    mimeType,
-    text: "SHOULD_NOT_PARSE"
-  });
-
-  assert.strictEqual(routed.status, EXTRACTOR_STATUS.PLANNED_UNSUPPORTED, `${fileName} route should be planned`);
-  assert.strictEqual(result.status, EXTRACTOR_STATUS.PLANNED_UNSUPPORTED, `${fileName} should stay disabled`);
-  assert.strictEqual(result.kind, expectedKind);
-  assert.strictEqual(result.text, "");
-  assert.strictEqual(result.safeForScan, false);
-  assert.ok(result.reason.includes("planned"));
-  assert.ok(result.metadata.planned);
-}
-
 function testSupportedTextFilesAreSafeForScan() {
   for (const fileName of [
     "notes.txt",
@@ -293,6 +276,82 @@ function testPlannedDocumentsRemainDisabled() {
     assert.strictEqual(result.status, EXTRACTOR_STATUS.UNSUPPORTED, `${fileName} should stay unsupported`);
     assert.strictEqual(result.safeForScan, false);
   }
+}
+
+async function testImageMetadataExtractsSafeFieldsOnly() {
+  for (const [fileName, mimeType] of [
+    ["photo.png", "image/png"],
+    ["photo.jpg", "image/jpeg"],
+    ["photo.jpeg", "image/jpeg"],
+    ["photo.webp", "image/webp"]
+  ]) {
+    const result = await prepareFileExtractionAsync({
+      fileName,
+      mimeType,
+      sizeBytes: 1536,
+      buffer: bufferFromText("pixel text must not be scanned")
+    });
+
+    assert.strictEqual(result.status, EXTRACTOR_STATUS.OK, `${fileName} should extract metadata`);
+    assert.strictEqual(result.kind, "image_metadata");
+    assert.strictEqual(result.safeForScan, true);
+    assert.ok(result.text.includes(`file_name=${fileName}`));
+    assert.ok(result.text.includes(`extension=${fileName.slice(fileName.lastIndexOf("."))}`));
+    assert.ok(result.text.includes(`mime_type=${mimeType}`));
+    assert.ok(result.text.includes("size_bucket=small"));
+    assert.strictEqual(result.text.includes("pixel text must not be scanned"), false);
+    assert.strictEqual(result.metadata.visualContentScanned, false);
+  }
+}
+
+async function testImageFilenameSecretFeedsExistingScannerWithoutRawReportMetadata() {
+  const rawSecret = "sk-proj-LeakGuardImageNameApiKey1234567890abcdef";
+  const fileName = `diagram-${rawSecret}.png`;
+  const result = await prepareFileExtractionAsync({
+    fileName,
+    mimeType: "image/png",
+    sizeBytes: 2048,
+    buffer: bufferFromText("ignored image bytes")
+  });
+  const scan = scanTextContent({
+    fileName,
+    mimeType: "image/png",
+    sizeBytes: result.metadata.textLength,
+    text: result.text,
+    extractedText: true,
+    mode: "hide_public"
+  });
+  const report = buildSanitizedReport(scan);
+  const reportJson = JSON.stringify(report);
+
+  assert.strictEqual(result.status, EXTRACTOR_STATUS.OK);
+  assert.ok(scan.summary.findingsCount > 0);
+  assert.strictEqual(scan.redactedText.includes(rawSecret), false);
+  assert.strictEqual(reportJson.includes(rawSecret), false);
+  assert.strictEqual(JSON.stringify(result.metadata).includes(rawSecret), false);
+}
+
+async function testSafeImageFilenameHasNoFindingsAndReportsOcrUnsupported() {
+  const result = await prepareFileExtractionAsync({
+    fileName: "vacation-photo.png",
+    mimeType: "image/png",
+    sizeBytes: 4096,
+    buffer: bufferFromText("ignored image bytes")
+  });
+  const scan = scanTextContent({
+    fileName: "vacation-photo.png",
+    mimeType: "image/png",
+    sizeBytes: result.metadata.textLength,
+    text: result.text,
+    extractedText: true,
+    mode: "hide_public"
+  });
+
+  assert.strictEqual(result.status, EXTRACTOR_STATUS.OK);
+  assert.strictEqual(scan.summary.findingsCount, 0);
+  assert.ok(result.warnings.includes("image_ocr_not_supported"));
+  assert.ok(result.text.includes("visual_text_scanned=false"));
+  assert.ok(result.text.includes("image_ocr_supported=false"));
 }
 
 async function testSafeXlsxTextExtractsLocally() {
@@ -598,14 +657,27 @@ async function testDocxMimeMismatchDoesNotBypassGates() {
   assert.strictEqual(macroDocm.safeForScan, false);
 }
 
-function testPlannedImagesRemainDisabled() {
+async function testPlannedImagesUseMetadataExtraction() {
   for (const [fileName, mimeType] of [
     ["diagram.png", "image/png"],
     ["photo.jpg", "image/jpeg"],
     ["photo.jpeg", "image/jpeg"],
     ["capture.webp", "image/webp"]
   ]) {
-    assertPlannedUnsupported(fileName, mimeType, "image");
+    const routed = routeFileExtractor({ fileName, mimeType });
+    const result = await prepareFileExtractionAsync({
+      fileName,
+      mimeType,
+      sizeBytes: 128,
+      buffer: bufferFromText("not OCR text")
+    });
+
+    assert.strictEqual(routed.status, EXTRACTOR_STATUS.OK, `${fileName} route should be enabled`);
+    assert.strictEqual(routed.kind, "image_metadata");
+    assert.strictEqual(result.status, EXTRACTOR_STATUS.OK);
+    assert.strictEqual(result.kind, "image_metadata");
+    assert.strictEqual(result.safeForScan, true);
+    assert.strictEqual(result.text.includes("not OCR text"), false);
   }
 }
 
@@ -774,6 +846,7 @@ function testPdfBundleBudget() {
   assert.strictEqual(source.includes("import("), false);
   assert.strictEqual(source.includes("eval("), false);
   assert.strictEqual(source.includes("require("), false);
+  assert.strictEqual(/tesseract|tensorflow|tfjs/i.test(source), false);
 }
 
 function testUnknownFileRemainsUnsupported() {
@@ -813,7 +886,7 @@ function testNoNewDependenciesAdded() {
 (async () => {
   testSupportedTextFilesAreSafeForScan();
   testPlannedDocumentsRemainDisabled();
-  testPlannedImagesRemainDisabled();
+  await testPlannedImagesUseMetadataExtraction();
   testMimeOnlyPlannedTypesDoNotEnableParsing();
   testUnknownFileRemainsUnsupported();
   testResultShapeDefaults();
@@ -837,6 +910,9 @@ function testNoNewDependenciesAdded() {
   await testUnreadableXlsxCasesFailClosed();
   await testLargeXlsxTextExtractionLimit();
   await testXlsxMimeMismatchAndLegacyFormatsDoNotBypassGates();
+  await testImageMetadataExtractsSafeFieldsOnly();
+  await testImageFilenameSecretFeedsExistingScannerWithoutRawReportMetadata();
+  await testSafeImageFilenameHasNoFindingsAndReportsOcrUnsupported();
   testPdfBundleBudget();
   console.log("PASS file extractor shell regressions");
 })().catch((error) => {

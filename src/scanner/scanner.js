@@ -179,7 +179,7 @@
       mimeType: file.type
     });
 
-    if (!scanner.isSupportedTextFile(file.name, file.type) && !isExtractedDocument(routedExtraction)) {
+    if (!scanner.isSupportedTextFile(file.name, file.type) && !isExtractedFile(routedExtraction)) {
       return {
         ok: false,
         message: scanner.UNSUPPORTED_TEXT_RELEASE_MESSAGE
@@ -189,12 +189,17 @@
     return { ok: true };
   }
 
-  function isExtractedDocument(extraction) {
-    return extraction?.kind === "pdf" || extraction?.kind === "docx" || extraction?.kind === "xlsx";
+  function isExtractedFile(extraction) {
+    return (
+      extraction?.kind === "pdf" ||
+      extraction?.kind === "docx" ||
+      extraction?.kind === "xlsx" ||
+      extraction?.kind === "image_metadata"
+    );
   }
 
   function formatExtractionFailureMessage(extraction) {
-    if (!isExtractedDocument(extraction)) {
+    if (!isExtractedFile(extraction)) {
       return extraction?.reason || "LeakGuard could not extract text from this file, so it was not scanned.";
     }
 
@@ -262,7 +267,7 @@
       buffer
     });
 
-    if (!isExtractedDocument(extraction)) {
+    if (!isExtractedFile(extraction)) {
       const validation = scanner.validateFileForTextScan({
         fileName: selectedFile.name,
         mimeType: selectedFile.type,
@@ -287,19 +292,23 @@
       return;
     }
 
-    const extractedDocument = isExtractedDocument(extraction);
-    const text = extractedDocument ? extraction.text : scanner.decodeUtf8Text(buffer);
+    const extractedFile = isExtractedFile(extraction);
+    const text = extractedFile ? extraction.text : scanner.decodeUtf8Text(buffer);
     const result = scanner.scanTextContent({
       fileName: selectedFile.name,
       mimeType: selectedFile.type,
-      sizeBytes: extractedDocument ? extraction.metadata.textLength : selectedFile.size,
+      sizeBytes: extractedFile ? extraction.metadata.textLength : selectedFile.size,
       text,
-      extractedText: extractedDocument,
+      extractedText: extractedFile,
       mode: "hide_public"
     });
 
     renderResult(result);
-    setStatus("Scan complete. Exports are generated only when you click a download button.", "success");
+    if (extraction.kind === "image_metadata" && result.summary.findingsCount === 0) {
+      setStatus("No image metadata findings. Image OCR is not supported yet, so visible text inside images was not scanned.", "success");
+    } else {
+      setStatus("Scan complete. Exports are generated only when you click a download button.", "success");
+    }
     scanBtn.disabled = false;
   }
 
@@ -317,7 +326,15 @@
 
   function redactedFileName(fileName) {
     const { base, extension } = splitFileName(fileName);
-    if (extension === ".pdf" || extension === ".docx" || extension === ".xlsx") {
+    if (
+      extension === ".pdf" ||
+      extension === ".docx" ||
+      extension === ".xlsx" ||
+      extension === ".png" ||
+      extension === ".jpg" ||
+      extension === ".jpeg" ||
+      extension === ".webp"
+    ) {
       return `${base}.redacted.txt`;
     }
     return `${base}.redacted${extension}`;

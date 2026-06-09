@@ -254,30 +254,45 @@ function testDynamicSiteSupportIsDeclaredMinimally(manifest) {
 
 function testDocumentScannerCopyStaysV1Scoped() {
   assert.ok(
-    scannerHtml.includes("text file, text PDF, DOCX, or XLSX") &&
-      scannerHtml.includes("Text files, text PDFs, DOCX text, and XLSX spreadsheet text") &&
+    scannerHtml.includes("text file, text PDF, DOCX, XLSX, or image") &&
+      scannerHtml.includes("Text files, text PDFs, DOCX text, XLSX spreadsheet text, and PNG/JPG/WEBP image metadata") &&
       scannerHtml.includes("XLSX formulas are scanned as text only and are not executed"),
-    "scanner UI should describe PDF, DOCX, and XLSX support as text extraction only"
+    "scanner UI should describe PDF, DOCX, XLSX, and image metadata support as scoped extraction only"
   );
   assert.ok(
     scannerHtml.includes("scanned-image PDF") &&
       scannerHtml.includes("legacy XLS") &&
       scannerHtml.includes("XLSM") &&
       scannerHtml.includes("embedded media") &&
-      scannerHtml.includes("embedded-image document redaction are not enabled"),
-    "scanner UI should explicitly avoid scanned-image PDF, legacy XLS, XLSM, media, and embedded-image support claims"
+      scannerHtml.includes("Image scans check filenames and safe metadata only") &&
+      scannerHtml.includes("visual text scanning") &&
+      scannerHtml.includes("image redaction"),
+    "scanner UI should explicitly avoid scanned-image PDF, legacy XLS, XLSM, media, OCR, visual text, and image-redaction claims"
   );
   assert.ok(
-    !/optical character recognition|image PDF support|full PDF|full DOCX|full XLSX|rebuilt DOCX|rebuilt XLSX|macro support/i.test(scannerHtml),
-    "scanner UI must not claim OCR, image-PDF support, macro support, or full PDF/DOCX/XLSX rebuild support"
+    !/optical character recognition|image PDF support|full PDF|full DOCX|full XLSX|full image|rebuilt DOCX|rebuilt XLSX|rebuilt image|macro support/i.test(scannerHtml),
+    "scanner UI must not claim OCR, image-PDF support, macro support, full visual image scanning, or full PDF/DOCX/XLSX rebuild support"
   );
   assert.ok(
     scannerJs.includes('extension === ".pdf"') &&
       scannerJs.includes('extension === ".docx"') &&
       scannerJs.includes('extension === ".xlsx"') &&
+      scannerJs.includes('extension === ".png"') &&
+      scannerJs.includes('extension === ".webp"') &&
       scannerJs.includes('redacted.txt'),
-    "scanner redacted exports for PDFs, DOCX, and XLSX should be text files, not rebuilt documents"
+    "scanner redacted exports for PDFs, DOCX, XLSX, and image metadata should be text files, not rebuilt documents or images"
   );
+}
+
+function testImageMetadataScannerAvoidsOcrDependencies() {
+  const dependencyText = JSON.stringify({
+    dependencies: packageJson.dependencies || {},
+    devDependencies: packageJson.devDependencies || {}
+  }).toLowerCase();
+
+  assert.strictEqual(dependencyText.includes("tesseract"), false, "image metadata scanner must not add Tesseract OCR");
+  assert.strictEqual(dependencyText.includes("tensorflow"), false, "image metadata scanner must not add TensorFlow");
+  assert.strictEqual(dependencyText.includes("tfjs"), false, "image metadata scanner must not add TensorFlow.js");
 }
 
 function testPublishReadinessDocsCoverStorePrivacyAndQa() {
@@ -343,8 +358,9 @@ async function run() {
   testPendingAttachPromptDoesNotBlockPageClicks();
   testFileProcessingUiIsGenericAndProgressive();
   testDynamicSiteSupportIsDeclaredMinimally(manifest);
-  testDocumentScannerCopyStaysV1Scoped();
-  testPublishReadinessDocsCoverStorePrivacyAndQa();
+testDocumentScannerCopyStaysV1Scoped();
+testImageMetadataScannerAvoidsOcrDependencies();
+testPublishReadinessDocsCoverStorePrivacyAndQa();
   testBrowserQaScriptOwnsFirefoxSmokeCoverage();
   console.log("PASS productization static regressions");
 }

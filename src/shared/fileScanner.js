@@ -459,6 +459,14 @@
     );
     const redactedText = String(transformed.redactedText || input);
     const redactedPreview = buildRedactedPreview(redactedText, reportWarnings);
+    const originalFileName = normalizeFileName(fileName);
+    const fileNameFindings = detector.scan(originalFileName);
+    const transformedFileName = transformOutboundPrompt(originalFileName, {
+      manager,
+      findings: fileNameFindings,
+      mode: mode || "hide_public"
+    });
+    const reportFileName = String(transformedFileName.redactedText || originalFileName);
     const normalizedSize = Number(sizeBytes);
     const textBytesRead = Number.isFinite(normalizedSize) && normalizedSize >= 0
       ? normalizedSize
@@ -468,7 +476,7 @@
       scanId: `scan_${scannedAt.replace(/[:.]/g, "-")}_${randomScanSuffix()}`,
       scannedAt,
       file: {
-        name: normalizeFileName(fileName),
+        name: reportFileName,
         extension: getFileExtension(fileName),
         type: normalizeMimeType(mimeType),
         sizeBytes: textBytesRead,

@@ -14,6 +14,7 @@
   const XLSX_TEXT_EXTRACTION_MAX_BYTES = 4 * 1024 * 1024;
   const XLSX_XML_PART_MAX_BYTES = 8 * 1024 * 1024;
   const XLSX_ZIP_ENTRY_MAX_COUNT = 1000;
+  const IMAGE_METADATA_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
 
   function normalizeText(text) {
     return typeof text === "string" ? text : "";
@@ -101,6 +102,22 @@
       });
     }
 
+    if (IMAGE_METADATA_EXTENSIONS.has(metadata.extension)) {
+      return createExtractorResult({
+        status: EXTRACTOR_STATUS.OK,
+        kind: "image_metadata",
+        metadata: {
+          ...metadata,
+          fileName: "",
+          status: EXTRACTOR_STATUS.OK,
+          family: "image",
+          planned: false
+        },
+        warnings: ["image_ocr_not_supported"],
+        safeForScan: true
+      });
+    }
+
     if (classification.status === "supported" && classification.family === "text") {
       return createExtractorResult({
         status: EXTRACTOR_STATUS.OK,
@@ -140,6 +157,9 @@
     }
     if (routed.kind === "xlsx") {
       return safeDocumentError(routed, "xlsx_requires_binary_extraction");
+    }
+    if (routed.kind === "image_metadata") {
+      return extractImageMetadata(fileInfo, routed);
     }
 
     return createExtractorResult({
@@ -187,6 +207,48 @@
 
   function decodeUtf8Bytes(bytes) {
     return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  }
+
+  function classifySizeBucket(sizeBytes) {
+    const size = Number(sizeBytes);
+    if (!Number.isFinite(size) || size < 0) return "unknown";
+    if (size < 64 * 1024) return "small";
+    if (size < 2 * 1024 * 1024) return "medium";
+    return "large";
+  }
+
+  function extractImageMetadata(fileInfo, routed) {
+    const fileName = FileTypeRegistry.normalizeFileName
+      ? FileTypeRegistry.normalizeFileName(fileInfo?.fileName)
+      : String(fileInfo?.fileName || "").split(/[\\/]/).pop();
+    const extension = routed.metadata.extension || getExtension(fileInfo);
+    const mimeType = routed.metadata.mimeType || "";
+    const sizeBucket = classifySizeBucket(fileInfo?.sizeBytes);
+    const text = [
+      `file_name=${fileName}`,
+      `extension=${extension}`,
+      `mime_type=${mimeType}`,
+      `size_bucket=${sizeBucket}`,
+      "visual_text_scanned=false",
+      "image_ocr_supported=false",
+      "image_redaction_supported=false"
+    ].join("\n");
+
+    return createExtractorResult({
+      ...routed,
+      text,
+      metadata: {
+        ...routed.metadata,
+        fileName: "",
+        textLength: text.length,
+        sizeBucket,
+        visualContentScanned: false,
+        ocrSupported: false,
+        imageRedactionSupported: false
+      },
+      warnings: ["image_ocr_not_supported"],
+      safeForScan: true
+    });
   }
 
   async function inflateBytes(bytes, format) {
@@ -714,6 +776,7 @@
     if (routed.kind === "pdf") return extractPdfText(fileInfo, routed);
     if (routed.kind === "docx") return extractDocxText(fileInfo, routed);
     if (routed.kind === "xlsx") return extractXlsxText(fileInfo, routed);
+    if (routed.kind === "image_metadata") return extractImageMetadata(fileInfo, routed);
     return createExtractorResult({
       ...routed,
       text: normalizeText(fileInfo.text),

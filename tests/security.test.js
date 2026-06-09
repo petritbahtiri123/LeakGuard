@@ -584,18 +584,18 @@ function testDocumentExtractionDoesNotWriteRawTextToDebugStorageOrAuditSurfaces(
     ["fileScanner", fileScannerSource],
     ["scanner page", scannerSource]
   ]) {
-    assertNotIncludes(source, "localStorage", `${label} must not persist extracted PDF/DOCX/XLSX text to localStorage`);
-    assertNotIncludes(source, "sessionStorage", `${label} must not persist extracted PDF/DOCX/XLSX text to sessionStorage`);
-    assertNotIncludes(source, "chrome.storage", `${label} must not persist extracted PDF/DOCX/XLSX text to extension storage`);
-    assertNotIncludes(source, "browser.storage", `${label} must not persist extracted PDF/DOCX/XLSX text to extension storage`);
-    assertNotIncludes(source, "pwm:audit", `${label} must not write extracted PDF/DOCX/XLSX text to audit metadata`);
+    assertNotIncludes(source, "localStorage", `${label} must not persist extracted PDF/DOCX/XLSX/image metadata text to localStorage`);
+    assertNotIncludes(source, "sessionStorage", `${label} must not persist extracted PDF/DOCX/XLSX/image metadata text to sessionStorage`);
+    assertNotIncludes(source, "chrome.storage", `${label} must not persist extracted PDF/DOCX/XLSX/image metadata text to extension storage`);
+    assertNotIncludes(source, "browser.storage", `${label} must not persist extracted PDF/DOCX/XLSX/image metadata text to extension storage`);
+    assertNotIncludes(source, "pwm:audit", `${label} must not write extracted PDF/DOCX/XLSX/image metadata text to audit metadata`);
   }
 
   for (const [label, source] of [
     ["fileExtractors", fileExtractorsSource],
     ["fileScanner", fileScannerSource]
   ]) {
-    assertNotIncludes(source, "console.log", `${label} must not log extracted PDF/DOCX/XLSX text`);
+    assertNotIncludes(source, "console.log", `${label} must not log extracted PDF/DOCX/XLSX/image metadata text`);
     assertNotIncludes(source, "console.error", `${label} must not log extracted document extraction failures`);
     assertNotIncludes(source, "debugReveal", `${label} must not send extracted document text to debug diagnostics`);
     assertNotIncludes(source, "debugLogSnapshot", `${label} must not send extracted document text to debug diagnostics`);
