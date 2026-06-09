@@ -19,6 +19,7 @@
     "test:release": "npm test && npm run docs:check-links && npm run qa:browser",
     "smoke:chrome": "npm run build:chrome && node tests/browser/chrome_smoke.test.mjs",
     "smoke:edge": "npm run build:chrome && node tests/browser/edge_smoke.test.mjs",
+    "smoke:firefox": "npm run build:firefox && node tests/browser/firefox_smoke.test.mjs",
     "release:clean": "node scripts/clean-release-artifacts.mjs --release-dir artifacts/release",
     "package:release": "node scripts/package-extension.mjs chrome --release-dir artifacts/release && node scripts/package-extension.mjs chrome-enterprise --release-dir artifacts/release && node scripts/package-extension.mjs firefox --release-dir artifacts/release && node scripts/package-extension.mjs firefox-enterprise --release-dir artifacts/release",
     "release:checksums": "node scripts/generate-release-checksums.mjs --release-dir artifacts/release --output artifacts/release/SHA256SUMS --json-output artifacts/release/release-checksums.json",

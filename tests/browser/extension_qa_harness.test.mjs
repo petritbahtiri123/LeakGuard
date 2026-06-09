@@ -1349,12 +1349,31 @@ async function runBrowserQa({ browserName, executable }) {
   }
 }
 
+function getBrowserQaTargets({
+  chromeExecutable = findChromeExecutable(),
+  edgeExecutable = findEdgeExecutable(),
+  targetList = process.env.LEAKGUARD_BROWSER_QA_TARGETS || ""
+} = {}) {
+  const requested = String(targetList || "chrome")
+    .split(",")
+    .map((target) => target.trim().toLowerCase())
+    .filter(Boolean);
+  const uniqueTargets = Array.from(new Set(requested));
+  const browsers = [];
+
+  if (uniqueTargets.includes("chrome")) {
+    browsers.push({ browserName: "Chrome", executable: chromeExecutable });
+  }
+  if (uniqueTargets.includes("edge")) {
+    browsers.push({ browserName: "Edge", executable: edgeExecutable });
+  }
+
+  return browsers;
+}
+
 async function main() {
   assertBuiltExtensionExists();
-  const browsers = [
-    { browserName: "Chrome", executable: findChromeExecutable() },
-    { browserName: "Edge", executable: findEdgeExecutable() }
-  ];
+  const browsers = getBrowserQaTargets();
 
   for (const browser of browsers) {
     await runBrowserQa(browser);
@@ -1373,5 +1392,6 @@ export {
   assertHarnessTempDir,
   cleanupBrowserQaRun,
   closeBrowserTargets,
+  getBrowserQaTargets,
   runBrowserQa
 };

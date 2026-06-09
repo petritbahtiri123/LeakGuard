@@ -302,6 +302,7 @@ function testPublishReadinessDocsCoverStorePrivacyAndQa() {
 function testBrowserQaScriptOwnsFirefoxSmokeCoverage() {
   const qaBrowser = packageJson.scripts["qa:browser"] || "";
   const testRelease = packageJson.scripts["test:release"] || "";
+  const smokeFirefox = packageJson.scripts["smoke:firefox"] || "";
 
   assert.ok(
     qaBrowser.includes("extension_qa_harness.test.mjs") &&
@@ -315,9 +316,9 @@ function testBrowserQaScriptOwnsFirefoxSmokeCoverage() {
     "test:release should use qa:browser as the single browser QA entrypoint"
   );
   assert.strictEqual(
-    Object.prototype.hasOwnProperty.call(packageJson.scripts, "smoke:firefox"),
-    false,
-    "smoke:firefox should not remain as a separate browser QA command"
+    smokeFirefox,
+    "npm run build:firefox && node tests/browser/firefox_smoke.test.mjs",
+    "smoke:firefox should remain available as the standalone Firefox smoke command"
   );
   assert.ok(
     testWorkflow.includes("npm run qa:browser") &&

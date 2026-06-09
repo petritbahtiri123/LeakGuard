@@ -79,7 +79,32 @@ async function testCleanupFailsBeforeBehaviorChecksPass() {
   );
 }
 
+function testHarnessTargetsDefaultToChromeOnly() {
+  const targets = harness.getBrowserQaTargets({
+    chromeExecutable: "/bin/chrome",
+    edgeExecutable: "/bin/edge",
+    targetList: ""
+  });
+
+  assert.deepEqual(targets, [{ browserName: "Chrome", executable: "/bin/chrome" }]);
+}
+
+function testHarnessTargetsCanOptIntoEdge() {
+  const targets = harness.getBrowserQaTargets({
+    chromeExecutable: "/bin/chrome",
+    edgeExecutable: "/bin/edge",
+    targetList: "chrome,edge"
+  });
+
+  assert.deepEqual(targets, [
+    { browserName: "Chrome", executable: "/bin/chrome" },
+    { browserName: "Edge", executable: "/bin/edge" }
+  ]);
+}
+
 await testCleanupRejectsNonHarnessTempDir();
 await testCleanupWarnsAfterPassedBehaviorChecks();
 await testCleanupFailsBeforeBehaviorChecksPass();
+testHarnessTargetsDefaultToChromeOnly();
+testHarnessTargetsCanOptIntoEdge();
 console.log("PASS browser QA cleanup regressions");
