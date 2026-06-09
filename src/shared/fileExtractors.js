@@ -10,6 +10,10 @@
     ERROR: "error"
   });
   const PDF_TEXT_EXTRACTION_MAX_BYTES = 4 * 1024 * 1024;
+  const DOCX_TEXT_EXTRACTION_MAX_BYTES = 4 * 1024 * 1024;
+  const XLSX_TEXT_EXTRACTION_MAX_BYTES = 4 * 1024 * 1024;
+  const XLSX_XML_PART_MAX_BYTES = 8 * 1024 * 1024;
+  const XLSX_ZIP_ENTRY_MAX_COUNT = 1000;
 
   function normalizeText(text) {
     return typeof text === "string" ? text : "";
@@ -82,10 +86,11 @@
     const classification = classify(fileInfo);
     const metadata = buildMetadata(fileInfo, classification);
 
-    if (metadata.extension === ".pdf") {
+    if (metadata.extension === ".pdf" || metadata.extension === ".docx" || metadata.extension === ".xlsx") {
+      const kind = metadata.extension.slice(1);
       return createExtractorResult({
         status: EXTRACTOR_STATUS.OK,
-        kind: "pdf",
+        kind,
         metadata: {
           ...metadata,
           status: EXTRACTOR_STATUS.OK,
@@ -130,6 +135,12 @@
     if (routed.kind === "pdf") {
       return safePdfError(routed, "pdf_requires_binary_extraction");
     }
+    if (routed.kind === "docx") {
+      return safeDocumentError(routed, "docx_requires_binary_extraction");
+    }
+    if (routed.kind === "xlsx") {
+      return safeDocumentError(routed, "xlsx_requires_binary_extraction");
+    }
 
     return createExtractorResult({
       ...routed,
@@ -159,6 +170,33 @@
       output += String.fromCharCode(bytes[index]);
     }
     return output;
+  }
+
+  function readUInt16LE(bytes, offset) {
+    return bytes[offset] | (bytes[offset + 1] << 8);
+  }
+
+  function readUInt32LE(bytes, offset) {
+    return (
+      bytes[offset] |
+      (bytes[offset + 1] << 8) |
+      (bytes[offset + 2] << 16) |
+      (bytes[offset + 3] << 24)
+    ) >>> 0;
+  }
+
+  function decodeUtf8Bytes(bytes) {
+    return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  }
+
+  async function inflateBytes(bytes, format) {
+    if (typeof DecompressionStream !== "function" || typeof Blob !== "function") {
+      return null;
+    }
+
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream(format));
+    const buffer = await new Response(stream).arrayBuffer();
+    return new Uint8Array(buffer);
   }
 
   function decodePdfEscapedString(value) {
@@ -291,13 +329,7 @@
   }
 
   async function inflatePdfStream(bytes) {
-    if (typeof DecompressionStream !== "function" || typeof Blob !== "function") {
-      return null;
-    }
-
-    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate"));
-    const buffer = await new Response(stream).arrayBuffer();
-    return new Uint8Array(buffer);
+    return inflateBytes(bytes, "deflate");
   }
 
   async function decodePdfStreamEntry(entry) {
@@ -312,6 +344,10 @@
   }
 
   function safePdfError(routed, reason) {
+    return safeDocumentError(routed, reason);
+  }
+
+  function safeDocumentError(routed, reason) {
     return createExtractorResult({
       ...routed,
       status: EXTRACTOR_STATUS.ERROR,
@@ -351,10 +387,333 @@
     });
   }
 
+  async function parseZipEntries(buffer) {
+    const bytes = toUint8Array(buffer);
+    if (!bytes || bytes.byteLength < 4) {
+      throw new Error("docx_malformed_zip");
+    }
+
+    const entries = [];
+    let offset = 0;
+    let sawLocalHeader = false;
+
+    while (offset + 4 <= bytes.byteLength) {
+      const signature = readUInt32LE(bytes, offset);
+      if (signature === 0x02014b50 || signature === 0x06054b50) break;
+      if (signature !== 0x04034b50) {
+        if (!sawLocalHeader) throw new Error("docx_malformed_zip");
+        break;
+      }
+
+      sawLocalHeader = true;
+      if (offset + 30 > bytes.byteLength) throw new Error("docx_malformed_zip");
+      const flags = readUInt16LE(bytes, offset + 6);
+      const method = readUInt16LE(bytes, offset + 8);
+      const compressedSize = readUInt32LE(bytes, offset + 18);
+      const uncompressedSize = readUInt32LE(bytes, offset + 22);
+      const fileNameLength = readUInt16LE(bytes, offset + 26);
+      const extraLength = readUInt16LE(bytes, offset + 28);
+      const nameStart = offset + 30;
+      const nameEnd = nameStart + fileNameLength;
+      const dataStart = nameEnd + extraLength;
+      const dataEnd = dataStart + compressedSize;
+      if (dataEnd > bytes.byteLength || nameEnd > bytes.byteLength) {
+        throw new Error("docx_malformed_zip");
+      }
+
+      const name = decodeUtf8Bytes(bytes.slice(nameStart, nameEnd)).replace(/\\/g, "/");
+      entries.push({
+        name,
+        flags,
+        method,
+        compressedSize,
+        uncompressedSize,
+        compressedBytes: bytes.slice(dataStart, dataEnd)
+      });
+      offset = dataEnd;
+    }
+
+    if (!sawLocalHeader) throw new Error("docx_malformed_zip");
+    return entries;
+  }
+
+  function isSafeDocxTextPart(name) {
+    return /^word\/(?:document|header\d+|footer\d+|footnotes|endnotes)\.xml$/i.test(name);
+  }
+
+  function sortDocxTextParts(left, right) {
+    const order = (name) => {
+      if (/^word\/document\.xml$/i.test(name)) return 0;
+      if (/^word\/header\d+\.xml$/i.test(name)) return 1;
+      if (/^word\/footer\d+\.xml$/i.test(name)) return 2;
+      if (/^word\/footnotes\.xml$/i.test(name)) return 3;
+      if (/^word\/endnotes\.xml$/i.test(name)) return 4;
+      return 5;
+    };
+    return order(left.name) - order(right.name) || left.name.localeCompare(right.name);
+  }
+
+  async function readZipEntryText(entry) {
+    if (entry.flags & 1) throw new Error("docx_encrypted");
+    if (entry.method === 0) return decodeUtf8Bytes(entry.compressedBytes);
+    if (entry.method === 8) {
+      const inflated = await inflateBytes(entry.compressedBytes, "deflate-raw");
+      if (!inflated) throw new Error("docx_unsupported_compression");
+      if (entry.uncompressedSize && inflated.byteLength !== entry.uncompressedSize) {
+        throw new Error("docx_malformed_zip");
+      }
+      return decodeUtf8Bytes(inflated);
+    }
+    throw new Error("docx_unsupported_compression");
+  }
+
+  function decodeXmlEntities(text) {
+    return String(text || "")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'")
+      .replace(/&#x([0-9a-fA-F]+);/g, (_match, value) => String.fromCodePoint(parseInt(value, 16)))
+      .replace(/&#(\d+);/g, (_match, value) => String.fromCodePoint(parseInt(value, 10)))
+      .replace(/&amp;/g, "&");
+  }
+
+  function extractTextFromDocxXml(xml) {
+    const textParts = [];
+    const tokenPattern = /<w:t\b[^>]*>([\s\S]*?)<\/w:t>|<w:tab\b[^>]*\/>|<w:(?:br|cr)\b[^>]*\/>|<\/w:p>/g;
+    let match;
+    while ((match = tokenPattern.exec(xml))) {
+      if (match[1] !== undefined) {
+        textParts.push(decodeXmlEntities(match[1]));
+      } else if (/^<w:tab\b/i.test(match[0])) {
+        textParts.push("\t");
+      } else {
+        textParts.push("\n");
+      }
+    }
+    return textParts.join("").replace(/\r\n?/g, "\n").replace(/[ \t]+\n/g, "\n").trim();
+  }
+
+  async function extractDocxText(fileInfo, routed) {
+    let entries;
+    try {
+      entries = await parseZipEntries(fileInfo?.buffer);
+    } catch (error) {
+      return safeDocumentError(routed, error?.message || "docx_malformed_zip");
+    }
+
+    if (entries.some((entry) => entry.flags & 1 || /^(?:EncryptedPackage|EncryptionInfo)$/i.test(entry.name))) {
+      return safeDocumentError(routed, "docx_encrypted");
+    }
+
+    const textEntries = entries.filter((entry) => isSafeDocxTextPart(entry.name)).sort(sortDocxTextParts);
+    if (!textEntries.length) return safeDocumentError(routed, "docx_no_extractable_text");
+
+    const textParts = [];
+    try {
+      for (const entry of textEntries) {
+        const xml = await readZipEntryText(entry);
+        const partText = extractTextFromDocxXml(xml);
+        if (partText) textParts.push(partText);
+      }
+    } catch (error) {
+      return safeDocumentError(routed, error?.message || "docx_malformed_zip");
+    }
+
+    const text = textParts.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+    if (!text) return safeDocumentError(routed, "docx_no_extractable_text");
+    if (text.length > DOCX_TEXT_EXTRACTION_MAX_BYTES) {
+      return safeDocumentError(routed, "docx_text_too_large");
+    }
+
+    return createExtractorResult({
+      ...routed,
+      text,
+      metadata: {
+        ...routed.metadata,
+        textLength: text.length,
+        extractedParts: textEntries.length
+      },
+      safeForScan: true
+    });
+  }
+
+  function normalizeXlsxZipError(error) {
+    const reason = String(error?.message || "");
+    if (reason === "docx_encrypted") return "xlsx_encrypted";
+    if (reason === "docx_unsupported_compression") return "xlsx_unsupported_compression";
+    if (reason === "docx_malformed_zip") return "xlsx_malformed_zip";
+    if (reason.startsWith("xlsx_")) return reason;
+    return "xlsx_malformed_zip";
+  }
+
+  function isSafeXlsxTextPart(name) {
+    return (
+      /^xl\/sharedStrings\.xml$/i.test(name) ||
+      /^xl\/workbook\.xml$/i.test(name) ||
+      /^xl\/worksheets\/sheet\d+\.xml$/i.test(name) ||
+      /^xl\/comments\d*\.xml$/i.test(name)
+    );
+  }
+
+  function sortXlsxTextParts(left, right) {
+    const order = (name) => {
+      if (/^xl\/workbook\.xml$/i.test(name)) return 0;
+      if (/^xl\/sharedStrings\.xml$/i.test(name)) return 1;
+      if (/^xl\/worksheets\/sheet\d+\.xml$/i.test(name)) return 2;
+      if (/^xl\/comments\d*\.xml$/i.test(name)) return 3;
+      return 4;
+    };
+    return order(left.name) - order(right.name) || left.name.localeCompare(right.name);
+  }
+
+  async function readXlsxXmlPart(entry) {
+    if (entry.uncompressedSize > XLSX_XML_PART_MAX_BYTES) throw new Error("xlsx_xml_too_large");
+    const xml = await readZipEntryText(entry);
+    if (xml.length > XLSX_XML_PART_MAX_BYTES) throw new Error("xlsx_xml_too_large");
+    return xml;
+  }
+
+  function extractXmlTextValues(xml, tagName) {
+    const values = [];
+    const pattern = new RegExp(`<${tagName}\\b[^>]*>([\\s\\S]*?)<\\/${tagName}>`, "gi");
+    let match;
+    while ((match = pattern.exec(xml))) {
+      const value = decodeXmlEntities(match[1].replace(/<[^>]+>/g, ""));
+      if (value) values.push(value);
+    }
+    return values;
+  }
+
+  function extractSharedStrings(xml) {
+    const strings = [];
+    const itemPattern = /<si\b[^>]*>([\s\S]*?)<\/si>/gi;
+    let itemMatch;
+    while ((itemMatch = itemPattern.exec(xml))) {
+      const text = extractXmlTextValues(itemMatch[1], "t").join("");
+      if (text) strings.push(text);
+    }
+    return strings;
+  }
+
+  function extractSheetNames(xml) {
+    const names = [];
+    const sheetPattern = /<sheet\b[^>]*\bname=(["'])([\s\S]*?)\1/gi;
+    let match;
+    while ((match = sheetPattern.exec(xml))) {
+      const name = decodeXmlEntities(match[2]).trim();
+      if (name && !/^Sheet\d*$/i.test(name)) names.push(name);
+    }
+    return names;
+  }
+
+  function getCellAttribute(cellXml, attributeName) {
+    const pattern = new RegExp(`\\b${attributeName}=(["'])(.*?)\\1`, "i");
+    return cellXml.match(pattern)?.[2] || "";
+  }
+
+  function extractTextFromXlsxWorksheetXml(xml, sharedStrings) {
+    const parts = [];
+    const cellPattern = /<c\b[^>]*>[\s\S]*?<\/c>/gi;
+    let cellMatch;
+    while ((cellMatch = cellPattern.exec(xml))) {
+      const cellXml = cellMatch[0];
+      const type = getCellAttribute(cellXml, "t");
+
+      if (type === "s") {
+        const indexText = extractXmlTextValues(cellXml, "v")[0] || "";
+        const shared = sharedStrings[Number(indexText)];
+        if (shared) parts.push(shared);
+        continue;
+      }
+
+      if (type === "inlineStr") {
+        parts.push(...extractXmlTextValues(cellXml, "t"));
+        continue;
+      }
+
+      const formulaText = extractXmlTextValues(cellXml, "f").join("");
+      if (formulaText) parts.push(formulaText);
+
+      const valueText = extractXmlTextValues(cellXml, "v").join("");
+      if (valueText) parts.push(valueText);
+    }
+    return parts.join("\n");
+  }
+
+  function extractTextFromXlsxCommentsXml(xml) {
+    return extractXmlTextValues(xml, "t").join("\n");
+  }
+
+  async function extractXlsxText(fileInfo, routed) {
+    let entries;
+    try {
+      entries = await parseZipEntries(fileInfo?.buffer);
+    } catch (error) {
+      return safeDocumentError(routed, normalizeXlsxZipError(error));
+    }
+
+    if (entries.length > XLSX_ZIP_ENTRY_MAX_COUNT) {
+      return safeDocumentError(routed, "xlsx_too_many_zip_entries");
+    }
+    if (
+      entries.some((entry) =>
+        entry.flags & 1 ||
+        /^(?:EncryptedPackage|EncryptionInfo)$/i.test(entry.name) ||
+        /(^|\/)vbaProject\.bin$/i.test(entry.name)
+      )
+    ) {
+      return safeDocumentError(routed, "xlsx_encrypted");
+    }
+
+    const textEntries = entries.filter((entry) => isSafeXlsxTextPart(entry.name)).sort(sortXlsxTextParts);
+    if (!textEntries.length) return safeDocumentError(routed, "xlsx_no_extractable_text");
+
+    const sharedStrings = [];
+    const textParts = [];
+    try {
+      for (const entry of textEntries) {
+        const xml = await readXlsxXmlPart(entry);
+        if (/^xl\/sharedStrings\.xml$/i.test(entry.name)) {
+          sharedStrings.push(...extractSharedStrings(xml));
+        } else if (/^xl\/workbook\.xml$/i.test(entry.name)) {
+          textParts.push(...extractSheetNames(xml));
+        } else if (/^xl\/worksheets\/sheet\d+\.xml$/i.test(entry.name)) {
+          const partText = extractTextFromXlsxWorksheetXml(xml, sharedStrings);
+          if (partText) textParts.push(partText);
+        } else if (/^xl\/comments\d*\.xml$/i.test(entry.name)) {
+          const partText = extractTextFromXlsxCommentsXml(xml);
+          if (partText) textParts.push(partText);
+        }
+      }
+    } catch (error) {
+      return safeDocumentError(routed, normalizeXlsxZipError(error));
+    }
+
+    const text = textParts.join("\n").replace(/\r\n?/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+    if (!text) return safeDocumentError(routed, "xlsx_no_extractable_text");
+    if (text.length > XLSX_TEXT_EXTRACTION_MAX_BYTES) {
+      return safeDocumentError(routed, "xlsx_text_too_large");
+    }
+
+    return createExtractorResult({
+      ...routed,
+      text,
+      metadata: {
+        ...routed.metadata,
+        textLength: text.length,
+        extractedParts: textEntries.length
+      },
+      safeForScan: true
+    });
+  }
+
   async function prepareFileExtractionAsync(fileInfo = {}) {
     const routed = routeFileExtractor(fileInfo);
     if (!routed.safeForScan) return routed;
     if (routed.kind === "pdf") return extractPdfText(fileInfo, routed);
+    if (routed.kind === "docx") return extractDocxText(fileInfo, routed);
+    if (routed.kind === "xlsx") return extractXlsxText(fileInfo, routed);
     return createExtractorResult({
       ...routed,
       text: normalizeText(fileInfo.text),
@@ -365,6 +724,8 @@
   root.PWM.FileExtractors = {
     EXTRACTOR_STATUS,
     PDF_TEXT_EXTRACTION_MAX_BYTES,
+    DOCX_TEXT_EXTRACTION_MAX_BYTES,
+    XLSX_TEXT_EXTRACTION_MAX_BYTES,
     createExtractorResult,
     prepareFileExtractionAsync,
     prepareFileExtraction,

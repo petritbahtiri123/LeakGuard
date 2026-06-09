@@ -30,6 +30,8 @@ const releaseChecklist = fs.readFileSync(
   path.join(repoRoot, "docs/RELEASE_QA_CHECKLIST.md"),
   "utf8"
 );
+const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
+const testWorkflow = fs.readFileSync(path.join(repoRoot, ".github/workflows/test.yml"), "utf8");
 const { BUILTIN_PROTECTED_SITES } = require(path.join(repoRoot, "src/shared/protected_sites.js"));
 
 function fileExists(relativePath) {
@@ -250,24 +252,31 @@ function testDynamicSiteSupportIsDeclaredMinimally(manifest) {
   );
 }
 
-function testPdfScannerCopyStaysV1Scoped() {
+function testDocumentScannerCopyStaysV1Scoped() {
   assert.ok(
-    scannerHtml.includes("text file or text PDF") &&
-      scannerHtml.includes("Text-based files and text PDFs"),
-    "scanner UI should describe PDF support as text-PDF extraction only"
+    scannerHtml.includes("text file, text PDF, DOCX, or XLSX") &&
+      scannerHtml.includes("Text files, text PDFs, DOCX text, and XLSX spreadsheet text") &&
+      scannerHtml.includes("XLSX formulas are scanned as text only and are not executed"),
+    "scanner UI should describe PDF, DOCX, and XLSX support as text extraction only"
   );
   assert.ok(
-    scannerHtml.includes("scanned-image PDF redaction are not enabled"),
-    "scanner UI should explicitly avoid scanned-image PDF support claims"
+    scannerHtml.includes("scanned-image PDF") &&
+      scannerHtml.includes("legacy XLS") &&
+      scannerHtml.includes("XLSM") &&
+      scannerHtml.includes("embedded media") &&
+      scannerHtml.includes("embedded-image document redaction are not enabled"),
+    "scanner UI should explicitly avoid scanned-image PDF, legacy XLS, XLSM, media, and embedded-image support claims"
   );
   assert.ok(
-    !/OCR|optical character recognition|image PDF support|full PDF/i.test(scannerHtml),
-    "scanner UI must not claim OCR, image-PDF support, or full PDF rebuild support"
+    !/optical character recognition|image PDF support|full PDF|full DOCX|full XLSX|rebuilt DOCX|rebuilt XLSX|macro support/i.test(scannerHtml),
+    "scanner UI must not claim OCR, image-PDF support, macro support, or full PDF/DOCX/XLSX rebuild support"
   );
   assert.ok(
     scannerJs.includes('extension === ".pdf"') &&
-      scannerJs.includes('extension: ".txt"'),
-    "scanner redacted exports for PDFs should be text files, not rebuilt PDFs"
+      scannerJs.includes('extension === ".docx"') &&
+      scannerJs.includes('extension === ".xlsx"') &&
+      scannerJs.includes('redacted.txt'),
+    "scanner redacted exports for PDFs, DOCX, and XLSX should be text files, not rebuilt documents"
   );
 }
 
@@ -290,6 +299,35 @@ function testPublishReadinessDocsCoverStorePrivacyAndQa() {
   );
 }
 
+function testBrowserQaScriptOwnsFirefoxSmokeCoverage() {
+  const qaBrowser = packageJson.scripts["qa:browser"] || "";
+  const testRelease = packageJson.scripts["test:release"] || "";
+
+  assert.ok(
+    qaBrowser.includes("extension_qa_harness.test.mjs") &&
+      qaBrowser.includes("chrome_smoke.test.mjs") &&
+      qaBrowser.includes("edge_smoke.test.mjs") &&
+      qaBrowser.includes("firefox_smoke.test.mjs"),
+    "qa:browser should run the browser QA harness plus Chrome, Edge, and Firefox smoke coverage"
+  );
+  assert.ok(
+    testRelease.includes("npm run qa:browser") && !testRelease.includes("npm run smoke:firefox"),
+    "test:release should use qa:browser as the single browser QA entrypoint"
+  );
+  assert.strictEqual(
+    Object.prototype.hasOwnProperty.call(packageJson.scripts, "smoke:firefox"),
+    false,
+    "smoke:firefox should not remain as a separate browser QA command"
+  );
+  assert.ok(
+    testWorkflow.includes("npm run qa:browser") &&
+      !testWorkflow.includes("npm run smoke:chrome") &&
+      !testWorkflow.includes("npm run smoke:firefox") &&
+      !testWorkflow.includes("npm run smoke:edge"),
+    "CI should run browser coverage through qa:browser instead of separate smoke steps"
+  );
+}
+
 async function run() {
   const { buildManifest } = await import(
     pathToFileURL(path.join(repoRoot, "scripts/build-extension.mjs")).href
@@ -304,8 +342,9 @@ async function run() {
   testPendingAttachPromptDoesNotBlockPageClicks();
   testFileProcessingUiIsGenericAndProgressive();
   testDynamicSiteSupportIsDeclaredMinimally(manifest);
-  testPdfScannerCopyStaysV1Scoped();
+  testDocumentScannerCopyStaysV1Scoped();
   testPublishReadinessDocsCoverStorePrivacyAndQa();
+  testBrowserQaScriptOwnsFirefoxSmokeCoverage();
   console.log("PASS productization static regressions");
 }
 

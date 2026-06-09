@@ -14,6 +14,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import zlib from "node:zlib";
 import { findExecutable } from "./chrome_smoke.test.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -92,6 +93,66 @@ function makeQaPdf(text, options = {}) {
     "<< /Root 1 0 R >>",
     "%%EOF"
   ].join("\n"));
+}
+
+function makeQaZip(entries) {
+  const chunks = [];
+  for (const entry of entries) {
+    const name = Buffer.from(entry.name, "utf8");
+    const raw = Buffer.from(String(entry.data || ""), "utf8");
+    const compressed = zlib.deflateRawSync(raw);
+    const header = Buffer.alloc(30);
+    header.writeUInt32LE(0x04034b50, 0);
+    header.writeUInt16LE(20, 4);
+    header.writeUInt16LE(0, 6);
+    header.writeUInt16LE(8, 8);
+    header.writeUInt16LE(0, 10);
+    header.writeUInt16LE(0, 12);
+    header.writeUInt32LE(0, 14);
+    header.writeUInt32LE(compressed.length, 18);
+    header.writeUInt32LE(raw.length, 22);
+    header.writeUInt16LE(name.length, 26);
+    header.writeUInt16LE(0, 28);
+    chunks.push(header, name, compressed);
+  }
+  return Buffer.concat(chunks);
+}
+
+function makeQaDocx(text, options = {}) {
+  const body = options.imageOnly
+    ? "<w:p><w:r><w:drawing /></w:r></w:p>"
+    : String(text)
+      .split("\n")
+      .map((line) => `<w:p><w:r><w:t>${line.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</w:t></w:r></w:p>`)
+      .join("");
+  return makeQaZip([
+    {
+      name: "[Content_Types].xml",
+      data: '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"></Types>'
+    },
+    {
+      name: "word/document.xml",
+      data: `<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${body}</w:body></w:document>`
+    }
+  ]);
+}
+
+function makeQaXlsx(text) {
+  const escaped = String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  return makeQaZip([
+    {
+      name: "[Content_Types].xml",
+      data: '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"></Types>'
+    },
+    {
+      name: "xl/workbook.xml",
+      data: '<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheets><sheet name="Secrets" sheetId="1"/></sheets></workbook>'
+    },
+    {
+      name: "xl/worksheets/sheet1.xml",
+      data: `<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>${escaped}</t></is></c></row></sheetData></worksheet>`
+    }
+  ]);
 }
 
 function findChromeExecutable() {
@@ -516,6 +577,7 @@ async function loadExtension(connection, profileDir, extensionDir, browserName) 
 
 async function setFileInputFiles(connection, sessionId, selector, files) {
   await connection.send("DOM.enable", {}, sessionId).catch(() => {});
+  const expectedNames = files.map((file) => path.basename(file));
   let lastError = null;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
@@ -536,6 +598,22 @@ async function setFileInputFiles(connection, sessionId, selector, files) {
           input?.dispatchEvent(new Event('change', { bubbles: true }));
           return true;
         })()`
+      );
+      await waitFor(
+        () =>
+          evaluate(
+            connection,
+            sessionId,
+            `(() => {
+              const expected = ${JSON.stringify(expectedNames)};
+              const actual = Array.from(document.querySelector(${JSON.stringify(selector)})?.files || [])
+                .map((file) => file.name);
+              return expected.length === actual.length &&
+                expected.every((name, index) => actual[index] === name);
+            })()`
+          ),
+        `file input assignment ${selector}`,
+        1000
       );
       return;
     } catch (error) {
@@ -1047,6 +1125,137 @@ async function runScannerQa(connection, extensionId, tempDir) {
     "scanner reset after text PDF"
   );
 
+  const textDocxPath = path.join(tempDir, "leakguard-browser-qa-text.docx");
+  fs.writeFileSync(textDocxPath, makeQaDocx(`DOCX_API_KEY=${syntheticSecrets.openAi}`));
+  await setFileInputFiles(connection, scanner.sessionId, "#file-input", [textDocxPath]);
+  const textDocx = await evaluate(
+    connection,
+    scanner.sessionId,
+    `new Promise((resolve, reject) => {
+      const rawSecret = ${JSON.stringify(syntheticSecrets.openAi)};
+      const started = Date.now();
+      let clicked = false;
+      const timer = setInterval(() => {
+        const preview = document.querySelector('#redacted-preview')?.textContent || '';
+        const status = document.querySelector('#status')?.textContent || '';
+        const scanButton = document.querySelector('#scan-btn');
+        if (!clicked && scanButton && !scanButton.disabled) {
+          clicked = true;
+          scanButton.click();
+        }
+        if (/Scan complete/i.test(status) && /DOCX_API_KEY=\\[PWM_\\d+\\]/.test(preview)) {
+          clearInterval(timer);
+          resolve({
+            status,
+            hasRaw: preview.includes(rawSecret),
+            redacted: /DOCX_API_KEY=\\[PWM_\\d+\\]/.test(preview)
+          });
+        } else if (Date.now() - started > 15000) {
+          clearInterval(timer);
+          reject(new Error('Timed out waiting for DOCX scanner result: ' + JSON.stringify({
+            status,
+            scanDisabled: scanButton?.disabled,
+            preview
+          })));
+        }
+      }, 50);
+    })`
+  );
+  assert.equal(textDocx.hasRaw, false, "scanner DOCX preview must not expose raw DOCX secrets");
+  assert.equal(textDocx.redacted, true, "scanner should redact text DOCX findings");
+
+  await evaluate(connection, scanner.sessionId, "document.querySelector('#clear-btn').click()");
+  await waitFor(
+    () => evaluate(connection, scanner.sessionId, "document.querySelector('#scan-btn')?.disabled"),
+    "scanner reset after text DOCX"
+  );
+
+  const textXlsxPath = path.join(tempDir, "leakguard-browser-qa-text.xlsx");
+  fs.writeFileSync(textXlsxPath, makeQaXlsx(`XLSX_API_KEY=${syntheticSecrets.openAi}`));
+  await setFileInputFiles(connection, scanner.sessionId, "#file-input", [textXlsxPath]);
+  const textXlsx = await evaluate(
+    connection,
+    scanner.sessionId,
+    `new Promise((resolve, reject) => {
+      const rawSecret = ${JSON.stringify(syntheticSecrets.openAi)};
+      const started = Date.now();
+      let clicked = false;
+      const timer = setInterval(() => {
+        const preview = document.querySelector('#redacted-preview')?.textContent || '';
+        const status = document.querySelector('#status')?.textContent || '';
+        const scanButton = document.querySelector('#scan-btn');
+        if (!clicked && scanButton && !scanButton.disabled) {
+          clicked = true;
+          scanButton.click();
+        }
+        if (/Scan complete/i.test(status) && /XLSX_API_KEY=\\[PWM_\\d+\\]/.test(preview)) {
+          clearInterval(timer);
+          resolve({
+            status,
+            hasRaw: preview.includes(rawSecret),
+            redacted: /XLSX_API_KEY=\\[PWM_\\d+\\]/.test(preview)
+          });
+        } else if (Date.now() - started > 15000) {
+          clearInterval(timer);
+          reject(new Error('Timed out waiting for XLSX scanner result: ' + JSON.stringify({
+            status,
+            scanDisabled: scanButton?.disabled,
+            preview
+          })));
+        }
+      }, 50);
+    })`
+  );
+  assert.equal(textXlsx.hasRaw, false, "scanner XLSX preview must not expose raw XLSX secrets");
+  assert.equal(textXlsx.redacted, true, "scanner should redact text XLSX findings");
+
+  await evaluate(connection, scanner.sessionId, "document.querySelector('#clear-btn').click()");
+  await waitFor(
+    () => evaluate(connection, scanner.sessionId, "document.querySelector('#scan-btn')?.disabled"),
+    "scanner reset after text XLSX"
+  );
+
+  const unsupportedDocxPath = path.join(tempDir, "leakguard-browser-qa-image-only.docx");
+  fs.writeFileSync(unsupportedDocxPath, makeQaDocx("", { imageOnly: true }));
+  await setFileInputFiles(connection, scanner.sessionId, "#file-input", [unsupportedDocxPath]);
+  const unsupportedDocx = await evaluate(
+    connection,
+    scanner.sessionId,
+    `new Promise((resolve, reject) => {
+      const started = Date.now();
+      let clicked = false;
+      const timer = setInterval(() => {
+        const status = document.querySelector('#status')?.textContent || '';
+        const preview = document.querySelector('#redacted-preview')?.textContent || '';
+        const scanButton = document.querySelector('#scan-btn');
+        if (!clicked && scanButton && !scanButton.disabled) {
+          clicked = true;
+          scanButton.click();
+        }
+        if (/could not find extractable text/i.test(status) && /Embedded images, macros, and OCR are not supported/i.test(status)) {
+          clearInterval(timer);
+          resolve({ status, preview });
+        } else if (Date.now() - started > 10000) {
+          clearInterval(timer);
+          reject(new Error('Timed out waiting for unsupported DOCX warning: ' + JSON.stringify({
+            status,
+            scanDisabled: scanButton?.disabled,
+            preview
+          })));
+        }
+      }, 50);
+    })`
+  );
+  assert.match(unsupportedDocx.status, /could not find extractable text/i);
+  assert.match(unsupportedDocx.status, /Embedded images, macros, and OCR are not supported/i);
+  assert.equal(unsupportedDocx.preview, "");
+
+  await evaluate(connection, scanner.sessionId, "document.querySelector('#clear-btn').click()");
+  await waitFor(
+    () => evaluate(connection, scanner.sessionId, "document.querySelector('#scan-btn')?.disabled"),
+    "scanner reset after unsupported DOCX"
+  );
+
   const unsupportedPath = path.join(tempDir, "leakguard-browser-qa-image-only.pdf");
   fs.writeFileSync(unsupportedPath, makeQaPdf("", { imageOnly: true }));
   await setFileInputFiles(connection, scanner.sessionId, "#file-input", [unsupportedPath]);
@@ -1082,7 +1291,7 @@ async function runScannerQa(connection, extensionId, tempDir) {
   assert.match(unsupported.status, /could not find extractable text/i);
   assert.match(unsupported.status, /OCR are not supported/i);
   assert.equal(unsupported.preview, "");
-  return { supported, textPdf, unsupported };
+  return { supported, textPdf, textDocx, textXlsx, unsupportedDocx, unsupported };
 }
 
 async function runBrowserQa({ browserName, executable }) {

@@ -578,35 +578,35 @@ function testFileSnapshotDebugPayloadsStayMetadataOnly() {
   );
 }
 
-function testPdfExtractionDoesNotWriteRawTextToDebugStorageOrAuditSurfaces() {
+function testDocumentExtractionDoesNotWriteRawTextToDebugStorageOrAuditSurfaces() {
   for (const [label, source] of [
     ["fileExtractors", fileExtractorsSource],
     ["fileScanner", fileScannerSource],
     ["scanner page", scannerSource]
   ]) {
-    assertNotIncludes(source, "localStorage", `${label} must not persist extracted PDF text to localStorage`);
-    assertNotIncludes(source, "sessionStorage", `${label} must not persist extracted PDF text to sessionStorage`);
-    assertNotIncludes(source, "chrome.storage", `${label} must not persist extracted PDF text to extension storage`);
-    assertNotIncludes(source, "browser.storage", `${label} must not persist extracted PDF text to extension storage`);
-    assertNotIncludes(source, "pwm:audit", `${label} must not write extracted PDF text to audit metadata`);
+    assertNotIncludes(source, "localStorage", `${label} must not persist extracted PDF/DOCX text to localStorage`);
+    assertNotIncludes(source, "sessionStorage", `${label} must not persist extracted PDF/DOCX text to sessionStorage`);
+    assertNotIncludes(source, "chrome.storage", `${label} must not persist extracted PDF/DOCX text to extension storage`);
+    assertNotIncludes(source, "browser.storage", `${label} must not persist extracted PDF/DOCX text to extension storage`);
+    assertNotIncludes(source, "pwm:audit", `${label} must not write extracted PDF/DOCX text to audit metadata`);
   }
 
   for (const [label, source] of [
     ["fileExtractors", fileExtractorsSource],
     ["fileScanner", fileScannerSource]
   ]) {
-    assertNotIncludes(source, "console.log", `${label} must not log extracted PDF text`);
-    assertNotIncludes(source, "console.error", `${label} must not log extracted PDF extraction failures`);
-    assertNotIncludes(source, "debugReveal", `${label} must not send extracted PDF text to debug diagnostics`);
-    assertNotIncludes(source, "debugLogSnapshot", `${label} must not send extracted PDF text to debug diagnostics`);
-    assertNotIncludes(source, "debugFileAttachMetadata", `${label} must not send PDF text to file metadata debug logs`);
+    assertNotIncludes(source, "console.log", `${label} must not log extracted PDF/DOCX text`);
+    assertNotIncludes(source, "console.error", `${label} must not log extracted document extraction failures`);
+    assertNotIncludes(source, "debugReveal", `${label} must not send extracted document text to debug diagnostics`);
+    assertNotIncludes(source, "debugLogSnapshot", `${label} must not send extracted document text to debug diagnostics`);
+    assertNotIncludes(source, "debugFileAttachMetadata", `${label} must not send document text to file metadata debug logs`);
   }
 
   assert.ok(
     scannerSource.includes("result.redactedPreview") &&
       scannerSource.includes("finding.preview") &&
       scannerSource.includes("buildSanitizedReport(currentScanResult)"),
-    "scanner DOM/report paths should use sanitized scanner outputs, not raw extracted PDF text directly"
+    "scanner DOM/report paths should use sanitized scanner outputs, not raw extracted document text directly"
   );
   assertNotIncludes(
     scannerSource,
@@ -970,7 +970,7 @@ async function run() {
   testLocalFilePasteDoesNotExposeRawFileContent();
   testFileAttachPipelineStaysPureAndContentOwnsFileAttachSideEffects();
   testFileSnapshotDebugPayloadsStayMetadataOnly();
-  testPdfExtractionDoesNotWriteRawTextToDebugStorageOrAuditSurfaces();
+  testDocumentExtractionDoesNotWriteRawTextToDebugStorageOrAuditSurfaces();
   testStaticAndDynamicFilePasteInjectionOrderStaysAligned();
   testBackgroundDeterministicRescanBackstopExists();
   testContentPublicStateIsMinimized();

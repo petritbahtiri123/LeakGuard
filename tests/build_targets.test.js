@@ -178,8 +178,8 @@ function assertPackageContentsAreRuntimeOnly(result) {
   });
   const extractorBytes = fs.statSync(path.join(result.targetRoot, "shared/fileExtractors.js")).size;
   assert.ok(
-    extractorBytes < 24000,
-    `${result.target} PDF extractor support should stay below the lightweight bundle budget`
+    extractorBytes < 36000,
+    `${result.target} document extractor support should stay below the lightweight bundle budget`
   );
 
   for (const file of files) {

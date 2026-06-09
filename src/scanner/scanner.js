@@ -179,7 +179,7 @@
       mimeType: file.type
     });
 
-    if (!scanner.isSupportedTextFile(file.name, file.type) && routedExtraction?.kind !== "pdf") {
+    if (!scanner.isSupportedTextFile(file.name, file.type) && !isExtractedDocument(routedExtraction)) {
       return {
         ok: false,
         message: scanner.UNSUPPORTED_TEXT_RELEASE_MESSAGE
@@ -189,12 +189,47 @@
     return { ok: true };
   }
 
+  function isExtractedDocument(extraction) {
+    return extraction?.kind === "pdf" || extraction?.kind === "docx" || extraction?.kind === "xlsx";
+  }
+
   function formatExtractionFailureMessage(extraction) {
-    if (extraction?.kind !== "pdf") {
+    if (!isExtractedDocument(extraction)) {
       return extraction?.reason || "LeakGuard could not extract text from this file, so it was not scanned.";
     }
 
     const reason = extraction.reason || "";
+    if (extraction.kind === "docx") {
+      if (reason === "docx_encrypted") {
+        return "LeakGuard could not scan this encrypted DOCX. Save an unencrypted text DOCX and try again.";
+      }
+      if (reason === "docx_malformed_zip" || reason === "docx_unsupported_compression") {
+        return "LeakGuard could not read this DOCX, so it was not scanned.";
+      }
+      if (reason === "docx_text_too_large") {
+        return "LeakGuard extracted too much DOCX text to scan safely in this release. Split the document and try again.";
+      }
+      return "LeakGuard could not find extractable text in this DOCX. Embedded images, macros, and OCR are not supported in this release.";
+    }
+
+    if (extraction.kind === "xlsx") {
+      if (reason === "xlsx_encrypted") {
+        return "LeakGuard could not scan this encrypted XLSX. Save an unencrypted spreadsheet and try again.";
+      }
+      if (
+        reason === "xlsx_malformed_zip" ||
+        reason === "xlsx_unsupported_compression" ||
+        reason === "xlsx_xml_too_large" ||
+        reason === "xlsx_too_many_zip_entries"
+      ) {
+        return "LeakGuard could not read this XLSX, so it was not scanned.";
+      }
+      if (reason === "xlsx_text_too_large") {
+        return "LeakGuard extracted too much XLSX text to scan safely in this release. Split the spreadsheet and try again.";
+      }
+      return "LeakGuard could not find extractable spreadsheet text in this XLSX. Macros, legacy XLS, XLSM, images, embedded media, and OCR are not supported in this release.";
+    }
+
     if (reason === "pdf_encrypted") {
       return "LeakGuard could not scan this encrypted PDF. Save an unencrypted text PDF and try again.";
     }
@@ -227,7 +262,7 @@
       buffer
     });
 
-    if (extraction.kind !== "pdf") {
+    if (!isExtractedDocument(extraction)) {
       const validation = scanner.validateFileForTextScan({
         fileName: selectedFile.name,
         mimeType: selectedFile.type,
@@ -252,13 +287,14 @@
       return;
     }
 
-    const text = extraction.kind === "pdf" ? extraction.text : scanner.decodeUtf8Text(buffer);
+    const extractedDocument = isExtractedDocument(extraction);
+    const text = extractedDocument ? extraction.text : scanner.decodeUtf8Text(buffer);
     const result = scanner.scanTextContent({
       fileName: selectedFile.name,
       mimeType: selectedFile.type,
-      sizeBytes: extraction.kind === "pdf" ? extraction.metadata.textLength : selectedFile.size,
+      sizeBytes: extractedDocument ? extraction.metadata.textLength : selectedFile.size,
       text,
-      extractedText: extraction.kind === "pdf",
+      extractedText: extractedDocument,
       mode: "hide_public"
     });
 
@@ -281,7 +317,7 @@
 
   function redactedFileName(fileName) {
     const { base, extension } = splitFileName(fileName);
-    if (extension === ".pdf") {
+    if (extension === ".pdf" || extension === ".docx" || extension === ".xlsx") {
       return `${base}.redacted.txt`;
     }
     return `${base}.redacted${extension}`;

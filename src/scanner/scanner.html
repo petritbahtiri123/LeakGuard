@@ -20,14 +20,14 @@
 
       <section class="scanner-grid">
         <section class="panel scan-panel">
-          <h2>Choose a text file or text PDF</h2>
+          <h2>Choose a text file, text PDF, DOCX, or XLSX</h2>
           <p class="copy">
-            Text-based files and text PDFs can be scanned and exported as redacted copies. DOCX, image, archive, executable, binary-file, and scanned-image PDF redaction are not enabled in this release.
+            Text files, text PDFs, DOCX text, and XLSX spreadsheet text can be scanned and exported as redacted text copies. XLSX formulas are scanned as text only and are not executed. Macros, legacy XLS, XLSM, images, embedded media, archive, executable, binary-file, scanned-image PDF, and embedded-image document redaction are not enabled in this release.
           </p>
 
           <label class="file-picker">
             <span>Local file</span>
-            <input id="file-input" type="file" accept=".txt,.env,.log,.json,.yaml,.yml,.xml,.csv,.md,.ini,.conf,.ps1,.sh,.py,.js,.ts,.html,.css,.pdf,text/*,application/json,application/xml,application/pdf">
+            <input id="file-input" type="file" accept=".txt,.env,.log,.json,.yaml,.yml,.xml,.csv,.md,.ini,.conf,.ps1,.sh,.py,.js,.ts,.html,.css,.pdf,.docx,.xlsx,text/*,application/json,application/xml,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
           </label>
 
           <div class="file-meta" id="file-meta" hidden>

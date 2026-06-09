@@ -983,10 +983,16 @@ async function runFirefoxScannerQa(webdriver, extensionOrigin, tempDir, download
   await webdriver.setFileInputFiles("#file-input", [unsupportedPath]);
   const unsupported = await webdriver.executeAsync(`const done = arguments[arguments.length - 1];
     const started = Date.now();
+    let clicked = false;
     const timer = setInterval(() => {
       const status = document.querySelector('#status')?.textContent || '';
-      const scanDisabled = document.querySelector('#scan-btn')?.disabled;
-      if (/Unsupported (?:file types|formats)/i.test(status) && scanDisabled) {
+      const scanButton = document.querySelector('#scan-btn');
+      const scanDisabled = scanButton?.disabled;
+      if (!clicked && scanButton && !scanButton.disabled) {
+        clicked = true;
+        scanButton.click();
+      }
+      if (/could not find extractable text/i.test(status) && /OCR are not supported/i.test(status)) {
         clearInterval(timer);
         done({ status, scanDisabled });
       } else if (Date.now() - started > 10000) {
@@ -995,8 +1001,8 @@ async function runFirefoxScannerQa(webdriver, extensionOrigin, tempDir, download
       }
     }, 50);`);
   assert.equal(unsupported.error, undefined, unsupported.error || "Firefox unsupported scanner case failed");
-  assert.equal(unsupported.scanDisabled, true);
-  assert.match(unsupported.status, /Unsupported (?:file types|formats)/i);
+  assert.match(unsupported.status, /could not find extractable text/i);
+  assert.match(unsupported.status, /OCR are not supported/i);
 }
 
 async function runFirefoxSmoke() {
