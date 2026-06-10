@@ -292,6 +292,64 @@
     });
   }
 
+  function createRecognitionProbe() {
+    if (!isAvailable()) {
+      return Promise.resolve({
+        ok: false,
+        status: "worker_unavailable",
+        ocrImplemented: false,
+        language: "eng",
+        reason: "worker_api_unavailable"
+      });
+    }
+
+    workerStatus = "probing_recognition";
+    const activeWorker = getWorker();
+
+    return new Promise((resolve, reject) => {
+      const timeout = root.setTimeout(() => {
+        activeWorker.onmessage = null;
+        activeWorker.onerror = null;
+        workerStatus = "recognition_probe_timeout";
+        reject(new Error("OCR recognition probe timed out."));
+      }, 8000);
+
+      activeWorker.onmessage = (event) => {
+        root.clearTimeout(timeout);
+        activeWorker.onmessage = null;
+        activeWorker.onerror = null;
+        const response = event?.data || {};
+        workerStatus =
+          response.status === "ocr_recognition_ready" || response.status === "ocr_recognition_blocked"
+            ? response.status
+            : "unexpected_response";
+        const result = {
+          ok: response.ok === true,
+          status: response.status || workerStatus,
+          ocrImplemented: false,
+          language: response.language || "eng",
+          textLength: Number(response.textLength || 0),
+          containsExpectedText: response.containsExpectedText === true,
+          confidenceBucket: response.confidenceBucket || "unknown"
+        };
+        if (response.reason) {
+          result.reason = response.reason;
+        }
+        resolve(result);
+      };
+
+      activeWorker.onerror = () => {
+        root.clearTimeout(timeout);
+        activeWorker.onmessage = null;
+        activeWorker.onerror = null;
+        workerStatus = "worker_error";
+        reject(new Error("OCR recognition probe failed."));
+      };
+
+      activeWorker.postMessage({ type: "ocr_recognition_probe" });
+    });
+  }
+
   function terminate() {
     if (worker && typeof worker.terminate === "function") {
       worker.terminate();
@@ -308,6 +366,7 @@
     createEngineProbe,
     createTesseractCoreProbe,
     createLanguageProbe,
+    createRecognitionProbe,
     terminate
   };
 

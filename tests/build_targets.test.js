@@ -17,6 +17,9 @@ const tesseractCoreProofFiles = Object.freeze([
 const englishLanguageProofFiles = Object.freeze([
   "shared/ocr/tessdata/eng.traineddata.gz"
 ]);
+const syntheticRecognitionProofFiles = Object.freeze([
+  "shared/ocr/fixtures/synthetic-test-ocr.png"
+]);
 const forbiddenPackageDirectories = new Set([
   ".git",
   ".github",
@@ -237,9 +240,10 @@ function assertOcrRuntimeAssets(result) {
       "shared/ocr/ocrWasmProbe.wasm",
       "shared/ocr/ocrWorker.js",
       ...tesseractCoreProofFiles,
-      ...englishLanguageProofFiles
+      ...englishLanguageProofFiles,
+      ...syntheticRecognitionProofFiles
     ].sort(),
-    `${result.target} should include only the local OCR proof shell, tiny WASM probe asset, minimal tesseract.js-core proof assets, and English traineddata proof asset`
+    `${result.target} should include only local OCR proof shell/assets, English traineddata, and the synthetic recognition fixture`
   );
   const wasmProbePath = path.join(result.targetRoot, "shared/ocr/ocrWasmProbe.wasm");
   assert.ok(fs.statSync(wasmProbePath).size <= 64, `${result.target} WASM probe asset should stay tiny`);
@@ -254,6 +258,10 @@ function assertOcrRuntimeAssets(result) {
   assert.ok(
     fs.statSync(path.join(result.targetRoot, "shared/ocr/tessdata/eng.traineddata.gz")).size < 3 * 1024 * 1024,
     `${result.target} English language proof should include the smallest packaged compressed traineddata asset`
+  );
+  assert.ok(
+    fs.statSync(path.join(result.targetRoot, "shared/ocr/fixtures/synthetic-test-ocr.png")).size < 5000,
+    `${result.target} synthetic OCR fixture should stay tiny`
   );
 
   const ocrBytes = ocrFiles.reduce(
@@ -273,7 +281,10 @@ function assertOcrRuntimeAssets(result) {
     const isAllowedEnglishLanguageProof = englishLanguageProofFiles.includes(
       relativePackagePath(result.targetRoot, file).split("\\").join("/")
     );
-    if (!isAllowedTesseractCoreProof && !isAllowedEnglishLanguageProof) {
+    const isAllowedSyntheticRecognitionProof = syntheticRecognitionProofFiles.includes(
+      relativePackagePath(result.targetRoot, file).split("\\").join("/")
+    );
+    if (!isAllowedTesseractCoreProof && !isAllowedEnglishLanguageProof && !isAllowedSyntheticRecognitionProof) {
       assert.strictEqual(
         /tesseract|ocrad|traineddata|ocr[-_.](?!wasmprobe\.wasm).*\.wasm|\.traineddata|ocr-model|ocr-assets/.test(
           relativePath
@@ -383,6 +394,20 @@ async function assertOcrRuntimeProbeShell(targetRoot) {
             status: "language_ready",
             language: "eng",
             ocrImplemented: false
+          }
+        });
+        return;
+      }
+      if (message?.type === "ocr_recognition_probe") {
+        this.onmessage?.({
+          data: {
+            ok: true,
+            status: "ocr_recognition_ready",
+            ocrImplemented: false,
+            language: "eng",
+            textLength: 8,
+            containsExpectedText: true,
+            confidenceBucket: "high"
           }
         });
         return;
@@ -539,6 +564,33 @@ async function assertOcrRuntimeProbeShell(targetRoot) {
     "English language proof should remain explicit-only and separate from engine probing"
   );
 
+  const recognitionProbe = plainObject(await runtime.createRecognitionProbe());
+  assert.deepStrictEqual(
+    recognitionProbe,
+    {
+      ok: true,
+      status: "ocr_recognition_ready",
+      ocrImplemented: false,
+      language: "eng",
+      textLength: 8,
+      containsExpectedText: true,
+      confidenceBucket: "high"
+    },
+    "Synthetic OCR recognition proof should return metadata only"
+  );
+  assert.deepStrictEqual(
+    plainObject(createdWorkers[0].messages),
+    [
+      { type: "ocr_probe" },
+      { type: "wasm_probe" },
+      { type: "ocr_engine_probe" },
+      { type: "tesseract_core_probe" },
+      { type: "ocr_language_probe", language: "eng" },
+      { type: "ocr_recognition_probe" }
+    ],
+    "Synthetic OCR recognition proof should remain explicit-only and separate from engine probing"
+  );
+
   runtime.terminate();
   assert.strictEqual(createdWorkers[0].terminated, true, "OCR runtime shell should terminate its worker");
 }
@@ -558,6 +610,12 @@ async function assertOcrWorkerEngineProof(targetRoot) {
   const englishTrainedDataBytes = fs.readFileSync(
     path.join(targetRoot, "shared/ocr/tessdata/eng.traineddata.gz")
   );
+  const syntheticFixtureBytes = fs.readFileSync(
+    path.join(targetRoot, "shared/ocr/fixtures/synthetic-test-ocr.png")
+  );
+  const syntheticFixtureRaw = require("sharp")(syntheticFixtureBytes).grayscale().raw().toBuffer({
+    resolveWithObject: true
+  });
   const wasmApi = {
     instantiate: WebAssembly.instantiate,
     instantiateStreaming: WebAssembly.instantiateStreaming,
@@ -577,6 +635,8 @@ async function assertOcrWorkerEngineProof(targetRoot) {
       ? tesseractCoreBytes
       : String(url).endsWith("/shared/ocr/tessdata/eng.traineddata.gz")
         ? englishTrainedDataBytes
+        : String(url).endsWith("/shared/ocr/fixtures/synthetic-test-ocr.png")
+          ? syntheticFixtureBytes
       : wasmProbeBytes;
     return {
       ok: true,
@@ -637,8 +697,42 @@ async function assertOcrWorkerEngineProof(targetRoot) {
     TextEncoder,
     Blob,
     Response,
-    DecompressionStream
+    DecompressionStream,
+    async createImageBitmap() {
+      const raw = await syntheticFixtureRaw;
+      return {
+        width: raw.info.width,
+        height: raw.info.height,
+        close() {}
+      };
+    },
+    OffscreenCanvas: class {
+      constructor(width, height) {
+        this.width = width;
+        this.height = height;
+      }
+
+      getContext() {
+        return {
+          drawImage() {},
+          getImageData: () => {
+            const raw = syntheticFixtureRawResult;
+            const rgba = new Uint8ClampedArray(raw.info.width * raw.info.height * 4);
+            for (let index = 0; index < raw.data.length; index += 1) {
+              const outputIndex = index * 4;
+              const value = raw.data[index];
+              rgba[outputIndex] = value;
+              rgba[outputIndex + 1] = value;
+              rgba[outputIndex + 2] = value;
+              rgba[outputIndex + 3] = 255;
+            }
+            return { data: rgba };
+          }
+        };
+      }
+    }
   });
+  const syntheticFixtureRawResult = await syntheticFixtureRaw;
   sandbox.globalThis = sandbox.self;
 
   vm.runInContext(workerSource, sandbox, {
@@ -674,6 +768,14 @@ async function assertOcrWorkerEngineProof(targetRoot) {
   });
   await sandbox.self.onmessage({
     data: {
+      type: "ocr_recognition_probe",
+      imageData: "must-not-be-read",
+      pixels: [1, 2, 3],
+      userText: "must-not-be-read"
+    }
+  });
+  await sandbox.self.onmessage({
+    data: {
       type: "ocr_language_probe",
       language: "deu"
     }
@@ -683,9 +785,10 @@ async function assertOcrWorkerEngineProof(targetRoot) {
     [
       "chrome-extension://test-id/shared/ocr/ocrWasmProbe.wasm",
       "chrome-extension://test-id/shared/ocr/tesseract-core/tesseract-core.wasm",
-      "chrome-extension://test-id/shared/ocr/tessdata/eng.traineddata.gz"
+      "chrome-extension://test-id/shared/ocr/tessdata/eng.traineddata.gz",
+      "chrome-extension://test-id/shared/ocr/fixtures/synthetic-test-ocr.png"
     ],
-    "OCR language proof should fetch only packaged extension-local WASM and English traineddata assets"
+    "OCR recognition proof should fetch only packaged extension-local WASM, English traineddata, and synthetic fixture assets"
   );
   assert.ok(
     fetchedUrls.every((url) => !/^https?:\/\//i.test(url) && !/cdn|unpkg/i.test(url)),
@@ -723,13 +826,27 @@ async function assertOcrWorkerEngineProof(targetRoot) {
         ocrImplemented: false
       },
       {
+        ok: true,
+        status: "ocr_recognition_ready",
+        ocrImplemented: false,
+        language: "eng",
+        textLength: 8,
+        containsExpectedText: true,
+        confidenceBucket: "high"
+      },
+      {
         ok: false,
         status: "language_blocked",
         language: "deu",
         reason: "unsupported_language"
       }
     ],
-    "OCR worker should keep probes data-free, prove WASM/core/English language loading, and report engine_blocked"
+    "OCR worker should keep probes metadata-only, prove WASM/core/English language/fixture recognition, and report engine_blocked"
+  );
+  assert.strictEqual(
+    postedMessages.some((message) => Object.prototype.hasOwnProperty.call(message, "text")),
+    false,
+    "OCR recognition proof must not post raw OCR text"
   );
 }
 
@@ -796,9 +913,18 @@ function assertOcrWorkerStaticSafety(targetRoot) {
     "OCR worker proof should avoid remote URLs, eval, and Function"
   );
   assert.strictEqual(
-    /imageData|pixels|userText|bitmap|canvas/i.test(workerSource),
+    /event\.data\.(?:imageData|pixels|userText|bitmap|canvas)/i.test(workerSource),
     false,
-    "OCR WASM proof worker should not process image or user data fields"
+    "OCR recognition proof worker should not process user-provided image or user data fields"
+  );
+  assert.ok(
+    workerSource.includes("fixtures/synthetic-test-ocr.png"),
+    "OCR recognition proof worker should use only the packaged synthetic fixture"
+  );
+  assert.strictEqual(
+    /postMessage\s*\([^)]*\btext\b/i.test(workerSource),
+    false,
+    "OCR recognition proof worker should not post raw OCR text"
   );
 
   for (const relativePath of [...tesseractCoreProofFiles, ...englishLanguageProofFiles]) {

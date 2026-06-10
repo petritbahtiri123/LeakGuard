@@ -1093,7 +1093,8 @@ function testOcrSpikeDoesNotEnterProductionPackage(manifest) {
   const allowedTesseractCoreProofPaths = new Set([
     "shared/ocr/tesseract-core/tesseract-core.js",
     "shared/ocr/tesseract-core/tesseract-core.wasm",
-    "shared/ocr/tessdata/eng.traineddata.gz"
+    "shared/ocr/tessdata/eng.traineddata.gz",
+    "shared/ocr/fixtures/synthetic-test-ocr.png"
   ]);
   const dependencyNames = Object.keys(packageJson.dependencies || {}).map((name) => name.toLowerCase());
   for (const forbidden of ["tesseract.js", "tesseract.js-core", "@tesseract.js-data/eng", "ocrad.js"]) {
@@ -1151,8 +1152,13 @@ function testOcrSpikeDoesNotEnterProductionPackage(manifest) {
         fs.existsSync(defaultOcrRuntimePath)
           ? fs.readdirSync(defaultOcrRuntimePath).sort()
           : [],
-        ["ocrRuntime.js", "ocrWasmProbe.wasm", "ocrWorker.js", "tessdata", "tesseract-core"],
-        `default target ${target} should package only the OCR worker proof shell, tiny WASM probe asset, isolated tesseract.js-core proof directory, and English tessdata proof directory`
+        ["fixtures", "ocrRuntime.js", "ocrWasmProbe.wasm", "ocrWorker.js", "tessdata", "tesseract-core"],
+        `default target ${target} should package only the OCR worker proof shell, tiny WASM probe asset, isolated tesseract.js-core proof directory, English tessdata proof directory, and synthetic fixture directory`
+      );
+      assert.deepStrictEqual(
+        fs.readdirSync(path.join(defaultOcrRuntimePath, "fixtures")).sort(),
+        ["synthetic-test-ocr.png"],
+        `default target ${target} should package only the synthetic OCR recognition proof fixture`
       );
       assert.deepStrictEqual(
         fs.readdirSync(path.join(defaultOcrRuntimePath, "tesseract-core")).sort(),

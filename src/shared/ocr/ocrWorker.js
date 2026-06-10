@@ -2,9 +2,12 @@ const wasmProbePath = "shared/ocr/ocrWasmProbe.wasm";
 const tesseractCoreScriptPath = "shared/ocr/tesseract-core/tesseract-core.js";
 const tesseractCoreWasmPath = "shared/ocr/tesseract-core/tesseract-core.wasm";
 const englishTrainedDataPath = "shared/ocr/tessdata/eng.traineddata.gz";
+const syntheticRecognitionFixturePath = "shared/ocr/fixtures/synthetic-test-ocr.png";
+const expectedSyntheticText = "TEST OCR";
 let tesseractCoreProbePromise = null;
 let tesseractCoreModulePromise = null;
 let englishLanguageProbePromise = null;
+let recognitionProbePromise = null;
 
 function getExtensionUrl(resourcePath) {
   const runtime = self.chrome?.runtime || self.browser?.runtime || null;
@@ -251,6 +254,140 @@ function classifyLanguageError(error) {
   return error?.name || "language_load_failed";
 }
 
+async function runRecognitionProbe() {
+  recognitionProbePromise = recognitionProbePromise || recognizeSyntheticFixture();
+  return recognitionProbePromise;
+}
+
+async function recognizeSyntheticFixture() {
+  const language = await runLanguageProbe("eng");
+  if (!language.ok) {
+    return {
+      ok: false,
+      status: "ocr_recognition_blocked",
+      ocrImplemented: false,
+      language: "eng",
+      reason: language.reason || "language_not_ready"
+    };
+  }
+
+  const core = await getTesseractCoreModule();
+  if (!core.ok) {
+    return {
+      ok: false,
+      status: "ocr_recognition_blocked",
+      ocrImplemented: false,
+      language: "eng",
+      reason: core.reason
+    };
+  }
+
+  try {
+    const image = await loadSyntheticFixturePixels();
+    const result = recognizeGrayscaleImage(core.module, image);
+    return {
+      ok: true,
+      status: "ocr_recognition_ready",
+      ocrImplemented: false,
+      language: "eng",
+      textLength: result.textLength,
+      containsExpectedText: result.containsExpectedText,
+      confidenceBucket: bucketConfidence(result.confidence)
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: "ocr_recognition_blocked",
+      ocrImplemented: false,
+      language: "eng",
+      reason: classifyRecognitionError(error)
+    };
+  }
+}
+
+async function loadSyntheticFixturePixels() {
+  if (typeof createImageBitmap !== "function" || typeof OffscreenCanvas !== "function" || typeof Blob !== "function") {
+    throw new Error("image_decode_api_unavailable");
+  }
+
+  const response = await self.fetch(getExtensionUrl(syntheticRecognitionFixturePath));
+  if (!response?.ok) {
+    throw new Error(`fixture_fetch_failed_${response?.status || "unknown"}`);
+  }
+
+  const bytes = await response.arrayBuffer();
+  const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+  try {
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) {
+      throw new Error("image_canvas_context_unavailable");
+    }
+    context.drawImage(bitmap, 0, 0);
+    const pixels = context.getImageData(0, 0, bitmap.width, bitmap.height).data;
+    return {
+      width: bitmap.width,
+      height: bitmap.height,
+      grayscale: rgbaToGrayscale(pixels)
+    };
+  } finally {
+    if (typeof bitmap.close === "function") {
+      bitmap.close();
+    }
+  }
+}
+
+function rgbaToGrayscale(pixels) {
+  const grayscale = new Uint8Array(pixels.length / 4);
+  for (let index = 0, output = 0; index < pixels.length; index += 4, output += 1) {
+    grayscale[output] = Math.round((pixels[index] + pixels[index + 1] + pixels[index + 2]) / 3);
+  }
+  return grayscale;
+}
+
+function recognizeGrayscaleImage(module, image) {
+  const api = new module.TessBaseAPI();
+  const pointer = module._malloc(image.grayscale.length);
+  try {
+    module.HEAPU8.set(image.grayscale, pointer);
+    if (api.Init("/tessdata", "eng") !== 0) {
+      throw new Error("recognition_init_failed");
+    }
+    api.SetPageSegMode(7);
+    api.SetVariable("tessedit_char_whitelist", "ABCDEFGHIJKLMNOPQRSTUVWXYZ ");
+    api.SetImage(pointer, image.width, image.height, 1, image.width);
+    api.SetSourceResolution(300);
+    if (api.Recognize(null) !== 0) {
+      throw new Error("recognition_failed");
+    }
+    const text = String(api.GetUTF8Text() || "").trim().replace(/\s+/g, " ");
+    return {
+      textLength: text.length,
+      containsExpectedText: text.includes(expectedSyntheticText),
+      confidence: Number(api.MeanTextConf() || 0)
+    };
+  } finally {
+    try {
+      api.End();
+    } catch {}
+    if (typeof api.__destroy__ === "function") {
+      api.__destroy__();
+    }
+    module._free(pointer);
+  }
+}
+
+function bucketConfidence(confidence) {
+  if (confidence >= 85) return "high";
+  if (confidence >= 60) return "medium";
+  if (confidence > 0) return "low";
+  return "none";
+}
+
+function classifyRecognitionError(error) {
+  return error?.message || error?.name || "recognition_load_failed";
+}
+
 self.onmessage = async (event) => {
   if (event?.data?.type === "ocr_probe") {
     self.postMessage({
@@ -273,6 +410,11 @@ self.onmessage = async (event) => {
 
   if (event?.data?.type === "ocr_language_probe") {
     self.postMessage(await runLanguageProbe(event.data.language));
+    return;
+  }
+
+  if (event?.data?.type === "ocr_recognition_probe") {
+    self.postMessage(await runRecognitionProbe());
     return;
   }
 

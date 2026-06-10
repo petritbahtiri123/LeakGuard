@@ -1381,8 +1381,9 @@ async function runOcrWasmProbeSmoke(connection, extensionId, browserName = "Chro
           const engine = await runtime.createEngineProbe();
           const core = await runtime.createTesseractCoreProbe();
           const language = await runtime.createLanguageProbe('eng');
+          const recognition = await runtime.createRecognitionProbe();
           runtime.terminate();
-          resolve({ worker, wasm, engine, core, language });
+          resolve({ worker, wasm, engine, core, language, recognition });
         } catch (error) {
           reject(new Error(error?.message || 'OCR WASM probe failed'));
         }
@@ -1435,6 +1436,20 @@ async function runOcrWasmProbeSmoke(connection, extensionId, browserName = "Chro
     status: "language_ready",
     language: "eng",
     ocrImplemented: false
+  });
+  console.log(
+    `${browserName} smoke: synthetic OCR recognition proof result ${result.recognition.status}${
+      result.recognition.reason ? ` (${result.recognition.reason})` : ""
+    }`
+  );
+  assert.deepEqual(result.recognition, {
+    ok: true,
+    status: "ocr_recognition_ready",
+    ocrImplemented: false,
+    language: "eng",
+    textLength: 8,
+    containsExpectedText: true,
+    confidenceBucket: "high"
   });
 }
 
