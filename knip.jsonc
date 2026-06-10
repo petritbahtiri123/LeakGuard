@@ -42,6 +42,12 @@
     "src/shared/streamingFileRedactor.js",
     "src/shared/protected_sites.js",
     "src/shared/policy.js",
+
+    // Scanner-only OCR worker proof shell. These are packaged classic scripts
+    // for future explicit scanner probes, not imported as modules.
+    "src/shared/ocr/ocrRuntime.js",
+    "src/shared/ocr/ocrWorker.js",
+
     "src/content/composer_helpers.js",
     "src/content/file_paste_helpers.js",
     "src/content/file_handoff_state.js",

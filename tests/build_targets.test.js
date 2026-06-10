@@ -1,6 +1,7 @@
 const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
+const vm = require("vm");
 const { pathToFileURL } = require("url");
 
 const repoRoot = path.join(__dirname, "..");
@@ -222,14 +223,18 @@ function assertOcrRuntimeAssets(result) {
     .filter((relativePath) => relativePath.startsWith("shared/ocr/"))
     .sort();
 
-  assert.deepStrictEqual(ocrFiles, [], `${result.target} should not include OCR runtime files yet`);
+  assert.deepStrictEqual(
+    ocrFiles,
+    ["shared/ocr/ocrRuntime.js", "shared/ocr/ocrWorker.js"],
+    `${result.target} should include only the local OCR proof shell files`
+  );
 
   for (const file of files) {
     const relativePath = relativePackagePath(result.targetRoot, file).toLowerCase();
     assert.strictEqual(
-      /tesseract|ocrad|traineddata|ocr[-_.].*\.wasm|\.traineddata|ocr-model/.test(relativePath),
+      /tesseract|ocrad|traineddata|ocr[-_.].*\.wasm|\.traineddata|ocr-model|ocr-assets/.test(relativePath),
       false,
-      `${result.target} should not contain OCR model asset ${relativePath}`
+      `${result.target} should not contain OCR engine/model asset ${relativePath}`
     );
     if (/\.(?:js|json|html|css|txt|md)$/i.test(file)) {
       const source = fs.readFileSync(file, "utf8").toLowerCase();
@@ -242,6 +247,106 @@ function assertOcrRuntimeAssets(result) {
       }
     }
   }
+}
+
+function plainObject(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+async function assertOcrRuntimeProbeShell(targetRoot) {
+  const runtimeSource = fs.readFileSync(path.join(targetRoot, "shared/ocr/ocrRuntime.js"), "utf8");
+  const createdWorkers = [];
+  class ProbeWorker {
+    constructor(url) {
+      this.url = String(url);
+      this.messages = [];
+      this.terminated = false;
+      createdWorkers.push(this);
+    }
+
+    postMessage(message) {
+      this.messages.push(message);
+      this.onmessage?.({
+        data: {
+          ok: true,
+          status: "worker_ready",
+          ocrImplemented: false
+        }
+      });
+    }
+
+    terminate() {
+      this.terminated = true;
+    }
+  }
+
+  const sandbox = {
+    globalThis: {
+      PWM: {},
+      PWM_BUILD_INFO: {
+        features: {
+          ocr: {
+            enabled: false,
+            status: "disabled",
+            reason: "ocr_runtime_not_implemented"
+          }
+        }
+      },
+      chrome: {
+        runtime: {
+          getURL: (resourcePath) => `chrome-extension://test-id/${resourcePath}`
+        }
+      },
+      setTimeout,
+      clearTimeout,
+      Worker: ProbeWorker
+    }
+  };
+  sandbox.globalThis.globalThis = sandbox.globalThis;
+  sandbox.globalThis.self = sandbox.globalThis;
+  sandbox.globalThis.window = sandbox.globalThis;
+
+  vm.runInNewContext(runtimeSource, sandbox, {
+    filename: "ocrRuntime.js"
+  });
+
+  const runtime = sandbox.globalThis.PWM.OcrRuntime;
+  assert.strictEqual(runtime.isAvailable(), true, "OCR runtime shell should be available in normal builds");
+  assert.deepStrictEqual(
+    plainObject(runtime.getStatus()),
+    {
+      available: true,
+      status: "not_implemented",
+      ocrImplemented: false,
+      workerStatus: "idle"
+    },
+    "OCR runtime shell should report not-implemented idle status before probing"
+  );
+  assert.strictEqual(createdWorkers.length, 0, "OCR runtime should not create a worker before an explicit probe");
+
+  const probe = plainObject(await runtime.createWorkerProbe());
+  assert.deepStrictEqual(
+    probe,
+    {
+      ok: true,
+      status: "worker_ready",
+      ocrImplemented: false
+    },
+    "OCR runtime shell should round-trip the worker probe payload"
+  );
+  assert.strictEqual(
+    createdWorkers[0].url,
+    "chrome-extension://test-id/shared/ocr/ocrWorker.js",
+    "OCR runtime shell should load the packaged worker URL"
+  );
+  assert.deepStrictEqual(
+    plainObject(createdWorkers[0].messages),
+    [{ type: "ocr_probe" }],
+    "OCR runtime shell should only send the harmless probe message"
+  );
+
+  runtime.terminate();
+  assert.strictEqual(createdWorkers[0].terminated, true, "OCR runtime shell should terminate its worker");
 }
 
 function assertManifestStructure(result, expectedHostPermissions) {
@@ -403,6 +508,7 @@ async function run() {
       },
       `${target} should keep OCR disabled metadata`
     );
+    await assertOcrRuntimeProbeShell(path.join(repoRoot, "dist", target));
   }
 
   const chromeEnterpriseManifest = JSON.parse(
@@ -418,6 +524,12 @@ async function run() {
     fs.readFileSync(path.join(repoRoot, "dist/firefox-enterprise/manifest.json"), "utf8")
   );
   const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
+  const scannerHtml = fs.readFileSync(path.join(repoRoot, "dist/chrome/scanner/scanner.html"), "utf8");
+  assert.ok(
+    scannerHtml.includes("OCR, visual text scanning") &&
+      scannerHtml.includes("are not enabled in this release"),
+    "scanner UI should continue to say OCR and visual text scanning are not enabled"
+  );
   for (const [target, manifest] of [
     ["chrome", chromeManifest],
     ["chrome-enterprise", chromeEnterpriseManifest],

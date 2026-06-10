@@ -1121,13 +1121,15 @@ function testOcrSpikeDoesNotEnterProductionPackage(manifest) {
   const distFiles = [];
   for (const target of defaultDistTargets) {
     const defaultOcrRuntimePath = path.join(repoRoot, "dist", target, "shared", "ocr");
-    assert.strictEqual(
-      fs.existsSync(defaultOcrRuntimePath),
-      false,
-      `default target ${target} must not package OCR runtime files before OCR is implemented`
-    );
     const targetRoot = path.join(repoRoot, "dist", target);
     if (fs.existsSync(targetRoot)) {
+      assert.deepStrictEqual(
+        fs.existsSync(defaultOcrRuntimePath)
+          ? fs.readdirSync(defaultOcrRuntimePath).sort()
+          : [],
+        ["ocrRuntime.js", "ocrWorker.js"],
+        `default target ${target} should package only the OCR worker proof shell`
+      );
       distFiles.push(...walkFiles(targetRoot));
     }
   }
