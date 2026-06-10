@@ -60,7 +60,8 @@ export default defineConfig([
       "dist/**",
       "node_modules/**",
       "release/**",
-      "sandbox/**"
+      "sandbox/**",
+      "src/shared/ocr/tesseract-core/tesseract-core.js"
     ]
   },
   {

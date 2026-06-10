@@ -10,6 +10,10 @@ const protectedSitesModule = require(path.join(repoRoot, "src/shared/protected_s
 
 const restrictiveExtensionPageCsp =
   "script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; base-uri 'none'; frame-ancestors 'none';";
+const tesseractCoreProofFiles = Object.freeze([
+  "shared/ocr/tesseract-core/tesseract-core.js",
+  "shared/ocr/tesseract-core/tesseract-core.wasm"
+]);
 const forbiddenPackageDirectories = new Set([
   ".git",
   ".github",
@@ -225,39 +229,67 @@ function assertOcrRuntimeAssets(result) {
 
   assert.deepStrictEqual(
     ocrFiles,
-    ["shared/ocr/ocrRuntime.js", "shared/ocr/ocrWasmProbe.wasm", "shared/ocr/ocrWorker.js"],
-    `${result.target} should include only the local OCR proof shell files and tiny WASM probe asset`
+    [
+      "shared/ocr/ocrRuntime.js",
+      "shared/ocr/ocrWasmProbe.wasm",
+      "shared/ocr/ocrWorker.js",
+      ...tesseractCoreProofFiles
+    ].sort(),
+    `${result.target} should include only the local OCR proof shell, tiny WASM probe asset, and minimal tesseract.js-core proof assets`
   );
   const wasmProbePath = path.join(result.targetRoot, "shared/ocr/ocrWasmProbe.wasm");
   assert.ok(fs.statSync(wasmProbePath).size <= 64, `${result.target} WASM probe asset should stay tiny`);
+  assert.ok(
+    fs.statSync(path.join(result.targetRoot, "shared/ocr/tesseract-core/tesseract-core.js")).size < 160000,
+    `${result.target} tesseract.js-core loader proof should include the small external-WASM loader only`
+  );
+  assert.ok(
+    fs.statSync(path.join(result.targetRoot, "shared/ocr/tesseract-core/tesseract-core.wasm")).size < 4 * 1024 * 1024,
+    `${result.target} tesseract.js-core proof should include one local core WASM asset only`
+  );
 
   const ocrBytes = ocrFiles.reduce(
     (total, relativePath) => total + fs.statSync(path.join(result.targetRoot, relativePath)).size,
     0
   );
   assert.ok(
-    ocrBytes < 12000,
-    `${result.target} OCR proof shell package impact should stay tiny before OCR assets exist`
+    ocrBytes < 4 * 1024 * 1024,
+    `${result.target} OCR proof assets should stay below the loading-only core budget`
   );
 
   for (const file of files) {
     const relativePath = relativePackagePath(result.targetRoot, file).toLowerCase();
-    assert.strictEqual(
-      /tesseract|ocrad|traineddata|ocr[-_.](?!wasmprobe\.wasm).*\.wasm|\.traineddata|ocr-model|ocr-assets/.test(
-        relativePath
-      ),
-      false,
-      `${result.target} should not contain OCR engine/model asset ${relativePath}`
+    const isAllowedTesseractCoreProof = tesseractCoreProofFiles.includes(
+      relativePackagePath(result.targetRoot, file).split("\\").join("/")
     );
+    if (!isAllowedTesseractCoreProof) {
+      assert.strictEqual(
+        /tesseract|ocrad|traineddata|ocr[-_.](?!wasmprobe\.wasm).*\.wasm|\.traineddata|ocr-model|ocr-assets/.test(
+          relativePath
+        ),
+        false,
+        `${result.target} should not contain OCR engine/model asset ${relativePath}`
+      );
+    }
     if (/\.(?:js|json|html|css|txt|md)$/i.test(file)) {
       const source = fs.readFileSync(file, "utf8").toLowerCase();
-      for (const forbidden of ["tesseract", "ocrad", "traineddata", "cdn.jsdelivr", "unpkg.com"]) {
+      for (const forbidden of ["ocrad", "traineddata", "cdn.jsdelivr", "unpkg.com"]) {
         assert.strictEqual(
           source.includes(forbidden),
           false,
           `${result.target}:${relativePath} should not contain OCR dependency or remote asset string ${forbidden}`
         );
       }
+      assert.strictEqual(
+        /https?:\/\//i.test(source) && relativePath.startsWith("shared/ocr/"),
+        false,
+        `${result.target}:${relativePath} should not contain remote URL strings`
+      );
+      assert.strictEqual(
+        /\beval\s*\(|\bnew\s+Function\b|\bFunction\s*\(/.test(source) && relativePath.startsWith("shared/ocr/"),
+        false,
+        `${result.target}:${relativePath} should not use eval or Function`
+      );
     }
   }
 }
@@ -307,6 +339,16 @@ async function assertOcrRuntimeProbeShell(targetRoot) {
             ocrImplemented: false,
             engine: null,
             reason: "no_candidate_passed_security_size_csp_gates"
+          }
+        });
+        return;
+      }
+      if (message?.type === "tesseract_core_probe") {
+        this.onmessage?.({
+          data: {
+            ok: true,
+            status: "tesseract_core_ready",
+            ocrImplemented: false
           }
         });
         return;
@@ -424,16 +466,41 @@ async function assertOcrRuntimeProbeShell(targetRoot) {
     "OCR engine proof should only send the explicit engine probe message after the worker probe"
   );
 
+  const tesseractCoreProbe = plainObject(await runtime.createTesseractCoreProbe());
+  assert.deepStrictEqual(
+    tesseractCoreProbe,
+    {
+      ok: true,
+      status: "tesseract_core_ready",
+      ocrImplemented: false
+    },
+    "tesseract.js-core proof should round-trip only the explicit core probe payload"
+  );
+  assert.deepStrictEqual(
+    plainObject(createdWorkers[0].messages),
+    [{ type: "ocr_probe" }, { type: "wasm_probe" }, { type: "ocr_engine_probe" }, { type: "tesseract_core_probe" }],
+    "tesseract.js-core proof should remain explicit-only and separate from engine probing"
+  );
+
   runtime.terminate();
   assert.strictEqual(createdWorkers[0].terminated, true, "OCR runtime shell should terminate its worker");
 }
 
 async function assertOcrWorkerEngineProof(targetRoot) {
   const workerSource = fs.readFileSync(path.join(targetRoot, "shared/ocr/ocrWorker.js"), "utf8");
+  const tesseractCoreSource = fs.readFileSync(
+    path.join(targetRoot, "shared/ocr/tesseract-core/tesseract-core.js"),
+    "utf8"
+  );
   const postedMessages = [];
   const fetchedUrls = [];
   const wasmProbeBytes = fs.readFileSync(path.join(targetRoot, "shared/ocr/ocrWasmProbe.wasm"));
+  const tesseractCoreBytes = fs.readFileSync(
+    path.join(targetRoot, "shared/ocr/tesseract-core/tesseract-core.wasm")
+  );
   const wasmApi = {
+    instantiate: WebAssembly.instantiate,
+    instantiateStreaming: WebAssembly.instantiateStreaming,
     async compile(bytes) {
       assert.ok(ArrayBuffer.isView(bytes), "WASM proof should compile byte content only");
       assert.deepStrictEqual(
@@ -446,23 +513,44 @@ async function assertOcrWorkerEngineProof(targetRoot) {
   };
   const fetchApi = async (url) => {
     fetchedUrls.push(String(url));
+    const bytes = String(url).endsWith("/shared/ocr/tesseract-core/tesseract-core.wasm")
+      ? tesseractCoreBytes
+      : wasmProbeBytes;
     return {
       ok: true,
       status: 200,
       async arrayBuffer() {
-        return wasmProbeBytes.buffer.slice(
-          wasmProbeBytes.byteOffset,
-          wasmProbeBytes.byteOffset + wasmProbeBytes.byteLength
+        return bytes.buffer.slice(
+          bytes.byteOffset,
+          bytes.byteOffset + bytes.byteLength
         );
       }
     };
   };
-  const sandbox = {
+  const sandbox = vm.createContext({
+    console: {
+      log() {},
+      warn() {},
+      error() {}
+    },
     WebAssembly: wasmApi,
     fetch: fetchApi,
+    importScripts(url) {
+      assert.strictEqual(
+        String(url),
+        "chrome-extension://test-id/shared/ocr/tesseract-core/tesseract-core.js",
+        "tesseract.js-core proof should import only the packaged core loader script"
+      );
+      vm.runInContext(tesseractCoreSource, sandbox, {
+        filename: "tesseract-core.js"
+      });
+    },
     self: {
       WebAssembly: wasmApi,
       fetch: fetchApi,
+      importScripts(url) {
+        sandbox.importScripts(url);
+      },
       location: {
         href: "chrome-extension://test-id/shared/ocr/ocrWorker.js"
       },
@@ -474,11 +562,20 @@ async function assertOcrWorkerEngineProof(targetRoot) {
       postMessage(message) {
         postedMessages.push(message);
       }
-    }
-  };
+    },
+    setTimeout,
+    clearTimeout,
+    Promise,
+    URL,
+    Uint8Array,
+    Int8Array,
+    ArrayBuffer,
+    TextDecoder,
+    TextEncoder
+  });
   sandbox.globalThis = sandbox.self;
 
-  vm.runInNewContext(workerSource, sandbox, {
+  vm.runInContext(workerSource, sandbox, {
     filename: "ocrWorker.js"
   });
 
@@ -492,10 +589,21 @@ async function assertOcrWorkerEngineProof(targetRoot) {
     }
   });
   await sandbox.self.onmessage({ data: { type: "ocr_engine_probe", imageData: "must-not-be-read" } });
+  await sandbox.self.onmessage({
+    data: {
+      type: "tesseract_core_probe",
+      imageData: "must-not-be-read",
+      pixels: [1, 2, 3],
+      userText: "must-not-be-read"
+    }
+  });
   assert.deepStrictEqual(
     fetchedUrls,
-    ["chrome-extension://test-id/shared/ocr/ocrWasmProbe.wasm"],
-    "OCR WASM proof should fetch only the packaged extension-local proof asset"
+    [
+      "chrome-extension://test-id/shared/ocr/ocrWasmProbe.wasm",
+      "chrome-extension://test-id/shared/ocr/tesseract-core/tesseract-core.wasm"
+    ],
+    "OCR core proof should fetch only packaged extension-local WASM assets"
   );
   assert.ok(
     fetchedUrls.every((url) => !/^https?:\/\//i.test(url) && !/cdn|unpkg/i.test(url)),
@@ -520,9 +628,14 @@ async function assertOcrWorkerEngineProof(targetRoot) {
         ocrImplemented: false,
         engine: null,
         reason: "no_candidate_passed_security_size_csp_gates"
+      },
+      {
+        ok: true,
+        status: "tesseract_core_ready",
+        ocrImplemented: false
       }
     ],
-    "OCR worker should keep probes data-free, prove WASM loading, and report engine_blocked"
+    "OCR worker should keep probes data-free, prove WASM/core loading, and report engine_blocked"
   );
 }
 
@@ -593,6 +706,23 @@ function assertOcrWorkerStaticSafety(targetRoot) {
     false,
     "OCR WASM proof worker should not process image or user data fields"
   );
+
+  for (const relativePath of tesseractCoreProofFiles) {
+    const sourcePath = path.join(targetRoot, relativePath);
+    const source = fs.readFileSync(sourcePath, "utf8");
+    assert.strictEqual(
+      /https?:\/\/|cdn\.jsdelivr|unpkg/i.test(source),
+      false,
+      `${relativePath} should not contain remote URL or CDN strings`
+    );
+    if (relativePath.endsWith(".js")) {
+      assert.strictEqual(
+        /\beval\s*\(|\bnew\s+Function\b|\bFunction\s*\(/.test(source),
+        false,
+        `${relativePath} should not use eval or Function`
+      );
+    }
+  }
 }
 
 function assertManifestStructure(result, expectedHostPermissions) {
@@ -826,21 +956,27 @@ async function run() {
       assert.strictEqual(
         Object.prototype.hasOwnProperty.call(dependencySet, forbidden),
         false,
-        `OCR package ${forbidden} should not be installed for optional build scaffolding`
+        `OCR package ${forbidden} should not be installed; tesseract.js-core proof assets should be isolated vendored files`
       );
     }
   }
   const chromeBytes = dirSizeBytes(path.join(repoRoot, "dist/chrome"));
   const firefoxBytes = dirSizeBytes(path.join(repoRoot, "dist/firefox"));
-  assert.ok(chromeBytes < 15 * 1024 * 1024, "default Chrome build should remain within current size budget");
-  assert.ok(firefoxBytes < 15 * 1024 * 1024, "default Firefox build should remain within current size budget");
+  const tesseractCoreProofBytes = tesseractCoreProofFiles.reduce(
+    (total, relativePath) => total + fs.statSync(path.join(repoRoot, "dist/chrome", relativePath)).size,
+    0
+  );
+  assert.ok(
+    tesseractCoreProofBytes < 4 * 1024 * 1024,
+    "tesseract.js-core loading proof should add only the minimal local core JS/WASM pair"
+  );
   assert.ok(
     chromeBytes < OCR_SIZE_BUDGETS.currentInstalledWarningBytes,
-    "Chrome installed package should stay below OCR planning warning threshold before OCR assets exist"
+    "Chrome installed package should stay below OCR planning warning threshold with core loading proof assets"
   );
   assert.ok(
     firefoxBytes < OCR_SIZE_BUDGETS.currentInstalledWarningBytes,
-    "Firefox installed package should stay below OCR planning warning threshold before OCR assets exist"
+    "Firefox installed package should stay below OCR planning warning threshold with core loading proof assets"
   );
   for (const target of ["chrome", "chrome-enterprise", "firefox", "firefox-enterprise"]) {
     const releaseZip = path.join(repoRoot, "artifacts", "release", `leakguard-${target}-v${packageJson.version}.zip`);

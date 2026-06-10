@@ -12,6 +12,12 @@ Use this file as a short handoff log for AI-made changes. Add newest entries fir
 ```
 
 ## Entries
+### 2026-06-10 - Phase 11E local tesseract.js-core proof
+- Goal: Prove minimal packaged `tesseract.js-core` core/WASM loading from the explicit OCR worker probe without enabling OCR, scanner UI exposure, language data, remote loading, permissions, or CSP changes.
+- Files: `src/shared/ocr/ocrWorker.js`, `src/shared/ocr/ocrRuntime.js`, `src/shared/ocr/tesseract-core/tesseract-core.js`, `src/shared/ocr/tesseract-core/tesseract-core.wasm`, `tests/build_targets.test.js`, `tests/security.test.js`, `tests/browser/chrome_smoke.test.mjs`, `tests/browser/firefox_smoke.test.mjs`, `eslint.config.mjs`, `knip.jsonc`, `docs/CODEX_CHANGELOG.md`
+- Tests: `npm run lint:unused` -> pass; `npm run deadcode` -> pass with existing Knip extension hints; `npm test` -> pass; `npm run build:all` -> pass; `npm run package:release` -> pass; `npm run bench:file-extraction` -> pass; `npm run smoke:chrome` -> pass; `npm run qa:browser` -> pass; `npm run smoke:firefox` -> pass; `git diff --check` -> pass
+- Notes: `{ type: "tesseract_core_probe" }` returns `tesseract_core_ready` in Chrome, Edge, and Firefox smoke. Added proof assets are 3,593,218 installed bytes and 1,336,377 compressed bytes per release zip; installed targets stay about 17.09 MiB, below the 50 MiB warning gate. OCR recognition and English traineddata remain deferred.
+
 ### 2026-06-10 - Phase 11D-2 safe MV3 WASM CSP proof
 - Goal: Allow local packaged WASM compilation for the OCR proof worker with only `'wasm-unsafe-eval'`, while keeping OCR engine/model integration blocked.
 - Files: `manifests/base.json`, `src/shared/ocr/ocrWorker.js`, `tests/build_targets.test.js`, `tests/security.test.js`, `tests/browser/chrome_smoke.test.mjs`, `tests/browser/firefox_smoke.test.mjs`, `docs/phase-11d-mv3-wasm-worker-proof.md`, `docs/OCR_BUILD_STRATEGY.md`, `docs/CODEX_CHANGELOG.md`

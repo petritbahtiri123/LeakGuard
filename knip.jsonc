@@ -100,6 +100,9 @@
     "config/**/*.json",
     "*.config.mjs"
   ],
+  "ignore": [
+    "src/shared/ocr/tesseract-core/tesseract-core.js"
+  ],
   "ignoreDependencies": [
     // The build and prepare scripts copy ONNX Runtime browser assets from
     // node_modules by path; there is no static JS import for Knip to follow.

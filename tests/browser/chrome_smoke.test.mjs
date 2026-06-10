@@ -1379,8 +1379,9 @@ async function runOcrWasmProbeSmoke(connection, extensionId, browserName = "Chro
           const worker = await runtime.createWorkerProbe();
           const wasm = await runtime.createWasmProbe();
           const engine = await runtime.createEngineProbe();
+          const core = await runtime.createTesseractCoreProbe();
           runtime.terminate();
-          resolve({ worker, wasm, engine });
+          resolve({ worker, wasm, engine, core });
         } catch (error) {
           reject(new Error(error?.message || 'OCR WASM probe failed'));
         }
@@ -1412,6 +1413,16 @@ async function runOcrWasmProbeSmoke(connection, extensionId, browserName = "Chro
     ocrImplemented: false,
     engine: null,
     reason: "no_candidate_passed_security_size_csp_gates"
+  });
+  console.log(
+    `${browserName} smoke: tesseract.js-core proof result ${result.core.status}${
+      result.core.reason ? ` (${result.core.reason})` : ""
+    }`
+  );
+  assert.deepEqual(result.core, {
+    ok: true,
+    status: "tesseract_core_ready",
+    ocrImplemented: false
   });
 }
 

@@ -1090,6 +1090,10 @@ function testExtensionPagesUseRestrictiveCsp(manifest) {
 }
 
 function testOcrSpikeDoesNotEnterProductionPackage(manifest) {
+  const allowedTesseractCoreProofPaths = new Set([
+    "shared/ocr/tesseract-core/tesseract-core.js",
+    "shared/ocr/tesseract-core/tesseract-core.wasm"
+  ]);
   const dependencyNames = Object.keys(packageJson.dependencies || {}).map((name) => name.toLowerCase());
   for (const forbidden of ["tesseract.js", "tesseract.js-core", "@tesseract.js-data/eng", "ocrad.js"]) {
     assert.strictEqual(
@@ -1146,8 +1150,13 @@ function testOcrSpikeDoesNotEnterProductionPackage(manifest) {
         fs.existsSync(defaultOcrRuntimePath)
           ? fs.readdirSync(defaultOcrRuntimePath).sort()
           : [],
-        ["ocrRuntime.js", "ocrWasmProbe.wasm", "ocrWorker.js"],
-        `default target ${target} should package only the OCR worker proof shell and tiny WASM probe asset`
+        ["ocrRuntime.js", "ocrWasmProbe.wasm", "ocrWorker.js", "tesseract-core"],
+        `default target ${target} should package only the OCR worker proof shell, tiny WASM probe asset, and isolated tesseract.js-core proof directory`
+      );
+      assert.deepStrictEqual(
+        fs.readdirSync(path.join(defaultOcrRuntimePath, "tesseract-core")).sort(),
+        ["tesseract-core.js", "tesseract-core.wasm"],
+        `default target ${target} should package only the minimal tesseract.js-core proof loader and WASM`
       );
       distFiles.push(...walkFiles(targetRoot));
     }
@@ -1155,27 +1164,44 @@ function testOcrSpikeDoesNotEnterProductionPackage(manifest) {
 
   for (const file of distFiles) {
     const relative = path.relative(repoRoot, file).split(path.sep).join("/").toLowerCase();
-    assert.strictEqual(
-      /tesseract|ocrad|traineddata|ocr[-_.](?!wasmprobe\.wasm).*\.wasm|\.traineddata/.test(relative),
-      false,
-      `dist must not contain OCR runtime asset: ${relative}`
+    const isAllowedTesseractCoreProof = allowedTesseractCoreProofPaths.has(
+      path.relative(path.join(repoRoot, relative.split("/")[0], relative.split("/")[1]), file)
+        .split(path.sep)
+        .join("/")
+        .toLowerCase()
     );
+    if (!isAllowedTesseractCoreProof) {
+      assert.strictEqual(
+        /tesseract|ocrad|traineddata|ocr[-_.](?!wasmprobe\.wasm).*\.wasm|\.traineddata/.test(relative),
+        false,
+        `dist must not contain OCR runtime asset: ${relative}`
+      );
+    }
     if (/\.(js|json|html|css|txt|md)$/i.test(file)) {
       const text = fs.readFileSync(file, "utf8").toLowerCase();
       for (const forbidden of ["tesseract", "ocrad", "traineddata", "cdn.jsdelivr", "unpkg.com"]) {
-        assert.strictEqual(
-          text.includes(forbidden),
-          false,
-          `dist production file must not include OCR package or remote asset string ${forbidden}: ${relative}`
-        );
+        const tesseractCoreProofText =
+          forbidden === "tesseract" && relative.includes("/shared/ocr/");
+        if (!tesseractCoreProofText) {
+          assert.strictEqual(
+            text.includes(forbidden),
+            false,
+            `dist production file must not include OCR package or remote asset string ${forbidden}: ${relative}`
+          );
+        }
       }
+      assert.strictEqual(
+        /https?:\/\//i.test(text) && relative.includes("/shared/ocr/"),
+        false,
+        `dist OCR proof file must not include remote URL strings: ${relative}`
+      );
       assert.strictEqual(
         /importscripts\s*\([^)]*(?:https?:|cdn|unpkg)/i.test(text),
         false,
         `dist production file must not import OCR worker code from a remote URL: ${relative}`
       );
       assert.strictEqual(
-        /\b(?:eval|function)\s*\(/i.test(text) && relative.includes("/shared/ocr/"),
+        /\beval\s*\(|\bnew\s+Function\b|\bFunction\s*\(/.test(text) && relative.includes("/shared/ocr/"),
         false,
         `OCR proof shell must not use eval or Function: ${relative}`
       );

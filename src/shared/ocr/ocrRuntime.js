@@ -184,6 +184,59 @@
     });
   }
 
+  function createTesseractCoreProbe() {
+    if (!isAvailable()) {
+      return Promise.resolve({
+        ok: false,
+        status: "worker_unavailable",
+        ocrImplemented: false,
+        reason: "worker_api_unavailable"
+      });
+    }
+
+    workerStatus = "probing_tesseract_core";
+    const activeWorker = getWorker();
+
+    return new Promise((resolve, reject) => {
+      const timeout = root.setTimeout(() => {
+        activeWorker.onmessage = null;
+        activeWorker.onerror = null;
+        workerStatus = "tesseract_core_probe_timeout";
+        reject(new Error("OCR tesseract.js-core probe timed out."));
+      }, 3000);
+
+      activeWorker.onmessage = (event) => {
+        root.clearTimeout(timeout);
+        activeWorker.onmessage = null;
+        activeWorker.onerror = null;
+        const response = event?.data || {};
+        workerStatus =
+          response.status === "tesseract_core_ready" || response.status === "tesseract_core_blocked"
+            ? response.status
+            : "unexpected_response";
+        const result = {
+          ok: response.ok === true,
+          status: response.status || workerStatus,
+          ocrImplemented: false
+        };
+        if (response.reason) {
+          result.reason = response.reason;
+        }
+        resolve(result);
+      };
+
+      activeWorker.onerror = () => {
+        root.clearTimeout(timeout);
+        activeWorker.onmessage = null;
+        activeWorker.onerror = null;
+        workerStatus = "worker_error";
+        reject(new Error("OCR tesseract.js-core probe failed."));
+      };
+
+      activeWorker.postMessage({ type: "tesseract_core_probe" });
+    });
+  }
+
   function terminate() {
     if (worker && typeof worker.terminate === "function") {
       worker.terminate();
@@ -198,6 +251,7 @@
     createWorkerProbe,
     createWasmProbe,
     createEngineProbe,
+    createTesseractCoreProbe,
     terminate
   };
 
