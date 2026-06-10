@@ -1117,7 +1117,21 @@ function testOcrSpikeDoesNotEnterProductionPackage(manifest) {
     );
   }
 
-  const distFiles = walkFiles(path.join(repoRoot, "dist"));
+  const defaultDistTargets = ["chrome", "chrome-enterprise", "firefox", "firefox-enterprise"];
+  const distFiles = [];
+  for (const target of defaultDistTargets) {
+    const defaultOcrRuntimePath = path.join(repoRoot, "dist", target, "shared", "ocr");
+    assert.strictEqual(
+      fs.existsSync(defaultOcrRuntimePath),
+      false,
+      `default target ${target} must not package OCR runtime files before OCR is implemented`
+    );
+    const targetRoot = path.join(repoRoot, "dist", target);
+    if (fs.existsSync(targetRoot)) {
+      distFiles.push(...walkFiles(targetRoot));
+    }
+  }
+
   for (const file of distFiles) {
     const relative = path.relative(repoRoot, file).split(path.sep).join("/").toLowerCase();
     assert.strictEqual(
@@ -1134,6 +1148,16 @@ function testOcrSpikeDoesNotEnterProductionPackage(manifest) {
           `dist production file must not include OCR package or remote asset string ${forbidden}: ${relative}`
         );
       }
+      assert.strictEqual(
+        /importscripts\s*\([^)]*(?:https?:|cdn|unpkg)/i.test(text),
+        false,
+        `dist production file must not import OCR worker code from a remote URL: ${relative}`
+      );
+      assert.strictEqual(
+        /\b(?:eval|function)\s*\(/i.test(text) && relative.includes("/shared/ocr/"),
+        false,
+        `OCR proof shell must not use eval or Function: ${relative}`
+      );
     }
   }
 }

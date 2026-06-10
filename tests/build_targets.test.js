@@ -56,6 +56,10 @@ function walkFiles(rootDir) {
   return files;
 }
 
+function dirSizeBytes(rootDir) {
+  return walkFiles(rootDir).reduce((total, file) => total + fs.statSync(file).size, 0);
+}
+
 function assertReleaseArtifactsAreSanitized(results) {
   const sourceContent = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
   const debugLoggerSource = fs.readFileSync(
@@ -211,6 +215,35 @@ function assertPackageContentsAreRuntimeOnly(result) {
   }
 }
 
+function assertOcrRuntimeAssets(result) {
+  const files = walkFiles(result.targetRoot);
+  const ocrFiles = files
+    .map((file) => relativePackagePath(result.targetRoot, file).split("\\").join("/"))
+    .filter((relativePath) => relativePath.startsWith("shared/ocr/"))
+    .sort();
+
+  assert.deepStrictEqual(ocrFiles, [], `${result.target} should not include OCR runtime files yet`);
+
+  for (const file of files) {
+    const relativePath = relativePackagePath(result.targetRoot, file).toLowerCase();
+    assert.strictEqual(
+      /tesseract|ocrad|traineddata|ocr[-_.].*\.wasm|\.traineddata|ocr-model/.test(relativePath),
+      false,
+      `${result.target} should not contain OCR model asset ${relativePath}`
+    );
+    if (/\.(?:js|json|html|css|txt|md)$/i.test(file)) {
+      const source = fs.readFileSync(file, "utf8").toLowerCase();
+      for (const forbidden of ["tesseract", "ocrad", "traineddata", "cdn.jsdelivr", "unpkg.com"]) {
+        assert.strictEqual(
+          source.includes(forbidden),
+          false,
+          `${result.target}:${relativePath} should not contain OCR dependency or remote asset string ${forbidden}`
+        );
+      }
+    }
+  }
+}
+
 function assertManifestStructure(result, expectedHostPermissions) {
   const manifest = result.manifest;
   const contentScript = manifest.content_scripts?.[0] || {};
@@ -298,12 +331,28 @@ function assertPackageStructure(results) {
   for (const result of results) {
     assertManifestStructure(result, expectedHostPermissions);
     assertPackageContentsAreRuntimeOnly(result);
+    assertOcrRuntimeAssets(result);
   }
 }
 
 async function run() {
-  const { BUILD_TARGETS, buildTarget } = await import(
+  const { BUILD_TARGETS, OCR_SIZE_BUDGETS, buildTarget } = await import(
     pathToFileURL(path.join(repoRoot, "scripts/build-extension.mjs")).href
+  );
+  assert.deepStrictEqual(
+    BUILD_TARGETS.map((target) => target.folder).sort(),
+    ["chrome", "chrome-enterprise", "firefox", "firefox-enterprise"].sort(),
+    "build target matrix should stay single-extension without optional OCR editions"
+  );
+  assert.deepStrictEqual(
+    OCR_SIZE_BUDGETS,
+    Object.freeze({
+      currentInstalledWarningBytes: 50 * 1024 * 1024,
+      hardReviewInstalledBytes: 100 * 1024 * 1024,
+      firefoxUploadHardLimitBytes: 200 * 1000 * 1000,
+      chromeZipHardLimitBytes: 2 * 1024 * 1024 * 1024
+    }),
+    "OCR size budget should document internal warning/review gates and external store limits"
   );
 
   const results = BUILD_TARGETS.map((target) => buildTarget(target.browser, target.mode));
@@ -328,12 +377,33 @@ async function run() {
   );
 
   assert.strictEqual(consumerBuildInfo.enterprise, false, "consumer build should stay non-enterprise");
+  assert.deepStrictEqual(
+    consumerBuildInfo.features?.ocr,
+    {
+      enabled: false,
+      status: "disabled",
+      reason: "ocr_runtime_not_implemented"
+    },
+    "default consumer build should keep OCR disabled"
+  );
   assert.strictEqual(chromeEnterpriseBuildInfo.enterprise, true, "chrome enterprise build should mark enterprise");
   assert.strictEqual(
     firefoxEnterpriseBuildInfo.enterprise,
     true,
     "firefox enterprise build should mark enterprise"
   );
+  for (const target of ["chrome", "chrome-enterprise", "firefox", "firefox-enterprise"]) {
+    const buildInfo = require(path.join(repoRoot, `dist/${target}/shared/build_info.js`));
+    assert.deepStrictEqual(
+      buildInfo.features?.ocr,
+      {
+        enabled: false,
+        status: "disabled",
+        reason: "ocr_runtime_not_implemented"
+      },
+      `${target} should keep OCR disabled metadata`
+    );
+  }
 
   const chromeEnterpriseManifest = JSON.parse(
     fs.readFileSync(path.join(repoRoot, "dist/chrome-enterprise/manifest.json"), "utf8")
@@ -360,6 +430,34 @@ async function run() {
       `${target} manifest should inherit package release version`
     );
   }
+  assert.strictEqual(
+    Object.keys(packageJson.scripts || {}).some((scriptName) =>
+      ["build:chrome-ocr", "prebuild:chrome-ocr", "build:firefox-ocr", "prebuild:firefox-ocr"].includes(scriptName)
+    ) || Object.values(packageJson.scripts || {}).some((script) => String(script).includes("--mode ocr")),
+    false,
+    "single-extension architecture should not expose optional OCR edition build scripts"
+  );
+  for (const dependencySet of [packageJson.dependencies || {}, packageJson.devDependencies || {}]) {
+    for (const forbidden of ["tesseract.js", "tesseract.js-core", "@tesseract.js-data/eng", "ocrad.js"]) {
+      assert.strictEqual(
+        Object.prototype.hasOwnProperty.call(dependencySet, forbidden),
+        false,
+        `OCR package ${forbidden} should not be installed for optional build scaffolding`
+      );
+    }
+  }
+  const chromeBytes = dirSizeBytes(path.join(repoRoot, "dist/chrome"));
+  const firefoxBytes = dirSizeBytes(path.join(repoRoot, "dist/firefox"));
+  assert.ok(chromeBytes < 15 * 1024 * 1024, "default Chrome build should remain within current size budget");
+  assert.ok(firefoxBytes < 15 * 1024 * 1024, "default Firefox build should remain within current size budget");
+  assert.ok(
+    chromeBytes < OCR_SIZE_BUDGETS.currentInstalledWarningBytes,
+    "Chrome installed package should stay below OCR planning warning threshold before OCR assets exist"
+  );
+  assert.ok(
+    firefoxBytes < OCR_SIZE_BUDGETS.currentInstalledWarningBytes,
+    "Firefox installed package should stay below OCR planning warning threshold before OCR assets exist"
+  );
   const contentScripts = chromeManifest.content_scripts[0].js;
   const knownSecretReuseIndex = contentScripts.indexOf("shared/knownSecretReuse.js");
   const transformOutboundPromptIndex = contentScripts.indexOf("shared/transformOutboundPrompt.js");

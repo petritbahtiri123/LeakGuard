@@ -25,6 +25,12 @@ const BUILD_TARGETS = Object.freeze([
   Object.freeze({ browser: "firefox", mode: "consumer", folder: "firefox" }),
   Object.freeze({ browser: "firefox", mode: "enterprise", folder: "firefox-enterprise" })
 ]);
+const OCR_SIZE_BUDGETS = Object.freeze({
+  currentInstalledWarningBytes: 50 * 1024 * 1024,
+  hardReviewInstalledBytes: 100 * 1024 * 1024,
+  firefoxUploadHardLimitBytes: 200 * 1000 * 1000,
+  chromeZipHardLimitBytes: 2 * 1024 * 1024 * 1024
+});
 const supportedBrowsers = new Set(BUILD_TARGETS.map((target) => target.browser));
 const supportedModes = new Set(BUILD_TARGETS.map((target) => target.mode));
 
@@ -311,6 +317,13 @@ function buildInfoSource({ browser, mode, builtAt }) {
   browser: ${JSON.stringify(browser)},
   mode: ${JSON.stringify(mode)},
   enterprise: ${enterprise},
+  features: Object.freeze({
+    ocr: Object.freeze({
+      enabled: false,
+      status: "disabled",
+      reason: "ocr_runtime_not_implemented"
+    })
+  }),
   target: ${JSON.stringify(target)},
   builtAt: ${JSON.stringify(builtAt)}
 });
@@ -442,6 +455,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 
 export {
   BUILD_TARGETS,
+  OCR_SIZE_BUDGETS,
   buildManifest,
   buildTarget,
   buildInfoSource,
