@@ -29,6 +29,7 @@
 
   let selectedFile = null;
   let currentScanResult = null;
+  let scanInFlight = null;
 
   function formatBytes(bytes) {
     const value = Number(bytes || 0);
@@ -307,7 +308,16 @@
     setStatus("Scan complete. English OCR ran locally for this image. Exports are generated only when you click a download button.", "success");
   }
 
-  async function scanSelectedFile() {
+  function restoreScanControls() {
+    if (!selectedFile) {
+      scanBtn.disabled = true;
+      return;
+    }
+
+    scanBtn.disabled = !validateSelectedFile(selectedFile).ok;
+  }
+
+  async function runSelectedFileScan() {
     const metadataValidation = validateSelectedFile(selectedFile);
     if (!metadataValidation.ok) {
       setStatus(metadataValidation.message, "error");
@@ -368,6 +378,21 @@
     renderResult(result);
     setStatus("Scan complete. Exports are generated only when you click a download button.", "success");
     scanBtn.disabled = false;
+  }
+
+  function scanSelectedFile() {
+    if (scanInFlight) {
+      return scanInFlight;
+    }
+
+    scanInFlight = runSelectedFileScan().finally(() => {
+      scanInFlight = null;
+      restoreScanControls();
+      if (typeof globalThis.PWM?.OcrRuntime?.terminate === "function") {
+        globalThis.PWM?.OcrRuntime?.terminate();
+      }
+    });
+    return scanInFlight;
   }
 
   function splitFileName(fileName) {

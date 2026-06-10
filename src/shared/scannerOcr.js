@@ -182,17 +182,33 @@
       imageBytes: bytes,
       mimeType: normalizeMimeType(file.type)
     };
+    let timeoutId = null;
+    let timedOut = false;
     const timeout = new Promise((resolve) => {
-      root.setTimeout(() => resolve(timeoutError()), timeoutMs);
+      timeoutId = root.setTimeout(() => {
+        timedOut = true;
+        if (typeof runtime.terminate === "function") {
+          try {
+            runtime.terminate();
+          } catch {}
+        }
+        resolve(timeoutError());
+      }, timeoutMs);
     });
 
     try {
       const result = await Promise.race([runtime.recognizeImageBytes(payload), timeout]);
+      if (!timedOut && timeoutId !== null) {
+        root.clearTimeout(timeoutId);
+      }
       if (!result?.ok) {
         return sanitizeOcrFailure(result?.status || "ocr_failed", result?.status || "ocr_failed");
       }
       return sanitizeOcrSuccess(result);
     } catch {
+      if (!timedOut && timeoutId !== null) {
+        root.clearTimeout(timeoutId);
+      }
       return sanitizeOcrFailure("ocr_failed", "ocr_failed");
     }
   }

@@ -391,6 +391,12 @@
         activeWorker.onmessage = null;
         activeWorker.onerror = null;
         workerStatus = "recognition_timeout";
+        if (typeof activeWorker.terminate === "function") {
+          activeWorker.terminate();
+        }
+        if (worker === activeWorker) {
+          worker = null;
+        }
         reject(new Error("OCR image recognition timed out."));
       }, 20000);
 
