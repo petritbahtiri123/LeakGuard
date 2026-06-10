@@ -13,8 +13,8 @@
   function getStatus() {
     return {
       available: isAvailable(),
-      status: "not_implemented",
-      ocrImplemented: false,
+      status: "scanner_page_v1",
+      ocrImplemented: true,
       workerStatus
     };
   }
@@ -326,7 +326,7 @@
         const result = {
           ok: response.ok === true,
           status: response.status || workerStatus,
-          ocrImplemented: false,
+          ocrImplemented: response.ocrImplemented === true,
           language: response.language || "eng",
           textLength: Number(response.textLength || 0),
           containsExpectedText: response.containsExpectedText === true,
@@ -350,6 +350,79 @@
     });
   }
 
+  function sanitizeRecognitionResponse(response) {
+    const result = {
+      ok: response?.ok === true,
+      status: response?.status || "ocr_recognition_blocked",
+      language: response?.language === "eng" ? "eng" : "eng",
+      text: String(response?.text || ""),
+      textLength: Number(response?.textLength || String(response?.text || "").length),
+      confidenceBucket: response?.confidenceBucket || "unknown",
+      warnings: Array.isArray(response?.warnings) ? response.warnings.map(String).filter(Boolean) : []
+    };
+    if (!result.ok) {
+      delete result.text;
+      result.textLength = 0;
+    }
+    if (response?.reason) {
+      result.reason = response.reason;
+    }
+    return result;
+  }
+
+  function recognizeImageBytes(payload = {}) {
+    if (!isAvailable()) {
+      return Promise.resolve({
+        ok: false,
+        status: "worker_unavailable",
+        language: "eng",
+        textLength: 0,
+        confidenceBucket: "unknown",
+        warnings: ["worker_api_unavailable"],
+        reason: "worker_api_unavailable"
+      });
+    }
+
+    workerStatus = "recognizing_image";
+    const activeWorker = getWorker();
+
+    return new Promise((resolve, reject) => {
+      const timeout = root.setTimeout(() => {
+        activeWorker.onmessage = null;
+        activeWorker.onerror = null;
+        workerStatus = "recognition_timeout";
+        reject(new Error("OCR image recognition timed out."));
+      }, 20000);
+
+      activeWorker.onmessage = (event) => {
+        root.clearTimeout(timeout);
+        activeWorker.onmessage = null;
+        activeWorker.onerror = null;
+        const response = event?.data || {};
+        workerStatus =
+          response.status === "ocr_recognition_ready" || response.status === "ocr_recognition_blocked"
+            ? response.status
+            : "unexpected_response";
+        resolve(sanitizeRecognitionResponse(response));
+      };
+
+      activeWorker.onerror = () => {
+        root.clearTimeout(timeout);
+        activeWorker.onmessage = null;
+        activeWorker.onerror = null;
+        workerStatus = "worker_error";
+        reject(new Error("OCR image recognition failed."));
+      };
+
+      activeWorker.postMessage({
+        type: "ocr_recognize_image",
+        language: "eng",
+        imageBytes: payload.imageBytes,
+        mimeType: payload.mimeType
+      });
+    });
+  }
+
   function terminate() {
     if (worker && typeof worker.terminate === "function") {
       worker.terminate();
@@ -367,6 +440,7 @@
     createTesseractCoreProbe,
     createLanguageProbe,
     createRecognitionProbe,
+    recognizeImageBytes,
     terminate
   };
 

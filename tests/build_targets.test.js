@@ -403,11 +403,25 @@ async function assertOcrRuntimeProbeShell(targetRoot) {
           data: {
             ok: true,
             status: "ocr_recognition_ready",
-            ocrImplemented: false,
+            ocrImplemented: true,
             language: "eng",
             textLength: 8,
             containsExpectedText: true,
             confidenceBucket: "high"
+          }
+        });
+        return;
+      }
+      if (message?.type === "ocr_recognize_image") {
+        this.onmessage?.({
+          data: {
+            ok: true,
+            status: "ocr_recognition_ready",
+            language: "eng",
+            text: "API_KEY=sk-proj-LeakGuardScannerOcrApiKey1234567890abcdef",
+            textLength: 61,
+            confidenceBucket: "high",
+            warnings: []
           }
         });
         return;
@@ -432,9 +446,9 @@ async function assertOcrRuntimeProbeShell(targetRoot) {
       PWM_BUILD_INFO: {
         features: {
           ocr: {
-            enabled: false,
-            status: "disabled",
-            reason: "ocr_runtime_not_implemented"
+            enabled: true,
+            status: "scanner_page_v1",
+            scope: "scanner_image_english_only"
           }
         }
       },
@@ -462,11 +476,11 @@ async function assertOcrRuntimeProbeShell(targetRoot) {
     plainObject(runtime.getStatus()),
     {
       available: true,
-      status: "not_implemented",
-      ocrImplemented: false,
+      status: "scanner_page_v1",
+      ocrImplemented: true,
       workerStatus: "idle"
     },
-    "OCR runtime shell should report not-implemented idle status before probing"
+    "OCR runtime shell should report scanner-page v1 idle status before probing"
   );
   assert.strictEqual(createdWorkers.length, 0, "OCR runtime should not create a worker before an explicit probe");
 
@@ -570,7 +584,7 @@ async function assertOcrRuntimeProbeShell(targetRoot) {
     {
       ok: true,
       status: "ocr_recognition_ready",
-      ocrImplemented: false,
+      ocrImplemented: true,
       language: "eng",
       textLength: 8,
       containsExpectedText: true,
@@ -589,6 +603,36 @@ async function assertOcrRuntimeProbeShell(targetRoot) {
       { type: "ocr_recognition_probe" }
     ],
     "Synthetic OCR recognition proof should remain explicit-only and separate from engine probing"
+  );
+
+  const imageBytes = new Uint8Array([137, 80, 78, 71]);
+  const imageRecognition = plainObject(await runtime.recognizeImageBytes({
+    type: "ocr_recognize_image",
+    language: "eng",
+    imageBytes,
+    mimeType: "image/png"
+  }));
+  assert.deepStrictEqual(
+    imageRecognition,
+    {
+      ok: true,
+      status: "ocr_recognition_ready",
+      language: "eng",
+      text: "API_KEY=sk-proj-LeakGuardScannerOcrApiKey1234567890abcdef",
+      textLength: 61,
+      confidenceBucket: "high",
+      warnings: []
+    },
+    "Scanner OCR runtime should return raw OCR text only for the explicit image-recognition message"
+  );
+  const lastImageMessage = createdWorkers[0].messages.at(-1);
+  assert.strictEqual(lastImageMessage.type, "ocr_recognize_image");
+  assert.strictEqual(lastImageMessage.language, "eng");
+  assert.strictEqual(lastImageMessage.mimeType, "image/png");
+  assert.deepStrictEqual(
+    Array.from(lastImageMessage.imageBytes),
+    Array.from(imageBytes),
+    "Scanner OCR runtime should send only the explicit scanner image-recognition payload"
   );
 
   runtime.terminate();
@@ -776,6 +820,15 @@ async function assertOcrWorkerEngineProof(targetRoot) {
   });
   await sandbox.self.onmessage({
     data: {
+      type: "ocr_recognize_image",
+      language: "eng",
+      imageBytes: syntheticFixtureBytes,
+      mimeType: "image/png",
+      userText: "must-not-be-read"
+    }
+  });
+  await sandbox.self.onmessage({
+    data: {
       type: "ocr_language_probe",
       language: "deu"
     }
@@ -828,11 +881,20 @@ async function assertOcrWorkerEngineProof(targetRoot) {
       {
         ok: true,
         status: "ocr_recognition_ready",
-        ocrImplemented: false,
+        ocrImplemented: true,
         language: "eng",
         textLength: 8,
         containsExpectedText: true,
         confidenceBucket: "high"
+      },
+      {
+        ok: true,
+        status: "ocr_recognition_ready",
+        language: "eng",
+        text: "TEST OCR",
+        textLength: 8,
+        confidenceBucket: "high",
+        warnings: []
       },
       {
         ok: false,
@@ -844,9 +906,11 @@ async function assertOcrWorkerEngineProof(targetRoot) {
     "OCR worker should keep probes metadata-only, prove WASM/core/English language/fixture recognition, and report engine_blocked"
   );
   assert.strictEqual(
-    postedMessages.some((message) => Object.prototype.hasOwnProperty.call(message, "text")),
+    postedMessages
+      .filter((message) => message.status !== "ocr_recognition_ready" || message.containsExpectedText === true)
+      .some((message) => Object.prototype.hasOwnProperty.call(message, "text")),
     false,
-    "OCR recognition proof must not post raw OCR text"
+    "OCR probe messages must not post raw OCR text"
   );
 }
 
@@ -915,16 +979,16 @@ function assertOcrWorkerStaticSafety(targetRoot) {
   assert.strictEqual(
     /event\.data\.(?:imageData|pixels|userText|bitmap|canvas)/i.test(workerSource),
     false,
-    "OCR recognition proof worker should not process user-provided image or user data fields"
+    "OCR worker should ignore probe-only user data fields"
   );
   assert.ok(
     workerSource.includes("fixtures/synthetic-test-ocr.png"),
-    "OCR recognition proof worker should use only the packaged synthetic fixture"
+    "OCR recognition proof worker should keep using the packaged synthetic fixture"
   );
   assert.strictEqual(
-    /postMessage\s*\([^)]*\btext\b/i.test(workerSource),
+    /ocr_recognition_probe[\s\S]*?postMessage\s*\([^)]*\btext\b/i.test(workerSource),
     false,
-    "OCR recognition proof worker should not post raw OCR text"
+    "OCR recognition probe path should not post raw OCR text"
   );
 
   for (const relativePath of [...tesseractCoreProofFiles, ...englishLanguageProofFiles]) {
@@ -1106,11 +1170,11 @@ async function run() {
   assert.deepStrictEqual(
     consumerBuildInfo.features?.ocr,
     {
-      enabled: false,
-      status: "disabled",
-      reason: "ocr_runtime_not_implemented"
+      enabled: true,
+      status: "scanner_page_v1",
+      scope: "scanner_image_english_only"
     },
-    "default consumer build should keep OCR disabled"
+    "default consumer build should enable scanner-page OCR v1 only"
   );
   assert.strictEqual(chromeEnterpriseBuildInfo.enterprise, true, "chrome enterprise build should mark enterprise");
   assert.strictEqual(
@@ -1123,11 +1187,11 @@ async function run() {
     assert.deepStrictEqual(
       buildInfo.features?.ocr,
       {
-        enabled: false,
-        status: "disabled",
-        reason: "ocr_runtime_not_implemented"
+        enabled: true,
+        status: "scanner_page_v1",
+        scope: "scanner_image_english_only"
       },
-      `${target} should keep OCR disabled metadata`
+      `${target} should report scanner-page OCR v1 metadata`
     );
     await assertOcrRuntimeProbeShell(path.join(repoRoot, "dist", target));
     await assertOcrWorkerEngineProof(path.join(repoRoot, "dist", target));
@@ -1150,9 +1214,14 @@ async function run() {
   const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
   const scannerHtml = fs.readFileSync(path.join(repoRoot, "dist/chrome/scanner/scanner.html"), "utf8");
   assert.ok(
-    scannerHtml.includes("OCR, visual text scanning") &&
-      scannerHtml.includes("are not enabled in this release"),
-    "scanner UI should continue to say OCR and visual text scanning are not enabled"
+    scannerHtml.includes("Image OCR is English-only") &&
+      scannerHtml.includes("scanned locally") &&
+      scannerHtml.includes("limited to image files on this scanner page") &&
+      scannerHtml.includes("Scanned PDF OCR") &&
+      scannerHtml.includes("image redaction") &&
+      scannerHtml.includes("image rebuild") &&
+      scannerHtml.includes("protected-site upload OCR"),
+    "scanner UI should scope OCR to local English image scanning and explicitly exclude scanned PDFs, image rebuild/redaction, and protected-site OCR"
   );
   for (const [target, manifest] of [
     ["chrome", chromeManifest],

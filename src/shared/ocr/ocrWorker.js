@@ -265,7 +265,7 @@ async function recognizeSyntheticFixture() {
     return {
       ok: false,
       status: "ocr_recognition_blocked",
-      ocrImplemented: false,
+      ocrImplemented: true,
       language: "eng",
       reason: language.reason || "language_not_ready"
     };
@@ -276,7 +276,7 @@ async function recognizeSyntheticFixture() {
     return {
       ok: false,
       status: "ocr_recognition_blocked",
-      ocrImplemented: false,
+      ocrImplemented: true,
       language: "eng",
       reason: core.reason
     };
@@ -288,7 +288,7 @@ async function recognizeSyntheticFixture() {
     return {
       ok: true,
       status: "ocr_recognition_ready",
-      ocrImplemented: false,
+      ocrImplemented: true,
       language: "eng",
       textLength: result.textLength,
       containsExpectedText: result.containsExpectedText,
@@ -298,7 +298,7 @@ async function recognizeSyntheticFixture() {
     return {
       ok: false,
       status: "ocr_recognition_blocked",
-      ocrImplemented: false,
+      ocrImplemented: true,
       language: "eng",
       reason: classifyRecognitionError(error)
     };
@@ -388,6 +388,156 @@ function classifyRecognitionError(error) {
   return error?.message || error?.name || "recognition_load_failed";
 }
 
+function isSupportedScannerImageMimeType(mimeType) {
+  return /^(?:image\/png|image\/jpeg|image\/webp)$/i.test(String(mimeType || ""));
+}
+
+function toUint8Array(value) {
+  if (value instanceof Uint8Array) return value;
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  if (ArrayBuffer.isView(value)) {
+    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  }
+  return null;
+}
+
+async function decodeImageBytesToPixels(imageBytes, mimeType) {
+  if (typeof createImageBitmap !== "function" || typeof OffscreenCanvas !== "function" || typeof Blob !== "function") {
+    throw new Error("image_decode_api_unavailable");
+  }
+  if (!isSupportedScannerImageMimeType(mimeType)) {
+    throw new Error("unsupported_image_mime_type");
+  }
+
+  const bytes = toUint8Array(imageBytes);
+  if (!bytes || !bytes.byteLength) {
+    throw new Error("image_bytes_unavailable");
+  }
+
+  const bitmap = await createImageBitmap(new Blob([bytes], { type: mimeType }));
+  try {
+    const width = Number(bitmap.width || 0);
+    const height = Number(bitmap.height || 0);
+    if (!width || !height || width > 4096 || height > 4096 || width * height > 12 * 1000 * 1000) {
+      throw new Error("image_dimensions_too_large");
+    }
+
+    const canvas = new OffscreenCanvas(width, height);
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) {
+      throw new Error("image_canvas_context_unavailable");
+    }
+    context.drawImage(bitmap, 0, 0);
+    const pixels = context.getImageData(0, 0, width, height).data;
+    return {
+      width,
+      height,
+      grayscale: rgbaToGrayscale(pixels)
+    };
+  } finally {
+    if (typeof bitmap.close === "function") {
+      bitmap.close();
+    }
+  }
+}
+
+function recognizeScannerImage(module, image) {
+  const api = new module.TessBaseAPI();
+  const pointer = module._malloc(image.grayscale.length);
+  try {
+    module.HEAPU8.set(image.grayscale, pointer);
+    if (api.Init("/tessdata", "eng") !== 0) {
+      throw new Error("recognition_init_failed");
+    }
+    api.SetPageSegMode(6);
+    api.SetImage(pointer, image.width, image.height, 1, image.width);
+    api.SetSourceResolution(300);
+    if (api.Recognize(null) !== 0) {
+      throw new Error("recognition_failed");
+    }
+    const text = String(api.GetUTF8Text() || "").trim();
+    const confidence = Number(api.MeanTextConf() || 0);
+    return {
+      text,
+      textLength: text.length,
+      confidenceBucket: bucketConfidence(confidence)
+    };
+  } finally {
+    try {
+      api.End();
+    } catch {}
+    if (typeof api.__destroy__ === "function") {
+      api.__destroy__();
+    }
+    module._free(pointer);
+  }
+}
+
+async function recognizeScannerImageBytes(message) {
+  if (message?.language !== "eng") {
+    return {
+      ok: false,
+      status: "ocr_recognition_blocked",
+      language: String(message?.language || ""),
+      textLength: 0,
+      confidenceBucket: "unknown",
+      warnings: ["unsupported_language"],
+      reason: "unsupported_language"
+    };
+  }
+
+  const language = await runLanguageProbe("eng");
+  if (!language.ok) {
+    return {
+      ok: false,
+      status: "ocr_recognition_blocked",
+      language: "eng",
+      textLength: 0,
+      confidenceBucket: "unknown",
+      warnings: [language.reason || "language_not_ready"],
+      reason: language.reason || "language_not_ready"
+    };
+  }
+
+  const core = await getTesseractCoreModule();
+  if (!core.ok) {
+    return {
+      ok: false,
+      status: "ocr_recognition_blocked",
+      language: "eng",
+      textLength: 0,
+      confidenceBucket: "unknown",
+      warnings: [core.reason || "core_not_ready"],
+      reason: core.reason || "core_not_ready"
+    };
+  }
+
+  try {
+    const image = await decodeImageBytesToPixels(message?.imageBytes, message?.mimeType);
+    const result = recognizeScannerImage(core.module, image);
+    return {
+      ok: true,
+      status: "ocr_recognition_ready",
+      language: "eng",
+      text: result.text,
+      textLength: result.textLength,
+      confidenceBucket: result.confidenceBucket,
+      warnings: []
+    };
+  } catch (error) {
+    const reason = classifyRecognitionError(error);
+    return {
+      ok: false,
+      status: "ocr_recognition_blocked",
+      language: "eng",
+      textLength: 0,
+      confidenceBucket: "unknown",
+      warnings: [reason],
+      reason
+    };
+  }
+}
+
 self.onmessage = async (event) => {
   if (event?.data?.type === "ocr_probe") {
     self.postMessage({
@@ -415,6 +565,11 @@ self.onmessage = async (event) => {
 
   if (event?.data?.type === "ocr_recognition_probe") {
     self.postMessage(await runRecognitionProbe());
+    return;
+  }
+
+  if (event?.data?.type === "ocr_recognize_image") {
+    self.postMessage(await recognizeScannerImageBytes(event.data));
     return;
   }
 

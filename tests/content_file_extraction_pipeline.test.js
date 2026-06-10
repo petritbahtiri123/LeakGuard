@@ -263,6 +263,17 @@ async function testImageMetadataProducesRedactedTxtOutput() {
   assert.ok(result.warnings.includes("image_ocr_not_supported"));
 }
 
+function testProtectedSiteImageAttachDoesNotUseScannerOcr() {
+  const source = fs.readFileSync(
+    path.join(repoRoot, "src/content/files/contentFileExtractionPipeline.js"),
+    "utf8"
+  );
+
+  assert.strictEqual(source.includes("ScannerOcr"), false);
+  assert.strictEqual(source.includes("OcrRuntime"), false);
+  assert.strictEqual(source.includes("ocr_recognize_image"), false);
+}
+
 async function testScannedPdfFailsClosedWithoutSanitizedFile() {
   const file = fileFromBuffer("scan.pdf", "application/pdf", makePdf("", { imageOnly: true }));
   const result = await processFileForAdapterHandoff({ file, context: "drop" });
@@ -566,6 +577,7 @@ async function run() {
   await testDocxProducesRedactedTxtOutput();
   await testXlsxProducesRedactedTxtOutput();
   await testImageMetadataProducesRedactedTxtOutput();
+  testProtectedSiteImageAttachDoesNotUseScannerOcr();
   await testScannedPdfFailsClosedWithoutSanitizedFile();
   await testMacroAndLegacyFormatsStayUnsupported();
   await testDebugMetadataExcludesRawExtractedText();

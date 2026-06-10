@@ -1,6 +1,7 @@
 (function () {
   const scanner = globalThis.PWM?.FileScanner;
   const extractors = globalThis.PWM?.FileExtractors;
+  const scannerOcr = globalThis.PWM?.ScannerOcr;
 
   if (!scanner) {
     throw new Error("LeakGuard File Scanner failed to initialize.");
@@ -179,6 +180,20 @@
       mimeType: file.type
     });
 
+    if (routedExtraction?.kind === "image_metadata" && scannerOcr?.validateScannerOcrImage) {
+      const imageValidation = scannerOcr.validateScannerOcrImage({
+        fileName: file.name,
+        mimeType: file.type,
+        sizeBytes: file.size
+      });
+      if (!imageValidation.ok) {
+        return {
+          ok: false,
+          message: imageValidation.message
+        };
+      }
+    }
+
     if (!scanner.isSupportedTextFile(file.name, file.type) && !isExtractedFile(routedExtraction)) {
       return {
         ok: false,
@@ -247,6 +262,51 @@
     return "LeakGuard could not find extractable text in this PDF. Scanned-image PDFs and OCR are not supported in this release.";
   }
 
+  function scanExtractedText(extraction, text, sizeBytes) {
+    return scanner.scanTextContent({
+      fileName: selectedFile.name,
+      mimeType: selectedFile.type,
+      sizeBytes,
+      text,
+      extractedText: isExtractedFile(extraction),
+      mode: "hide_public"
+    });
+  }
+
+  async function scanImageWithOcr(extraction) {
+    if (!scannerOcr?.recognizeScannerImageFile || !scannerOcr?.buildScannerOcrScanText) {
+      const metadataOnly = scanExtractedText(extraction, extraction.text, extraction.metadata.textLength);
+      renderResult(metadataOnly);
+      setStatus("Image metadata scanned, but local English OCR is unavailable. Visible text inside the image was not scanned.", "error");
+      return;
+    }
+
+    setStatus("Scanning image metadata and running local English OCR...", "");
+    const ocr = await scannerOcr.recognizeScannerImageFile(selectedFile, {
+      runtime: globalThis.PWM?.OcrRuntime,
+      readDimensions: true
+    });
+
+    if (!ocr.ok) {
+      const metadataOnly = scanExtractedText(extraction, extraction.text, extraction.metadata.textLength);
+      renderResult(metadataOnly);
+      setStatus("Image metadata scanned, but English OCR did not complete. Visible text inside the image was not scanned.", "error");
+      return;
+    }
+
+    const combinedText = scannerOcr.buildScannerOcrScanText({
+      metadataText: extraction.text,
+      ocrText: ocr.text,
+      ocrMetadata: ocr
+    });
+    const result = scanExtractedText(extraction, combinedText, combinedText.length);
+    if (Array.isArray(ocr.warnings) && ocr.warnings.length) {
+      result.reportWarnings.push(...ocr.warnings.map((warning) => `ocr:${warning}`));
+    }
+    renderResult(result);
+    setStatus("Scan complete. English OCR ran locally for this image. Exports are generated only when you click a download button.", "success");
+  }
+
   async function scanSelectedFile() {
     const metadataValidation = validateSelectedFile(selectedFile);
     if (!metadataValidation.ok) {
@@ -292,23 +352,21 @@
       return;
     }
 
+    if (extraction.kind === "image_metadata") {
+      await scanImageWithOcr(extraction);
+      scanBtn.disabled = false;
+      return;
+    }
+
     const extractedFile = isExtractedFile(extraction);
     const text = extractedFile ? extraction.text : scanner.decodeUtf8Text(buffer);
-    const result = scanner.scanTextContent({
-      fileName: selectedFile.name,
-      mimeType: selectedFile.type,
-      sizeBytes: extractedFile ? extraction.metadata.textLength : selectedFile.size,
+    const result = scanExtractedText(
+      extraction,
       text,
-      extractedText: extractedFile,
-      mode: "hide_public"
-    });
-
+      extractedFile ? extraction.metadata.textLength : selectedFile.size
+    );
     renderResult(result);
-    if (extraction.kind === "image_metadata" && result.summary.findingsCount === 0) {
-      setStatus("No image metadata findings. Image OCR is not supported yet, so visible text inside images was not scanned.", "success");
-    } else {
-      setStatus("Scan complete. Exports are generated only when you click a download button.", "success");
-    }
+    setStatus("Scan complete. Exports are generated only when you click a download button.", "success");
     scanBtn.disabled = false;
   }
 

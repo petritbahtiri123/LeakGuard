@@ -1085,7 +1085,7 @@ async function runFirefoxOcrWasmProbeQa(webdriver, extensionOrigin) {
   assert.deepEqual(result.recognition, {
     ok: true,
     status: "ocr_recognition_ready",
-    ocrImplemented: false,
+    ocrImplemented: true,
     language: "eng",
     textLength: 8,
     containsExpectedText: true,

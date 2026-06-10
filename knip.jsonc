@@ -43,10 +43,10 @@
     "src/shared/protected_sites.js",
     "src/shared/policy.js",
 
-    // Scanner-only OCR worker proof shell. These are packaged classic scripts
-    // for future explicit scanner probes, not imported as modules.
+    // Scanner-only OCR classic scripts are loaded from scanner.html, not modules.
     "src/shared/ocr/ocrRuntime.js",
     "src/shared/ocr/ocrWorker.js",
+    "src/shared/scannerOcr.js",
 
     "src/content/composer_helpers.js",
     "src/content/file_paste_helpers.js",

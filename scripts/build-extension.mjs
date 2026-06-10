@@ -319,9 +319,9 @@ function buildInfoSource({ browser, mode, builtAt }) {
   enterprise: ${enterprise},
   features: Object.freeze({
     ocr: Object.freeze({
-      enabled: false,
-      status: "disabled",
-      reason: "ocr_runtime_not_implemented"
+      enabled: true,
+      status: "scanner_page_v1",
+      scope: "scanner_image_english_only"
     })
   }),
   target: ${JSON.stringify(target)},

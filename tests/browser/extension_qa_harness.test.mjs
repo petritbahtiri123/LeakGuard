@@ -1168,13 +1168,14 @@ async function runScannerQa(connection, extensionId, tempDir) {
           clicked = true;
           scanButton.click();
         }
-        if (/Scan complete/i.test(status) && /file_name=image-\\[PWM_\\d+\\]\\.png/.test(preview)) {
+        if (/Image metadata scanned/i.test(status) && /Visible text inside the image was not scanned/i.test(status) && /file_name=image-\\[PWM_\\d+\\]\\.png/.test(preview)) {
           clearInterval(timer);
           resolve({
             status,
             hasRaw: preview.includes(rawSecret),
             redacted: /file_name=image-\\[PWM_\\d+\\]\\.png/.test(preview),
-            noOcrClaim: /visual_text_scanned=false/.test(preview)
+            noOcrClaim: /visual_text_scanned=false/.test(preview),
+            ocrFailedSafely: /English OCR did not complete/i.test(status)
           });
         } else if (Date.now() - started > 15000) {
           clearInterval(timer);
@@ -1190,6 +1191,7 @@ async function runScannerQa(connection, extensionId, tempDir) {
   assert.equal(imageMetadata.hasRaw, false, "scanner image metadata preview must not expose raw filename secrets");
   assert.equal(imageMetadata.redacted, true, "scanner should redact image filename metadata findings");
   assert.equal(imageMetadata.noOcrClaim, true, "scanner should mark visual text as unscanned");
+  assert.equal(imageMetadata.ocrFailedSafely, true, "scanner should not treat invalid-image OCR failure as a visual-text scan");
 
   await evaluate(connection, scanner.sessionId, "document.querySelector('#clear-btn').click()");
   await waitFor(
