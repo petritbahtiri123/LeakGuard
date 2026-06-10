@@ -61,6 +61,7 @@ const CONTENT_SCRIPT_FILES = [
   "content/file_handoff_flow.js",
   "content/input/rewriteVerificationText.js",
   "content/files/fileTransferPolicy.js",
+  "content/files/fileExtractionSessionCache.js",
   "content/files/contentFileExtractionPipeline.js",
   "content/adapters/hostMatching.js",
   "content/adapters/chatgptAdapter.js",

@@ -375,6 +375,7 @@ async function run() {
   const fileHandoffFlowIndex = contentScripts.indexOf("content/file_handoff_flow.js");
   const rewriteVerificationTextIndex = contentScripts.indexOf("content/input/rewriteVerificationText.js");
   const fileTransferPolicyIndex = contentScripts.indexOf("content/files/fileTransferPolicy.js");
+  const fileExtractionSessionCacheIndex = contentScripts.indexOf("content/files/fileExtractionSessionCache.js");
   const contentFileExtractionPipelineIndex = contentScripts.indexOf("content/files/contentFileExtractionPipeline.js");
   const hostMatchingIndex = contentScripts.indexOf("content/adapters/hostMatching.js");
   const adapterScripts = [
@@ -414,6 +415,7 @@ async function run() {
   assert.ok(fileHandoffFlowIndex > -1, "content scripts should include file handoff flow helpers");
   assert.ok(rewriteVerificationTextIndex > -1, "content scripts should include rewrite verification text helpers");
   assert.ok(fileTransferPolicyIndex > -1, "content scripts should include file transfer policy helpers");
+  assert.ok(fileExtractionSessionCacheIndex > -1, "content scripts should include file extraction session cache helpers");
   assert.ok(
     contentFileExtractionPipelineIndex > -1,
     "content scripts should include content file extraction pipeline helpers"
@@ -442,7 +444,8 @@ async function run() {
       fileHandoffPendingIndex < fileHandoffFlowIndex &&
       fileHandoffFlowIndex < rewriteVerificationTextIndex &&
       rewriteVerificationTextIndex < fileTransferPolicyIndex &&
-      fileTransferPolicyIndex < contentFileExtractionPipelineIndex &&
+      fileTransferPolicyIndex < fileExtractionSessionCacheIndex &&
+      fileExtractionSessionCacheIndex < contentFileExtractionPipelineIndex &&
       contentFileExtractionPipelineIndex < hostMatchingIndex &&
       hostMatchingIndex < adapterIndexes[0] &&
       adapterOrderAligned &&

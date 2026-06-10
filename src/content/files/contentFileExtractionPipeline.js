@@ -17,6 +17,10 @@
     return root.PWM.FileScanner || {};
   }
 
+  function getSessionCache() {
+    return root.PWM.FileExtractionSessionCache || {};
+  }
+
   function normalizeFileName(fileName) {
     const registry = getRegistry();
     if (typeof registry.normalizeFileName === "function") return registry.normalizeFileName(fileName);
@@ -171,6 +175,7 @@
     const sizeBytes = Math.max(0, Number(file?.size || 0));
     const extractors = getExtractors();
     const scanner = getScanner();
+    const sessionCache = getSessionCache();
 
     if (
       !file ||
@@ -183,6 +188,35 @@
         sizeBytes,
         fallbackReason: "content_file_pipeline_unavailable"
       });
+    }
+
+    if (typeof sessionCache.get === "function") {
+      const cached = sessionCache.get(file);
+      if (cached?.status === "ready" && cached.safeForUpload === true) {
+        const sanitizedFile = createTextFile(
+          String(cached.sanitizedText || ""),
+          cached.outputName,
+          cached.outputKind === "redacted_text_file" ? "text/plain" : mimeType || "text/plain"
+        );
+        if (sanitizedFile) {
+          return {
+            ...cached,
+            originalName,
+            sanitizedFile,
+            metadata: {
+              ...(cached.metadata || {}),
+              original: {
+                ...((cached.metadata || {}).original || {}),
+                type: mimeType,
+                size: sizeBytes
+              },
+              cache: {
+                status: "hit"
+              }
+            }
+          };
+        }
+      }
     }
 
     let buffer;
@@ -278,7 +312,7 @@
       });
     }
 
-    return {
+    const result = {
       status: "ready",
       originalName,
       outputName,
@@ -303,6 +337,14 @@
       safeForUpload: true,
       fallbackReason: ""
     };
+
+    result.metadata.cache = {
+      status: "miss"
+    };
+    if (typeof sessionCache.set === "function") {
+      sessionCache.set(file, result);
+    }
+    return result;
   }
 
   root.PWM.ContentFileExtractionPipeline = {

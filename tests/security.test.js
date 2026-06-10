@@ -48,6 +48,7 @@ const fileAttachPipelineSource = fs.readFileSync(
   "utf8"
 );
 const popupSource = fs.readFileSync(path.join(repoRoot, "src/popup/popup.js"), "utf8");
+const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
 const harnessSource = fs.readFileSync(
   path.join(repoRoot, "sandbox/composer-harness.js"),
   "utf8"
@@ -66,6 +67,21 @@ const {
 
 function assertNotIncludes(source, needle, message) {
   assert.strictEqual(source.includes(needle), false, message);
+}
+
+function walkFiles(dir) {
+  if (!fs.existsSync(dir)) return [];
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  const files = [];
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...walkFiles(fullPath));
+    } else if (entry.isFile()) {
+      files.push(fullPath);
+    }
+  }
+  return files;
 }
 
 function extractFunctionSource(source, name) {
@@ -620,7 +636,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const staticScripts = baseManifest.content_scripts[0].js;
   const dynamicScripts = Array.from(
     backgroundSource.matchAll(
-      /"([^"]+(?:fileLimits|fileTypeRegistry|fileExtractors|fileScanner|file_paste_helpers|file_handoff_state|file_handoff_pending|file_handoff_flow|rewriteVerificationText|fileTransferPolicy|contentFileExtractionPipeline|hostMatching|chatgptAdapter|openaiAdapter|geminiDiagnosticsAdapter|geminiAdapter|claudeAdapter|grokAdapter|xAdapter|index|geminiFallbackWriter|safeSnapshots|fileAttachPipeline|placeholderRehydrator|responseObserver|revealController|debugLogger|eventBindings|content)\.js)"/g
+      /"([^"]+(?:fileLimits|fileTypeRegistry|fileExtractors|fileScanner|file_paste_helpers|file_handoff_state|file_handoff_pending|file_handoff_flow|rewriteVerificationText|fileTransferPolicy|fileExtractionSessionCache|contentFileExtractionPipeline|hostMatching|chatgptAdapter|openaiAdapter|geminiDiagnosticsAdapter|geminiAdapter|claudeAdapter|grokAdapter|xAdapter|index|geminiFallbackWriter|safeSnapshots|fileAttachPipeline|placeholderRehydrator|responseObserver|revealController|debugLogger|eventBindings|content)\.js)"/g
     )
   ).map((match) => match[1]);
   const adapterScripts = [
@@ -643,6 +659,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const staticFileHandoffFlow = staticScripts.indexOf("content/file_handoff_flow.js");
   const staticRewriteVerificationText = staticScripts.indexOf("content/input/rewriteVerificationText.js");
   const staticFileTransferPolicy = staticScripts.indexOf("content/files/fileTransferPolicy.js");
+  const staticFileExtractionSessionCache = staticScripts.indexOf("content/files/fileExtractionSessionCache.js");
   const staticContentFileExtractionPipeline = staticScripts.indexOf("content/files/contentFileExtractionPipeline.js");
   const staticHostMatching = staticScripts.indexOf("content/adapters/hostMatching.js");
   const staticAdapterIndexes = adapterScripts.map((script) => staticScripts.indexOf(script));
@@ -665,6 +682,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const dynamicFileHandoffFlow = dynamicScripts.indexOf("content/file_handoff_flow.js");
   const dynamicRewriteVerificationText = dynamicScripts.indexOf("content/input/rewriteVerificationText.js");
   const dynamicFileTransferPolicy = dynamicScripts.indexOf("content/files/fileTransferPolicy.js");
+  const dynamicFileExtractionSessionCache = dynamicScripts.indexOf("content/files/fileExtractionSessionCache.js");
   const dynamicContentFileExtractionPipeline = dynamicScripts.indexOf("content/files/contentFileExtractionPipeline.js");
   const dynamicHostMatching = dynamicScripts.indexOf("content/adapters/hostMatching.js");
   const dynamicAdapterIndexes = adapterScripts.map((script) => dynamicScripts.indexOf(script));
@@ -689,6 +707,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       staticFileHandoffFlow > -1 &&
       staticRewriteVerificationText > -1 &&
       staticFileTransferPolicy > -1 &&
+      staticFileExtractionSessionCache > -1 &&
       staticContentFileExtractionPipeline > -1 &&
       staticHostMatching > -1 &&
       staticAdapterIndexes.every((index) => index > -1) &&
@@ -714,6 +733,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       dynamicFileHandoffFlow > -1 &&
       dynamicRewriteVerificationText > -1 &&
       dynamicFileTransferPolicy > -1 &&
+      dynamicFileExtractionSessionCache > -1 &&
       dynamicContentFileExtractionPipeline > -1 &&
       dynamicHostMatching > -1 &&
       dynamicAdapterIndexes.every((index) => index > -1) &&
@@ -744,7 +764,8 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       staticFileHandoffPending < staticFileHandoffFlow &&
       staticFileHandoffFlow < staticRewriteVerificationText &&
       staticRewriteVerificationText < staticFileTransferPolicy &&
-      staticFileTransferPolicy < staticContentFileExtractionPipeline &&
+      staticFileTransferPolicy < staticFileExtractionSessionCache &&
+      staticFileExtractionSessionCache < staticContentFileExtractionPipeline &&
       staticContentFileExtractionPipeline < staticHostMatching &&
       staticHostMatching < staticAdapterIndexes[0] &&
       staticAdapterOrderAligned &&
@@ -769,7 +790,8 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       dynamicFileHandoffPending < dynamicFileHandoffFlow &&
       dynamicFileHandoffFlow < dynamicRewriteVerificationText &&
       dynamicRewriteVerificationText < dynamicFileTransferPolicy &&
-      dynamicFileTransferPolicy < dynamicContentFileExtractionPipeline &&
+      dynamicFileTransferPolicy < dynamicFileExtractionSessionCache &&
+      dynamicFileExtractionSessionCache < dynamicContentFileExtractionPipeline &&
       dynamicContentFileExtractionPipeline < dynamicHostMatching &&
       dynamicHostMatching < dynamicAdapterIndexes[0] &&
       dynamicAdapterOrderAligned &&
@@ -986,6 +1008,7 @@ async function run() {
   testContentRuntimeInvalidationIsHandled();
   testManifestNoLongerExposesRevealUiToWebPages(manifest, runtimeResources);
   testExtensionPagesUseRestrictiveCsp(manifest);
+  testOcrSpikeDoesNotEnterProductionPackage(manifest);
   testPageUiNoLongerLeaksClassificationsOrMaskedFragments();
   testOnlyPwmPlaceholdersRemainCanonical();
   console.log("PASS security hardening static regressions");
@@ -1050,6 +1073,69 @@ function testExtensionPagesUseRestrictiveCsp(manifest) {
     },
     "manifest should lock extension pages to packaged scripts and disallow framing/base overrides"
   );
+}
+
+function testOcrSpikeDoesNotEnterProductionPackage(manifest) {
+  const dependencyNames = Object.keys(packageJson.dependencies || {}).map((name) => name.toLowerCase());
+  for (const forbidden of ["tesseract.js", "tesseract.js-core", "@tesseract.js-data/eng", "ocrad.js"]) {
+    assert.strictEqual(
+      dependencyNames.includes(forbidden),
+      false,
+      `OCR spike package ${forbidden} must not be a production dependency`
+    );
+  }
+
+  assert.deepStrictEqual(
+    manifest.content_security_policy,
+    {
+      extension_pages:
+        "script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none';"
+    },
+    "OCR spike must not weaken extension-page CSP or add unsafe-eval"
+  );
+  assert.strictEqual(
+    String(manifest.content_security_policy?.extension_pages || "").includes("unsafe-eval"),
+    false,
+    "OCR spike must not require unsafe-eval"
+  );
+
+  const productionSources = [
+    contentSource,
+    backgroundSource,
+    fileExtractorsSource,
+    fileScannerSource,
+    scannerSource,
+    fileAttachPipelineSource,
+    popupSource,
+    fs.readFileSync(path.join(repoRoot, "manifests/base.json"), "utf8")
+  ].join("\n").toLowerCase();
+  for (const forbidden of ["tesseract", "ocrad", "traineddata", "cdn.jsdelivr", "unpkg.com"]) {
+    assert.strictEqual(
+      productionSources.includes(forbidden),
+      false,
+      `production runtime source must not include OCR package or remote asset string: ${forbidden}`
+    );
+  }
+
+  const distFiles = walkFiles(path.join(repoRoot, "dist"));
+  for (const file of distFiles) {
+    const relative = path.relative(repoRoot, file).split(path.sep).join("/").toLowerCase();
+    assert.strictEqual(
+      /tesseract|ocrad|traineddata|ocr[-_.].*\.wasm|\.traineddata/.test(relative),
+      false,
+      `dist must not contain OCR runtime asset: ${relative}`
+    );
+    if (/\.(js|json|html|css|txt|md)$/i.test(file)) {
+      const text = fs.readFileSync(file, "utf8").toLowerCase();
+      for (const forbidden of ["tesseract", "ocrad", "traineddata", "cdn.jsdelivr", "unpkg.com"]) {
+        assert.strictEqual(
+          text.includes(forbidden),
+          false,
+          `dist production file must not include OCR package or remote asset string ${forbidden}: ${relative}`
+        );
+      }
+    }
+  }
 }
 
 run().catch((error) => {

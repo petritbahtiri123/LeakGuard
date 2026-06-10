@@ -21,9 +21,11 @@ require(path.join(repoRoot, "src/shared/fileTypeRegistry.js"));
 require(path.join(repoRoot, "src/shared/fileExtractors.js"));
 require(path.join(repoRoot, "src/shared/fileScanner.js"));
 require(path.join(repoRoot, "src/content/file_paste_helpers.js"));
+require(path.join(repoRoot, "src/content/files/fileExtractionSessionCache.js"));
 require(path.join(repoRoot, "src/content/files/contentFileExtractionPipeline.js"));
 
 const { processFileForAdapterHandoff } = globalThis.PWM.ContentFileExtractionPipeline;
+const ExtractionCache = globalThis.PWM.FileExtractionSessionCache;
 
 const RAW_SECRET = "sk-proj-LeakGuardPhaseTenContentPipelineSecret1234567890abcdef";
 
@@ -297,6 +299,258 @@ async function testDebugMetadataExcludesRawExtractedText() {
   assert.strictEqual(metadataJson.includes("token"), false);
 }
 
+async function testSameFileSignatureReusesSafeCachedResult() {
+  ExtractionCache.clear();
+  const file = fileFromBuffer("cached.pdf", "application/pdf", makePdf(`token ${RAW_SECRET}`));
+  const originalPrepare = globalThis.PWM.FileExtractors.prepareFileExtractionAsync;
+  const originalScan = globalThis.PWM.FileScanner.scanTextContent;
+  let prepareCalls = 0;
+  let scanCalls = 0;
+  globalThis.PWM.FileExtractors.prepareFileExtractionAsync = async (...args) => {
+    prepareCalls += 1;
+    return originalPrepare(...args);
+  };
+  globalThis.PWM.FileScanner.scanTextContent = (...args) => {
+    scanCalls += 1;
+    return originalScan(...args);
+  };
+  let first;
+  let second;
+  try {
+    first = await processFileForAdapterHandoff({ file, context: "drop" });
+    second = await processFileForAdapterHandoff({ file, context: "drop" });
+  } finally {
+    globalThis.PWM.FileExtractors.prepareFileExtractionAsync = originalPrepare;
+    globalThis.PWM.FileScanner.scanTextContent = originalScan;
+  }
+
+  assertNormalizedReadyResult(first, {
+    originalName: "cached.pdf",
+    outputName: "cached.redacted.txt",
+    outputKind: "redacted_text_file",
+    extractedKind: "pdf"
+  });
+  assertNormalizedReadyResult(second, {
+    originalName: "cached.pdf",
+    outputName: "cached.redacted.txt",
+    outputKind: "redacted_text_file",
+    extractedKind: "pdf"
+  });
+  assert.strictEqual(first.sanitizedText, second.sanitizedText);
+  assert.notStrictEqual(first.sanitizedFile, second.sanitizedFile);
+  assert.strictEqual(prepareCalls, 1);
+  assert.strictEqual(scanCalls, 1);
+  assert.strictEqual(second.metadata.cache.status, "hit");
+  assert.strictEqual(JSON.stringify(ExtractionCache.debugSnapshot()).includes(RAW_SECRET), false);
+}
+
+async function testChangedSignatureCausesCacheMiss() {
+  ExtractionCache.clear();
+  const firstFile = new TestFile([makePdf(`token ${RAW_SECRET}`)], "same.pdf", {
+    type: "application/pdf",
+    lastModified: 111
+  });
+  const changedFile = new TestFile([makePdf(`token ${RAW_SECRET}`)], "same.pdf", {
+    type: "application/pdf",
+    lastModified: 222
+  });
+
+  const first = await processFileForAdapterHandoff({ file: firstFile, context: "drop" });
+  const second = await processFileForAdapterHandoff({ file: changedFile, context: "drop" });
+
+  assert.strictEqual(first.metadata.cache.status, "miss");
+  assert.strictEqual(second.metadata.cache.status, "miss");
+}
+
+async function testRawFilenameAndExtractedTextAreNotStoredInCache() {
+  ExtractionCache.clear();
+  const file = fileFromBuffer(`contract-${RAW_SECRET}.pdf`, "application/pdf", makePdf(`document body ${RAW_SECRET}`));
+
+  await processFileForAdapterHandoff({ file, context: "drop" });
+  const snapshotJson = JSON.stringify(ExtractionCache.debugSnapshot());
+
+  assert.strictEqual(snapshotJson.includes(RAW_SECRET), false);
+  assert.strictEqual(snapshotJson.includes("document body"), false);
+  assert.strictEqual(snapshotJson.includes("contract-"), false);
+}
+
+async function testBlockedOrUnsupportedFilesAreNotCached() {
+  ExtractionCache.clear();
+  const scannedPdf = fileFromBuffer("scan.pdf", "application/pdf", makePdf("", { imageOnly: true }));
+  const unsupportedDoc = new TestFile(["legacy"], "legacy.doc", { type: "application/msword" });
+
+  await processFileForAdapterHandoff({ file: scannedPdf, context: "drop" });
+  await processFileForAdapterHandoff({ file: unsupportedDoc, context: "drop" });
+
+  assert.strictEqual(ExtractionCache.debugSnapshot().entries.length, 0);
+}
+
+function makeCacheFile(name, options = {}) {
+  return new TestFile(["safe sanitized cache bytes"], name, {
+    type: options.type || "application/pdf",
+    lastModified: options.lastModified || 999
+  });
+}
+
+function makeSafeCacheResult(overrides = {}) {
+  return {
+    status: "ready",
+    outputName: "safe.redacted.txt",
+    outputKind: "redacted_text_file",
+    extractedKind: "pdf",
+    sanitizedText: "API_KEY=[PWM_1]",
+    metadata: {
+      original: {
+        type: "application/pdf",
+        size: 26
+      },
+      extraction: {
+        extension: ".pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 26,
+        textLength: 18,
+        extractedParts: 1
+      },
+      scan: {
+        findingsCount: 1,
+        changed: true,
+        redactedLength: 15
+      }
+    },
+    warnings: [],
+    safeForUpload: true,
+    fallbackReason: "",
+    ...overrides
+  };
+}
+
+function testCacheRefusesRawExtractedTextFields() {
+  ExtractionCache.clear();
+  const unsafeKeys = ["rawText", "extractedText", "originalText", "sourceText", "fileText"];
+
+  for (const key of unsafeKeys) {
+    const result = makeSafeCacheResult({ [key]: RAW_SECRET });
+    assert.strictEqual(ExtractionCache.set(makeCacheFile(`${key}.pdf`), result), false, key);
+  }
+
+  assert.strictEqual(ExtractionCache.debugSnapshot().entries.length, 0);
+}
+
+function testCacheRefusesUnsafeMetadataKeys() {
+  ExtractionCache.clear();
+  const unsafeMetadata = [
+    { rawText: RAW_SECRET },
+    { nested: { extractedText: RAW_SECRET } },
+    { nested: [{ originalText: RAW_SECRET }] },
+    { originalName: `contract-${RAW_SECRET}.pdf` },
+    { content: RAW_SECRET },
+    { bytes: [1, 2, 3] },
+    { arrayBuffer: RAW_SECRET }
+  ];
+
+  for (const [index, metadata] of unsafeMetadata.entries()) {
+    assert.strictEqual(
+      ExtractionCache.set(makeCacheFile(`unsafe-${index}.pdf`), makeSafeCacheResult({ metadata })),
+      false,
+      JSON.stringify(metadata)
+    );
+  }
+
+  assert.strictEqual(ExtractionCache.debugSnapshot().entries.length, 0);
+}
+
+function testCacheRefusesUnsupportedErrorBlockedAndUnsafeOutputs() {
+  ExtractionCache.clear();
+  for (const status of ["unsupported", "failed", "blocked", "error"]) {
+    assert.strictEqual(
+      ExtractionCache.set(makeCacheFile(`${status}.pdf`), makeSafeCacheResult({ status })),
+      false,
+      status
+    );
+  }
+
+  assert.strictEqual(
+    ExtractionCache.set(makeCacheFile("unsafe-output.pdf"), makeSafeCacheResult({ outputName: "unsafe.pdf" })),
+    false
+  );
+  assert.strictEqual(
+    ExtractionCache.set(makeCacheFile("empty-text.pdf"), makeSafeCacheResult({ sanitizedText: "" })),
+    false
+  );
+  assert.strictEqual(ExtractionCache.debugSnapshot().entries.length, 0);
+}
+
+function testCacheAcceptsOnlySafeSanitizedOutputsAndTrimsMaxEntries() {
+  ExtractionCache.clear();
+
+  assert.strictEqual(
+    ExtractionCache.set(makeCacheFile("safe-doc.pdf"), makeSafeCacheResult()),
+    true
+  );
+  assert.strictEqual(
+    ExtractionCache.set(
+      makeCacheFile("safe-ok-doc.pdf", { lastModified: 1000 }),
+      makeSafeCacheResult({ status: "ok", outputName: "safe-ok.redacted.txt" })
+    ),
+    true
+  );
+  assert.strictEqual(
+    ExtractionCache.set(
+      makeCacheFile("safe-text.env", { type: "text/plain", lastModified: 1001 }),
+      makeSafeCacheResult({
+        outputName: "safe-text.env",
+        outputKind: "sanitized_text_file",
+        extractedKind: "text"
+      })
+    ),
+    true
+  );
+
+  ExtractionCache.clear();
+  for (let index = 0; index < 30; index += 1) {
+    assert.strictEqual(
+      ExtractionCache.set(
+        makeCacheFile(`safe-${index}.pdf`, { lastModified: 2000 + index }),
+        makeSafeCacheResult({ outputName: `safe-${index}.redacted.txt` })
+      ),
+      true
+    );
+  }
+
+  const snapshot = ExtractionCache.debugSnapshot();
+  assert.strictEqual(snapshot.entries.length, 24);
+  assert.strictEqual(snapshot.entries.some((entry) => entry.outputName), false);
+}
+
+async function testCacheTtlExpiryAndClear() {
+  ExtractionCache.clear();
+  const originalNow = Date.now;
+  let now = 1000;
+  Date.now = () => now;
+  try {
+    const file = fileFromBuffer("ttl.pdf", "application/pdf", makePdf(`token ${RAW_SECRET}`));
+    await processFileForAdapterHandoff({ file, context: "drop" });
+    assert.strictEqual(ExtractionCache.debugSnapshot().entries.length, 1);
+
+    now += 16 * 60 * 1000;
+    const result = await processFileForAdapterHandoff({ file, context: "drop" });
+    assert.strictEqual(result.metadata.cache.status, "miss");
+
+    ExtractionCache.clear();
+    assert.strictEqual(ExtractionCache.debugSnapshot().entries.length, 0);
+  } finally {
+    Date.now = originalNow;
+  }
+}
+
+function testCacheAvoidsPersistentStorageAndPermissions() {
+  const cacheSource = fs.readFileSync(path.join(repoRoot, "src/content/files/fileExtractionSessionCache.js"), "utf8");
+
+  assert.strictEqual(cacheSource.includes("chrome.storage.local"), false);
+  assert.strictEqual(cacheSource.includes("chrome.storage.sync"), false);
+  assert.strictEqual(cacheSource.includes("chrome.storage.session"), false);
+}
+
 function testExtractionIsNotOnTypingPath() {
   const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
   const beforeInputSource = /async function maybeHandleBeforeInput\(event\) \{([\s\S]*?)\n  async function/.exec(contentSource)?.[1] || "";
@@ -315,6 +569,16 @@ async function run() {
   await testScannedPdfFailsClosedWithoutSanitizedFile();
   await testMacroAndLegacyFormatsStayUnsupported();
   await testDebugMetadataExcludesRawExtractedText();
+  await testSameFileSignatureReusesSafeCachedResult();
+  await testChangedSignatureCausesCacheMiss();
+  await testRawFilenameAndExtractedTextAreNotStoredInCache();
+  await testBlockedOrUnsupportedFilesAreNotCached();
+  testCacheRefusesRawExtractedTextFields();
+  testCacheRefusesUnsafeMetadataKeys();
+  testCacheRefusesUnsupportedErrorBlockedAndUnsafeOutputs();
+  testCacheAcceptsOnlySafeSanitizedOutputsAndTrimsMaxEntries();
+  await testCacheTtlExpiryAndClear();
+  testCacheAvoidsPersistentStorageAndPermissions();
   testExtractionIsNotOnTypingPath();
 }
 
