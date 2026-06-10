@@ -1005,6 +1005,56 @@ async function runFirefoxScannerQa(webdriver, extensionOrigin, tempDir, download
   assert.match(unsupported.status, /OCR are not supported/i);
 }
 
+async function runFirefoxOcrWasmProbeQa(webdriver, extensionOrigin) {
+  await webdriver.navigate(`${extensionOrigin}/scanner/scanner.html`);
+  await waitFor(
+    () => webdriver.execute("return Boolean(document.querySelector('#file-input'));"),
+    "Firefox scanner UI"
+  );
+
+  const result = await webdriver.executeAsync(`const done = arguments[arguments.length - 1];
+    const script = document.createElement('script');
+    script.src = '/shared/ocr/ocrRuntime.js';
+    script.onload = async () => {
+      try {
+        const runtime = globalThis.PWM?.OcrRuntime;
+        const worker = await runtime.createWorkerProbe();
+        const wasm = await runtime.createWasmProbe();
+        const engine = await runtime.createEngineProbe();
+        runtime.terminate();
+        done({ worker, wasm, engine });
+      } catch (error) {
+        done({ error: error?.message || 'OCR WASM probe failed' });
+      }
+    };
+    script.onerror = () => done({ error: 'OCR runtime script failed to load' });
+    document.documentElement.appendChild(script);`);
+
+  assert.equal(result.error, undefined, result.error || "Firefox OCR WASM worker proof failed");
+  assert.deepEqual(result.worker, {
+    ok: true,
+    status: "worker_ready",
+    ocrImplemented: false
+  });
+  console.log(
+    `Firefox smoke: OCR WASM worker proof result ${result.wasm.status}${
+      result.wasm.reason ? ` (${result.wasm.reason})` : ""
+    }`
+  );
+  assert.deepEqual(result.wasm, {
+    ok: true,
+    status: "wasm_ready",
+    wasmLoaded: true
+  });
+  assert.deepEqual(result.engine, {
+    ok: false,
+    status: "engine_blocked",
+    ocrImplemented: false,
+    engine: null,
+    reason: "no_candidate_passed_security_size_csp_gates"
+  });
+}
+
 async function runFirefoxSmoke() {
   assertBuiltExtensionExists();
   const firefoxPath = findFirefoxExecutable();
@@ -1083,6 +1133,8 @@ async function runFirefoxSmoke() {
     assertNoRawSyntheticValues(refreshed.body, "Firefox refreshed body");
     assertNoRawSyntheticValues(refreshed.value, "Firefox refreshed textarea");
 
+    console.log("Firefox smoke: OCR WASM worker proof");
+    await runFirefoxOcrWasmProbeQa(webdriver, extensionOrigin);
     console.log("Firefox smoke: file scanner");
     await runFirefoxScannerQa(webdriver, extensionOrigin, tempDir, downloadDir);
     console.log("Firefox smoke: protected-site removal");

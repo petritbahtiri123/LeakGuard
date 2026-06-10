@@ -1363,6 +1363,58 @@ async function runScannerSmoke(connection, extensionId, tempDir) {
   assert.match(unsupported.status, /OCR are not supported/i);
 }
 
+async function runOcrWasmProbeSmoke(connection, extensionId, browserName = "Chrome") {
+  const page = await createPage(connection, `chrome-extension://${extensionId}/scanner/scanner.html`);
+  await waitForEval(connection, page.sessionId, "Boolean(document.querySelector('#file-input'))", "scanner UI");
+
+  const result = await evaluate(
+    connection,
+    page.sessionId,
+    `new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = '/shared/ocr/ocrRuntime.js';
+      script.onload = async () => {
+        try {
+          const runtime = globalThis.PWM?.OcrRuntime;
+          const worker = await runtime.createWorkerProbe();
+          const wasm = await runtime.createWasmProbe();
+          const engine = await runtime.createEngineProbe();
+          runtime.terminate();
+          resolve({ worker, wasm, engine });
+        } catch (error) {
+          reject(new Error(error?.message || 'OCR WASM probe failed'));
+        }
+      };
+      script.onerror = () => reject(new Error('OCR runtime script failed to load'));
+      document.documentElement.appendChild(script);
+    })`,
+    { awaitPromise: true }
+  );
+
+  assert.deepEqual(result.worker, {
+    ok: true,
+    status: "worker_ready",
+    ocrImplemented: false
+  });
+  console.log(
+    `${browserName} smoke: OCR WASM worker proof result ${result.wasm.status}${
+      result.wasm.reason ? ` (${result.wasm.reason})` : ""
+    }`
+  );
+  assert.deepEqual(result.wasm, {
+    ok: true,
+    status: "wasm_ready",
+    wasmLoaded: true
+  });
+  assert.deepEqual(result.engine, {
+    ok: false,
+    status: "engine_blocked",
+    ocrImplemented: false,
+    engine: null,
+    reason: "no_candidate_passed_security_size_csp_gates"
+  });
+}
+
 async function runChromiumSmoke(options = {}) {
   const {
     browserName = "Chrome",
@@ -1421,6 +1473,8 @@ async function runChromiumSmoke(options = {}) {
     await runSecureRevealSmoke(connection, builtInPage, extensionId, rawSecret, placeholder);
     console.log(`${browserName} smoke: user-managed protected site`);
     await runUserManagedSiteSmoke(connection, popup.sessionId, httpServer.origin);
+    console.log(`${browserName} smoke: OCR WASM worker proof`);
+    await runOcrWasmProbeSmoke(connection, extensionId, browserName);
     console.log(`${browserName} smoke: file scanner`);
     await runScannerSmoke(connection, extensionId, tempDir);
 

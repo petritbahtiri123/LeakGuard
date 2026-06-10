@@ -131,6 +131,59 @@
     });
   }
 
+  function createWasmProbe() {
+    if (!isAvailable()) {
+      return Promise.resolve({
+        ok: false,
+        status: "worker_unavailable",
+        wasmLoaded: false,
+        reason: "worker_api_unavailable"
+      });
+    }
+
+    workerStatus = "probing_wasm";
+    const activeWorker = getWorker();
+
+    return new Promise((resolve, reject) => {
+      const timeout = root.setTimeout(() => {
+        activeWorker.onmessage = null;
+        activeWorker.onerror = null;
+        workerStatus = "wasm_probe_timeout";
+        reject(new Error("OCR WASM probe timed out."));
+      }, 3000);
+
+      activeWorker.onmessage = (event) => {
+        root.clearTimeout(timeout);
+        activeWorker.onmessage = null;
+        activeWorker.onerror = null;
+        const response = event?.data || {};
+        workerStatus =
+          response.status === "wasm_ready" || response.status === "wasm_blocked"
+            ? response.status
+            : "unexpected_response";
+        const result = {
+          ok: response.ok === true,
+          status: response.status || workerStatus,
+          wasmLoaded: response.wasmLoaded === true
+        };
+        if (response.reason) {
+          result.reason = response.reason;
+        }
+        resolve(result);
+      };
+
+      activeWorker.onerror = () => {
+        root.clearTimeout(timeout);
+        activeWorker.onmessage = null;
+        activeWorker.onerror = null;
+        workerStatus = "worker_error";
+        reject(new Error("OCR WASM probe failed."));
+      };
+
+      activeWorker.postMessage({ type: "wasm_probe" });
+    });
+  }
+
   function terminate() {
     if (worker && typeof worker.terminate === "function") {
       worker.terminate();
@@ -143,6 +196,7 @@
     isAvailable,
     getStatus,
     createWorkerProbe,
+    createWasmProbe,
     createEngineProbe,
     terminate
   };

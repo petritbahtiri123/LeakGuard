@@ -6,9 +6,10 @@ store listing, or alternate user-facing build.
 
 ## Current State
 
-OCR is not implemented yet. Current builds must not include OCR runtime files,
-OCR workers, OCR model files, traineddata, OCR dependencies, remote OCR calls,
-CDN loading, runtime model downloads, new permissions, or CSP changes.
+OCR is not implemented yet. Current builds include only a tiny worker/WASM
+mechanics proof shell. They must not include OCR engine files, OCR model files,
+traineddata, OCR dependencies, remote OCR calls, CDN loading, runtime model
+downloads, new permissions, or CSP changes.
 
 The supported build targets remain:
 
@@ -22,6 +23,9 @@ The supported build targets remain:
 When OCR is implemented, OCR code and assets must be packaged locally inside the
 same extension. Runtime loading must be lazy and must use extension-owned URLs
 only, such as `chrome.runtime.getURL(...)` or the Firefox-compatible equivalent.
+Phase 11D-2 proved this local WASM loading shape with only `'wasm-unsafe-eval'`
+added to extension-page `script-src`; no remote script source or `'unsafe-eval'`
+is allowed.
 
 OCR must not use:
 
@@ -60,7 +64,7 @@ assets can ship.
 
 Before OCR runtime proof work begins, tests must continue to prove:
 
-- default builds contain no OCR assets yet
+- default builds contain only the proof shell and tiny WASM loading asset
 - CSP remains unchanged
 - no OCR dependency has entered `package.json`
 - no remote OCR, CDN, traineddata, or model-download strings appear in runtime

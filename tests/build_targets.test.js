@@ -9,7 +9,7 @@ const policyModule = require(path.join(repoRoot, "src/shared/policy.js"));
 const protectedSitesModule = require(path.join(repoRoot, "src/shared/protected_sites.js"));
 
 const restrictiveExtensionPageCsp =
-  "script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none';";
+  "script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; base-uri 'none'; frame-ancestors 'none';";
 const forbiddenPackageDirectories = new Set([
   ".git",
   ".github",
@@ -225,14 +225,27 @@ function assertOcrRuntimeAssets(result) {
 
   assert.deepStrictEqual(
     ocrFiles,
-    ["shared/ocr/ocrRuntime.js", "shared/ocr/ocrWorker.js"],
-    `${result.target} should include only the local OCR proof shell files`
+    ["shared/ocr/ocrRuntime.js", "shared/ocr/ocrWasmProbe.wasm", "shared/ocr/ocrWorker.js"],
+    `${result.target} should include only the local OCR proof shell files and tiny WASM probe asset`
+  );
+  const wasmProbePath = path.join(result.targetRoot, "shared/ocr/ocrWasmProbe.wasm");
+  assert.ok(fs.statSync(wasmProbePath).size <= 64, `${result.target} WASM probe asset should stay tiny`);
+
+  const ocrBytes = ocrFiles.reduce(
+    (total, relativePath) => total + fs.statSync(path.join(result.targetRoot, relativePath)).size,
+    0
+  );
+  assert.ok(
+    ocrBytes < 12000,
+    `${result.target} OCR proof shell package impact should stay tiny before OCR assets exist`
   );
 
   for (const file of files) {
     const relativePath = relativePackagePath(result.targetRoot, file).toLowerCase();
     assert.strictEqual(
-      /tesseract|ocrad|traineddata|ocr[-_.].*\.wasm|\.traineddata|ocr-model|ocr-assets/.test(relativePath),
+      /tesseract|ocrad|traineddata|ocr[-_.](?!wasmprobe\.wasm).*\.wasm|\.traineddata|ocr-model|ocr-assets/.test(
+        relativePath
+      ),
       false,
       `${result.target} should not contain OCR engine/model asset ${relativePath}`
     );
@@ -253,6 +266,16 @@ function plainObject(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function parseCspDirectives(csp) {
+  const directives = {};
+  for (const directive of String(csp || "").split(";")) {
+    const parts = directive.trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) continue;
+    directives[parts[0]] = parts.slice(1);
+  }
+  return directives;
+}
+
 async function assertOcrRuntimeProbeShell(targetRoot) {
   const runtimeSource = fs.readFileSync(path.join(targetRoot, "shared/ocr/ocrRuntime.js"), "utf8");
   const createdWorkers = [];
@@ -266,6 +289,16 @@ async function assertOcrRuntimeProbeShell(targetRoot) {
 
     postMessage(message) {
       this.messages.push(message);
+      if (message?.type === "wasm_probe") {
+        this.onmessage?.({
+          data: {
+            ok: true,
+            status: "wasm_ready",
+            wasmLoaded: true
+          }
+        });
+        return;
+      }
       if (message?.type === "ocr_engine_probe") {
         this.onmessage?.({
           data: {
@@ -357,6 +390,22 @@ async function assertOcrRuntimeProbeShell(targetRoot) {
     "OCR runtime shell should only send the harmless probe message"
   );
 
+  const wasmProbe = plainObject(await runtime.createWasmProbe());
+  assert.deepStrictEqual(
+    wasmProbe,
+    {
+      ok: true,
+      status: "wasm_ready",
+      wasmLoaded: true
+    },
+    "OCR WASM proof should report local packaged WASM readiness without enabling OCR"
+  );
+  assert.deepStrictEqual(
+    plainObject(createdWorkers[0].messages),
+    [{ type: "ocr_probe" }, { type: "wasm_probe" }],
+    "OCR WASM proof should send only the explicit data-free WASM probe message"
+  );
+
   const engineProbe = plainObject(await runtime.createEngineProbe());
   assert.deepStrictEqual(
     engineProbe,
@@ -371,7 +420,7 @@ async function assertOcrRuntimeProbeShell(targetRoot) {
   );
   assert.deepStrictEqual(
     plainObject(createdWorkers[0].messages),
-    [{ type: "ocr_probe" }, { type: "ocr_engine_probe" }],
+    [{ type: "ocr_probe" }, { type: "wasm_probe" }, { type: "ocr_engine_probe" }],
     "OCR engine proof should only send the explicit engine probe message after the worker probe"
   );
 
@@ -379,11 +428,49 @@ async function assertOcrRuntimeProbeShell(targetRoot) {
   assert.strictEqual(createdWorkers[0].terminated, true, "OCR runtime shell should terminate its worker");
 }
 
-function assertOcrWorkerEngineProof(targetRoot) {
+async function assertOcrWorkerEngineProof(targetRoot) {
   const workerSource = fs.readFileSync(path.join(targetRoot, "shared/ocr/ocrWorker.js"), "utf8");
   const postedMessages = [];
+  const fetchedUrls = [];
+  const wasmProbeBytes = fs.readFileSync(path.join(targetRoot, "shared/ocr/ocrWasmProbe.wasm"));
+  const wasmApi = {
+    async compile(bytes) {
+      assert.ok(ArrayBuffer.isView(bytes), "WASM proof should compile byte content only");
+      assert.deepStrictEqual(
+        Array.from(bytes),
+        Array.from(wasmProbeBytes),
+        "WASM proof should compile the packaged proof asset bytes"
+      );
+      return {};
+    }
+  };
+  const fetchApi = async (url) => {
+    fetchedUrls.push(String(url));
+    return {
+      ok: true,
+      status: 200,
+      async arrayBuffer() {
+        return wasmProbeBytes.buffer.slice(
+          wasmProbeBytes.byteOffset,
+          wasmProbeBytes.byteOffset + wasmProbeBytes.byteLength
+        );
+      }
+    };
+  };
   const sandbox = {
+    WebAssembly: wasmApi,
+    fetch: fetchApi,
     self: {
+      WebAssembly: wasmApi,
+      fetch: fetchApi,
+      location: {
+        href: "chrome-extension://test-id/shared/ocr/ocrWorker.js"
+      },
+      chrome: {
+        runtime: {
+          getURL: (resourcePath) => `chrome-extension://test-id/${resourcePath}`
+        }
+      },
       postMessage(message) {
         postedMessages.push(message);
       }
@@ -395,10 +482,38 @@ function assertOcrWorkerEngineProof(targetRoot) {
     filename: "ocrWorker.js"
   });
 
-  sandbox.self.onmessage({ data: { type: "ocr_engine_probe" } });
+  await sandbox.self.onmessage({ data: { type: "ocr_probe" } });
+  await sandbox.self.onmessage({
+    data: {
+      type: "wasm_probe",
+      imageData: "must-not-be-read",
+      pixels: [1, 2, 3],
+      userText: "must-not-be-read"
+    }
+  });
+  await sandbox.self.onmessage({ data: { type: "ocr_engine_probe", imageData: "must-not-be-read" } });
+  assert.deepStrictEqual(
+    fetchedUrls,
+    ["chrome-extension://test-id/shared/ocr/ocrWasmProbe.wasm"],
+    "OCR WASM proof should fetch only the packaged extension-local proof asset"
+  );
+  assert.ok(
+    fetchedUrls.every((url) => !/^https?:\/\//i.test(url) && !/cdn|unpkg/i.test(url)),
+    "OCR WASM proof must not use remote URLs"
+  );
   assert.deepStrictEqual(
     plainObject(postedMessages),
     [
+      {
+        ok: true,
+        status: "worker_ready",
+        ocrImplemented: false
+      },
+      {
+        ok: true,
+        status: "wasm_ready",
+        wasmLoaded: true
+      },
       {
         ok: false,
         status: "engine_blocked",
@@ -407,7 +522,76 @@ function assertOcrWorkerEngineProof(targetRoot) {
         reason: "no_candidate_passed_security_size_csp_gates"
       }
     ],
-    "OCR worker should report engine_blocked without loading dependencies or processing image data"
+    "OCR worker should keep probes data-free, prove WASM loading, and report engine_blocked"
+  );
+}
+
+async function assertOcrWorkerWasmProofUsesSiblingFallback(targetRoot) {
+  const workerSource = fs.readFileSync(path.join(targetRoot, "shared/ocr/ocrWorker.js"), "utf8");
+  const postedMessages = [];
+  const fetchedUrls = [];
+  const wasmProbeBytes = fs.readFileSync(path.join(targetRoot, "shared/ocr/ocrWasmProbe.wasm"));
+  const sandbox = {
+    URL,
+    self: {
+      WebAssembly: {
+        async compile() {
+          return {};
+        }
+      },
+      fetch: async (url) => {
+        fetchedUrls.push(String(url));
+        return {
+          ok: true,
+          status: 200,
+          async arrayBuffer() {
+            return wasmProbeBytes.buffer.slice(
+              wasmProbeBytes.byteOffset,
+              wasmProbeBytes.byteOffset + wasmProbeBytes.byteLength
+            );
+          }
+        };
+      },
+      location: {
+        href: "chrome-extension://test-id/shared/ocr/ocrWorker.js"
+      },
+      postMessage(message) {
+        postedMessages.push(message);
+      }
+    }
+  };
+  sandbox.globalThis = sandbox.self;
+
+  vm.runInNewContext(workerSource, sandbox, {
+    filename: "ocrWorker.js"
+  });
+
+  await sandbox.self.onmessage({ data: { type: "wasm_probe" } });
+  assert.deepStrictEqual(
+    fetchedUrls,
+    ["chrome-extension://test-id/shared/ocr/ocrWasmProbe.wasm"],
+    "OCR WASM proof should resolve a packaged sibling asset when runtime APIs are unavailable in the worker"
+  );
+  assert.deepStrictEqual(plainObject(postedMessages), [
+    {
+      ok: true,
+      status: "wasm_ready",
+      wasmLoaded: true
+    }
+  ]);
+}
+
+function assertOcrWorkerStaticSafety(targetRoot) {
+  const workerSource = fs.readFileSync(path.join(targetRoot, "shared/ocr/ocrWorker.js"), "utf8");
+  assert.deepStrictEqual(
+    [/https?:\/\//i, /cdn/i, /unpkg/i, /\beval\s*\(/i, /\bFunction\s*\(/].map((pattern) => pattern.test(workerSource)),
+    [false, false, false, false, false],
+    "OCR worker proof should avoid remote URLs, eval, and Function"
+  );
+  assert.strictEqual(
+    /imageData|pixels|userText|bitmap|canvas/i.test(workerSource),
+    false,
+    "OCR WASM proof worker should not process image or user data fields"
   );
 }
 
@@ -419,7 +603,30 @@ function assertManifestStructure(result, expectedHostPermissions) {
   assert.deepStrictEqual(
     manifest.content_security_policy,
     { extension_pages: restrictiveExtensionPageCsp },
-    `${result.target} should keep the restrictive extension-page CSP`
+    `${result.target} should keep the restrictive extension-page CSP with local WASM compilation only`
+  );
+  const cspDirectives = parseCspDirectives(manifest.content_security_policy?.extension_pages);
+  assert.deepStrictEqual(
+    cspDirectives["script-src"],
+    ["'self'", "'wasm-unsafe-eval'"],
+    `${result.target} script-src should allow only packaged scripts and local WASM compilation`
+  );
+  assert.strictEqual(
+    cspDirectives["script-src"].includes("'unsafe-eval'"),
+    false,
+    `${result.target} script-src must not allow unsafe-eval`
+  );
+  assert.strictEqual(
+    cspDirectives["script-src"].some((source) => /^(?:https?:|wss?:|data:|blob:)|cdn|unpkg/i.test(source)),
+    false,
+    `${result.target} script-src must not allow remote, CDN, data, or blob sources`
+  );
+  assert.deepStrictEqual(cspDirectives["object-src"], ["'none'"], `${result.target} object-src should stay none`);
+  assert.deepStrictEqual(cspDirectives["base-uri"], ["'none'"], `${result.target} base-uri should stay none`);
+  assert.deepStrictEqual(
+    cspDirectives["frame-ancestors"],
+    ["'none'"],
+    `${result.target} frame-ancestors should stay none`
   );
   assert.deepStrictEqual(
     [...(manifest.host_permissions || [])].sort(),
@@ -571,7 +778,9 @@ async function run() {
       `${target} should keep OCR disabled metadata`
     );
     await assertOcrRuntimeProbeShell(path.join(repoRoot, "dist", target));
-    assertOcrWorkerEngineProof(path.join(repoRoot, "dist", target));
+    await assertOcrWorkerEngineProof(path.join(repoRoot, "dist", target));
+    await assertOcrWorkerWasmProofUsesSiblingFallback(path.join(repoRoot, "dist", target));
+    assertOcrWorkerStaticSafety(path.join(repoRoot, "dist", target));
   }
 
   const chromeEnterpriseManifest = JSON.parse(

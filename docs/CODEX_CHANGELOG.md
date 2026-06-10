@@ -12,6 +12,18 @@ Use this file as a short handoff log for AI-made changes. Add newest entries fir
 ```
 
 ## Entries
+### 2026-06-10 - Phase 11D-2 safe MV3 WASM CSP proof
+- Goal: Allow local packaged WASM compilation for the OCR proof worker with only `'wasm-unsafe-eval'`, while keeping OCR engine/model integration blocked.
+- Files: `manifests/base.json`, `src/shared/ocr/ocrWorker.js`, `tests/build_targets.test.js`, `tests/security.test.js`, `tests/browser/chrome_smoke.test.mjs`, `tests/browser/firefox_smoke.test.mjs`, `docs/phase-11d-mv3-wasm-worker-proof.md`, `docs/OCR_BUILD_STRATEGY.md`, `docs/CODEX_CHANGELOG.md`
+- Tests: `npm run lint:unused` -> pass; `npm run deadcode` -> pass; `npm test` -> pass; `npm run build:all` -> pass; `npm run package:release` -> pass; `npm run bench:file-extraction` -> pass; `npm run smoke:chrome` -> pass; `npm run qa:browser` -> pass after rerun for a scanner file-input flake; `npm run smoke:firefox` -> pass; `git diff --check` -> pass
+- Notes: Dedicated workers may not expose extension runtime URL helpers, so the proof worker falls back to resolving the WASM sidecar as a packaged sibling of `ocrWorker.js`. No OCR, Tesseract, traineddata, remote loading, permissions, or scanner UI exposure added.
+
+### 2026-06-10 - Phase 11D MV3 WASM worker proof
+- Goal: Prove local packaged WASM loading mechanics in the OCR worker shell without adding OCR, models, traineddata, dependencies, permissions, CSP changes, remote URLs, or image processing.
+- Files: `src/shared/ocr/ocrWorker.js`, `src/shared/ocr/ocrRuntime.js`, `src/shared/ocr/ocrWasmProbe.wasm`, `tests/build_targets.test.js`, `tests/security.test.js`, `docs/phase-11d-mv3-wasm-worker-proof.md`, `docs/OCR_BUILD_STRATEGY.md`, `docs/CODEX_CHANGELOG.md`
+- Tests: `npm run lint:unused` -> pass; `npm run deadcode` -> pass; `npm test` -> pass; `npm run build:all` -> pass; `npm run package:release` -> pass; `npm run bench:file-extraction` -> pass; `npm run smoke:chrome` -> pass; `npm run qa:browser` -> pass; `npm run smoke:firefox` -> pass; `git diff --check` -> pass
+- Notes: Worker `{ type: "wasm_probe" }` attempts only the 8-byte packaged proof module; real Chrome MV3 smoke currently reports `wasm_blocked` under the unchanged CSP posture. `{ type: "ocr_engine_probe" }` remains blocked, and scanner image handling remains metadata-only.
+
 ### 2026-05-29 - CI docs link gate
 - Goal: Added the roadmap Phase 0 documentation link check to the default GitHub test workflow so broken local Markdown links are caught in CI before the full suite.
 - Files: `.github/workflows/test.yml`, `docs/CODEX_CHANGELOG.md`

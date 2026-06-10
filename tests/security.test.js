@@ -1069,9 +1069,23 @@ function testExtensionPagesUseRestrictiveCsp(manifest) {
     manifest.content_security_policy,
     {
       extension_pages:
-        "script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none';"
+        "script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; base-uri 'none'; frame-ancestors 'none';"
     },
-    "manifest should lock extension pages to packaged scripts and disallow framing/base overrides"
+    "manifest should lock extension pages to packaged scripts, local WASM compilation, and disallow framing/base overrides"
+  );
+  const scriptSources =
+    manifest.content_security_policy.extension_pages
+      .split(";")
+      .find((directive) => directive.trim().startsWith("script-src"))
+      ?.trim()
+      .split(/\s+/)
+      .slice(1) || [];
+  assert.ok(scriptSources.includes("'wasm-unsafe-eval'"), "CSP should allow local WASM compilation only");
+  assert.strictEqual(scriptSources.includes("'unsafe-eval'"), false, "CSP must not allow unsafe-eval");
+  assert.strictEqual(
+    scriptSources.some((source) => /^(?:https?:|wss?:|data:|blob:)|cdn|unpkg/i.test(source)),
+    false,
+    "CSP must not allow remote, CDN, data, or blob script sources"
   );
 }
 
@@ -1089,12 +1103,17 @@ function testOcrSpikeDoesNotEnterProductionPackage(manifest) {
     manifest.content_security_policy,
     {
       extension_pages:
-        "script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none';"
+        "script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; base-uri 'none'; frame-ancestors 'none';"
     },
-    "OCR spike must not weaken extension-page CSP or add unsafe-eval"
+    "OCR WASM proof must not weaken extension-page CSP beyond local WASM compilation"
   );
   assert.strictEqual(
-    String(manifest.content_security_policy?.extension_pages || "").includes("unsafe-eval"),
+    String(manifest.content_security_policy?.extension_pages || "")
+      .split(";")
+      .find((directive) => directive.trim().startsWith("script-src"))
+      ?.trim()
+      .split(/\s+/)
+      .includes("'unsafe-eval'") || false,
     false,
     "OCR spike must not require unsafe-eval"
   );
@@ -1127,8 +1146,8 @@ function testOcrSpikeDoesNotEnterProductionPackage(manifest) {
         fs.existsSync(defaultOcrRuntimePath)
           ? fs.readdirSync(defaultOcrRuntimePath).sort()
           : [],
-        ["ocrRuntime.js", "ocrWorker.js"],
-        `default target ${target} should package only the OCR worker proof shell`
+        ["ocrRuntime.js", "ocrWasmProbe.wasm", "ocrWorker.js"],
+        `default target ${target} should package only the OCR worker proof shell and tiny WASM probe asset`
       );
       distFiles.push(...walkFiles(targetRoot));
     }
@@ -1137,7 +1156,7 @@ function testOcrSpikeDoesNotEnterProductionPackage(manifest) {
   for (const file of distFiles) {
     const relative = path.relative(repoRoot, file).split(path.sep).join("/").toLowerCase();
     assert.strictEqual(
-      /tesseract|ocrad|traineddata|ocr[-_.].*\.wasm|\.traineddata/.test(relative),
+      /tesseract|ocrad|traineddata|ocr[-_.](?!wasmprobe\.wasm).*\.wasm|\.traineddata/.test(relative),
       false,
       `dist must not contain OCR runtime asset: ${relative}`
     );
