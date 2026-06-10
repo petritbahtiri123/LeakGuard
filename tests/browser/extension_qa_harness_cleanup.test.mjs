@@ -110,6 +110,24 @@ function testHarnessDebuggingModeCanUsePipeForLocalDebugging() {
   assert.equal(harness.getBrowserQaDebuggingMode({ mode: "pipe" }), "pipe");
 }
 
+function testHarnessMatchesExtensionProfilePath() {
+  const profile = {
+    extensions: {
+      settings: {
+        abcdefghijklmnopabcdefghijklmnop: {
+          manifest: { name: "Different dev name" },
+          path: "/tmp/leakguard-extension"
+        }
+      }
+    }
+  };
+
+  assert.equal(
+    harness.findExtensionIdInPreferences(profile, "/tmp/leakguard-extension"),
+    "abcdefghijklmnopabcdefghijklmnop"
+  );
+}
+
 await testCleanupRejectsNonHarnessTempDir();
 await testCleanupWarnsAfterPassedBehaviorChecks();
 await testCleanupFailsBeforeBehaviorChecksPass();
@@ -117,4 +135,5 @@ testHarnessTargetsDefaultToChromeOnly();
 testHarnessTargetsCanOptIntoEdge();
 testHarnessDebuggingModeDefaultsToPort();
 testHarnessDebuggingModeCanUsePipeForLocalDebugging();
+testHarnessMatchesExtensionProfilePath();
 console.log("PASS browser QA cleanup regressions");

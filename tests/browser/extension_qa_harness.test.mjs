@@ -292,6 +292,23 @@ function prepareQaExtension(tempDir) {
   return extensionDir;
 }
 
+function normalizePathForCompare(value) {
+  return path.resolve(String(value || "")).toLowerCase();
+}
+
+function findExtensionIdInPreferences(preferences, expectedExtensionDir) {
+  const settings = preferences?.extensions?.settings || {};
+  const expectedPath = normalizePathForCompare(expectedExtensionDir);
+  for (const [id, setting] of Object.entries(settings)) {
+    const manifestName = setting?.manifest?.name || "";
+    const extensionPath = setting?.path || "";
+    if (manifestName === "LeakGuard" || normalizePathForCompare(extensionPath) === expectedPath) {
+      return id;
+    }
+  }
+  return "";
+}
+
 function getBrowserQaDebuggingMode({ mode = process.env.LEAKGUARD_BROWSER_QA_DEBUGGING || "" } = {}) {
   const normalized = String(mode || "port").trim().toLowerCase();
   if (normalized === "pipe" || normalized === "port") return normalized;
@@ -461,7 +478,7 @@ async function loadExtension(connection, profileDir, extensionDir, browserName) 
       path: extensionDir,
       enableInIncognito: false
     });
-    if (response.id) return response.id;
+    if (response.id || response.extensionId) return response.id || response.extensionId;
   } catch (error) {
     console.warn(`${browserName} browser QA: CDP extension load warning: ${error.message}`);
   }
@@ -480,11 +497,8 @@ async function loadExtension(connection, profileDir, extensionDir, browserName) 
     const preferencesPath = path.join(profileDir, "Default", "Preferences");
     if (!fs.existsSync(preferencesPath)) return null;
     const preferences = JSON.parse(fs.readFileSync(preferencesPath, "utf8"));
-    for (const [id, setting] of Object.entries(preferences.extensions?.settings || {})) {
-      if (setting?.manifest?.name === "LeakGuard") {
-        return { url: `chrome-extension://${id}/background/service_worker.js` };
-      }
-    }
+    const id = findExtensionIdInPreferences(preferences, extensionDir);
+    if (id) return { url: `chrome-extension://${id}/background/service_worker.js` };
     return null;
   }, `${browserName} LeakGuard extension service worker`).catch((error) => {
     const targetSummary = lastTargets
@@ -1455,6 +1469,7 @@ export {
   assertHarnessTempDir,
   cleanupBrowserQaRun,
   closeBrowserTargets,
+  findExtensionIdInPreferences,
   getBrowserQaDebuggingMode,
   getBrowserQaTargets,
   runBrowserQa
