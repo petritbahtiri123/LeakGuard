@@ -266,6 +266,18 @@ async function assertOcrRuntimeProbeShell(targetRoot) {
 
     postMessage(message) {
       this.messages.push(message);
+      if (message?.type === "ocr_engine_probe") {
+        this.onmessage?.({
+          data: {
+            ok: false,
+            status: "engine_blocked",
+            ocrImplemented: false,
+            engine: null,
+            reason: "no_candidate_passed_security_size_csp_gates"
+          }
+        });
+        return;
+      }
       this.onmessage?.({
         data: {
           ok: true,
@@ -345,8 +357,58 @@ async function assertOcrRuntimeProbeShell(targetRoot) {
     "OCR runtime shell should only send the harmless probe message"
   );
 
+  const engineProbe = plainObject(await runtime.createEngineProbe());
+  assert.deepStrictEqual(
+    engineProbe,
+    {
+      ok: false,
+      status: "engine_blocked",
+      ocrImplemented: false,
+      engine: null,
+      reason: "no_candidate_passed_security_size_csp_gates"
+    },
+    "OCR engine proof should report blocked when no candidate passes local/CSP/size gates"
+  );
+  assert.deepStrictEqual(
+    plainObject(createdWorkers[0].messages),
+    [{ type: "ocr_probe" }, { type: "ocr_engine_probe" }],
+    "OCR engine proof should only send the explicit engine probe message after the worker probe"
+  );
+
   runtime.terminate();
   assert.strictEqual(createdWorkers[0].terminated, true, "OCR runtime shell should terminate its worker");
+}
+
+function assertOcrWorkerEngineProof(targetRoot) {
+  const workerSource = fs.readFileSync(path.join(targetRoot, "shared/ocr/ocrWorker.js"), "utf8");
+  const postedMessages = [];
+  const sandbox = {
+    self: {
+      postMessage(message) {
+        postedMessages.push(message);
+      }
+    }
+  };
+  sandbox.globalThis = sandbox.self;
+
+  vm.runInNewContext(workerSource, sandbox, {
+    filename: "ocrWorker.js"
+  });
+
+  sandbox.self.onmessage({ data: { type: "ocr_engine_probe" } });
+  assert.deepStrictEqual(
+    plainObject(postedMessages),
+    [
+      {
+        ok: false,
+        status: "engine_blocked",
+        ocrImplemented: false,
+        engine: null,
+        reason: "no_candidate_passed_security_size_csp_gates"
+      }
+    ],
+    "OCR worker should report engine_blocked without loading dependencies or processing image data"
+  );
 }
 
 function assertManifestStructure(result, expectedHostPermissions) {
@@ -509,6 +571,7 @@ async function run() {
       `${target} should keep OCR disabled metadata`
     );
     await assertOcrRuntimeProbeShell(path.join(repoRoot, "dist", target));
+    assertOcrWorkerEngineProof(path.join(repoRoot, "dist", target));
   }
 
   const chromeEnterpriseManifest = JSON.parse(
@@ -570,6 +633,15 @@ async function run() {
     firefoxBytes < OCR_SIZE_BUDGETS.currentInstalledWarningBytes,
     "Firefox installed package should stay below OCR planning warning threshold before OCR assets exist"
   );
+  for (const target of ["chrome", "chrome-enterprise", "firefox", "firefox-enterprise"]) {
+    const releaseZip = path.join(repoRoot, "artifacts", "release", `leakguard-${target}-v${packageJson.version}.zip`);
+    if (fs.existsSync(releaseZip)) {
+      assert.ok(
+        fs.statSync(releaseZip).size < OCR_SIZE_BUDGETS.currentInstalledWarningBytes,
+        `${target} release zip should stay below OCR planning warning threshold before OCR assets exist`
+      );
+    }
+  }
   const contentScripts = chromeManifest.content_scripts[0].js;
   const knownSecretReuseIndex = contentScripts.indexOf("shared/knownSecretReuse.js");
   const transformOutboundPromptIndex = contentScripts.indexOf("shared/transformOutboundPrompt.js");
