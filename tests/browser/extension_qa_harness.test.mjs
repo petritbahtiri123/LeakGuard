@@ -8,20 +8,24 @@
  */
 
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import zlib from "node:zlib";
-import { findExecutable } from "./chrome_smoke.test.mjs";
+import {
+  CdpPipeConnection as ChromiumPipeConnection,
+  CdpWebSocketConnection,
+  findCdpWebSocketUrl,
+  findExecutable,
+  launchChrome
+} from "./chrome_smoke.test.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "../..");
 const sourceExtensionDir = path.join(repoRoot, "dist", "chrome");
 const qaTimeoutMs = Number(process.env.LEAKGUARD_BROWSER_QA_TIMEOUT_MS || 60000);
-const cdpTimeoutMs = Number(process.env.LEAKGUARD_BROWSER_QA_CDP_TIMEOUT_MS || 30000);
 const cleanupDelayMs = Number(process.env.LEAKGUARD_BROWSER_QA_CLEANUP_DELAY_MS || 500);
 const cleanupMaxRetries = Number(process.env.LEAKGUARD_BROWSER_QA_CLEANUP_RETRIES || 10);
 const cleanupRetryDelayMs = Number(process.env.LEAKGUARD_BROWSER_QA_CLEANUP_RETRY_DELAY_MS || 300);
@@ -245,86 +249,6 @@ async function waitFor(condition, label, timeoutMs = qaTimeoutMs) {
   throw new Error(`Timed out waiting for ${label}.${suffix}`);
 }
 
-class CdpPipeConnection {
-  constructor(input, output) {
-    this.input = input;
-    this.output = output;
-    this.buffer = "";
-    this.nextId = 1;
-    this.pending = new Map();
-  }
-
-  async connect() {
-    assert.ok(this.input, "Browser remote debugging input pipe is missing.");
-    assert.ok(this.output, "Browser remote debugging output pipe is missing.");
-    this.output.setEncoding("utf8");
-    this.output.on("data", (chunk) => {
-      this.buffer += chunk;
-      let separator = this.buffer.indexOf("\0");
-      while (separator !== -1) {
-        const payload = this.buffer.slice(0, separator);
-        this.buffer = this.buffer.slice(separator + 1);
-        if (payload) this.handleMessage(payload);
-        separator = this.buffer.indexOf("\0");
-      }
-    });
-    this.input.on("error", (error) => this.rejectPending(error));
-    this.output.on("error", (error) => this.rejectPending(error));
-    this.output.on("close", () => this.rejectPending(new Error("CDP pipe closed.")));
-    await this.send("Browser.getVersion");
-  }
-
-  handleMessage(payload) {
-    const message = JSON.parse(payload);
-    if (message.id === undefined || !this.pending.has(message.id)) return;
-    const pending = this.pending.get(message.id);
-    this.pending.delete(message.id);
-    if (message.error) {
-      pending.reject(
-        new Error(`${pending.method} ${message.error.message}: ${JSON.stringify(message.error.data || {})}`)
-      );
-    } else {
-      pending.resolve(message.result || {});
-    }
-  }
-
-  rejectPending(error) {
-    for (const { reject } of this.pending.values()) reject(error);
-    this.pending.clear();
-  }
-
-  send(method, params = {}, sessionId = null) {
-    const id = this.nextId;
-    this.nextId += 1;
-    const payload = { id, method, params, ...(sessionId ? { sessionId } : {}) };
-    const request = new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new Error(`CDP command timed out: ${method}`));
-      }, cdpTimeoutMs);
-      this.pending.set(id, {
-        method,
-        resolve: (value) => {
-          clearTimeout(timeout);
-          resolve(value);
-        },
-        reject: (error) => {
-          clearTimeout(timeout);
-          reject(error);
-        }
-      });
-    });
-    this.input.write(`${JSON.stringify(payload)}\0`);
-    return request;
-  }
-
-  async close() {
-    this.rejectPending(new Error("CDP pipe closed."));
-    this.input?.destroy();
-    this.output?.destroy();
-  }
-}
-
 function createHarnessPage() {
   return `<!doctype html>
 <html lang="en">
@@ -368,34 +292,29 @@ function prepareQaExtension(tempDir) {
   return extensionDir;
 }
 
-function launchBrowser({ executable, extensionDir, profileDir, browserName }) {
-  assert.ok(executable, `${browserName} was not found. Set CHROME_BIN, EDGE_BIN, or MSEDGE_BIN.`);
-  const args = [
-    "--remote-debugging-pipe",
-    `--user-data-dir=${profileDir}`,
-    `--load-extension=${extensionDir}`,
-    "--enable-unsafe-extension-debugging",
-    "--disable-features=DisableLoadExtensionCommandLineSwitch",
-    "--disable-gpu",
-    "--no-first-run",
-    "--no-default-browser-check",
-    "--disable-background-networking",
-    "--disable-sync",
-    "--window-size=1280,900",
-    "--window-position=-2400,-2400",
-    "about:blank"
-  ];
-  if (process.platform === "linux") args.push("--no-sandbox");
+function getBrowserQaDebuggingMode({ mode = process.env.LEAKGUARD_BROWSER_QA_DEBUGGING || "" } = {}) {
+  const normalized = String(mode || "port").trim().toLowerCase();
+  if (normalized === "pipe" || normalized === "port") return normalized;
+  throw new Error(`Unsupported browser QA debugging mode "${mode}". Expected port or pipe.`);
+}
 
-  const child = spawn(executable, args, { stdio: ["ignore", "pipe", "pipe", "pipe", "pipe"] });
-  let stderr = "";
-  child.stderr.on("data", (chunk) => {
-    stderr += chunk.toString();
+async function launchBrowser({ executable, extensionDir, profileDir, browserName }) {
+  return await launchChrome({
+    extensionPath: extensionDir,
+    profileDir,
+    browserName,
+    browserExecutable: executable,
+    missingMessage: `${browserName} was not found. Set CHROME_BIN, EDGE_BIN, or MSEDGE_BIN.`,
+    remoteDebuggingMode: getBrowserQaDebuggingMode()
   });
-  child.on("exit", (code, signal) => {
-    if (code && code !== 0) stderr += `\n${browserName} exited with code ${code} signal ${signal || ""}`;
-  });
-  return { child, stderr: () => stderr };
+}
+
+async function createBrowserConnection(browserProcess, browserName) {
+  if (browserProcess.debuggingMode === "port") {
+    const webSocketUrl = await findCdpWebSocketUrl(browserProcess.debuggingPort, browserName);
+    return new CdpWebSocketConnection(webSocketUrl);
+  }
+  return new ChromiumPipeConnection(browserProcess.child.stdio[3], browserProcess.child.stdio[4]);
 }
 
 async function waitForBrowserExit(child, timeoutMs = 5000) {
@@ -1450,8 +1369,8 @@ async function runBrowserQa({ browserName, executable }) {
   let behaviorChecksPassed = false;
   try {
     harnessServer = await startHarnessServer();
-    browserProcess = launchBrowser({ executable, extensionDir, profileDir, browserName });
-    connection = new CdpPipeConnection(browserProcess.child.stdio[3], browserProcess.child.stdio[4]);
+    browserProcess = await launchBrowser({ executable, extensionDir, profileDir, browserName });
+    connection = await createBrowserConnection(browserProcess, browserName);
     await connection.connect();
     const version = await connection.send("Browser.getVersion");
     const extensionId = await loadExtension(connection, profileDir, extensionDir, browserName);
@@ -1536,6 +1455,7 @@ export {
   assertHarnessTempDir,
   cleanupBrowserQaRun,
   closeBrowserTargets,
+  getBrowserQaDebuggingMode,
   getBrowserQaTargets,
   runBrowserQa
 };

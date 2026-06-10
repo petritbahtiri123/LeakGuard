@@ -102,9 +102,19 @@ function testHarnessTargetsCanOptIntoEdge() {
   ]);
 }
 
+function testHarnessDebuggingModeDefaultsToPort() {
+  assert.equal(harness.getBrowserQaDebuggingMode({ mode: "" }), "port");
+}
+
+function testHarnessDebuggingModeCanUsePipeForLocalDebugging() {
+  assert.equal(harness.getBrowserQaDebuggingMode({ mode: "pipe" }), "pipe");
+}
+
 await testCleanupRejectsNonHarnessTempDir();
 await testCleanupWarnsAfterPassedBehaviorChecks();
 await testCleanupFailsBeforeBehaviorChecksPass();
 testHarnessTargetsDefaultToChromeOnly();
 testHarnessTargetsCanOptIntoEdge();
+testHarnessDebuggingModeDefaultsToPort();
+testHarnessDebuggingModeCanUsePipeForLocalDebugging();
 console.log("PASS browser QA cleanup regressions");
