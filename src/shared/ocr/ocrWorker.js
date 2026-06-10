@@ -1,7 +1,10 @@
 const wasmProbePath = "shared/ocr/ocrWasmProbe.wasm";
 const tesseractCoreScriptPath = "shared/ocr/tesseract-core/tesseract-core.js";
 const tesseractCoreWasmPath = "shared/ocr/tesseract-core/tesseract-core.wasm";
+const englishTrainedDataPath = "shared/ocr/tessdata/eng.traineddata.gz";
 let tesseractCoreProbePromise = null;
+let tesseractCoreModulePromise = null;
+let englishLanguageProbePromise = null;
 
 function getExtensionUrl(resourcePath) {
   const runtime = self.chrome?.runtime || self.browser?.runtime || null;
@@ -65,15 +68,33 @@ function classifyWasmProbeError(error) {
 }
 
 async function runTesseractCoreProbe() {
-  if (tesseractCoreProbePromise) {
-    return tesseractCoreProbePromise;
-  }
-
-  tesseractCoreProbePromise = loadTesseractCoreProof();
+  tesseractCoreProbePromise = tesseractCoreProbePromise || loadTesseractCoreProof();
   return tesseractCoreProbePromise;
 }
 
 async function loadTesseractCoreProof() {
+  const result = await getTesseractCoreModule();
+  if (!result.ok) {
+    return {
+      ok: false,
+      status: "tesseract_core_blocked",
+      reason: result.reason
+    };
+  }
+
+  return {
+    ok: true,
+    status: "tesseract_core_ready",
+    ocrImplemented: false
+  };
+}
+
+async function getTesseractCoreModule() {
+  tesseractCoreModulePromise = tesseractCoreModulePromise || initializeTesseractCoreModule();
+  return tesseractCoreModulePromise;
+}
+
+async function initializeTesseractCoreModule() {
   if (
     typeof self.fetch !== "function" ||
     typeof self.importScripts !== "function" ||
@@ -107,15 +128,19 @@ async function loadTesseractCoreProof() {
       print() {},
       printErr() {}
     };
-    root.TesseractCore = coreConfig;
-    self.TesseractCore = coreConfig;
     self.importScripts(getExtensionUrl(tesseractCoreScriptPath));
-    await self.TesseractCore.ready;
+    if (typeof root.TesseractCore !== "function") {
+      return {
+        ok: false,
+        status: "tesseract_core_blocked",
+        reason: "core_factory_unavailable"
+      };
+    }
 
+    const module = await root.TesseractCore(coreConfig);
     return {
       ok: true,
-      status: "tesseract_core_ready",
-      ocrImplemented: false
+      module
     };
   } catch (error) {
     return {
@@ -138,6 +163,94 @@ function classifyTesseractCoreError(error) {
   return error?.name || "core_load_failed";
 }
 
+async function runLanguageProbe(language) {
+  if (language !== "eng") {
+    return {
+      ok: false,
+      status: "language_blocked",
+      language: String(language || ""),
+      reason: "unsupported_language"
+    };
+  }
+
+  englishLanguageProbePromise = englishLanguageProbePromise || loadEnglishLanguageProof();
+  return englishLanguageProbePromise;
+}
+
+async function loadEnglishLanguageProof() {
+  const core = await getTesseractCoreModule();
+  if (!core.ok) {
+    return {
+      ok: false,
+      status: "language_blocked",
+      language: "eng",
+      reason: core.reason
+    };
+  }
+
+  if (typeof DecompressionStream !== "function" || typeof Response !== "function" || typeof Blob !== "function") {
+    return {
+      ok: false,
+      status: "language_blocked",
+      language: "eng",
+      reason: "gzip_decompression_unavailable"
+    };
+  }
+
+  try {
+    const response = await self.fetch(getExtensionUrl(englishTrainedDataPath));
+    if (!response?.ok) {
+      return {
+        ok: false,
+        status: "language_blocked",
+        language: "eng",
+        reason: `language_fetch_failed_${response?.status || "unknown"}`
+      };
+    }
+
+    const compressedData = new Uint8Array(await response.arrayBuffer());
+    if (compressedData[0] !== 0x1f || compressedData[1] !== 0x8b) {
+      return {
+        ok: false,
+        status: "language_blocked",
+        language: "eng",
+        reason: "language_asset_not_gzip"
+      };
+    }
+
+    const trainedData = await decompressGzip(compressedData);
+    core.module.FS_createPath("/", "tessdata", true, true);
+    core.module.FS_createDataFile("/tessdata", "eng.traineddata", trainedData, true, false, false);
+
+    return {
+      ok: true,
+      status: "language_ready",
+      language: "eng",
+      ocrImplemented: false
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: "language_blocked",
+      language: "eng",
+      reason: classifyLanguageError(error)
+    };
+  }
+}
+
+async function decompressGzip(compressedData) {
+  const stream = new Blob([compressedData]).stream().pipeThrough(new DecompressionStream("gzip"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+function classifyLanguageError(error) {
+  const text = `${error?.name || ""} ${error?.message || ""}`.toLowerCase();
+  if (text.includes("exists")) {
+    return "language_already_loaded";
+  }
+  return error?.name || "language_load_failed";
+}
+
 self.onmessage = async (event) => {
   if (event?.data?.type === "ocr_probe") {
     self.postMessage({
@@ -155,6 +268,11 @@ self.onmessage = async (event) => {
 
   if (event?.data?.type === "tesseract_core_probe") {
     self.postMessage(await runTesseractCoreProbe());
+    return;
+  }
+
+  if (event?.data?.type === "ocr_language_probe") {
+    self.postMessage(await runLanguageProbe(event.data.language));
     return;
   }
 

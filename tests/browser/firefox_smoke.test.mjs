@@ -1022,8 +1022,9 @@ async function runFirefoxOcrWasmProbeQa(webdriver, extensionOrigin) {
         const wasm = await runtime.createWasmProbe();
         const engine = await runtime.createEngineProbe();
         const core = await runtime.createTesseractCoreProbe();
+        const language = await runtime.createLanguageProbe('eng');
         runtime.terminate();
-        done({ worker, wasm, engine, core });
+        done({ worker, wasm, engine, core, language });
       } catch (error) {
         done({ error: error?.message || 'OCR WASM probe failed' });
       }
@@ -1062,6 +1063,17 @@ async function runFirefoxOcrWasmProbeQa(webdriver, extensionOrigin) {
   assert.deepEqual(result.core, {
     ok: true,
     status: "tesseract_core_ready",
+    ocrImplemented: false
+  });
+  console.log(
+    `Firefox smoke: English traineddata proof result ${result.language.status}${
+      result.language.reason ? ` (${result.language.reason})` : ""
+    }`
+  );
+  assert.deepEqual(result.language, {
+    ok: true,
+    status: "language_ready",
+    language: "eng",
     ocrImplemented: false
   });
 }

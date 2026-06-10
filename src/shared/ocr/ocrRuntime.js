@@ -237,6 +237,61 @@
     });
   }
 
+  function createLanguageProbe(language = "eng") {
+    if (!isAvailable()) {
+      return Promise.resolve({
+        ok: false,
+        status: "worker_unavailable",
+        language,
+        ocrImplemented: false,
+        reason: "worker_api_unavailable"
+      });
+    }
+
+    workerStatus = "probing_language";
+    const activeWorker = getWorker();
+
+    return new Promise((resolve, reject) => {
+      const timeout = root.setTimeout(() => {
+        activeWorker.onmessage = null;
+        activeWorker.onerror = null;
+        workerStatus = "language_probe_timeout";
+        reject(new Error("OCR language probe timed out."));
+      }, 5000);
+
+      activeWorker.onmessage = (event) => {
+        root.clearTimeout(timeout);
+        activeWorker.onmessage = null;
+        activeWorker.onerror = null;
+        const response = event?.data || {};
+        workerStatus =
+          response.status === "language_ready" || response.status === "language_blocked"
+            ? response.status
+            : "unexpected_response";
+        const result = {
+          ok: response.ok === true,
+          status: response.status || workerStatus,
+          language: response.language || language,
+          ocrImplemented: false
+        };
+        if (response.reason) {
+          result.reason = response.reason;
+        }
+        resolve(result);
+      };
+
+      activeWorker.onerror = () => {
+        root.clearTimeout(timeout);
+        activeWorker.onmessage = null;
+        activeWorker.onerror = null;
+        workerStatus = "worker_error";
+        reject(new Error("OCR language probe failed."));
+      };
+
+      activeWorker.postMessage({ type: "ocr_language_probe", language });
+    });
+  }
+
   function terminate() {
     if (worker && typeof worker.terminate === "function") {
       worker.terminate();
@@ -252,6 +307,7 @@
     createWasmProbe,
     createEngineProbe,
     createTesseractCoreProbe,
+    createLanguageProbe,
     terminate
   };
 

@@ -14,6 +14,9 @@ const tesseractCoreProofFiles = Object.freeze([
   "shared/ocr/tesseract-core/tesseract-core.js",
   "shared/ocr/tesseract-core/tesseract-core.wasm"
 ]);
+const englishLanguageProofFiles = Object.freeze([
+  "shared/ocr/tessdata/eng.traineddata.gz"
+]);
 const forbiddenPackageDirectories = new Set([
   ".git",
   ".github",
@@ -233,9 +236,10 @@ function assertOcrRuntimeAssets(result) {
       "shared/ocr/ocrRuntime.js",
       "shared/ocr/ocrWasmProbe.wasm",
       "shared/ocr/ocrWorker.js",
-      ...tesseractCoreProofFiles
+      ...tesseractCoreProofFiles,
+      ...englishLanguageProofFiles
     ].sort(),
-    `${result.target} should include only the local OCR proof shell, tiny WASM probe asset, and minimal tesseract.js-core proof assets`
+    `${result.target} should include only the local OCR proof shell, tiny WASM probe asset, minimal tesseract.js-core proof assets, and English traineddata proof asset`
   );
   const wasmProbePath = path.join(result.targetRoot, "shared/ocr/ocrWasmProbe.wasm");
   assert.ok(fs.statSync(wasmProbePath).size <= 64, `${result.target} WASM probe asset should stay tiny`);
@@ -247,14 +251,18 @@ function assertOcrRuntimeAssets(result) {
     fs.statSync(path.join(result.targetRoot, "shared/ocr/tesseract-core/tesseract-core.wasm")).size < 4 * 1024 * 1024,
     `${result.target} tesseract.js-core proof should include one local core WASM asset only`
   );
+  assert.ok(
+    fs.statSync(path.join(result.targetRoot, "shared/ocr/tessdata/eng.traineddata.gz")).size < 3 * 1024 * 1024,
+    `${result.target} English language proof should include the smallest packaged compressed traineddata asset`
+  );
 
   const ocrBytes = ocrFiles.reduce(
     (total, relativePath) => total + fs.statSync(path.join(result.targetRoot, relativePath)).size,
     0
   );
   assert.ok(
-    ocrBytes < 4 * 1024 * 1024,
-    `${result.target} OCR proof assets should stay below the loading-only core budget`
+    ocrBytes < 7 * 1024 * 1024,
+    `${result.target} OCR proof assets should stay below the English loading-only budget`
   );
 
   for (const file of files) {
@@ -262,7 +270,10 @@ function assertOcrRuntimeAssets(result) {
     const isAllowedTesseractCoreProof = tesseractCoreProofFiles.includes(
       relativePackagePath(result.targetRoot, file).split("\\").join("/")
     );
-    if (!isAllowedTesseractCoreProof) {
+    const isAllowedEnglishLanguageProof = englishLanguageProofFiles.includes(
+      relativePackagePath(result.targetRoot, file).split("\\").join("/")
+    );
+    if (!isAllowedTesseractCoreProof && !isAllowedEnglishLanguageProof) {
       assert.strictEqual(
         /tesseract|ocrad|traineddata|ocr[-_.](?!wasmprobe\.wasm).*\.wasm|\.traineddata|ocr-model|ocr-assets/.test(
           relativePath
@@ -271,14 +282,26 @@ function assertOcrRuntimeAssets(result) {
         `${result.target} should not contain OCR engine/model asset ${relativePath}`
       );
     }
+    assert.strictEqual(
+      /shared\/ocr\/tessdata\/(?!eng\.traineddata\.gz$).*traineddata/i.test(relativePath),
+      false,
+      `${result.target} should not package non-English traineddata assets`
+    );
     if (/\.(?:js|json|html|css|txt|md)$/i.test(file)) {
       const source = fs.readFileSync(file, "utf8").toLowerCase();
       for (const forbidden of ["ocrad", "traineddata", "cdn.jsdelivr", "unpkg.com"]) {
-        assert.strictEqual(
-          source.includes(forbidden),
-          false,
-          `${result.target}:${relativePath} should not contain OCR dependency or remote asset string ${forbidden}`
-        );
+        const allowedEnglishTrainedDataReference =
+          forbidden === "traineddata" &&
+          relativePath.startsWith("shared/ocr/") &&
+          source.includes("eng.traineddata.gz") &&
+          !/tessdata\/(?!eng\.traineddata\.gz)/i.test(source);
+        if (!allowedEnglishTrainedDataReference) {
+          assert.strictEqual(
+            source.includes(forbidden),
+            false,
+            `${result.target}:${relativePath} should not contain OCR dependency or remote asset string ${forbidden}`
+          );
+        }
       }
       assert.strictEqual(
         /https?:\/\//i.test(source) && relativePath.startsWith("shared/ocr/"),
@@ -348,6 +371,17 @@ async function assertOcrRuntimeProbeShell(targetRoot) {
           data: {
             ok: true,
             status: "tesseract_core_ready",
+            ocrImplemented: false
+          }
+        });
+        return;
+      }
+      if (message?.type === "ocr_language_probe") {
+        this.onmessage?.({
+          data: {
+            ok: true,
+            status: "language_ready",
+            language: "eng",
             ocrImplemented: false
           }
         });
@@ -482,6 +516,29 @@ async function assertOcrRuntimeProbeShell(targetRoot) {
     "tesseract.js-core proof should remain explicit-only and separate from engine probing"
   );
 
+  const languageProbe = plainObject(await runtime.createLanguageProbe("eng"));
+  assert.deepStrictEqual(
+    languageProbe,
+    {
+      ok: true,
+      status: "language_ready",
+      language: "eng",
+      ocrImplemented: false
+    },
+    "English language proof should round-trip only the explicit language probe payload"
+  );
+  assert.deepStrictEqual(
+    plainObject(createdWorkers[0].messages),
+    [
+      { type: "ocr_probe" },
+      { type: "wasm_probe" },
+      { type: "ocr_engine_probe" },
+      { type: "tesseract_core_probe" },
+      { type: "ocr_language_probe", language: "eng" }
+    ],
+    "English language proof should remain explicit-only and separate from engine probing"
+  );
+
   runtime.terminate();
   assert.strictEqual(createdWorkers[0].terminated, true, "OCR runtime shell should terminate its worker");
 }
@@ -497,6 +554,9 @@ async function assertOcrWorkerEngineProof(targetRoot) {
   const wasmProbeBytes = fs.readFileSync(path.join(targetRoot, "shared/ocr/ocrWasmProbe.wasm"));
   const tesseractCoreBytes = fs.readFileSync(
     path.join(targetRoot, "shared/ocr/tesseract-core/tesseract-core.wasm")
+  );
+  const englishTrainedDataBytes = fs.readFileSync(
+    path.join(targetRoot, "shared/ocr/tessdata/eng.traineddata.gz")
   );
   const wasmApi = {
     instantiate: WebAssembly.instantiate,
@@ -515,6 +575,8 @@ async function assertOcrWorkerEngineProof(targetRoot) {
     fetchedUrls.push(String(url));
     const bytes = String(url).endsWith("/shared/ocr/tesseract-core/tesseract-core.wasm")
       ? tesseractCoreBytes
+      : String(url).endsWith("/shared/ocr/tessdata/eng.traineddata.gz")
+        ? englishTrainedDataBytes
       : wasmProbeBytes;
     return {
       ok: true,
@@ -544,6 +606,7 @@ async function assertOcrWorkerEngineProof(targetRoot) {
       vm.runInContext(tesseractCoreSource, sandbox, {
         filename: "tesseract-core.js"
       });
+      sandbox.self.TesseractCore = sandbox.TesseractCore;
     },
     self: {
       WebAssembly: wasmApi,
@@ -571,7 +634,10 @@ async function assertOcrWorkerEngineProof(targetRoot) {
     Int8Array,
     ArrayBuffer,
     TextDecoder,
-    TextEncoder
+    TextEncoder,
+    Blob,
+    Response,
+    DecompressionStream
   });
   sandbox.globalThis = sandbox.self;
 
@@ -597,13 +663,29 @@ async function assertOcrWorkerEngineProof(targetRoot) {
       userText: "must-not-be-read"
     }
   });
+  await sandbox.self.onmessage({
+    data: {
+      type: "ocr_language_probe",
+      language: "eng",
+      imageData: "must-not-be-read",
+      pixels: [1, 2, 3],
+      userText: "must-not-be-read"
+    }
+  });
+  await sandbox.self.onmessage({
+    data: {
+      type: "ocr_language_probe",
+      language: "deu"
+    }
+  });
   assert.deepStrictEqual(
     fetchedUrls,
     [
       "chrome-extension://test-id/shared/ocr/ocrWasmProbe.wasm",
-      "chrome-extension://test-id/shared/ocr/tesseract-core/tesseract-core.wasm"
+      "chrome-extension://test-id/shared/ocr/tesseract-core/tesseract-core.wasm",
+      "chrome-extension://test-id/shared/ocr/tessdata/eng.traineddata.gz"
     ],
-    "OCR core proof should fetch only packaged extension-local WASM assets"
+    "OCR language proof should fetch only packaged extension-local WASM and English traineddata assets"
   );
   assert.ok(
     fetchedUrls.every((url) => !/^https?:\/\//i.test(url) && !/cdn|unpkg/i.test(url)),
@@ -633,9 +715,21 @@ async function assertOcrWorkerEngineProof(targetRoot) {
         ok: true,
         status: "tesseract_core_ready",
         ocrImplemented: false
+      },
+      {
+        ok: true,
+        status: "language_ready",
+        language: "eng",
+        ocrImplemented: false
+      },
+      {
+        ok: false,
+        status: "language_blocked",
+        language: "deu",
+        reason: "unsupported_language"
       }
     ],
-    "OCR worker should keep probes data-free, prove WASM/core loading, and report engine_blocked"
+    "OCR worker should keep probes data-free, prove WASM/core/English language loading, and report engine_blocked"
   );
 }
 
@@ -707,14 +801,16 @@ function assertOcrWorkerStaticSafety(targetRoot) {
     "OCR WASM proof worker should not process image or user data fields"
   );
 
-  for (const relativePath of tesseractCoreProofFiles) {
+  for (const relativePath of [...tesseractCoreProofFiles, ...englishLanguageProofFiles]) {
     const sourcePath = path.join(targetRoot, relativePath);
-    const source = fs.readFileSync(sourcePath, "utf8");
-    assert.strictEqual(
-      /https?:\/\/|cdn\.jsdelivr|unpkg/i.test(source),
-      false,
-      `${relativePath} should not contain remote URL or CDN strings`
-    );
+    const source = relativePath.endsWith(".gz") ? "" : fs.readFileSync(sourcePath, "utf8");
+    if (source) {
+      assert.strictEqual(
+        /https?:\/\/|cdn\.jsdelivr|unpkg/i.test(source),
+        false,
+        `${relativePath} should not contain remote URL or CDN strings`
+      );
+    }
     if (relativePath.endsWith(".js")) {
       assert.strictEqual(
         /\beval\s*\(|\bnew\s+Function\b|\bFunction\s*\(/.test(source),
@@ -969,6 +1065,14 @@ async function run() {
   assert.ok(
     tesseractCoreProofBytes < 4 * 1024 * 1024,
     "tesseract.js-core loading proof should add only the minimal local core JS/WASM pair"
+  );
+  const englishLanguageProofBytes = englishLanguageProofFiles.reduce(
+    (total, relativePath) => total + fs.statSync(path.join(repoRoot, "dist/chrome", relativePath)).size,
+    0
+  );
+  assert.ok(
+    englishLanguageProofBytes < 3 * 1024 * 1024,
+    "English language loading proof should add only the compressed eng.traineddata asset"
   );
   assert.ok(
     chromeBytes < OCR_SIZE_BUDGETS.currentInstalledWarningBytes,

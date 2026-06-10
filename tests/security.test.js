@@ -1092,7 +1092,8 @@ function testExtensionPagesUseRestrictiveCsp(manifest) {
 function testOcrSpikeDoesNotEnterProductionPackage(manifest) {
   const allowedTesseractCoreProofPaths = new Set([
     "shared/ocr/tesseract-core/tesseract-core.js",
-    "shared/ocr/tesseract-core/tesseract-core.wasm"
+    "shared/ocr/tesseract-core/tesseract-core.wasm",
+    "shared/ocr/tessdata/eng.traineddata.gz"
   ]);
   const dependencyNames = Object.keys(packageJson.dependencies || {}).map((name) => name.toLowerCase());
   for (const forbidden of ["tesseract.js", "tesseract.js-core", "@tesseract.js-data/eng", "ocrad.js"]) {
@@ -1150,13 +1151,18 @@ function testOcrSpikeDoesNotEnterProductionPackage(manifest) {
         fs.existsSync(defaultOcrRuntimePath)
           ? fs.readdirSync(defaultOcrRuntimePath).sort()
           : [],
-        ["ocrRuntime.js", "ocrWasmProbe.wasm", "ocrWorker.js", "tesseract-core"],
-        `default target ${target} should package only the OCR worker proof shell, tiny WASM probe asset, and isolated tesseract.js-core proof directory`
+        ["ocrRuntime.js", "ocrWasmProbe.wasm", "ocrWorker.js", "tessdata", "tesseract-core"],
+        `default target ${target} should package only the OCR worker proof shell, tiny WASM probe asset, isolated tesseract.js-core proof directory, and English tessdata proof directory`
       );
       assert.deepStrictEqual(
         fs.readdirSync(path.join(defaultOcrRuntimePath, "tesseract-core")).sort(),
         ["tesseract-core.js", "tesseract-core.wasm"],
         `default target ${target} should package only the minimal tesseract.js-core proof loader and WASM`
+      );
+      assert.deepStrictEqual(
+        fs.readdirSync(path.join(defaultOcrRuntimePath, "tessdata")).sort(),
+        ["eng.traineddata.gz"],
+        `default target ${target} should package only English traineddata for the language proof`
       );
       distFiles.push(...walkFiles(targetRoot));
     }
@@ -1177,12 +1183,22 @@ function testOcrSpikeDoesNotEnterProductionPackage(manifest) {
         `dist must not contain OCR runtime asset: ${relative}`
       );
     }
+    assert.strictEqual(
+      /shared\/ocr\/tessdata\/(?!eng\.traineddata\.gz$).*traineddata/i.test(relative),
+      false,
+      `dist must not contain non-English traineddata: ${relative}`
+    );
     if (/\.(js|json|html|css|txt|md)$/i.test(file)) {
       const text = fs.readFileSync(file, "utf8").toLowerCase();
       for (const forbidden of ["tesseract", "ocrad", "traineddata", "cdn.jsdelivr", "unpkg.com"]) {
         const tesseractCoreProofText =
           forbidden === "tesseract" && relative.includes("/shared/ocr/");
-        if (!tesseractCoreProofText) {
+        const englishTrainedDataProofText =
+          forbidden === "traineddata" &&
+          relative.includes("/shared/ocr/") &&
+          text.includes("eng.traineddata.gz") &&
+          !/tessdata\/(?!eng\.traineddata\.gz)/i.test(text);
+        if (!tesseractCoreProofText && !englishTrainedDataProofText) {
           assert.strictEqual(
             text.includes(forbidden),
             false,

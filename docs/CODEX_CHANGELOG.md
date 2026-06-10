@@ -12,6 +12,12 @@ Use this file as a short handoff log for AI-made changes. Add newest entries fir
 ```
 
 ## Entries
+### 2026-06-10 - Phase 11F local English traineddata proof
+- Goal: Prove packaged English `eng.traineddata.gz` loading from an explicit OCR worker language probe without enabling OCR recognition, scanner UI exposure, remote downloads, permissions, or CSP changes.
+- Files: `src/shared/ocr/ocrWorker.js`, `src/shared/ocr/ocrRuntime.js`, `src/shared/ocr/tessdata/eng.traineddata.gz`, `tests/build_targets.test.js`, `tests/security.test.js`, `tests/browser/chrome_smoke.test.mjs`, `tests/browser/firefox_smoke.test.mjs`, `docs/CODEX_CHANGELOG.md`
+- Tests: `npm run lint:unused` -> pass; `npm run deadcode` -> pass with existing Knip extension hints; `npm test` -> pass; `npm run build:all` -> pass; `npm run package:release` -> pass; `npm run bench:file-extraction` -> pass; `npm run smoke:chrome` -> pass; `npm run qa:browser` -> pass; `npm run smoke:firefox` -> pass; `git diff --check` -> pass
+- Notes: `{ type: "ocr_language_probe", language: "eng" }` returns `language_ready` in Chrome, Edge, and Firefox smoke after fetching the packaged gzip, decompressing in memory, and writing `/tessdata/eng.traineddata` into the initialized core MEMFS. Added English data is 2,952,873 installed bytes and 2,948,213 compressed bytes per release zip; installed targets stay about 19.91 MiB, below the 50 MiB warning gate.
+
 ### 2026-06-10 - Phase 11E local tesseract.js-core proof
 - Goal: Prove minimal packaged `tesseract.js-core` core/WASM loading from the explicit OCR worker probe without enabling OCR, scanner UI exposure, language data, remote loading, permissions, or CSP changes.
 - Files: `src/shared/ocr/ocrWorker.js`, `src/shared/ocr/ocrRuntime.js`, `src/shared/ocr/tesseract-core/tesseract-core.js`, `src/shared/ocr/tesseract-core/tesseract-core.wasm`, `tests/build_targets.test.js`, `tests/security.test.js`, `tests/browser/chrome_smoke.test.mjs`, `tests/browser/firefox_smoke.test.mjs`, `eslint.config.mjs`, `knip.jsonc`, `docs/CODEX_CHANGELOG.md`
