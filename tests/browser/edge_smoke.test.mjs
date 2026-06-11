@@ -45,6 +45,7 @@ runChromiumSmoke({
   buildCommand: "npm run build:chrome",
   findBrowserExecutable: findEdgeExecutable,
   headlessEnvName: "LEAKGUARD_EDGE_HEADLESS",
+  remoteDebuggingMode: "port",
   missingMessage: "Microsoft Edge was not found. Set EDGE_BIN or MSEDGE_BIN to run this smoke test."
 }).catch((error) => {
   console.error(error);
