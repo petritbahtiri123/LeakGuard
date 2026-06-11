@@ -428,6 +428,35 @@ async function testProtectedSiteImageOcrRedactsSupportedFormatsWhenEnabled() {
   }
 }
 
+async function testProtectedSiteImageOcrEnabledLeavesUnsupportedImagesMetadataOnly() {
+  const originalHelper = globalThis.PWM.isProtectedSiteOcrEnabled;
+  let runtimeCalls = 0;
+  globalThis.PWM.isProtectedSiteOcrEnabled = async () => true;
+  globalThis.PWM.OcrRuntime = {
+    recognizeImageBytes() {
+      runtimeCalls += 1;
+      throw new Error("unsupported protected-site images must not call OCR");
+    }
+  };
+
+  try {
+    const result = await processFileForAdapterHandoff({
+      file: fileFromBuffer("diagram.gif", "image/gif", bufferFromText("gif bytes")),
+      context: "drop"
+    });
+
+    assert.strictEqual(runtimeCalls, 0);
+    assert.strictEqual(result.status, "unsupported");
+    assert.strictEqual(result.safeForUpload, false);
+    assert.strictEqual(result.sanitizedFile, null);
+    assert.strictEqual(result.sanitizedText, "");
+    assert.strictEqual(result.fallbackReason, "Unsupported file type for local text extraction.");
+  } finally {
+    globalThis.PWM.isProtectedSiteOcrEnabled = originalHelper;
+    delete globalThis.PWM.OcrRuntime;
+  }
+}
+
 async function testProtectedSiteImageOcrFailureFailsClosedWithoutCachingRawText() {
   const originalHelper = globalThis.PWM.isProtectedSiteOcrEnabled;
   const rawSecret = "sk-proj-ProtectedSiteOcrFailureSecret1234567890";
@@ -848,6 +877,7 @@ async function run() {
   await testProtectedSiteImageAttachStaysMetadataOnlyWhenOcrSettingEnabled();
   await testProtectedSiteImageAttachStaysMetadataOnlyWhenOcrDisabled();
   await testProtectedSiteImageOcrRedactsSupportedFormatsWhenEnabled();
+  await testProtectedSiteImageOcrEnabledLeavesUnsupportedImagesMetadataOnly();
   await testProtectedSiteImageOcrFailureFailsClosedWithoutCachingRawText();
   await testProtectedSiteImageOcrTimeoutTerminatesRuntimeAndFailsClosed();
   await testProtectedSiteImageOcrOversizedImageFailsBeforeWorkerCall();

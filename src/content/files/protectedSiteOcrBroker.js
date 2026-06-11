@@ -10,6 +10,7 @@
   let iframe = null;
   let iframeReady = null;
   let requestCounter = 0;
+  let brokerChannelId = "";
   const pending = new Map();
 
   function getRuntimeUrl(path) {
@@ -21,6 +22,10 @@
     if (iframe?.contentWindow && iframeReady) return { frame: iframe, ready: iframeReady };
     if (!root.document?.documentElement) return null;
 
+    brokerChannelId =
+      root.crypto && typeof root.crypto.randomUUID === "function"
+        ? root.crypto.randomUUID()
+        : `ocr-channel-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     iframe = root.document.createElement("iframe");
     iframeReady = new Promise((resolve, reject) => {
       const timeoutId = root.setTimeout(() => reject(new Error("protected_site_ocr_broker_load_timeout")), 5000);
@@ -55,6 +60,10 @@
     if (!entry) return;
     pending.delete(requestId);
     root.clearTimeout(entry.timeoutId);
+    if (entry.port) {
+      entry.port.onmessage = null;
+      if (typeof entry.port.close === "function") entry.port.close();
+    }
     if (isError) {
       entry.reject(new Error(result?.reason || "protected_site_ocr_broker_failed"));
     } else {
@@ -74,17 +83,6 @@
     };
   }
 
-  root.addEventListener("message", (event) => {
-    if (!iframe?.contentWindow || event.source !== iframe.contentWindow) return;
-    const message = event.data || {};
-    if (message.source !== RESPONSE_SOURCE || !message.requestId) return;
-    if (message.ok) {
-      settle(message.requestId, message.result || {});
-    } else {
-      settle(message.requestId, failureResult(message.reason || "protected_site_ocr_broker_failed"));
-    }
-  });
-
   function sendBrokerRequest(messagePayload = {}, options = {}) {
     const broker = ensureBrokerFrame();
     const imageBytes = messagePayload.payload?.imageBytes || null;
@@ -99,24 +97,40 @@
         reason: "protected_site_ocr_broker_unavailable"
       });
     }
+    if (typeof root.MessageChannel !== "function") {
+      return Promise.resolve(failureResult("protected_site_ocr_broker_unavailable"));
+    }
 
     const requestId = `ocr-${Date.now()}-${++requestCounter}`;
     return new Promise((resolve, reject) => {
+      const channel = new root.MessageChannel();
       const timeoutId = root.setTimeout(() => {
         settle(requestId, failureResult("protected_site_ocr_broker_timeout"));
       }, Math.max(1, Number(options.timeoutMs || DEFAULT_TIMEOUT_MS)));
 
-      pending.set(requestId, { resolve, reject, timeoutId });
+      channel.port1.onmessage = (event) => {
+        const message = event.data || {};
+        if (message.source !== RESPONSE_SOURCE || message.requestId !== requestId) return;
+        if (message.ok) {
+          settle(requestId, message.result || {});
+        } else {
+          settle(requestId, failureResult(message.reason || "protected_site_ocr_broker_failed"));
+        }
+      };
+      pending.set(requestId, { resolve, reject, timeoutId, port: channel.port1 });
       broker.ready
         .then(() => {
+          const transfers = [channel.port2];
+          if (imageBytes) transfers.push(imageBytes);
           broker.frame.contentWindow.postMessage(
             {
               source: REQUEST_SOURCE,
+              channelId: brokerChannelId,
               requestId,
               ...messagePayload
             },
             "*",
-            imageBytes ? [imageBytes] : []
+            transfers
           );
         })
         .catch((error) => {

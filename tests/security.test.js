@@ -51,6 +51,14 @@ const contentFileExtractionPipelineSource = fs.readFileSync(
   path.join(repoRoot, "src/content/files/contentFileExtractionPipeline.js"),
   "utf8"
 );
+const protectedSiteOcrBrokerSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/files/protectedSiteOcrBroker.js"),
+  "utf8"
+);
+const protectedSiteOcrBrokerPageSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/protected_site_ocr_broker_page.js"),
+  "utf8"
+);
 const policySource = fs.readFileSync(path.join(repoRoot, "src/shared/policy.js"), "utf8");
 const optionsSource = fs.readFileSync(path.join(repoRoot, "src/options/options.js"), "utf8");
 const popupSource = fs.readFileSync(path.join(repoRoot, "src/popup/popup.js"), "utf8");
@@ -1034,6 +1042,8 @@ async function run() {
   testExtensionPagesUseRestrictiveCsp(manifest);
   testOcrSpikeDoesNotEnterProductionPackage(manifest);
   testProtectedSiteOcrOptInStaysLocalAndGateBound();
+  await testProtectedSiteOcrBrokerRejectsMalformedMessages();
+  testProtectedSiteOcrBrokerMessageSurfaceIsNarrow();
   testPageUiNoLongerLeaksClassificationsOrMaskedFragments();
   testOnlyPwmPlaceholdersRemainCanonical();
   console.log("PASS security hardening static regressions");
@@ -1338,6 +1348,158 @@ function testProtectedSiteOcrOptInStaysLocalAndGateBound() {
     false,
     "protected-site OCR pipeline must not directly construct workers, persist OCR text, or log OCR text"
   );
+}
+
+function testProtectedSiteOcrBrokerMessageSurfaceIsNarrow() {
+  assert.ok(
+    protectedSiteOcrBrokerSource.includes("new root.MessageChannel()") &&
+      protectedSiteOcrBrokerSource.includes("channel.port1.onmessage"),
+    "content broker should receive raw OCR results only through a private MessageChannel"
+  );
+  assert.ok(
+    protectedSiteOcrBrokerSource.includes("channelId: brokerChannelId"),
+    "content broker should bind sandbox messages to a private channel id"
+  );
+  assert.ok(
+    protectedSiteOcrBrokerPageSource.includes("window.parent") &&
+      protectedSiteOcrBrokerPageSource.includes("event.source !== window.parent"),
+    "sandbox broker page should only accept messages from its parent content frame"
+  );
+  assert.ok(
+    protectedSiteOcrBrokerPageSource.includes("isValidRequestMessage"),
+    "sandbox broker page should validate request message shape before OCR"
+  );
+  assert.ok(
+    protectedSiteOcrBrokerPageSource.includes("allowedMimeTypes") &&
+      protectedSiteOcrBrokerPageSource.includes("image/png") &&
+      protectedSiteOcrBrokerPageSource.includes("image/jpeg") &&
+      protectedSiteOcrBrokerPageSource.includes("image/webp"),
+    "sandbox broker page should allow only PNG, JPG/JPEG, and WEBP OCR payloads"
+  );
+  assert.strictEqual(
+    /target\?\.postMessage|event\.source\.postMessage|window\.parent\.postMessage/.test(protectedSiteOcrBrokerPageSource),
+    false,
+    "sandbox broker page must not post raw OCR results onto the page window message stream"
+  );
+  assert.strictEqual(
+    /console\.(?:log|warn|error)|localStorage|sessionStorage|chrome\.storage|browser\.storage/.test(
+      protectedSiteOcrBrokerPageSource
+    ),
+    false,
+    "sandbox broker page must not log or persist OCR text"
+  );
+}
+
+async function testProtectedSiteOcrBrokerRejectsMalformedMessages() {
+  let handler = null;
+  let runtimeCalls = 0;
+  const parent = {};
+  const replies = [];
+  const sandbox = {
+    ArrayBuffer,
+    Set,
+    Object,
+    String,
+    window: {
+      parent,
+      PWM: {
+        OcrRuntime: {
+          async recognizeImageBytes(payload) {
+            runtimeCalls += 1;
+            return {
+              ok: true,
+              status: "ocr_recognition_ready",
+              language: "eng",
+              text: `OCR:${payload.mimeType}`,
+              textLength: 13,
+              confidenceBucket: "high",
+              warnings: []
+            };
+          }
+        }
+      },
+      addEventListener(type, callback) {
+        if (type === "message") handler = callback;
+      }
+    }
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(protectedSiteOcrBrokerPageSource, sandbox, {
+    filename: "protected_site_ocr_broker_page.js"
+  });
+
+  assert.strictEqual(typeof handler, "function", "broker page should register a message handler");
+  const makePort = () => ({
+    postMessage(message) {
+      replies.push(message);
+    }
+  });
+
+  await handler({
+    source: {},
+    ports: [makePort()],
+    data: {
+      source: "LeakGuardProtectedSiteOcr",
+      channelId: "channel",
+      requestId: "foreign",
+      payload: {
+        imageBytes: new ArrayBuffer(1),
+        mimeType: "image/png",
+        language: "eng"
+      }
+    }
+  });
+  await handler({
+    source: parent,
+    ports: [],
+    data: {
+      source: "LeakGuardProtectedSiteOcr",
+      channelId: "channel",
+      requestId: "missing-port",
+      payload: {
+        imageBytes: new ArrayBuffer(1),
+        mimeType: "image/png",
+        language: "eng"
+      }
+    }
+  });
+  await handler({
+    source: parent,
+    ports: [makePort()],
+    data: {
+      source: "LeakGuardProtectedSiteOcr",
+      channelId: "channel",
+      requestId: "unsupported",
+      payload: {
+        imageBytes: new ArrayBuffer(1),
+        mimeType: "image/gif",
+        language: "eng"
+      }
+    }
+  });
+
+  assert.strictEqual(runtimeCalls, 0, "malformed broker messages must not call OCR");
+  assert.strictEqual(replies.length, 0, "malformed broker messages must not receive replies");
+
+  await handler({
+    source: parent,
+    ports: [makePort()],
+    data: {
+      source: "LeakGuardProtectedSiteOcr",
+      channelId: "channel",
+      requestId: "valid",
+      payload: {
+        imageBytes: new ArrayBuffer(1),
+        mimeType: "image/webp",
+        language: "eng"
+      }
+    }
+  });
+
+  assert.strictEqual(runtimeCalls, 1, "valid private-channel broker message should call OCR once");
+  assert.strictEqual(replies.length, 1, "valid broker message should reply through the private port");
+  assert.strictEqual(replies[0].requestId, "valid");
+  assert.strictEqual(replies[0].result.text, "OCR:image/webp");
 }
 
 run().catch((error) => {
