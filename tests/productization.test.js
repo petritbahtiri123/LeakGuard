@@ -368,11 +368,11 @@ function testBrowserQaScriptOwnsFirefoxSmokeCoverage() {
     "smoke:firefox should remain available as the standalone Firefox smoke command"
   );
   assert.ok(
-    testWorkflow.includes("npm run qa:browser") &&
-      !testWorkflow.includes("npm run smoke:chrome") &&
-      !testWorkflow.includes("npm run smoke:firefox") &&
-      !testWorkflow.includes("npm run smoke:edge"),
-    "CI should run browser coverage through qa:browser instead of separate smoke steps"
+    testWorkflow.includes("xvfb-run -a npm run smoke:chrome") &&
+      testWorkflow.includes("xvfb-run -a npm run smoke:firefox") &&
+      testWorkflow.includes("xvfb-run -a npm run smoke:edge") &&
+      !testWorkflow.includes("xvfb-run -a npm run qa:browser"),
+    "CI should isolate browser smoke runs in separate Xvfb sessions"
   );
   assert.ok(
     !edgeSmokeSource.includes('remoteDebuggingMode: "port"'),

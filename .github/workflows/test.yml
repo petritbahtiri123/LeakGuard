@@ -85,8 +85,14 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      - name: Run browser QA
-        run: xvfb-run -a npm run qa:browser
+      - name: Run Chrome extension smoke
+        run: xvfb-run -a npm run smoke:chrome
+
+      - name: Run Firefox extension smoke
+        run: xvfb-run -a npm run smoke:firefox
+
+      - name: Run Edge extension smoke
+        run: xvfb-run -a npm run smoke:edge
 
       - name: Upload browser smoke timings
         if: always()
