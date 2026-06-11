@@ -1277,7 +1277,12 @@ async function runUserManagedSiteSmoke(connection, extensionSessionId, userOrigi
 
 async function runScannerSmoke(connection, extensionId, tempDir) {
   const scanner = await createPage(connection, `chrome-extension://${extensionId}/scanner/scanner.html`);
-  await waitForEval(connection, scanner.sessionId, "Boolean(document.querySelector('#file-input'))", "scanner UI");
+  await waitForEval(
+    connection,
+    scanner.sessionId,
+    "document.readyState === 'complete' && Boolean(document.querySelector('#file-input'))",
+    "scanner UI"
+  );
 
   const supportedPath = path.join(tempDir, "smoke.env");
   fs.writeFileSync(supportedPath, "API_KEY=sk_live_7Qm2Lp9Xv4Nc8Tr6Yh1Zw5Kd3Bj0Pf\n");
@@ -1365,7 +1370,12 @@ async function runScannerSmoke(connection, extensionId, tempDir) {
 
 async function runOcrWasmProbeSmoke(connection, extensionId, browserName = "Chrome") {
   const page = await createPage(connection, `chrome-extension://${extensionId}/scanner/scanner.html`);
-  await waitForEval(connection, page.sessionId, "Boolean(document.querySelector('#file-input'))", "scanner UI");
+  await waitForEval(
+    connection,
+    page.sessionId,
+    "document.readyState === 'complete' && Boolean(document.querySelector('#file-input'))",
+    "scanner UI"
+  );
 
   const result = await evaluate(
     connection,
