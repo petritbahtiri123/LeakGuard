@@ -1461,7 +1461,7 @@ async function runChromiumSmoke(options = {}) {
     findBrowserExecutable = findChromeExecutable,
     headlessEnvName = "LEAKGUARD_CHROME_HEADLESS",
     missingMessage = "Chrome stable or Chromium was not found. Set CHROME_BIN to run this smoke test.",
-    remoteDebuggingMode = "pipe"
+    remoteDebuggingMode = "port"
   } = options;
   const debuggingMode = normalizeRemoteDebuggingMode(remoteDebuggingMode);
   assertBuiltExtensionExists(sourceExtensionDir, buildCommand);

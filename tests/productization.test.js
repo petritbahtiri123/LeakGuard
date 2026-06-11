@@ -32,6 +32,7 @@ const releaseChecklist = fs.readFileSync(
 );
 const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
 const testWorkflow = fs.readFileSync(path.join(repoRoot, ".github/workflows/test.yml"), "utf8");
+const chromeSmokeSource = fs.readFileSync(path.join(repoRoot, "tests/browser/chrome_smoke.test.mjs"), "utf8");
 const edgeSmokeSource = fs.readFileSync(path.join(repoRoot, "tests/browser/edge_smoke.test.mjs"), "utf8");
 const { BUILTIN_PROTECTED_SITES } = require(path.join(repoRoot, "src/shared/protected_sites.js"));
 
@@ -261,31 +262,36 @@ function testDocumentScannerCopyStaysV1Scoped() {
     "scanner UI should describe PDF, DOCX, XLSX, and scanner image support as scoped extraction only"
   );
   assert.ok(
-      scannerHtml.includes("Image OCR is English-only") &&
+    scannerHtml.includes("Image OCR is English-only") &&
       scannerHtml.includes("runs only after you select an image and click Scan File") &&
       scannerHtml.includes("limited to image files on this scanner page") &&
+      scannerHtml.includes("Scanner image visual redaction outputs a flattened PNG") &&
+      scannerHtml.includes("JPG, JPEG, and WEBP inputs are not preserved as their original format") &&
       scannerHtml.includes("Protected-site upload OCR is available only when enabled in settings") &&
       scannerHtml.includes("Scanned PDF OCR") &&
+      scannerHtml.includes("protected-site image-redacted uploads") &&
       scannerHtml.includes("legacy XLS") &&
       scannerHtml.includes("XLSM") &&
-      scannerHtml.includes("embedded media") &&
-      /image redaction|image-redacted uploads|visual redaction/i.test(scannerHtml),
-    "scanner UI should explicitly scope English/local/images-only OCR, settings-gated protected-site OCR, and avoid scanned PDF, legacy XLS, XLSM, media, and image-redaction claims"
+      scannerHtml.includes("embedded media"),
+    "scanner UI should explicitly scope English/local/images-only OCR, scanner PNG visual redaction, settings-gated protected-site OCR, and avoid scanned PDF, legacy XLS, XLSM, and media claims"
   );
   assert.ok(
-    !/image PDF support|full PDF|full DOCX|full XLSX|full image|rebuilt DOCX|rebuilt XLSX|rebuilt image|macro support/i.test(scannerHtml),
+    !/image PDF support|full PDF|full DOCX|full XLSX|full image|rebuilt DOCX|rebuilt XLSX|rebuilt image|macro support|preserve JPG|preserve JPEG|preserve WEBP/i.test(scannerHtml),
     "scanner UI must not claim image-PDF support, macro support, full visual image scanning, or full PDF/DOCX/XLSX/image rebuild support"
   );
   assert.ok(
     scannerHtml.includes("../shared/ocr/ocrRuntime.js") &&
       scannerHtml.includes("../shared/scannerOcr.js") &&
-    scannerJs.includes('extension === ".pdf"') &&
+      scannerHtml.includes("../shared/imageRedactor.js") &&
+      scannerJs.includes('extension === ".pdf"') &&
       scannerJs.includes('extension === ".docx"') &&
       scannerJs.includes('extension === ".xlsx"') &&
       scannerJs.includes('extension === ".png"') &&
       scannerJs.includes('extension === ".webp"') &&
-      scannerJs.includes('redacted.txt'),
-    "scanner redacted exports for PDFs, DOCX, XLSX, and images should be text files, not rebuilt documents or images"
+      scannerJs.includes('redacted.txt') &&
+      scannerJs.includes("createRedactedPng") &&
+      scannerHtml.includes("Download Redacted PNG"),
+    "scanner redacted exports should keep text output for documents/images and add scanner-only flattened PNG output for image findings"
   );
 }
 
@@ -375,8 +381,9 @@ function testBrowserQaScriptOwnsFirefoxSmokeCoverage() {
     "CI should isolate browser smoke runs in separate Xvfb sessions"
   );
   assert.ok(
+    chromeSmokeSource.includes('remoteDebuggingMode = "port"') &&
     edgeSmokeSource.includes('remoteDebuggingMode: "port"'),
-    "Edge smoke should use port CDP because GitHub setup-edge Linux runs do not reliably answer pipe CDP"
+    "Chromium smoke should use port CDP because GitHub browser Linux runs do not reliably answer pipe CDP"
   );
 }
 
