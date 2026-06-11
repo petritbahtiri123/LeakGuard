@@ -247,7 +247,7 @@ function testDynamicSiteSupportIsDeclaredMinimally(manifest) {
     "dynamic site sync should use the supported scripting related-frame option"
   );
   assert.ok(
-    !manifest.content_scripts[0].js.some((script) => script.includes("scanner")),
+    !manifest.content_scripts[0].js.some((script) => script.startsWith("scanner/")),
     "scanner scripts should not be injected into protected sites"
   );
 }
@@ -263,13 +263,13 @@ function testDocumentScannerCopyStaysV1Scoped() {
     scannerHtml.includes("Image OCR is English-only") &&
       scannerHtml.includes("runs only after you select an image and click Scan File") &&
       scannerHtml.includes("limited to image files on this scanner page") &&
+      scannerHtml.includes("Protected-site upload OCR is available only when enabled in settings") &&
       scannerHtml.includes("Scanned PDF OCR") &&
       scannerHtml.includes("legacy XLS") &&
       scannerHtml.includes("XLSM") &&
       scannerHtml.includes("embedded media") &&
-      scannerHtml.includes("protected-site upload OCR") &&
       scannerHtml.includes("image redaction"),
-    "scanner UI should explicitly scope English/local/images-only OCR and avoid scanned PDF, protected-site OCR, legacy XLS, XLSM, media, and image-redaction claims"
+    "scanner UI should explicitly scope English/local/images-only OCR, settings-gated protected-site OCR, and avoid scanned PDF, legacy XLS, XLSM, media, and image-redaction claims"
   );
   assert.ok(
     !/image PDF support|full PDF|full DOCX|full XLSX|full image|rebuilt DOCX|rebuilt XLSX|rebuilt image|macro support/i.test(scannerHtml),
@@ -285,6 +285,33 @@ function testDocumentScannerCopyStaysV1Scoped() {
       scannerJs.includes('extension === ".webp"') &&
       scannerJs.includes('redacted.txt'),
     "scanner redacted exports for PDFs, DOCX, XLSX, and images should be text files, not rebuilt documents or images"
+  );
+}
+
+function testProtectedSiteOcrSettingsCopyIsAccurateAndScoped() {
+  assert.ok(
+    optionsHtml.includes("Enable image OCR for protected-site uploads"),
+    "options should expose the protected-site OCR opt-in label"
+  );
+  for (const copy of [
+    "English-only",
+    "local-only",
+    "may be slower",
+    "images only",
+    "No scanned PDF OCR",
+    "sanitized .redacted.txt",
+    "Raw image bytes and OCR text never leave your device"
+  ]) {
+    assert.ok(optionsHtml.includes(copy), `protected-site OCR settings copy should include: ${copy}`);
+  }
+  assert.ok(
+    optionsJs.includes("PWM_GET_PROTECTED_SITE_OCR_SETTING") &&
+      optionsJs.includes("PWM_SET_PROTECTED_SITE_OCR_SETTING"),
+    "options should load and persist protected-site OCR through explicit settings messages"
+  );
+  assert.ok(
+    !/full image OCR|all image text|scanned PDF OCR enabled|supports image redaction|supports image rebuild|cloud OCR|remote OCR/i.test(optionsHtml),
+    "protected-site OCR settings copy must not overclaim scope or imply remote/cloud processing"
   );
 }
 
@@ -363,6 +390,7 @@ async function run() {
   testFileProcessingUiIsGenericAndProgressive();
   testDynamicSiteSupportIsDeclaredMinimally(manifest);
 testDocumentScannerCopyStaysV1Scoped();
+testProtectedSiteOcrSettingsCopyIsAccurateAndScoped();
 testImageMetadataScannerAvoidsOcrDependencies();
 testPublishReadinessDocsCoverStorePrivacyAndQa();
   testBrowserQaScriptOwnsFirefoxSmokeCoverage();

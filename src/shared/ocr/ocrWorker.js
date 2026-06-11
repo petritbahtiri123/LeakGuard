@@ -10,6 +10,9 @@ let englishLanguageProbePromise = null;
 let recognitionProbePromise = null;
 
 function getExtensionUrl(resourcePath) {
+  if (self.LEAKGUARD_OCR_BASE && typeof URL === "function") {
+    return new URL(resourcePath, self.LEAKGUARD_OCR_BASE).href;
+  }
   const runtime = self.chrome?.runtime || self.browser?.runtime || null;
   if (runtime && typeof runtime.getURL === "function") {
     return runtime.getURL(resourcePath);

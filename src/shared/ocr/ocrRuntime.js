@@ -24,14 +24,56 @@
     if (runtime && typeof runtime.getURL === "function") {
       return runtime.getURL(workerPath);
     }
+    if (root.location?.href && typeof URL === "function") {
+      return new URL(`/${workerPath}`, root.location.href).href;
+    }
     return workerPath;
+  }
+
+  function createBlobWorkerFallback() {
+    if (
+      root.chrome?.runtime ||
+      root.browser?.runtime ||
+      typeof root.XMLHttpRequest !== "function" ||
+      typeof root.Blob !== "function" ||
+      !root.URL?.createObjectURL ||
+      !root.location?.href
+    ) {
+      return null;
+    }
+
+    const request = new root.XMLHttpRequest();
+    request.open("GET", getWorkerUrl(), false);
+    request.send(null);
+    if (request.status && request.status !== 200) return null;
+
+    const extensionBase = new URL("/", root.location.href).href;
+    const source = `self.LEAKGUARD_OCR_BASE=${JSON.stringify(extensionBase)};\n${request.responseText || ""}`;
+    const blobUrl = root.URL.createObjectURL(new root.Blob([source], { type: "text/javascript" }));
+    return new root.Worker(blobUrl);
   }
 
   function getWorker() {
     if (!worker) {
-      worker = new root.Worker(getWorkerUrl());
+      try {
+        worker = new root.Worker(getWorkerUrl());
+      } catch (error) {
+        worker = createBlobWorkerFallback();
+        if (!worker) throw error;
+      }
     }
     return worker;
+  }
+
+  function classifyWorkerStartError(error) {
+    const text = `${error?.name || ""} ${error?.message || ""}`.toLowerCase();
+    if (text.includes("content security policy") || text.includes("security")) {
+      return "worker_start_blocked_by_csp";
+    }
+    if (text.includes("web_accessible_resources") || text.includes("access")) {
+      return "worker_start_resource_blocked";
+    }
+    return error?.name || "worker_start_failed";
   }
 
   function createWorkerProbe() {
@@ -384,7 +426,22 @@
     }
 
     workerStatus = "recognizing_image";
-    const activeWorker = getWorker();
+    let activeWorker;
+    try {
+      activeWorker = getWorker();
+    } catch (error) {
+      const reason = classifyWorkerStartError(error);
+      workerStatus = reason;
+      return Promise.resolve({
+        ok: false,
+        status: "ocr_recognition_blocked",
+        language: "eng",
+        textLength: 0,
+        confidenceBucket: "unknown",
+        warnings: [reason],
+        reason
+      });
+    }
 
     return new Promise((resolve, reject) => {
       const timeout = root.setTimeout(() => {

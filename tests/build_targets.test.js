@@ -10,6 +10,8 @@ const protectedSitesModule = require(path.join(repoRoot, "src/shared/protected_s
 
 const restrictiveExtensionPageCsp =
   "script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; base-uri 'none'; frame-ancestors 'none';";
+const restrictiveSandboxCsp =
+  "sandbox allow-scripts; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; object-src 'none'; base-uri 'none';";
 const tesseractCoreProofFiles = Object.freeze([
   "shared/ocr/tesseract-core/tesseract-core.js",
   "shared/ocr/tesseract-core/tesseract-core.wasm"
@@ -303,7 +305,7 @@ function assertOcrRuntimeAssets(result) {
       for (const forbidden of ["ocrad", "traineddata", "cdn.jsdelivr", "unpkg.com"]) {
         const allowedEnglishTrainedDataReference =
           forbidden === "traineddata" &&
-          relativePath.startsWith("shared/ocr/") &&
+          (relativePath.startsWith("shared/ocr/") || relativePath === "manifest.json") &&
           source.includes("eng.traineddata.gz") &&
           !/tessdata\/(?!eng\.traineddata\.gz)/i.test(source);
         if (!allowedEnglishTrainedDataReference) {
@@ -1018,8 +1020,16 @@ function assertManifestStructure(result, expectedHostPermissions) {
   assert.strictEqual(manifest.manifest_version, 3, `${result.target} should remain MV3`);
   assert.deepStrictEqual(
     manifest.content_security_policy,
-    { extension_pages: restrictiveExtensionPageCsp },
+    {
+      extension_pages: restrictiveExtensionPageCsp,
+      sandbox: restrictiveSandboxCsp
+    },
     `${result.target} should keep the restrictive extension-page CSP with local WASM compilation only`
+  );
+  assert.deepStrictEqual(
+    manifest.sandbox,
+    { pages: ["content/protected_site_ocr_broker.html"] },
+    `${result.target} should sandbox only the protected-site OCR broker page`
   );
   const cspDirectives = parseCspDirectives(manifest.content_security_policy?.extension_pages);
   assert.deepStrictEqual(
@@ -1171,10 +1181,10 @@ async function run() {
     consumerBuildInfo.features?.ocr,
     {
       enabled: true,
-      status: "scanner_page_v1",
-      scope: "scanner_image_english_only"
+      status: "image_ocr_v1",
+      scope: "scanner_and_protected_site_image_english_only_default_off"
     },
-    "default consumer build should enable scanner-page OCR v1 only"
+    "default consumer build should expose scanner OCR and default-off protected-site image OCR metadata"
   );
   assert.strictEqual(chromeEnterpriseBuildInfo.enterprise, true, "chrome enterprise build should mark enterprise");
   assert.strictEqual(
@@ -1188,10 +1198,10 @@ async function run() {
       buildInfo.features?.ocr,
       {
         enabled: true,
-        status: "scanner_page_v1",
-        scope: "scanner_image_english_only"
+        status: "image_ocr_v1",
+        scope: "scanner_and_protected_site_image_english_only_default_off"
       },
-      `${target} should report scanner-page OCR v1 metadata`
+      `${target} should report image OCR v1 metadata`
     );
     await assertOcrRuntimeProbeShell(path.join(repoRoot, "dist", target));
     await assertOcrWorkerEngineProof(path.join(repoRoot, "dist", target));
@@ -1217,11 +1227,11 @@ async function run() {
     scannerHtml.includes("Image OCR is English-only") &&
       scannerHtml.includes("scanned locally") &&
       scannerHtml.includes("limited to image files on this scanner page") &&
+      scannerHtml.includes("Protected-site upload OCR is available only when enabled in settings") &&
       scannerHtml.includes("Scanned PDF OCR") &&
       scannerHtml.includes("image redaction") &&
-      scannerHtml.includes("image rebuild") &&
-      scannerHtml.includes("protected-site upload OCR"),
-    "scanner UI should scope OCR to local English image scanning and explicitly exclude scanned PDFs, image rebuild/redaction, and protected-site OCR"
+      scannerHtml.includes("image rebuild"),
+    "scanner UI should scope OCR to local English image scanning, settings-gated protected-site OCR, and explicitly exclude scanned PDFs and image rebuild/redaction"
   );
   for (const [target, manifest] of [
     ["chrome", chromeManifest],
@@ -1294,6 +1304,8 @@ async function run() {
   const fileTypeRegistryIndex = contentScripts.indexOf("shared/fileTypeRegistry.js");
   const fileExtractorsIndex = contentScripts.indexOf("shared/fileExtractors.js");
   const fileScannerIndex = contentScripts.indexOf("shared/fileScanner.js");
+  const ocrRuntimeIndex = contentScripts.indexOf("shared/ocr/ocrRuntime.js");
+  const scannerOcrIndex = contentScripts.indexOf("shared/scannerOcr.js");
   const streamingRedactorIndex = contentScripts.indexOf("shared/streamingFileRedactor.js");
   const filePasteHelperIndex = contentScripts.indexOf("content/file_paste_helpers.js");
   const fileHandoffStateIndex = contentScripts.indexOf("content/file_handoff_state.js");
@@ -1302,6 +1314,7 @@ async function run() {
   const rewriteVerificationTextIndex = contentScripts.indexOf("content/input/rewriteVerificationText.js");
   const fileTransferPolicyIndex = contentScripts.indexOf("content/files/fileTransferPolicy.js");
   const fileExtractionSessionCacheIndex = contentScripts.indexOf("content/files/fileExtractionSessionCache.js");
+  const protectedSiteOcrBrokerIndex = contentScripts.indexOf("content/files/protectedSiteOcrBroker.js");
   const contentFileExtractionPipelineIndex = contentScripts.indexOf("content/files/contentFileExtractionPipeline.js");
   const hostMatchingIndex = contentScripts.indexOf("content/adapters/hostMatching.js");
   const adapterScripts = [
@@ -1334,6 +1347,8 @@ async function run() {
   assert.ok(fileLimitsIndex > -1, "content scripts should include shared file limit constants");
   assert.ok(fileTypeRegistryIndex > -1, "content scripts should include shared file type registry helpers");
   assert.ok(fileExtractorsIndex > -1, "content scripts should include shared file extractor helpers");
+  assert.ok(ocrRuntimeIndex > -1, "content scripts should include shared OCR runtime helpers");
+  assert.ok(scannerOcrIndex > -1, "content scripts should include shared scanner OCR helpers");
   assert.ok(streamingRedactorIndex > -1, "content scripts should include streaming file redactor helpers");
   assert.ok(filePasteHelperIndex > -1, "content scripts should include local file paste helpers");
   assert.ok(fileHandoffStateIndex > -1, "content scripts should include file handoff state helpers");
@@ -1342,6 +1357,7 @@ async function run() {
   assert.ok(rewriteVerificationTextIndex > -1, "content scripts should include rewrite verification text helpers");
   assert.ok(fileTransferPolicyIndex > -1, "content scripts should include file transfer policy helpers");
   assert.ok(fileExtractionSessionCacheIndex > -1, "content scripts should include file extraction session cache helpers");
+  assert.ok(protectedSiteOcrBrokerIndex > -1, "content scripts should include protected-site OCR broker helpers");
   assert.ok(
     contentFileExtractionPipelineIndex > -1,
     "content scripts should include content file extraction pipeline helpers"
@@ -1363,7 +1379,9 @@ async function run() {
     fileLimitsIndex < fileTypeRegistryIndex &&
       fileTypeRegistryIndex < fileExtractorsIndex &&
       fileExtractorsIndex < fileScannerIndex &&
-      fileScannerIndex < streamingRedactorIndex &&
+      fileScannerIndex < ocrRuntimeIndex &&
+      ocrRuntimeIndex < scannerOcrIndex &&
+      scannerOcrIndex < streamingRedactorIndex &&
       streamingRedactorIndex < filePasteHelperIndex &&
       filePasteHelperIndex < fileHandoffStateIndex &&
       fileHandoffStateIndex < fileHandoffPendingIndex &&
@@ -1371,7 +1389,8 @@ async function run() {
       fileHandoffFlowIndex < rewriteVerificationTextIndex &&
       rewriteVerificationTextIndex < fileTransferPolicyIndex &&
       fileTransferPolicyIndex < fileExtractionSessionCacheIndex &&
-      fileExtractionSessionCacheIndex < contentFileExtractionPipelineIndex &&
+      fileExtractionSessionCacheIndex < protectedSiteOcrBrokerIndex &&
+      protectedSiteOcrBrokerIndex < contentFileExtractionPipelineIndex &&
       contentFileExtractionPipelineIndex < hostMatchingIndex &&
       hostMatchingIndex < adapterIndexes[0] &&
       adapterOrderAligned &&

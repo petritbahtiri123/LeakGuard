@@ -3,7 +3,7 @@
   root.PWM = root.PWM || {};
 
   const SUPPORTED_EXTRACTION_KINDS = new Set(["text", "pdf", "docx", "xlsx", "image_metadata"]);
-  const EXTRACTED_TEXT_OUTPUT_KINDS = new Set(["pdf", "docx", "xlsx", "image_metadata"]);
+  const EXTRACTED_TEXT_OUTPUT_KINDS = new Set(["pdf", "docx", "xlsx", "image_metadata", "image_ocr"]);
 
   function getRegistry() {
     return root.PWM.FileTypeRegistry || {};
@@ -19,6 +19,19 @@
 
   function getSessionCache() {
     return root.PWM.FileExtractionSessionCache || {};
+  }
+
+  function getScannerOcr() {
+    return root.PWM.ScannerOcr || {};
+  }
+
+  function getOcrRuntime() {
+    return root.PWM.ProtectedSiteOcrBroker || root.PWM.OcrRuntime || {};
+  }
+
+  async function getProtectedSiteOcrGate() {
+    if (typeof root.PWM.isProtectedSiteOcrEnabled !== "function") return false;
+    return root.PWM.isProtectedSiteOcrEnabled();
   }
 
   function normalizeFileName(fileName) {
@@ -66,6 +79,13 @@
           .filter(Boolean)
       )
     );
+  }
+
+  function removeImageMetadataOcrClaims(text) {
+    return String(text || "")
+      .split(/\r?\n/)
+      .filter((line) => !/^(?:visual_text_scanned|image_ocr_supported)=/i.test(String(line || "").trim()))
+      .join("\n");
   }
 
   function sanitizeExtractionMetadata(metadata = {}) {
@@ -157,6 +177,71 @@
     return new TextDecoder("utf-8", { fatal: true }).decode(buffer);
   }
 
+  async function runProtectedSiteImageOcr(file, extraction, options = {}) {
+    const scannerOcr = getScannerOcr();
+    if (
+      typeof scannerOcr.recognizeScannerImageFile !== "function" ||
+      typeof scannerOcr.buildScannerOcrScanText !== "function"
+    ) {
+      return {
+        ok: false,
+        status: "ocr_runtime_unavailable",
+        warnings: ["ocr_runtime_unavailable"]
+      };
+    }
+
+    const runtime = getOcrRuntime();
+    if (typeof runtime.prepare === "function") {
+      const prepared = await runtime.prepare({ timeoutMs: options.ocrTimeoutMs });
+      if (!prepared?.ok) {
+        const status = prepared?.reason || prepared?.status || "ocr_runtime_unavailable";
+        return {
+          ok: false,
+          status,
+          warnings: listWarnings(prepared?.warnings, [status])
+        };
+      }
+    }
+
+    const ocrOptions = {
+      runtime,
+      timeoutMs: options.ocrTimeoutMs
+    };
+    if (options.ocrDimensions) {
+      ocrOptions.dimensions = options.ocrDimensions;
+    } else {
+      ocrOptions.readDimensions = true;
+    }
+
+    const ocr = await scannerOcr.recognizeScannerImageFile(file, ocrOptions);
+    if (!ocr?.ok) {
+      return {
+        ok: false,
+        status: ocr?.status || "ocr_failed",
+        warnings: listWarnings(ocr?.warnings, [ocr?.status || "ocr_failed"])
+      };
+    }
+
+    const text = scannerOcr.buildScannerOcrScanText({
+      metadataText: removeImageMetadataOcrClaims(extraction.text),
+      ocrText: ocr.text,
+      ocrMetadata: ocr
+    });
+
+    return {
+      ok: true,
+      kind: "image_ocr",
+      text,
+      metadata: {
+        ...(extraction.metadata || {}),
+        textLength: text.length,
+        visualContentScanned: true,
+        ocrSupported: true
+      },
+      warnings: listWarnings(ocr.warnings)
+    };
+  }
+
   function canExtractForAdapterHandoff(file) {
     const extractors = getExtractors();
     if (typeof extractors.routeFileExtractor !== "function") return false;
@@ -176,6 +261,12 @@
     const extractors = getExtractors();
     const scanner = getScanner();
     const sessionCache = getSessionCache();
+    const routed = extractors.routeFileExtractor?.({
+      fileName: originalName,
+      mimeType,
+      sizeBytes
+    });
+    const skipSessionCache = routed?.kind === "image_metadata";
 
     if (
       !file ||
@@ -190,7 +281,7 @@
       });
     }
 
-    if (typeof sessionCache.get === "function") {
+    if (!skipSessionCache && typeof sessionCache.get === "function") {
       const cached = sessionCache.get(file);
       if (cached?.status === "ready" && cached.safeForUpload === true) {
         const sanitizedFile = createTextFile(
@@ -232,11 +323,8 @@
     }
 
     let text = "";
-    const routed = extractors.routeFileExtractor?.({
-      fileName: originalName,
-      mimeType,
-      sizeBytes
-    });
+    const protectedSiteOcrEnabled =
+      routed?.kind === "image_metadata" ? await getProtectedSiteOcrGate() : false;
     if (routed?.kind === "text") {
       try {
         text = await readFileText(file, buffer);
@@ -257,12 +345,14 @@
       buffer,
       text
     });
-    const extractedKind = extraction?.kind || routed?.kind || "";
-    const extractionMetadata = extraction?.metadata || {
+    let extractedKind = extraction?.kind || routed?.kind || "";
+    let extractedText = String(extraction?.text || "");
+    let extractionMetadata = extraction?.metadata || {
       fileName: originalName,
       mimeType,
       sizeBytes
     };
+    let extractionWarnings = extraction?.warnings;
 
     if (!extraction?.safeForScan) {
       const status = extraction?.status === "unsupported" ? "unsupported" : "blocked";
@@ -277,11 +367,29 @@
       });
     }
 
-    const extractedText = String(extraction.text || "");
+    if (protectedSiteOcrEnabled && extractedKind === "image_metadata") {
+      const ocrExtraction = await runProtectedSiteImageOcr(file, extraction, options);
+      if (!ocrExtraction.ok) {
+        return createEmptyResult("blocked", {
+          originalName,
+          mimeType,
+          sizeBytes,
+          extractedKind: "image_ocr",
+          extractionMetadata,
+          warnings: ocrExtraction.warnings,
+          fallbackReason: ocrExtraction.status || "ocr_failed"
+        });
+      }
+      extractedKind = ocrExtraction.kind;
+      extractedText = ocrExtraction.text;
+      extractionMetadata = ocrExtraction.metadata;
+      extractionWarnings = ocrExtraction.warnings;
+    }
+
     const scan = scanner.scanTextContent({
       fileName: originalName,
       mimeType,
-      sizeBytes: Number(extraction.metadata?.textLength || sizeBytes),
+      sizeBytes: Number(extractionMetadata?.textLength || sizeBytes),
       text: extractedText,
       extractedText: extractedKind !== "text",
       mode: options.mode || "hide_public"
@@ -307,7 +415,7 @@
         outputName,
         outputKind,
         extractionMetadata,
-        warnings: extraction.warnings,
+        warnings: extractionWarnings,
         fallbackReason: "sanitized_file_create_failed"
       });
     }
@@ -333,7 +441,7 @@
           redactedLength: sanitizedText.length
         }
       },
-      warnings: listWarnings(extraction.warnings, scan.reportWarnings),
+      warnings: listWarnings(extractionWarnings, scan.reportWarnings),
       safeForUpload: true,
       fallbackReason: ""
     };
@@ -341,7 +449,7 @@
     result.metadata.cache = {
       status: "miss"
     };
-    if (typeof sessionCache.set === "function") {
+    if (!skipSessionCache && typeof sessionCache.set === "function") {
       sessionCache.set(file, result);
     }
     return result;
@@ -349,6 +457,8 @@
 
   root.PWM.ContentFileExtractionPipeline = {
     canExtractForAdapterHandoff,
+    getProtectedSiteOcrGate,
+    runProtectedSiteImageOcr,
     processFileForAdapterHandoff
   };
 

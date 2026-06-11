@@ -403,8 +403,7 @@ function testScannerUiCopyScopesOcrV1() {
   assert.ok(scannerHtml.includes("Scanned PDF OCR"));
   assert.ok(scannerHtml.includes("image redaction"));
   assert.ok(scannerHtml.includes("image rebuild"));
-  assert.ok(scannerHtml.includes("protected-site upload OCR"));
-  assert.ok(scannerHtml.includes("protected-site upload OCR are not enabled in this release"));
+  assert.ok(scannerHtml.includes("Protected-site upload OCR is available only when enabled in settings"));
 }
 
 function testScannerUiSerializesRepeatedScansAndRestoresControls() {

@@ -101,6 +101,30 @@ h1 {
   color: #fef3c7;
 }
 
+.toggle-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.toggle-row input {
+  width: 18px;
+  height: 18px;
+  margin: 3px 0 0;
+  accent-color: #10b981;
+}
+
+.toggle-row strong,
+.toggle-row small {
+  display: block;
+}
+
+.toggle-row small {
+  margin-top: 4px;
+  color: #bae6fd;
+}
+
 .site-list {
   display: grid;
   gap: 12px;

@@ -14,6 +14,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import zlib from "node:zlib";
+import sharp from "sharp";
 import {
   CdpPipeConnection as ChromiumPipeConnection,
   CdpWebSocketConnection,
@@ -160,6 +161,18 @@ function makeQaXlsx(text) {
   ]);
 }
 
+async function makeSyntheticTextImage(text, format, options = {}) {
+  const width = options.width || 1400;
+  const height = options.height || 220;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
+    <rect width="100%" height="100%" fill="white"/>
+    <text x="32" y="130" font-family="Arial" font-size="48" fill="black">${String(text)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")}</text>
+  </svg>`;
+  return await sharp(Buffer.from(svg)).toFormat(format).toBuffer();
+}
+
 function findChromeExecutable() {
   const localAppData = process.env.LOCALAPPDATA || "";
   const windowsCandidates =
@@ -257,9 +270,26 @@ function createHarnessPage() {
     <main>
       <h1>LeakGuard Browser QA Harness</h1>
       <textarea id="prompt-textarea" data-testid="prompt-textarea" placeholder="Message"></textarea>
+      <input id="qa-file-input" type="file" accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp">
       <button id="send-button" type="button">Send</button>
       <section id="echo-zone"></section>
     </main>
+    <script>
+      window.__leakguardQaUploads = [];
+      document.querySelector('#qa-file-input').addEventListener('change', async (event) => {
+        const files = Array.from(event.target.files || []);
+        const items = await Promise.all(files.map(async (file) => {
+          const isText = file.type === 'text/plain' || /\\.txt$/i.test(file.name || '');
+          return {
+            name: file.name,
+            type: file.type,
+            size: file.size,
+            text: isText ? await file.text() : ''
+          };
+        }));
+        window.__leakguardQaUploads.push({ items });
+      });
+    </script>
   </body>
 </html>`;
 }
@@ -854,6 +884,100 @@ async function runRefreshSafetyQa(connection, page) {
   assert.equal(refreshed.textareaValue.includes("sk-"), false);
 }
 
+async function runProtectedSiteImageOcrQa(connection, page, extensionSessionId, tempDir) {
+  const settingResponse = await extensionMessage(connection, extensionSessionId, {
+    type: "PWM_SET_PROTECTED_SITE_OCR_SETTING",
+    enabled: true
+  });
+  assert.equal(settingResponse.ok, true, "protected-site OCR setting should be enabled for QA");
+
+  const fixtureSecret = "sk-proj-LeakGuardScannerOcrApiKey1234567890abcdef";
+  const imagePath = path.join(tempDir, "protected-site-ocr.png");
+  fs.writeFileSync(imagePath, await makeSyntheticTextImage(`API_KEY=${fixtureSecret}`, "png"));
+  await setFileInputFiles(connection, page.sessionId, "#qa-file-input", [imagePath]);
+
+  let result;
+  try {
+    result = await waitFor(
+      () =>
+        evaluate(
+          connection,
+          page.sessionId,
+          `(async () => {
+          const rawSecret = ${JSON.stringify(fixtureSecret)};
+          const uploads = [
+            ...Array.from(window.__leakguardQaUploads || []),
+            {
+              items: await Promise.all(Array.from(document.querySelector('#qa-file-input')?.files || []).map(async (file) => ({
+                name: file.name,
+                type: file.type,
+                size: file.size,
+                text: file.type === 'text/plain' || /\\.txt$/i.test(file.name || '') ? await file.text() : ''
+              })))
+            }
+          ];
+          const sanitized = uploads
+            .flatMap((upload) => upload.items || [])
+            .find((item) => /\\.redacted\\.txt$/i.test(item.name || '') && item.type === 'text/plain');
+          if (!sanitized) return null;
+          const text = sanitized.text || '';
+          return {
+            name: sanitized.name,
+            type: sanitized.type,
+            textPrefix: text.slice(0, 240),
+            hasRaw: text.includes(rawSecret),
+            visualTextScanned: /visual_text_scanned=true/.test(text),
+            ocrSupported: /image_ocr_supported=true/.test(text),
+            metadataOnlyClaim: /image_ocr_not_supported|visual_text_scanned=false/.test(text),
+            originalImagePresent: uploads
+              .flatMap((upload) => upload.items || [])
+              .some((item) => item.name === 'protected-site-ocr.png' && item.type !== 'text/plain')
+          };
+        })()`,
+          { awaitPromise: true }
+        ),
+      "protected-site image OCR sanitized handoff",
+      30000
+    );
+  } catch (error) {
+    const diagnostic = await evaluate(
+      connection,
+      page.sessionId,
+      `(async () => ({
+        inputFiles: await Promise.all(Array.from(document.querySelector('#qa-file-input')?.files || []).map(async (file) => ({
+          name: file.name,
+          type: file.type,
+          size: file.size,
+          textPrefix: (file.type === 'text/plain' || /\\.txt$/i.test(file.name || '')) ? (await file.text()).slice(0, 160) : ''
+        }))),
+        recordedUploads: Array.from(window.__leakguardQaUploads || []).map((upload) => ({
+          items: (upload.items || []).map((item) => ({
+            name: item.name,
+            type: item.type,
+            size: item.size,
+            textPrefix: String(item.text || '').slice(0, 160)
+          }))
+        })),
+        badge: document.querySelector('.pwm-badge')?.textContent || '',
+        modal: document.querySelector('.pwm-modal')?.innerText || '',
+        overlay: document.querySelector('.pwm-file-processing-overlay')?.innerText || '',
+        panel: document.querySelector('.pwm-panel')?.innerText || ''
+      }))()`,
+      { awaitPromise: true }
+    );
+    throw new Error(`${error.message} Diagnostic: ${JSON.stringify(diagnostic)}`);
+  }
+
+  assert.equal(result.name, "protected-site-ocr.redacted.txt");
+  assert.equal(result.type, "text/plain");
+  assert.equal(result.hasRaw, false, "protected-site OCR handoff must not expose raw OCR text");
+  assert.equal(result.visualTextScanned, true, "protected-site OCR handoff should report scanned visual text");
+  assert.equal(result.ocrSupported, true, "protected-site OCR handoff should report OCR support");
+  assert.equal(result.metadataOnlyClaim, false, "enabled OCR handoff should not claim metadata-only scanning");
+  assert.equal(result.originalImagePresent, false, "protected-site OCR handoff must not upload the raw image");
+  return result;
+}
+
 function assertScannerResult(result) {
   assert.equal(result.hasAnyRaw, false, "scanner preview still contains raw synthetic values");
   assert.equal(result.openAiRedacted, true);
@@ -1400,6 +1524,7 @@ async function runBrowserQa({ browserName, executable }) {
 
     const page = await openProtectedHarness(connection, harnessServer.origin);
     const prompt = await runPromptRedactionQa(connection, page);
+    const protectedSiteImageOcr = await runProtectedSiteImageOcrQa(connection, page, popup.sessionId, tempDir);
     await runSecureRevealQa(connection, page, extensionId, prompt.firstPlaceholder);
     await runRefreshSafetyQa(connection, page);
     const scanner = await runScannerQa(connection, extensionId, tempDir);
@@ -1408,11 +1533,11 @@ async function runBrowserQa({ browserName, executable }) {
     console.log(`${browserName} browser QA: extension loaded (${extensionId})`);
     console.log(`${browserName} browser QA: local harness ${harnessServer.origin}`);
     console.log(
-      `${browserName} browser QA: protected-site lifecycle, prompt redaction, reveal, refresh, scanner exports, unsupported file`
+      `${browserName} browser QA: protected-site lifecycle, prompt redaction, protected-site image OCR, reveal, refresh, scanner exports, unsupported file`
     );
 
     behaviorChecksPassed = true;
-    return { browserName, extensionId, product: version.product, prompt, scanner };
+    return { browserName, extensionId, product: version.product, prompt, protectedSiteImageOcr, scanner };
   } catch (error) {
     if (browserProcess?.stderr?.()) console.error(browserProcess.stderr());
     throw error;

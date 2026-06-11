@@ -320,8 +320,8 @@ function buildInfoSource({ browser, mode, builtAt }) {
   features: Object.freeze({
     ocr: Object.freeze({
       enabled: true,
-      status: "scanner_page_v1",
-      scope: "scanner_image_english_only"
+      status: "image_ocr_v1",
+      scope: "scanner_and_protected_site_image_english_only_default_off"
     })
   }),
   target: ${JSON.stringify(target)},

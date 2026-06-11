@@ -9120,7 +9120,7 @@
         handled: true,
         ok: false,
         code: fallbackReason,
-        message: "LeakGuard blocked raw file upload because local file extraction did not produce safe text."
+        message: `LeakGuard blocked raw file upload because local file extraction did not produce safe text. Reason: ${fallbackReason}.`
       };
     }
 
@@ -9909,7 +9909,9 @@
     }
 
     const input = findComposer(event.target);
-    if (!input && !isGeminiHost()) {
+    const hasContentExtractionFile =
+      selectedFiles.length === 1 && shouldUseContentFileExtractionPipeline(selectedFiles[0]);
+    if (!input && !isGeminiHost() && !hasContentExtractionFile) {
       if (!(isFirefoxRuntime() && isProtectedFileDropDriver(getCurrentHandoffDriverId()))) return;
     }
 

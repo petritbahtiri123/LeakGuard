@@ -202,7 +202,8 @@
         root.clearTimeout(timeoutId);
       }
       if (!result?.ok) {
-        return sanitizeOcrFailure(result?.status || "ocr_failed", result?.status || "ocr_failed");
+        const reason = result?.reason || result?.status || "ocr_failed";
+        return sanitizeOcrFailure(reason, reason);
       }
       return sanitizeOcrSuccess(result);
     } catch {

@@ -56,6 +56,7 @@
     "src/content/input/rewriteVerificationText.js",
     "src/content/files/fileTransferPolicy.js",
     "src/content/files/fileExtractionSessionCache.js",
+    "src/content/files/protectedSiteOcrBroker.js",
     "src/content/files/contentFileExtractionPipeline.js",
     "src/content/adapters/hostMatching.js",
     "src/content/adapters/chatgptAdapter.js",
@@ -76,6 +77,8 @@
     "src/content/bootstrap/eventBindings.js",
     "src/content/content.js",
     "src/content/overlay.css",
+    "src/content/protected_site_ocr_broker.html",
+    "src/content/protected_site_ocr_broker_page.js",
 
     // Extension pages are loaded from manifests, popup navigation, or tests;
     // their scripts are browser classic scripts, not module imports.

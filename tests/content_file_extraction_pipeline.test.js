@@ -20,12 +20,20 @@ require(path.join(repoRoot, "src/shared/fileLimits.js"));
 require(path.join(repoRoot, "src/shared/fileTypeRegistry.js"));
 require(path.join(repoRoot, "src/shared/fileExtractors.js"));
 require(path.join(repoRoot, "src/shared/fileScanner.js"));
+require(path.join(repoRoot, "src/shared/policy.js"));
+require(path.join(repoRoot, "src/shared/scannerOcr.js"));
 require(path.join(repoRoot, "src/content/file_paste_helpers.js"));
 require(path.join(repoRoot, "src/content/files/fileExtractionSessionCache.js"));
 require(path.join(repoRoot, "src/content/files/contentFileExtractionPipeline.js"));
 
 const { processFileForAdapterHandoff } = globalThis.PWM.ContentFileExtractionPipeline;
 const ExtractionCache = globalThis.PWM.FileExtractionSessionCache;
+const {
+  PROTECTED_SITE_OCR_ENABLED_STORAGE_KEY,
+  isProtectedSiteOcrEnabled,
+  setProtectedSiteOcrEnabled
+} = globalThis.PWM;
+const ScannerOcr = globalThis.PWM.ScannerOcr;
 
 const RAW_SECRET = "sk-proj-LeakGuardPhaseTenContentPipelineSecret1234567890abcdef";
 
@@ -263,15 +271,274 @@ async function testImageMetadataProducesRedactedTxtOutput() {
   assert.ok(result.warnings.includes("image_ocr_not_supported"));
 }
 
-function testProtectedSiteImageAttachDoesNotUseScannerOcr() {
+async function testProtectedSiteOcrDisabledByDefaultAndLocalPersistence() {
+  const localStore = {};
+  const syncStore = {};
+  const storageArea = {
+    async get(key) {
+      return Object.prototype.hasOwnProperty.call(localStore, key) ? { [key]: localStore[key] } : {};
+    },
+    async set(values) {
+      Object.assign(localStore, values);
+    }
+  };
+  const syncStorageArea = {
+    async get(key) {
+      return Object.prototype.hasOwnProperty.call(syncStore, key) ? { [key]: syncStore[key] } : {};
+    },
+    async set(values) {
+      Object.assign(syncStore, values);
+    }
+  };
+
+  assert.strictEqual(await isProtectedSiteOcrEnabled({ storageArea, syncStorageArea }), false);
+  await setProtectedSiteOcrEnabled(true, { storageArea, syncStorageArea });
+  assert.strictEqual(await isProtectedSiteOcrEnabled({ storageArea, syncStorageArea }), true);
+  assert.deepStrictEqual(localStore, { [PROTECTED_SITE_OCR_ENABLED_STORAGE_KEY]: true });
+  assert.deepStrictEqual(syncStore, {});
+}
+
+async function testProtectedSiteImageAttachStaysMetadataOnlyWhenOcrSettingEnabled() {
+  const originalHelper = globalThis.PWM.isProtectedSiteOcrEnabled;
+  let helperCalls = 0;
+  globalThis.PWM.isProtectedSiteOcrEnabled = async () => {
+    helperCalls += 1;
+    return true;
+  };
+  let ocrCalls = 0;
+  globalThis.PWM.OcrRuntime = {
+    recognizeImageBytes() {
+      ocrCalls += 1;
+      return Promise.resolve({
+        ok: true,
+        status: "ocr_recognition_ready",
+        language: "eng",
+        text: "ignored while implementation is absent",
+        textLength: 38,
+        confidenceBucket: "high",
+        warnings: []
+      });
+    }
+  };
+
+  try {
+    const file = fileFromBuffer("photo.png", "image/png", bufferFromText("pixel bytes"));
+    const result = await processFileForAdapterHandoff({ file, context: "drop" });
+
+    assert.strictEqual(helperCalls, 1);
+    assert.strictEqual(ocrCalls, 1);
+    assert.strictEqual(result.status, "ready");
+    assert.strictEqual(result.extractedKind, "image_ocr");
+    assert.strictEqual(result.outputName, "photo.redacted.txt");
+    assert.strictEqual(result.outputKind, "redacted_text_file");
+    assert.strictEqual(result.metadata.extraction.visualContentScanned, true);
+    assert.strictEqual(result.metadata.extraction.ocrSupported, true);
+    assert.ok(result.sanitizedText.includes("visual_text_scanned=true"));
+    assert.ok(result.sanitizedText.includes("image_ocr_supported=true"));
+    assert.strictEqual(result.warnings.includes("image_ocr_not_supported"), false);
+  } finally {
+    globalThis.PWM.isProtectedSiteOcrEnabled = originalHelper;
+    delete globalThis.PWM.OcrRuntime;
+  }
+}
+
+async function testProtectedSiteImageAttachStaysMetadataOnlyWhenOcrDisabled() {
+  const originalHelper = globalThis.PWM.isProtectedSiteOcrEnabled;
+  let ocrCalls = 0;
+  globalThis.PWM.isProtectedSiteOcrEnabled = async () => false;
+  globalThis.PWM.OcrRuntime = {
+    recognizeImageBytes() {
+      ocrCalls += 1;
+      throw new Error("disabled protected-site OCR must not call the OCR runtime");
+    }
+  };
+
+  try {
+    const file = fileFromBuffer("photo.png", "image/png", bufferFromText("pixel bytes"));
+    const result = await processFileForAdapterHandoff({ file, context: "drop" });
+
+    assert.strictEqual(ocrCalls, 0);
+    assert.strictEqual(result.status, "ready");
+    assert.strictEqual(result.extractedKind, "image_metadata");
+    assert.strictEqual(result.outputName, "photo.redacted.txt");
+    assert.strictEqual(result.outputKind, "redacted_text_file");
+    assert.strictEqual(result.metadata.extraction.visualContentScanned, false);
+    assert.strictEqual(result.metadata.extraction.ocrSupported, false);
+    assert.ok(result.sanitizedText.includes("visual_text_scanned=false"));
+    assert.ok(result.sanitizedText.includes("image_ocr_supported=false"));
+    assert.ok(result.warnings.includes("image_ocr_not_supported"));
+  } finally {
+    globalThis.PWM.isProtectedSiteOcrEnabled = originalHelper;
+    delete globalThis.PWM.OcrRuntime;
+  }
+}
+
+async function testProtectedSiteImageOcrRedactsSupportedFormatsWhenEnabled() {
+  const originalHelper = globalThis.PWM.isProtectedSiteOcrEnabled;
+  const rawSecret = "sk-proj-ProtectedSiteOcrApiKey1234567890abcdef";
+  const calls = [];
+  globalThis.PWM.isProtectedSiteOcrEnabled = async () => true;
+  globalThis.PWM.OcrRuntime = {
+    recognizeImageBytes(payload) {
+      calls.push(payload);
+      return Promise.resolve({
+        ok: true,
+        status: "ocr_recognition_ready",
+        language: "eng",
+        text: `API_KEY=${rawSecret}`,
+        textLength: rawSecret.length + 8,
+        confidenceBucket: "high",
+        warnings: []
+      });
+    }
+  };
+
+  try {
+    ExtractionCache.clear();
+    for (const [fileName, mimeType] of [
+      ["photo.png", "image/png"],
+      ["photo.jpg", "image/jpeg"],
+      ["photo.jpeg", "image/jpeg"],
+      ["photo.webp", "image/webp"]
+    ]) {
+      const result = await processFileForAdapterHandoff({
+        file: fileFromBuffer(fileName, mimeType, bufferFromText("image bytes")),
+        context: "drop"
+      });
+
+      assert.strictEqual(result.status, "ready", fileName);
+      assert.strictEqual(result.safeForUpload, true, fileName);
+      assert.strictEqual(result.extractedKind, "image_ocr", fileName);
+      assert.strictEqual(result.outputName, "photo.redacted.txt", fileName);
+      assert.strictEqual(result.outputKind, "redacted_text_file", fileName);
+      assert.ok(result.sanitizedText.includes("API_KEY=[PWM_"), fileName);
+      assert.strictEqual(result.sanitizedText.includes(rawSecret), false, fileName);
+      assert.strictEqual((result.sanitizedText.match(/\[PWM_\d+\]/g) || []).length, 1, fileName);
+      assert.strictEqual(JSON.stringify(result.metadata).includes(rawSecret), false, fileName);
+      assert.strictEqual(JSON.stringify(result.warnings).includes(rawSecret), false, fileName);
+    }
+
+    assert.strictEqual(calls.length, 4);
+    assert.ok(calls.every((payload) => payload.type === "ocr_recognize_image"));
+    assert.ok(calls.every((payload) => payload.language === "eng"));
+    assert.strictEqual(ExtractionCache.debugSnapshot().entries.length, 0);
+  } finally {
+    globalThis.PWM.isProtectedSiteOcrEnabled = originalHelper;
+    delete globalThis.PWM.OcrRuntime;
+  }
+}
+
+async function testProtectedSiteImageOcrFailureFailsClosedWithoutCachingRawText() {
+  const originalHelper = globalThis.PWM.isProtectedSiteOcrEnabled;
+  const rawSecret = "sk-proj-ProtectedSiteOcrFailureSecret1234567890";
+  let runtimeCalls = 0;
+  globalThis.PWM.isProtectedSiteOcrEnabled = async () => true;
+  globalThis.PWM.OcrRuntime = {
+    recognizeImageBytes() {
+      runtimeCalls += 1;
+      return Promise.reject(new Error(`decoder saw ${rawSecret}`));
+    }
+  };
+
+  try {
+    ExtractionCache.clear();
+    const result = await processFileForAdapterHandoff({
+      file: fileFromBuffer("broken.png", "image/png", bufferFromText(rawSecret)),
+      context: "drop"
+    });
+    const serialized = JSON.stringify(result);
+
+    assert.strictEqual(runtimeCalls, 1);
+    assert.strictEqual(result.status, "blocked");
+    assert.strictEqual(result.safeForUpload, false);
+    assert.strictEqual(result.sanitizedFile, null);
+    assert.strictEqual(result.sanitizedText, "");
+    assert.strictEqual(result.fallbackReason, "ocr_failed");
+    assert.strictEqual(serialized.includes(rawSecret), false);
+    assert.strictEqual(JSON.stringify(ExtractionCache.debugSnapshot()).includes(rawSecret), false);
+  } finally {
+    globalThis.PWM.isProtectedSiteOcrEnabled = originalHelper;
+    delete globalThis.PWM.OcrRuntime;
+  }
+}
+
+async function testProtectedSiteImageOcrTimeoutTerminatesRuntimeAndFailsClosed() {
+  const originalHelper = globalThis.PWM.isProtectedSiteOcrEnabled;
+  let terminated = 0;
+  globalThis.PWM.isProtectedSiteOcrEnabled = async () => true;
+  globalThis.PWM.OcrRuntime = {
+    recognizeImageBytes() {
+      return new Promise(() => {});
+    },
+    terminate() {
+      terminated += 1;
+    }
+  };
+
+  try {
+    const result = await processFileForAdapterHandoff({
+      file: fileFromBuffer("timeout.png", "image/png", bufferFromText("image bytes")),
+      context: "drop",
+      ocrTimeoutMs: 1
+    });
+
+    assert.strictEqual(terminated, 1);
+    assert.strictEqual(result.status, "blocked");
+    assert.strictEqual(result.safeForUpload, false);
+    assert.strictEqual(result.sanitizedFile, null);
+    assert.strictEqual(result.fallbackReason, "ocr_timeout");
+    assert.ok(result.warnings.includes("ocr_timeout"));
+  } finally {
+    globalThis.PWM.isProtectedSiteOcrEnabled = originalHelper;
+    delete globalThis.PWM.OcrRuntime;
+  }
+}
+
+async function testProtectedSiteImageOcrOversizedImageFailsBeforeWorkerCall() {
+  const originalHelper = globalThis.PWM.isProtectedSiteOcrEnabled;
+  let runtimeCalls = 0;
+  globalThis.PWM.isProtectedSiteOcrEnabled = async () => true;
+  globalThis.PWM.OcrRuntime = {
+    recognizeImageBytes() {
+      runtimeCalls += 1;
+      throw new Error("oversized images must not reach OCR runtime");
+    }
+  };
+
+  try {
+    const result = await processFileForAdapterHandoff({
+      file: fileFromBuffer(
+        "huge.png",
+        "image/png",
+        bufferFromText("not actually huge but metadata controls validation")
+      ),
+      context: "drop",
+      ocrDimensions: {
+        width: ScannerOcr.MAX_SCANNER_OCR_IMAGE_DIMENSION + 1,
+        height: 100
+      }
+    });
+
+    assert.strictEqual(runtimeCalls, 0);
+    assert.strictEqual(result.status, "blocked");
+    assert.strictEqual(result.safeForUpload, false);
+    assert.strictEqual(result.sanitizedFile, null);
+    assert.strictEqual(result.fallbackReason, "ocr_image_dimensions_too_large");
+  } finally {
+    globalThis.PWM.isProtectedSiteOcrEnabled = originalHelper;
+    delete globalThis.PWM.OcrRuntime;
+  }
+}
+
+function testProtectedSiteImageAttachUsesOcrOnlyInsidePipelineGate() {
   const source = fs.readFileSync(
     path.join(repoRoot, "src/content/files/contentFileExtractionPipeline.js"),
     "utf8"
   );
 
-  assert.strictEqual(source.includes("ScannerOcr"), false);
-  assert.strictEqual(source.includes("OcrRuntime"), false);
-  assert.strictEqual(source.includes("ocr_recognize_image"), false);
+  assert.ok(source.includes("isProtectedSiteOcrEnabled"));
+  assert.ok(source.includes("recognizeScannerImageFile"));
+  assert.strictEqual(source.includes("new Worker"), false);
 }
 
 async function testScannedPdfFailsClosedWithoutSanitizedFile() {
@@ -577,7 +844,14 @@ async function run() {
   await testDocxProducesRedactedTxtOutput();
   await testXlsxProducesRedactedTxtOutput();
   await testImageMetadataProducesRedactedTxtOutput();
-  testProtectedSiteImageAttachDoesNotUseScannerOcr();
+  await testProtectedSiteOcrDisabledByDefaultAndLocalPersistence();
+  await testProtectedSiteImageAttachStaysMetadataOnlyWhenOcrSettingEnabled();
+  await testProtectedSiteImageAttachStaysMetadataOnlyWhenOcrDisabled();
+  await testProtectedSiteImageOcrRedactsSupportedFormatsWhenEnabled();
+  await testProtectedSiteImageOcrFailureFailsClosedWithoutCachingRawText();
+  await testProtectedSiteImageOcrTimeoutTerminatesRuntimeAndFailsClosed();
+  await testProtectedSiteImageOcrOversizedImageFailsBeforeWorkerCall();
+  testProtectedSiteImageAttachUsesOcrOnlyInsidePipelineGate();
   await testScannedPdfFailsClosedWithoutSanitizedFile();
   await testMacroAndLegacyFormatsStayUnsupported();
   await testDebugMetadataExcludesRawExtractedText();

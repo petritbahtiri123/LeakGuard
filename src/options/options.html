@@ -31,6 +31,25 @@
 
       <section class="panel">
         <div class="section-head">
+          <h2>Protected-site image OCR</h2>
+          <p>Local-only, English-only image text scanning for protected-site uploads.</p>
+        </div>
+        <label class="toggle-row">
+          <input id="protected-site-ocr-toggle" type="checkbox">
+          <span>
+            <strong>Enable image OCR for protected-site uploads</strong>
+            <small>
+              English-only and local-only. It may be slower, works for images only, and does not scan PDFs.
+              No scanned PDF OCR, image redaction, or image rebuild. Future OCR output will be a sanitized .redacted.txt file.
+              Raw image bytes and OCR text never leave your device.
+            </small>
+          </span>
+        </label>
+        <p class="feedback" id="protected-site-ocr-feedback" aria-live="polite"></p>
+      </section>
+
+      <section class="panel">
+        <div class="section-head">
           <h2>Managed sites</h2>
           <p>Applied from enterprise policy when browser site access is available.</p>
         </div>
