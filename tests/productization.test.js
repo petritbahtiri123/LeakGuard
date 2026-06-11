@@ -32,6 +32,7 @@ const releaseChecklist = fs.readFileSync(
 );
 const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
 const testWorkflow = fs.readFileSync(path.join(repoRoot, ".github/workflows/test.yml"), "utf8");
+const edgeSmokeSource = fs.readFileSync(path.join(repoRoot, "tests/browser/edge_smoke.test.mjs"), "utf8");
 const { BUILTIN_PROTECTED_SITES } = require(path.join(repoRoot, "src/shared/protected_sites.js"));
 
 function fileExists(relativePath) {
@@ -372,6 +373,10 @@ function testBrowserQaScriptOwnsFirefoxSmokeCoverage() {
       !testWorkflow.includes("npm run smoke:firefox") &&
       !testWorkflow.includes("npm run smoke:edge"),
     "CI should run browser coverage through qa:browser instead of separate smoke steps"
+  );
+  assert.ok(
+    !edgeSmokeSource.includes('remoteDebuggingMode: "port"'),
+    "Edge smoke should use Chromium pipe CDP to avoid flaky CI remote-debugging HTTP probes"
   );
 }
 
