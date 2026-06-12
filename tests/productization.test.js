@@ -118,6 +118,13 @@ const phase18FinalPrStabilizationCloseoutPath = path.join(
 const phase18FinalPrStabilizationCloseout = fs.existsSync(phase18FinalPrStabilizationCloseoutPath)
   ? fs.readFileSync(phase18FinalPrStabilizationCloseoutPath, "utf8")
   : "";
+const phase19ManualReleaseQaChecklistPath = path.join(
+  repoRoot,
+  "docs/phase-19-manual-release-qa-checklist.md"
+);
+const phase19ManualReleaseQaChecklist = fs.existsSync(phase19ManualReleaseQaChecklistPath)
+  ? fs.readFileSync(phase19ManualReleaseQaChecklistPath, "utf8")
+  : "";
 const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
 const testWorkflow = fs.readFileSync(path.join(repoRoot, ".github/workflows/test.yml"), "utf8");
 const releaseArtifactsWorkflow = fs.readFileSync(
@@ -986,6 +993,30 @@ function testPhase18FinalPrStabilizationCloseoutIsDocumented() {
   }
 }
 
+function testPhase19ManualReleaseQaChecklistIsDocumented() {
+  assert.ok(
+    fileExists("docs/phase-19-manual-release-qa-checklist.md"),
+    "Phase 19 manual release QA checklist should exist"
+  );
+
+  for (const required of [
+    "Chrome",
+    "Firefox",
+    "scanner",
+    "protected-site",
+    "ChatGPT",
+    "Gemini",
+    "Grok",
+    "privacy policy",
+    "go/no-go"
+  ]) {
+    assert.ok(
+      phase19ManualReleaseQaChecklist.includes(required),
+      `Phase 19 manual release QA checklist should include: ${required}`
+    );
+  }
+}
+
 function testPhase17fBrowserDiagnosticsAreActionable() {
   assert.ok(fileExists("scripts/check-browser-environment.mjs"), "browser preflight script should exist");
   const preflightSource = fs.readFileSync(path.join(repoRoot, "scripts/check-browser-environment.mjs"), "utf8");
@@ -1057,6 +1088,7 @@ async function run() {
   testPhase17fScriptsAndWorkflowsAreTiered();
   testPublicationContactsAreFinalized();
   testPhase18FinalPrStabilizationCloseoutIsDocumented();
+  testPhase19ManualReleaseQaChecklistIsDocumented();
   testPhase17fBrowserDiagnosticsAreActionable();
   console.log("PASS productization static regressions");
 }
