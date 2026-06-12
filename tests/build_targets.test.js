@@ -182,6 +182,7 @@ function assertPackageContentsAreRuntimeOnly(result) {
     "shared/fileTypeRegistry.js",
     "shared/fileExtractors.js",
     "shared/fileScanner.js",
+    "shared/imageRedactor.js",
     "vendor/onnxruntime/ort.wasm.min.js",
     "ai/models/leakguard_secret_classifier.features.json",
     "ai/models/leakguard_secret_classifier.onnx"
@@ -896,6 +897,21 @@ async function assertOcrWorkerEngineProof(targetRoot) {
         text: "TEST OCR",
         textLength: 8,
         confidenceBucket: "high",
+        layout: {
+          source: "line",
+          boxes: [
+            {
+              kind: "line",
+              start: 0,
+              end: 8,
+              x: 0,
+              y: 0,
+              width: 260,
+              height: 90,
+              confidenceBucket: "high"
+            }
+          ]
+        },
         warnings: []
       },
       {
@@ -1227,11 +1243,13 @@ async function run() {
     scannerHtml.includes("Image OCR is English-only") &&
       scannerHtml.includes("scanned locally") &&
       scannerHtml.includes("limited to image files on this scanner page") &&
+      scannerHtml.includes("Scanner image visual redaction outputs a flattened PNG") &&
+      scannerHtml.includes("JPG, JPEG, and WEBP inputs are not preserved as their original format") &&
       scannerHtml.includes("Protected-site upload OCR is available only when enabled in settings") &&
       scannerHtml.includes("Scanned PDF OCR") &&
-      scannerHtml.includes("image redaction") &&
+      scannerHtml.includes("protected-site image-redacted uploads") &&
       scannerHtml.includes("image rebuild"),
-    "scanner UI should scope OCR to local English image scanning, settings-gated protected-site OCR, and explicitly exclude scanned PDFs and image rebuild/redaction"
+    "scanner UI should scope OCR to local English image scanning, scanner PNG visual redaction, settings-gated protected-site OCR, and explicitly exclude scanned PDFs, protected-site image-redacted uploads, and image rebuild"
   );
   for (const [target, manifest] of [
     ["chrome", chromeManifest],

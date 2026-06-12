@@ -393,6 +393,20 @@
   }
 
   function sanitizeRecognitionResponse(response) {
+    const layoutBoxes = Array.isArray(response?.layout?.boxes)
+      ? response.layout.boxes
+          .map((box) => ({
+            kind: String(box?.kind || "line"),
+            start: Math.max(0, Number(box?.start || 0)),
+            end: Math.max(0, Number(box?.end || 0)),
+            x: Math.max(0, Number(box?.x || 0)),
+            y: Math.max(0, Number(box?.y || 0)),
+            width: Math.max(0, Number(box?.width || 0)),
+            height: Math.max(0, Number(box?.height || 0)),
+            confidenceBucket: String(box?.confidenceBucket || "unknown")
+          }))
+          .filter((box) => box.end > box.start && box.width > 0 && box.height > 0)
+      : [];
     const result = {
       ok: response?.ok === true,
       status: response?.status || "ocr_recognition_blocked",
@@ -402,6 +416,12 @@
       confidenceBucket: response?.confidenceBucket || "unknown",
       warnings: Array.isArray(response?.warnings) ? response.warnings.map(String).filter(Boolean) : []
     };
+    if (layoutBoxes.length) {
+      result.layout = {
+        source: response?.layout?.source === "word" ? "word" : "line",
+        boxes: layoutBoxes
+      };
+    }
     if (!result.ok) {
       delete result.text;
       result.textLength = 0;

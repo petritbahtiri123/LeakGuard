@@ -2,6 +2,7 @@
   const scanner = globalThis.PWM?.FileScanner;
   const extractors = globalThis.PWM?.FileExtractors;
   const scannerOcr = globalThis.PWM?.ScannerOcr;
+  const imageRedactor = globalThis.PWM?.ImageRedactor;
 
   if (!scanner) {
     throw new Error("LeakGuard File Scanner failed to initialize.");
@@ -25,10 +26,12 @@
   const findingsListEl = document.getElementById("findings-list");
   const redactedPreviewEl = document.getElementById("redacted-preview");
   const downloadRedactedBtn = document.getElementById("download-redacted-btn");
+  const downloadRedactedImageBtn = document.getElementById("download-redacted-image-btn");
   const downloadReportBtn = document.getElementById("download-report-btn");
 
   let selectedFile = null;
   let currentScanResult = null;
+  let currentRedactedImage = null;
   let scanInFlight = null;
 
   function formatBytes(bytes) {
@@ -46,6 +49,8 @@
   function setExportEnabled(enabled) {
     downloadRedactedBtn.disabled = !enabled;
     downloadReportBtn.disabled = !enabled;
+    downloadRedactedImageBtn.disabled = !enabled || !currentRedactedImage?.blob;
+    downloadRedactedImageBtn.hidden = !currentRedactedImage?.blob;
   }
 
   function clearNode(node) {
@@ -151,6 +156,7 @@
   function clearScan() {
     selectedFile = null;
     currentScanResult = null;
+    currentRedactedImage = null;
     fileInput.value = "";
     scanBtn.disabled = true;
     resultPanel.hidden = true;
@@ -274,7 +280,8 @@
     });
   }
 
-  async function scanImageWithOcr(extraction) {
+  async function scanImageWithOcr(extraction, imageBuffer) {
+    currentRedactedImage = null;
     if (!scannerOcr?.recognizeScannerImageFile || !scannerOcr?.buildScannerOcrScanText) {
       const metadataOnly = scanExtractedText(extraction, extraction.text, extraction.metadata.textLength);
       renderResult(metadataOnly);
@@ -304,8 +311,44 @@
     if (Array.isArray(ocr.warnings) && ocr.warnings.length) {
       result.reportWarnings.push(...ocr.warnings.map((warning) => `ocr:${warning}`));
     }
+
+    let statusMessage =
+      "Scan complete. English OCR ran locally for this image. Redacted text is available.";
+    let statusKind = "success";
+    if (result.summary.findingsCount > 0) {
+      const boxMapping = scannerOcr.redactionBoxesForOcrFindings?.({
+        ocr,
+        scanResult: result,
+        scanText: combinedText,
+        ocrText: ocr.text
+      });
+      if (boxMapping?.ok && imageRedactor?.createRedactedPng) {
+        const redactedImage = await imageRedactor.createRedactedPng({
+          imageBytes: imageBuffer,
+          mimeType: selectedFile.type,
+          fileName: selectedFile.name,
+          boxes: boxMapping.boxes
+        });
+        if (redactedImage?.ok && redactedImage.blob) {
+          currentRedactedImage = redactedImage;
+          statusMessage =
+            "Scan complete. English OCR ran locally for this image. Redacted text and a flattened redacted PNG are available.";
+        } else {
+          result.reportWarnings.push(`image-redaction:${redactedImage?.status || "image_redaction_failed"}`);
+          statusMessage =
+            "Scan complete. Redacted text is available, but LeakGuard could not generate a visual redacted PNG for this image.";
+          statusKind = "error";
+        }
+      } else {
+        result.reportWarnings.push(`image-redaction:${boxMapping?.status || "ocr_boxes_missing"}`);
+        statusMessage =
+          "Scan complete. Redacted text is available, but OCR did not provide usable boxes for visual image redaction.";
+        statusKind = "error";
+      }
+    }
+
     renderResult(result);
-    setStatus("Scan complete. English OCR ran locally for this image. Exports are generated only when you click a download button.", "success");
+    setStatus(statusMessage, statusKind);
   }
 
   function restoreScanControls() {
@@ -363,7 +406,7 @@
     }
 
     if (extraction.kind === "image_metadata") {
-      await scanImageWithOcr(extraction);
+      await scanImageWithOcr(extraction, buffer);
       scanBtn.disabled = false;
       return;
     }
@@ -442,6 +485,19 @@
     setTimeout(() => URL.revokeObjectURL(url), 0);
   }
 
+  function downloadExistingBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download = filename;
+    link.rel = "noopener";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
   function downloadRedactedCopy() {
     if (!currentScanResult) return;
     downloadBlob(
@@ -461,9 +517,15 @@
     );
   }
 
+  function downloadRedactedImage() {
+    if (!currentRedactedImage?.blob) return;
+    downloadExistingBlob(currentRedactedImage.blob, currentRedactedImage.fileName || "image.redacted.png");
+  }
+
   fileInput.addEventListener("change", () => {
     selectedFile = fileInput.files?.[0] || null;
     currentScanResult = null;
+    currentRedactedImage = null;
     resultPanel.hidden = true;
     setExportEnabled(false);
     renderFileMeta(selectedFile);
@@ -486,6 +548,7 @@
   });
 
   downloadRedactedBtn.addEventListener("click", downloadRedactedCopy);
+  downloadRedactedImageBtn.addEventListener("click", downloadRedactedImage);
   downloadReportBtn.addEventListener("click", downloadReport);
 
   clearScan();

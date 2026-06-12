@@ -47,6 +47,7 @@
     "src/shared/ocr/ocrRuntime.js",
     "src/shared/ocr/ocrWorker.js",
     "src/shared/scannerOcr.js",
+    "src/shared/imageRedactor.js",
 
     "src/content/composer_helpers.js",
     "src/content/file_paste_helpers.js",

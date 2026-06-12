@@ -460,10 +460,28 @@ function recognizeScannerImage(module, image) {
     }
     const text = String(api.GetUTF8Text() || "").trim();
     const confidence = Number(api.MeanTextConf() || 0);
+    const confidenceBucket = bucketConfidence(confidence);
     return {
       text,
       textLength: text.length,
-      confidenceBucket: bucketConfidence(confidence)
+      confidenceBucket,
+      layout: {
+        source: text ? "line" : "none",
+        boxes: text
+          ? [
+              {
+                kind: "line",
+                start: 0,
+                end: text.length,
+                x: 0,
+                y: 0,
+                width: image.width,
+                height: image.height,
+                confidenceBucket
+              }
+            ]
+          : []
+      }
     };
   } finally {
     try {
@@ -525,6 +543,7 @@ async function recognizeScannerImageBytes(message) {
       text: result.text,
       textLength: result.textLength,
       confidenceBucket: result.confidenceBucket,
+      layout: result.layout,
       warnings: []
     };
   } catch (error) {
