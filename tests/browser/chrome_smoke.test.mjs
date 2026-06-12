@@ -13,7 +13,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "../..");
 const extensionDir = path.join(repoRoot, "dist", "chrome");
 const smokeTimeoutMs = Number(process.env.LEAKGUARD_CHROME_SMOKE_TIMEOUT_MS || 60000);
-const cdpCommandTimeoutMs = Number(process.env.LEAKGUARD_CHROME_SMOKE_CDP_TIMEOUT_MS || 30000);
+const cdpCommandTimeoutMs = Number(process.env.LEAKGUARD_CHROME_SMOKE_CDP_TIMEOUT_MS || 60000);
 const smokeTimingWarningMs = Number(process.env.LEAKGUARD_SMOKE_TIMING_WARN_MS || 5000);
 
 function assertBuiltExtensionExists(sourceExtensionDir = extensionDir, buildCommand = "npm run build:chrome") {
@@ -760,6 +760,7 @@ async function launchChrome({
     "--enable-unsafe-extension-debugging",
     "--disable-features=DisableLoadExtensionCommandLineSwitch",
     "--disable-gpu",
+    "--disable-dev-shm-usage",
     "--no-first-run",
     "--no-default-browser-check",
     "--disable-background-networking",
@@ -774,7 +775,7 @@ async function launchChrome({
   if (debuggingMode === "port") {
     args.push("--remote-debugging-address=127.0.0.1");
   }
-  if (process.env[headlessEnvName] === "1") {
+  if (process.env[headlessEnvName] !== "0") {
     args.push("--headless=new");
   }
   if (process.platform === "linux") {
@@ -799,6 +800,36 @@ async function launchChrome({
   });
 
   return { child, debuggingMode, debuggingPort, stderr: () => stderr };
+}
+
+function writeBrowserStderrLog({ browserName, tempDir, stderr }) {
+  const logDir = path.join(tempDir, "logs");
+  fs.mkdirSync(logDir, { recursive: true });
+  const logPath = path.join(logDir, `${browserName.toLowerCase()}-stderr.log`);
+  fs.writeFileSync(logPath, stderr || "(no browser stderr captured)\n");
+  return logPath;
+}
+
+function classifyChromiumStartupError({ browserName, tempDir, error, browserProcess, extensionLoaded }) {
+  if (extensionLoaded) return error;
+  const stderr = browserProcess?.stderr?.() || "";
+  const stderrLogPath = writeBrowserStderrLog({ browserName, tempDir, stderr });
+  const crashed =
+    browserProcess?.child?.exitCode !== null ||
+    /GPU process isn't usable|exited with code|ECONNRESET|CDP websocket is not connected/i.test(
+      `${stderr}\n${error?.message || ""}`
+    );
+  const reason = crashed
+    ? "browser crashed before extension load"
+    : "browser did not expose the CDP endpoint before extension load";
+  const diagnostics = [
+    `${browserName} environment failure: ${reason}.`,
+    `This is not classified as a LeakGuard product failure unless the extension loads and a product assertion fails.`,
+    `stderr log: ${stderrLogPath}`,
+    `Original error: ${error?.message || error}`,
+    `Remediation: run the smoke command alone, confirm the ${browserName} executable is current, close stale browser processes, and rerun npm run preflight:browser.`
+  ].join("\n");
+  return new Error(diagnostics);
 }
 
 async function waitForChromeExit(child, timeoutMs = 5000) {
@@ -1485,6 +1516,7 @@ async function runChromiumSmoke(options = {}) {
   let httpsServer = null;
   let chrome = null;
   let connection = null;
+  let extensionLoaded = false;
 
   try {
     httpServer = await startHttpServer();
@@ -1510,6 +1542,7 @@ async function runChromiumSmoke(options = {}) {
     await connection.send("Target.setDiscoverTargets", { discover: true });
 
     const extensionId = await loadExtension(connection, profileDir, smokeExtensionDir, browserName);
+    extensionLoaded = true;
     console.log(`${browserName} smoke: extension loaded (${extensionId})`);
     console.log(`${browserName} smoke: popup`);
     const popup = await runPopupSmoke(connection, extensionId);
@@ -1531,7 +1564,13 @@ async function runChromiumSmoke(options = {}) {
     if (chrome?.stderr?.()) {
       console.error(chrome.stderr());
     }
-    throw error;
+    throw classifyChromiumStartupError({
+      browserName,
+      tempDir,
+      error,
+      browserProcess: chrome,
+      extensionLoaded
+    });
   } finally {
     await connection?.send("Browser.close").catch(() => {});
     await connection?.close().catch(() => {});

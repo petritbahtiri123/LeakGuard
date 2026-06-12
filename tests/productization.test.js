@@ -69,10 +69,61 @@ const phase16eXlsxCloseoutPath = path.join(
 const phase16eXlsxCloseout = fs.existsSync(phase16eXlsxCloseoutPath)
   ? fs.readFileSync(phase16eXlsxCloseoutPath, "utf8")
   : "";
+const phase17aTestingGapAnalysisPath = path.join(
+  repoRoot,
+  "docs/phase-17a-testing-gap-analysis.md"
+);
+const phase17aTestingGapAnalysis = fs.existsSync(phase17aTestingGapAnalysisPath)
+  ? fs.readFileSync(phase17aTestingGapAnalysisPath, "utf8")
+  : "";
+const phase17bBrowserAutomationPath = path.join(
+  repoRoot,
+  "docs/phase-17b-p0-browser-automation.md"
+);
+const phase17bBrowserAutomation = fs.existsSync(phase17bBrowserAutomationPath)
+  ? fs.readFileSync(phase17bBrowserAutomationPath, "utf8")
+  : "";
+const phase17cProviderBrowserParityPath = path.join(
+  repoRoot,
+  "docs/phase-17c-provider-browser-parity-automation.md"
+);
+const phase17cProviderBrowserParity = fs.existsSync(phase17cProviderBrowserParityPath)
+  ? fs.readFileSync(phase17cProviderBrowserParityPath, "utf8")
+  : "";
+const phase17dCorruptedLargeFileFuzzPath = path.join(
+  repoRoot,
+  "docs/phase-17d-corrupted-large-file-fuzz-automation.md"
+);
+const phase17dCorruptedLargeFileFuzz = fs.existsSync(phase17dCorruptedLargeFileFuzzPath)
+  ? fs.readFileSync(phase17dCorruptedLargeFileFuzzPath, "utf8")
+  : "";
+const phase17eReleaseArtifactStoreReadinessPath = path.join(
+  repoRoot,
+  "docs/phase-17e-release-artifact-store-readiness-automation.md"
+);
+const phase17eReleaseArtifactStoreReadiness = fs.existsSync(phase17eReleaseArtifactStoreReadinessPath)
+  ? fs.readFileSync(phase17eReleaseArtifactStoreReadinessPath, "utf8")
+  : "";
+const phase17fCiNightlyMatrixPath = path.join(
+  repoRoot,
+  "docs/phase-17f-ci-nightly-matrix-hardening.md"
+);
+const phase17fCiNightlyMatrix = fs.existsSync(phase17fCiNightlyMatrixPath)
+  ? fs.readFileSync(phase17fCiNightlyMatrixPath, "utf8")
+  : "";
 const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
 const testWorkflow = fs.readFileSync(path.join(repoRoot, ".github/workflows/test.yml"), "utf8");
+const releaseArtifactsWorkflow = fs.readFileSync(
+  path.join(repoRoot, ".github/workflows/release-artifacts.yml"),
+  "utf8"
+);
+const browserNightlyWorkflow = fs.readFileSync(
+  path.join(repoRoot, ".github/workflows/browser-nightly.yml"),
+  "utf8"
+);
 const chromeSmokeSource = fs.readFileSync(path.join(repoRoot, "tests/browser/chrome_smoke.test.mjs"), "utf8");
 const edgeSmokeSource = fs.readFileSync(path.join(repoRoot, "tests/browser/edge_smoke.test.mjs"), "utf8");
+const firefoxSmokeSource = fs.readFileSync(path.join(repoRoot, "tests/browser/firefox_smoke.test.mjs"), "utf8");
 const { BUILTIN_PROTECTED_SITES } = require(path.join(repoRoot, "src/shared/protected_sites.js"));
 
 function fileExists(relativePath) {
@@ -633,17 +684,293 @@ function testBrowserQaScriptOwnsFirefoxSmokeCoverage() {
     "smoke:firefox should remain available as the standalone Firefox smoke command"
   );
   assert.ok(
-    testWorkflow.includes("xvfb-run -a npm run smoke:chrome") &&
-      testWorkflow.includes("xvfb-run -a npm run smoke:firefox") &&
-      testWorkflow.includes("xvfb-run -a npm run smoke:edge") &&
-      !testWorkflow.includes("xvfb-run -a npm run qa:browser"),
-    "CI should isolate browser smoke runs in separate Xvfb sessions"
+    !testWorkflow.includes("xvfb-run -a npm run smoke:chrome") &&
+      !testWorkflow.includes("xvfb-run -a npm run smoke:firefox") &&
+      !testWorkflow.includes("xvfb-run -a npm run smoke:edge") &&
+      browserNightlyWorkflow.includes("xvfb-run -a npm run test:browser-gates"),
+    "PR CI should avoid browser smoke while browser-nightly owns Tier C browser gates"
   );
   assert.ok(
     chromeSmokeSource.includes('remoteDebuggingMode = "port"') &&
     edgeSmokeSource.includes('remoteDebuggingMode: "port"'),
     "Chromium smoke should use port CDP because GitHub browser Linux runs do not reliably answer pipe CDP"
   );
+}
+
+function testPhase17aTestingGapAnalysisDocumentsAutomationGaps() {
+  assert.ok(fileExists("docs/phase-17a-testing-gap-analysis.md"), "Phase 17A testing gap analysis should exist");
+
+  for (const required of [
+    "## Test Entry Point Inventory",
+    "## Current Coverage Strengths",
+    "## Gap Matrix",
+    "## P0 Gaps",
+    "## P1 Gaps",
+    "## P2 Gaps",
+    "scanner",
+    "protected-site",
+    "PDF",
+    "DOCX",
+    "XLSX",
+    "OCR",
+    "adapters",
+    "security",
+    "package"
+  ]) {
+    assert.ok(
+      phase17aTestingGapAnalysis.includes(required),
+      `Phase 17A testing gap analysis should include: ${required}`
+    );
+  }
+}
+
+function testPhase17bBrowserAutomationDocumentsP0Coverage() {
+  assert.ok(fileExists("docs/phase-17b-p0-browser-automation.md"), "Phase 17B browser automation doc should exist");
+
+  for (const required of [
+    "file drop",
+    "file picker",
+    "scanner downloads",
+    "raw marker sweep",
+    "reload/session cache",
+    "synthetic provider",
+    "no raw upload"
+  ]) {
+    assert.ok(
+      phase17bBrowserAutomation.includes(required),
+      `Phase 17B browser automation doc should include: ${required}`
+    );
+  }
+}
+
+function testPhase17cProviderBrowserParityAutomationIsDocumented() {
+  assert.ok(
+    fileExists("docs/phase-17c-provider-browser-parity-automation.md"),
+    "Phase 17C provider/browser parity automation doc should exist"
+  );
+
+  for (const required of [
+    "Chrome",
+    "Firefox",
+    "Edge",
+    "ChatGPT/OpenAI",
+    "Gemini",
+    "Grok",
+    "Claude",
+    "X",
+    "synthetic provider",
+    "file picker",
+    "file drop",
+    "typed",
+    "paste",
+    "contenteditable",
+    "rebuilt file handoff",
+    "fail-closed behavior"
+  ]) {
+    assert.ok(
+      phase17cProviderBrowserParity.includes(required),
+      `Phase 17C provider/browser parity doc should include: ${required}`
+    );
+  }
+}
+
+function testPhase17dCorruptedLargeFileFuzzAutomationIsDocumented() {
+  assert.ok(
+    fileExists("docs/phase-17d-corrupted-large-file-fuzz-automation.md"),
+    "Phase 17D corrupted/large-file fuzz automation doc should exist"
+  );
+
+  for (const required of [
+    "malformed PDF",
+    "malformed DOCX",
+    "malformed XLSX",
+    "oversized",
+    "deterministic seed",
+    "raw marker sweep",
+    "fail closed",
+    "no raw upload",
+    "scanner",
+    "protected-site"
+  ]) {
+    assert.ok(
+      phase17dCorruptedLargeFileFuzz.includes(required),
+      `Phase 17D fuzz automation doc should include: ${required}`
+    );
+  }
+}
+
+function testPhase17eReleaseArtifactStoreReadinessAutomationIsDocumented() {
+  assert.ok(
+    fileExists("docs/phase-17e-release-artifact-store-readiness-automation.md"),
+    "Phase 17E release artifact/store-readiness automation doc should exist"
+  );
+
+  for (const required of [
+    "release artifact",
+    "store-readiness",
+    "dist/chrome",
+    "dist/firefox",
+    "artifacts/release",
+    "manifest.json",
+    "unsafe-eval",
+    "web_accessible_resources",
+    "local-only processing",
+    "no backend",
+    "no telemetry",
+    "no remote OCR",
+    "no cloud verification",
+    "English-only",
+    "opt-in/default-off",
+    ".redacted.txt",
+    "raw marker",
+    "secret",
+    "size",
+    "file count",
+    "release blockers",
+    "test:release-artifacts"
+  ]) {
+    assert.ok(
+      phase17eReleaseArtifactStoreReadiness.includes(required),
+      `Phase 17E release artifact/store-readiness doc should include: ${required}`
+    );
+  }
+  assert.strictEqual(
+    packageJson.scripts["test:release-artifacts"],
+    "node tests/release_artifacts.test.js",
+    "package.json should expose Phase 17E release artifact automation"
+  );
+}
+
+function testPhase17fCiNightlyMatrixHardeningIsDocumented() {
+  assert.ok(
+    fileExists("docs/phase-17f-ci-nightly-matrix-hardening.md"),
+    "Phase 17F CI/nightly matrix hardening doc should exist"
+  );
+
+  for (const required of [
+    "Tier A",
+    "fast PR checks",
+    "Tier B",
+    "release artifact checks",
+    "Tier C",
+    "browser/nightly checks",
+    "test:fast",
+    "test:release-gates",
+    "test:browser-gates",
+    "test:nightly",
+    "test:ci",
+    "privacy contact release blocker",
+    "Chrome executable",
+    "Edge executable",
+    "Firefox executable",
+    "geckodriver",
+    "GPU/CDP",
+    "environment failure",
+    "product failure"
+  ]) {
+    assert.ok(
+      phase17fCiNightlyMatrix.includes(required),
+      `Phase 17F CI/nightly matrix doc should include: ${required}`
+    );
+  }
+}
+
+function testPhase17fScriptsAndWorkflowsAreTiered() {
+  assert.strictEqual(
+    packageJson.scripts["test:fast"],
+    "npm test && node tests/productization.test.js && node tests/security.test.js && node tests/build_targets.test.js",
+    "test:fast should own Tier A fast PR validation"
+  );
+  assert.strictEqual(
+    packageJson.scripts["test:release-gates"],
+    "npm run build:all && npm run package:release && npm run test:release-artifacts && npm run bench:file-extraction",
+    "test:release-gates should own Tier B release artifact validation"
+  );
+  assert.strictEqual(
+    packageJson.scripts["test:browser-gates"],
+    "node scripts/check-browser-environment.mjs && npm run smoke:chrome && npm run smoke:firefox && npm run smoke:edge && npm run qa:browser && node tests/browser/extension_qa_harness.test.mjs",
+    "test:browser-gates should own Tier C browser validation"
+  );
+  assert.strictEqual(
+    packageJson.scripts["test:nightly"],
+    "npm run test:fast && npm run test:release-gates && npm run test:browser-gates",
+    "test:nightly should compose all tiers"
+  );
+  assert.strictEqual(
+    packageJson.scripts["test:ci"],
+    "npm run test:fast",
+    "test:ci should stay PR-safe and avoid browser flake by default"
+  );
+  assert.ok(
+    packageJson.scripts["preflight:browser"] === "node scripts/check-browser-environment.mjs",
+    "preflight:browser should expose browser environment diagnostics"
+  );
+
+  assert.ok(testWorkflow.includes("npm run test:ci"), "PR workflow should run Tier A through test:ci");
+  assert.strictEqual(
+    /smoke:(?:chrome|firefox|edge)|qa:browser/.test(testWorkflow),
+    false,
+    "PR workflow should not run browser smoke/QA on every PR"
+  );
+  assert.ok(
+    releaseArtifactsWorkflow.includes("npm run test:fast") &&
+      releaseArtifactsWorkflow.includes("npm run test:release-gates"),
+    "release workflow should run Tier A and Tier B"
+  );
+  assert.ok(
+    releaseArtifactsWorkflow.includes("workflow_dispatch") && releaseArtifactsWorkflow.includes("schedule"),
+    "release workflow should support manual and scheduled runs"
+  );
+}
+
+function testPhase17fPrivacyContactBlockerIsCentralized() {
+  assert.ok(
+    privacyPolicy.includes("Release blocker: publication contacts are not finalized"),
+    "privacy policy should centralize unknown publication contacts as a release blocker"
+  );
+  assert.strictEqual(/\bTODO\b/i.test(privacyPolicy), false, "privacy policy should not contain TODO placeholders");
+  assert.ok(
+    releaseChecklist.includes("Release blocker: publication contacts are not finalized"),
+    "release QA checklist should name the privacy contact blocker"
+  );
+}
+
+function testPhase17fBrowserDiagnosticsAreActionable() {
+  assert.ok(fileExists("scripts/check-browser-environment.mjs"), "browser preflight script should exist");
+  const preflightSource = fs.readFileSync(path.join(repoRoot, "scripts/check-browser-environment.mjs"), "utf8");
+
+  for (const required of [
+    "Chrome executable",
+    "Edge executable",
+    "Firefox executable",
+    "geckodriver",
+    "temp profile directory",
+    "headless",
+    "environment failure"
+  ]) {
+    assert.ok(preflightSource.includes(required), `browser preflight should include: ${required}`);
+  }
+
+  for (const required of [
+    "--disable-gpu",
+    "--disable-dev-shm-usage",
+    "--headless=new",
+    "environment failure",
+    "browser crashed before extension load",
+    "stderr log"
+  ]) {
+    assert.ok(chromeSmokeSource.includes(required), `Chromium smoke diagnostics should include: ${required}`);
+  }
+  assert.ok(edgeSmokeSource.includes("runChromiumSmoke"), "Edge smoke should continue using Chromium smoke diagnostics");
+  for (const required of [
+    "geckodriver version",
+    "Firefox version",
+    "status endpoint",
+    "environment failure",
+    "run smoke:firefox alone"
+  ]) {
+    assert.ok(firefoxSmokeSource.includes(required), `Firefox smoke diagnostics should include: ${required}`);
+  }
 }
 
 async function run() {
@@ -670,6 +997,15 @@ async function run() {
   testPhase14cProtectedSitePdfPlanIsPlanningOnly();
   testPublicDocsAlignWithCurrentFileCapabilities();
   testBrowserQaScriptOwnsFirefoxSmokeCoverage();
+  testPhase17aTestingGapAnalysisDocumentsAutomationGaps();
+  testPhase17bBrowserAutomationDocumentsP0Coverage();
+  testPhase17cProviderBrowserParityAutomationIsDocumented();
+  testPhase17dCorruptedLargeFileFuzzAutomationIsDocumented();
+  testPhase17eReleaseArtifactStoreReadinessAutomationIsDocumented();
+  testPhase17fCiNightlyMatrixHardeningIsDocumented();
+  testPhase17fScriptsAndWorkflowsAreTiered();
+  testPhase17fPrivacyContactBlockerIsCentralized();
+  testPhase17fBrowserDiagnosticsAreActionable();
   console.log("PASS productization static regressions");
 }
 

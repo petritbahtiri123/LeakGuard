@@ -94,6 +94,19 @@ function findGeckodriverCommand() {
   };
 }
 
+function runVersionProbe(label, command, args) {
+  try {
+    const output = execFileSync(command, args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 15000
+    }).trim();
+    return output.split(/\r?\n/, 1)[0] || `${label} version probe returned no output`;
+  } catch (error) {
+    return `${label} version probe failed: ${error.message}`;
+  }
+}
+
 function quoteForWindowsCmd(value) {
   const text = String(value);
   if (!/[ \t"&^<>|()]/.test(text)) return text;
@@ -577,11 +590,18 @@ async function launchGeckodriver(port) {
   const geckodriver = findGeckodriverCommand();
   let command = geckodriver.command;
   let args = [...geckodriver.argsPrefix, "--host", "127.0.0.1", "--port", String(port)];
+  let versionCommand = command;
+  let versionArgs = [...geckodriver.argsPrefix, "--version"];
   if (geckodriver.wrapWithWindowsCmd) {
     const commandLine = [command, ...args].map(quoteForWindowsCmd).join(" ");
+    const versionCommandLine = [command, ...versionArgs].map(quoteForWindowsCmd).join(" ");
     command = process.env.ComSpec || "cmd.exe";
     args = ["/d", "/s", "/c", commandLine];
+    versionCommand = command;
+    versionArgs = ["/d", "/s", "/c", versionCommandLine];
   }
+  const geckodriverVersion = runVersionProbe("geckodriver version", versionCommand, versionArgs);
+  console.log(`Firefox smoke: geckodriver version: ${geckodriverVersion}`);
   const child = spawn(command, args, {
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -592,14 +612,29 @@ async function launchGeckodriver(port) {
   child.stdout.on("data", (chunk) => {
     stderr += chunk.toString();
   });
-  await waitFor(async () => {
-    try {
-      const status = await fetchJson(`http://127.0.0.1:${port}/status`);
-      return status.value?.ready || status.ready;
-    } catch {
-      return false;
-    }
-  }, "geckodriver status endpoint");
+  try {
+    await waitFor(async () => {
+      try {
+        const status = await fetchJson(`http://127.0.0.1:${port}/status`);
+        return status.value?.ready || status.ready;
+      } catch {
+        return false;
+      }
+    }, `geckodriver status endpoint on 127.0.0.1:${port}`);
+  } catch (error) {
+    const diagnostics = [
+      "Firefox environment failure: geckodriver status endpoint did not become ready.",
+      "This is not classified as a LeakGuard product failure because Firefox did not start far enough to load the extension.",
+      `geckodriver version: ${geckodriverVersion}`,
+      `geckodriver command: ${command} ${args.join(" ")}`,
+      `status endpoint: http://127.0.0.1:${port}/status`,
+      `geckodriver output: ${stderr || "(no geckodriver output captured)"}`,
+      `Original error: ${error.message}`,
+      "Remediation: update geckodriver, ensure FIREFOX_BIN points to a current Firefox executable, free the blocked port if one is stuck, and run smoke:firefox alone."
+    ].join("\n");
+    child.kill();
+    throw new Error(diagnostics);
+  }
   return { child, processTreeKill: geckodriver.processTreeKill, stderr: () => stderr };
 }
 
@@ -1097,6 +1132,7 @@ async function runFirefoxSmoke() {
   assertBuiltExtensionExists();
   const firefoxPath = findFirefoxExecutable();
   assert.ok(firefoxPath, "Firefox stable was not found. Set FIREFOX_BIN to run this smoke test.");
+  console.log(`Firefox smoke: Firefox version: ${runVersionProbe("Firefox version", firefoxPath, ["--version"])}`);
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "leakguard-firefox-smoke-"));
   const profileDir = path.join(tempDir, "profile");

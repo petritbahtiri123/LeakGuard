@@ -1242,6 +1242,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "isOpenAiChatHost"),
       extractFunctionSource(contentSource, "isXHost"),
       extractFunctionSource(contentSource, "getCurrentHandoffDriverId"),
+      extractFunctionSource(contentSource, "getActiveProtection"),
       extractFunctionSource(contentSource, "isProtectedFileDropDriver"),
       extractFunctionSource(contentSource, "shouldHandleChatGptLargeTextPaste"),
       extractFunctionSource(contentSource, "createSanitizedChatGptPasteFile"),
@@ -1413,13 +1414,15 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "isAllowedGeminiUploadMenuOpener"),
       extractFunctionSource(contentSource, "shouldUseContentFileExtractionPipeline"),
       extractFunctionSource(contentSource, "localFileFromContentExtractionResult"),
+      extractFunctionSource(contentSource, "isUnsupportedLegacyOfficeFile"),
+      extractFunctionSource(contentSource, "shouldFailClosedProtectedUnsupportedFileTransfer"),
       extractFunctionSource(contentSource, "maybeHandleLocalFileInsert"),
       extractFunctionSource(contentSource, "maybeHandlePaste"),
       extractFunctionSource(contentSource, "maybeHandleDrop"),
       extractFunctionSource(contentSource, "maybeHandleFileDrag"),
       'let lastGeminiDropSessionHash = "";',
       extractFunctionSource(contentSource, "maybeHandleFileInputChange"),
-      "return { maybeHandleChatGptLargeTextPaste, maybeHandlePaste, maybeHandleDrop, maybeHandleFileDrag, maybeHandleFileInputChange, handOffSanitizedFileInput, hasPendingGrokSanitizedFileHandoff, getPendingGrokSanitizedFileHandoffDebug, getSuppressInputScanUntil: () => suppressInputScanUntil, isProgrammaticInputScanSuppressed };"
+      "return { maybeHandleChatGptLargeTextPaste, maybeHandlePaste, maybeHandleDrop, maybeHandleFileDrag, maybeHandleFileInputChange, handOffSanitizedFileInput, resolveFileDragGuardPolicy, hasPendingGrokSanitizedFileHandoff, getPendingGrokSanitizedFileHandoffDebug, getSuppressInputScanUntil: () => suppressInputScanUntil, isProgrammaticInputScanSuppressed };"
     ].join("\n\n")
   );
   const handlers = factory(...Object.values(dependencies));
@@ -2483,6 +2486,28 @@ async function testFileDropIsConsumedBeforeComposerLookup() {
   assert.strictEqual(event.defaultPrevented, true);
   assert.strictEqual(eventCalls.preventDefault, 2);
   assert.strictEqual(eventCalls.stopImmediatePropagation, 2);
+}
+
+function testProtectedRebuiltFileDropBlocksAtDragGuard() {
+  const { resolveFileDragGuardPolicy } = createHarness({
+    location: { hostname: "chatgpt.com" },
+    canExtractForAdapterHandoff: (file) => file?.name === "contract.pdf",
+    processFileForAdapterHandoff: async () => null
+  });
+  const policy = resolveFileDragGuardPolicy({
+    types: ["Files"],
+    files: [
+      {
+        name: "contract.pdf",
+        type: "application/pdf",
+        size: 512
+      }
+    ],
+    items: []
+  });
+
+  assert.strictEqual(policy.action, "block");
+  assert.strictEqual(policy.reason, "content_extraction_candidate");
 }
 
 async function testDuplicateDropListenerDoesNotDoubleHandleSameEvent() {
@@ -5926,6 +5951,70 @@ async function testDocumentAndImageFileInputUseContentExtractionPipelineForSanit
     assert.strictEqual(calls.handoffs[0].sanitizedFile, sanitizedFile);
     assert.strictEqual(calls.handoffs[0].sanitizedFile.name, item.outputName);
     assert.strictEqual(JSON.stringify(calls.debugEvents).includes(item.rawText), false);
+  }
+}
+
+async function testProtectedLegacyOfficeFileInputBlocksRawUpload() {
+  for (const testCase of [
+    {
+      label: "built-in provider",
+      location: { hostname: "chatgpt.com" },
+      currentPublicState: {
+        currentSite: { protected: false },
+        protection: { protectionEnforced: false }
+      }
+    },
+    {
+      label: "generic protected site",
+      location: { hostname: "local.example" },
+      currentPublicState: {
+        protection: { paused: false }
+      }
+    }
+  ]) {
+    const rawSecret = `sk-proj-LegacyOfficeProtectedUnitQa${testCase.label.replace(/\W+/g, "")}1234567890abcdef`;
+    const rawFile = createTextFile({
+      name: "legacy-protected.doc",
+      type: "application/msword",
+      text: `DOC_API_KEY=${rawSecret}`
+    });
+    const fileInput = createFileInput();
+    fileInput.files = [rawFile];
+    fileInput.value = "C:\\fakepath\\legacy-protected.doc";
+    const { maybeHandleFileInputChange, resolveFileDragGuardPolicy, calls } = createHarness({
+      location: testCase.location,
+      currentPublicState: testCase.currentPublicState,
+      findComposer: () => null,
+      readLocalTextFileFromDataTransfer: async () => {
+        throw new Error(`${testCase.label} legacy Office file should be blocked before the raw reader`);
+      },
+      handOffSanitizedLocalFile() {
+        throw new Error(`${testCase.label} legacy Office file must not hand off a raw file`);
+      }
+    });
+    const dragPolicy = resolveFileDragGuardPolicy({
+      types: ["Files"],
+      files: [rawFile],
+      items: []
+    });
+    const { event, calls: eventCalls } = createEvent({
+      type: "change",
+      target: fileInput
+    });
+
+    await maybeHandleFileInputChange(event);
+
+    assert.strictEqual(dragPolicy.action, "block", `${testCase.label} drag policy`);
+    assert.strictEqual(dragPolicy.reason, "unsupported_protected_file_blocked", `${testCase.label} drag reason`);
+    assert.strictEqual(event.defaultPrevented, true, `${testCase.label} file input should be consumed`);
+    assert.strictEqual(eventCalls.stopImmediatePropagation, 1, `${testCase.label} file input should stop propagation`);
+    assert.strictEqual(fileInput.value, "", `${testCase.label} raw input value should clear`);
+    assert.strictEqual(calls.reads.length, 0, `${testCase.label} should not read raw legacy Office file`);
+    assert.strictEqual(calls.redactions.length, 0, `${testCase.label} should not redact raw legacy Office file`);
+    assert.strictEqual(calls.createdFiles.length, 0, `${testCase.label} should not create sanitized output`);
+    assert.strictEqual(calls.handoffs.length, 0, `${testCase.label} should not hand off raw file`);
+    assert.ok(calls.modals.some(([title]) => title === "Raw file upload blocked"), `${testCase.label} should show block modal`);
+    assert.strictEqual(JSON.stringify(calls).includes(rawSecret), false, `${testCase.label} debug state leaked raw marker`);
   }
 }
 
@@ -12779,6 +12868,7 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testFileDropIsHandledWithoutComposerTarget();
   await testFileDropIsBlockedWithoutHelperLoaded();
   await testFileDropIsConsumedBeforeComposerLookup();
+  testProtectedRebuiltFileDropBlocksAtDragGuard();
   await testDuplicateDropListenerDoesNotDoubleHandleSameEvent();
   await testFileDropHandlesEarlierPreventDefaultWithoutComposerTarget();
   await testNonFileDragoverIsIgnored();
@@ -12880,6 +12970,7 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testSanitizedHandoffMixedRawFileDoesNotSuppressScan();
   await testSmallFileInputShowsProcessingUiThenDirectAttachSuccess();
   await testDocumentAndImageFileInputUseContentExtractionPipelineForSanitizedHandoff();
+  await testProtectedLegacyOfficeFileInputBlocksRawUpload();
   await testUnsupportedFileReadFailureHidesProcessingUi();
   await testFileProcessingUiClearsAfterException();
   await testLocalFileDropProcessingUiClearsAfterException();

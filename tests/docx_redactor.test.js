@@ -224,6 +224,37 @@ async function testUnsafeDocxInputsDoNotProduceProofDocx() {
   }
 }
 
+async function testEmptyAndOversizedSanitizedDocxTextHandling() {
+  const source = makeDocx("safe source text");
+  const empty = await DocxRedactor.createRedactedDocxFromText({
+    originalName: "empty.docx",
+    originalBytes: source,
+    text: " \n\t "
+  });
+  assert.strictEqual(empty.ok, false);
+  assert.strictEqual(empty.status, "docx_redacted_text_empty");
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(empty, "bytes"), false);
+
+  const keptPrefix = "API_KEY=[PWM_1]\n";
+  const droppedTail = "TAIL_SHOULD_NOT_SURVIVE";
+  const oversizedText = `${keptPrefix}${"A".repeat(DocxRedactor.MAX_DOCX_TEXT_CHARS)}${droppedTail}`;
+  const bounded = await DocxRedactor.createRedactedDocxFromText({
+    originalName: "large.docx",
+    originalBytes: source,
+    text: oversizedText
+  });
+  const bytesText = byteText(bounded.bytes);
+  const extracted = await extractDocxText(arrayBufferFromBytes(bounded.bytes), bounded.fileName);
+
+  assert.strictEqual(bounded.ok, true);
+  assert.strictEqual(bounded.truncated, true);
+  assert.strictEqual(bounded.fileName, "large.redacted.docx");
+  assert.strictEqual(bytesText.includes(droppedTail), false);
+  assert.strictEqual(extracted.status, EXTRACTOR_STATUS.OK);
+  assert.ok(extracted.text.includes("API_KEY=[PWM_1]"));
+  assert.strictEqual(extracted.text.includes(droppedTail), false);
+}
+
 async function testFallbackTxtContractKeepsProtectedSiteAndScannerWired() {
   const pipelineSource = require("fs").readFileSync(
     path.join(repoRoot, "src/content/files/contentFileExtractionPipeline.js"),
@@ -271,6 +302,7 @@ function testNoPersistenceLoggingOrUnsafeOverlayTerms() {
   await testGeneratedDocxDropsOriginalHeaderFooterFootnoteEndnoteText();
   testScannerCopyStatesRegeneratedDocxBoundaries();
   await testUnsafeDocxInputsDoNotProduceProofDocx();
+  await testEmptyAndOversizedSanitizedDocxTextHandling();
   await testFallbackTxtContractKeepsProtectedSiteAndScannerWired();
   testNoPersistenceLoggingOrUnsafeOverlayTerms();
   console.log("docx_redactor tests passed");

@@ -5,10 +5,20 @@
 - Reload the unpacked extension after the latest branch changes.
 - Confirm the popup opens and renders correctly on desktop width.
 - Confirm the popup still renders correctly on a smaller laptop display.
-- Confirm `npm test` passes locally.
+- Confirm Tier A fast validation passes: `npm run test:fast`.
+- Confirm Tier B release validation passes before publishing packages: `npm run test:release-gates`.
 - Confirm the built manifest includes `content_security_policy.extension_pages` with LeakGuard's restrictive extension-page CSP.
 - Confirm the built manifest does not add new host permissions for File Scanner.
 - Confirm protected-site image OCR remains opt-in and default off.
+
+## CI And Nightly Validation
+
+- PR-required validation is Tier A: `npm run test:ci`, which maps to `npm run test:fast`.
+- Release/manual validation is Tier A plus Tier B: `npm run test:fast` and `npm run test:release-gates`.
+- Nightly/browser validation is Tier A plus Tier B plus Tier C: `npm run test:nightly`.
+- Tier C browser validation is heavy and environment-sensitive: `npm run preflight:browser` followed by `npm run test:browser-gates`.
+- A browser startup failure before extension load, such as Chrome/Edge GPU/CDP startup failure or Firefox geckodriver status timeout, is a local or CI environment failure until rerun evidence shows the extension loaded and failed product assertions.
+- Product failures are failures after the extension loads and a LeakGuard behavior assertion fails, such as missing popup controls, missing protected-site panel, raw marker leakage, failed redaction, or missing scanner export behavior.
 
 ## Built-in Site Coverage
 
@@ -147,7 +157,7 @@
 
 - Capture final screenshots for popup home, popup management, in-page panel, decision modal, and popup reveal.
 - Confirm [STORE_ASSETS_CHECKLIST.md](STORE_ASSETS_CHECKLIST.md) is complete for the target store.
-- Complete the support, privacy, and security contact TODOs in the privacy policy with real project contacts.
+- Release blocker: publication contacts are not finalized. Complete the support, privacy, and security contacts in the privacy policy with real project contacts before publishing.
 - Review the Chrome Web Store copy in `docs/CHROME_WEB_STORE_LISTING.md`.
 - Review the Firefox AMO submission notes in `docs/FIREFOX_AMO_CHECKLIST.md` if publishing a Firefox package.
 - Review release-facing wording for Firefox Add-ons suitability: local-only processing, no telemetry, no cloud processing, no remote model calls, and no perfect-protection claims.

@@ -2,6 +2,7 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const zlib = require("zlib");
+const fuzzFixtures = require("./fixtures/file_fuzz_fixtures.js");
 
 const repoRoot = path.join(__dirname, "..");
 
@@ -301,6 +302,66 @@ async function testImageMetadataExtractsSafeFieldsOnly() {
     assert.ok(result.text.includes("size_bucket=small"));
     assert.strictEqual(result.text.includes("pixel text must not be scanned"), false);
     assert.strictEqual(result.metadata.visualContentScanned, false);
+  }
+}
+
+async function testPhase17dDeterministicFuzzFixturesFailClosedAndStaySanitized() {
+  const started = Date.now();
+  const cases = fuzzFixtures.createPhase17dExtractorFuzzCases();
+
+  assert.strictEqual(fuzzFixtures.PHASE_17D_FUZZ_SEED, "phase-17d-deterministic-seed-v1");
+  assert.ok(cases.length >= 18, "Phase 17D should cover deterministic malformed, oversized, image, and legacy fixtures");
+
+  for (const testCase of cases) {
+    const result = await prepareFileExtractionAsync({
+      fileName: testCase.fileName,
+      mimeType: testCase.mimeType,
+      sizeBytes: testCase.sizeBytes,
+      buffer: testCase.buffer,
+      text: testCase.text
+    });
+    const serializedSafeState = JSON.stringify({
+      label: testCase.label,
+      status: result.status,
+      kind: result.kind,
+      metadata: result.metadata,
+      warnings: result.warnings,
+      reason: result.reason,
+      safeForScan: result.safeForScan
+    });
+
+    assert.strictEqual(
+      serializedSafeState.includes(fuzzFixtures.PHASE_17D_RAW_MARKER),
+      false,
+      `${testCase.label} leaked raw marker in safe extractor state; seed=${fuzzFixtures.PHASE_17D_FUZZ_SEED}`
+    );
+    assert.ok(
+      Date.now() - started < 5000,
+      `${testCase.label} exceeded bounded extractor fuzz runtime; seed=${fuzzFixtures.PHASE_17D_FUZZ_SEED}`
+    );
+    if (testCase.expectedStatus) {
+      assert.strictEqual(result.status, testCase.expectedStatus, `${testCase.label} status`);
+    }
+    if (testCase.expectedReason) {
+      assert.strictEqual(result.reason, testCase.expectedReason, `${testCase.label} reason`);
+    }
+    if (testCase.safeForScan === false) {
+      assert.strictEqual(result.safeForScan, false, `${testCase.label} should fail closed`);
+      assert.strictEqual(result.text, "", `${testCase.label} should not expose extracted raw text`);
+    }
+    if (testCase.expectRawMarkerRedactedByScanner) {
+      const scan = scanTextContent({
+        fileName: testCase.fileName,
+        mimeType: testCase.mimeType,
+        sizeBytes: result.metadata.textLength || result.text.length,
+        text: result.text,
+        extractedText: result.kind !== "text",
+        mode: "hide_public"
+      });
+      const report = buildSanitizedReport(scan);
+      assert.strictEqual(scan.redactedText.includes(fuzzFixtures.PHASE_17D_RAW_MARKER), false, `${testCase.label} redacted text`);
+      assert.strictEqual(JSON.stringify(report).includes(fuzzFixtures.PHASE_17D_RAW_MARKER), false, `${testCase.label} report`);
+    }
   }
 }
 
@@ -911,6 +972,7 @@ function testNoNewDependenciesAdded() {
   await testLargeXlsxTextExtractionLimit();
   await testXlsxMimeMismatchAndLegacyFormatsDoNotBypassGates();
   await testImageMetadataExtractsSafeFieldsOnly();
+  await testPhase17dDeterministicFuzzFixturesFailClosedAndStaySanitized();
   await testImageFilenameSecretFeedsExistingScannerWithoutRawReportMetadata();
   await testSafeImageFilenameHasNoFindingsAndReportsOcrUnsupported();
   testPdfBundleBudget();

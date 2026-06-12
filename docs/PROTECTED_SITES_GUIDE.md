@@ -55,7 +55,7 @@ Text PDF, DOCX, and XLSX outputs on protected sites can be regenerated as `.reda
 
 Protected-site image OCR is opt-in and default off. When enabled, it runs locally, supports English-only PNG/JPG/JPEG/WEBP image OCR, and uploads a flattened `.redacted.png` only when OCR boxes are eligible for visual redaction. If OCR fails, times out, or produces ineligible boxes for a raw image upload path, LeakGuard blocks raw upload rather than sending the original image.
 
-LeakGuard does not provide scanned-PDF OCR, non-English OCR, remote OCR/backend processing, remote model calls, or image format preservation.
+LeakGuard does not provide scanned-PDF OCR, non-English OCR, remote OCR/backend processing, telemetry, cloud verification, remote model calls, or image format preservation.
 
 Protection is best-effort for supported editors and upload paths. Site DOM changes, hidden upload controls, unsupported file formats, browser limitations, or extension reloads can affect coverage.
 

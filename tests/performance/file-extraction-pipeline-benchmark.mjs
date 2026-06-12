@@ -333,6 +333,8 @@ async function benchmark(sample) {
 function makeSamples() {
   const smallText = `hello\nOPENAI_API_KEY=${RAW_SECRET}\n`;
   const envText = buildEnvText(32);
+  const largeText = buildEnvText(384);
+  const largeDocumentText = buildEnvText(192);
   const documentText = `Document token ${RAW_SECRET} and password ${RAW_PASSWORD}`;
   return [
     {
@@ -348,6 +350,13 @@ function makeSamples() {
       createFile: () => new TestFile([envText], "service.env", { type: "text/plain" })
     },
     {
+      name: "large_text_env_phase17d",
+      fileType: "text_large",
+      sizeBucket: "100_500kb",
+      budgetP95Ms: 1500,
+      createFile: () => new TestFile([largeText], "phase17d-large.env", { type: "text/plain" })
+    },
+    {
       name: "text_pdf",
       fileType: "pdf",
       sizeBucket: "lt_10kb",
@@ -360,6 +369,13 @@ function makeSamples() {
       createFile: () => fileFromBuffer("report-compressed.pdf", "application/pdf", makePdf(documentText, { flate: true }))
     },
     {
+      name: "large_text_pdf_phase17d",
+      fileType: "pdf_large",
+      sizeBucket: "100_500kb",
+      budgetP95Ms: 1500,
+      createFile: () => fileFromBuffer("phase17d-large.pdf", "application/pdf", makePdf(largeDocumentText))
+    },
+    {
       name: "docx_text",
       fileType: "docx",
       sizeBucket: "lt_10kb",
@@ -368,6 +384,18 @@ function makeSamples() {
           "brief.docx",
           "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
           makeDocx(documentText)
+        )
+    },
+    {
+      name: "large_docx_phase17d",
+      fileType: "docx_large",
+      sizeBucket: "100_500kb",
+      budgetP95Ms: 1500,
+      createFile: () =>
+        fileFromBuffer(
+          "phase17d-large.docx",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          makeDocx(largeDocumentText)
         )
     },
     {
@@ -382,11 +410,35 @@ function makeSamples() {
         )
     },
     {
+      name: "large_xlsx_phase17d",
+      fileType: "xlsx_large",
+      sizeBucket: "100_500kb",
+      budgetP95Ms: 1500,
+      createFile: () =>
+        fileFromBuffer(
+          "phase17d-large.xlsx",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          makeXlsx(largeDocumentText)
+        )
+    },
+    {
       name: "image_metadata",
       fileType: "image_metadata",
       sizeBucket: "lt_1kb",
       createFile: () =>
         fileFromBuffer(`diagram-secret-filename-${RAW_SECRET}.png`, "image/png", bufferFromText("png bytes"))
+    },
+    {
+      name: "large_image_metadata_phase17d",
+      fileType: "image_metadata_large",
+      sizeBucket: "gt_1mb",
+      budgetP95Ms: 75,
+      createFile: () =>
+        fileFromBuffer(
+          `phase17d-image-secret-filename-${RAW_SECRET}.webp`,
+          "image/webp",
+          new Uint8Array(2 * 1024 * 1024).fill(0x61)
+        )
     },
     {
       name: "scanned_pdf_failure",

@@ -1124,6 +1124,22 @@
 
   function resolveFileDragGuardPolicy(dataTransfer) {
     const policy = resolveLocalFileTransferPolicy(dataTransfer);
+    const localTransferFiles = listLocalTransferFiles(dataTransfer);
+    if (
+      localTransferFiles.length === 1 &&
+      shouldUseContentFileExtractionPipeline(localTransferFiles[0])
+    ) {
+      return {
+        action: "block",
+        reason: "content_extraction_candidate"
+      };
+    }
+    if (shouldFailClosedProtectedUnsupportedFileTransfer(policy)) {
+      return {
+        action: "block",
+        reason: "unsupported_protected_file_blocked"
+      };
+    }
     if (isGeminiHost() && dataTransferLooksLikeFiles(dataTransfer)) {
       return {
         action: "block",
@@ -4518,7 +4534,11 @@
     if (id !== "generic") {
       return false;
     }
-    return currentPublicState.currentSite?.protected === true;
+    if (currentPublicState.currentSite?.protected === true) return true;
+    if (currentPublicState.currentSite?.protected === false) {
+      return getActiveProtection().protectionEnforced === true;
+    }
+    return getActiveProtection().paused !== true;
   }
 
   function shouldHandleChatGptLargeTextPaste(pasted, quickAnalysis) {
@@ -9107,6 +9127,9 @@
     ) {
       return false;
     }
+    if (isUnsupportedLegacyOfficeFile(file)) {
+      return false;
+    }
     if (typeof FileScanner.isSupportedTextFile === "function" && FileScanner.isSupportedTextFile(file.name, file.type)) {
       return false;
     }
@@ -9138,6 +9161,19 @@
     };
   }
 
+  function isUnsupportedLegacyOfficeFile(file) {
+    return /\.(?:doc|docm|xls|xlsm)$/i.test(String(file?.name || "").toLowerCase());
+  }
+
+  function shouldFailClosedProtectedUnsupportedFileTransfer(policy) {
+    if (policy?.action !== "allow" || !isProtectedFileDropDriver(getCurrentHandoffDriverId())) {
+      return false;
+    }
+
+    const files = Array.from(policy.files || []);
+    return files.length === 1 && isUnsupportedLegacyOfficeFile(files[0]);
+  }
+
   async function maybeHandleLocalFileInsert(event, input, dataTransfer, context) {
     if (
       !extensionRuntimeAvailable ||
@@ -9159,15 +9195,24 @@
         : null;
     const transferPolicy = resolveLocalFileTransferPolicy(dataTransfer);
     if (transferPolicy.action === "allow" && !contentExtractionFile) {
-      if (shouldBlockUnsupportedFileTransfer(transferPolicy)) {
+      const unsupportedFileMustBlock =
+        shouldBlockUnsupportedFileTransfer(transferPolicy) ||
+        shouldFailClosedProtectedUnsupportedFileTransfer(transferPolicy);
+      if (unsupportedFileMustBlock) {
+        const unsupportedBlockReason = shouldBlockUnsupportedFileTransfer(transferPolicy)
+          ? "firefox_unsupported_file_blocked"
+          : "unsupported_protected_file_blocked";
         if (!event.defaultPrevented) {
           consumeInterceptionEvent(event);
         }
+        if (event?.target?.tagName === "INPUT" && String(event.target.type || "").toLowerCase() === "file") {
+          clearLocalFileInputSelection(event.target);
+        }
         showFileProcessingError("Raw file upload blocked", {
           site: getCurrentHandoffDriverId(),
-          reason: "firefox_unsupported_file_blocked"
+          reason: unsupportedBlockReason
         });
-        hideFileProcessingOverlay("firefox_unsupported_file_blocked");
+        hideFileProcessingOverlay(unsupportedBlockReason);
         setBadge("Raw file upload blocked");
         hideBadgeSoon(4200);
         await showMessageModal("Raw file upload blocked", getUnsupportedFileBlockedMessage(transferPolicy));
@@ -9175,7 +9220,7 @@
         return {
           handled: true,
           ok: false,
-          reason: "firefox_unsupported_file_blocked"
+          reason: unsupportedBlockReason
         };
       }
       showUnsupportedFilePassThroughNotice(transferPolicy);
@@ -9911,18 +9956,22 @@
     const input = findComposer(event.target);
     const hasContentExtractionFile =
       selectedFiles.length === 1 && shouldUseContentFileExtractionPipeline(selectedFiles[0]);
-    if (!input && !isGeminiHost() && !hasContentExtractionFile) {
+    const selectedTransfer = {
+      files: selectedFiles,
+      types: ["Files"],
+      items: []
+    };
+    const selectedTransferPolicy = resolveLocalFileTransferPolicy(selectedTransfer);
+    const hasFailClosedProtectedUnsupportedFile =
+      shouldFailClosedProtectedUnsupportedFileTransfer(selectedTransferPolicy);
+    if (!input && !isGeminiHost() && !hasContentExtractionFile && !hasFailClosedProtectedUnsupportedFile) {
       if (!(isFirefoxRuntime() && isProtectedFileDropDriver(getCurrentHandoffDriverId()))) return;
     }
 
     const result = await maybeHandleLocalFileInsert(
       event,
       input,
-      {
-        files: selectedFiles,
-        types: ["Files"],
-        items: []
-      },
+      selectedTransfer,
       "file-input"
     );
     if (isFirefoxProtectedInput && transaction) {

@@ -96,6 +96,69 @@ function testHostMatchingRoutesExpectedUrlsToAdapters() {
   });
 }
 
+function testUnsupportedHostnamesDoNotReceiveSpecialAdapterBehavior() {
+  const adapters = createAdapters();
+  const unsupportedUrls = [
+    "https://chatgpt.com.evil.test/c/123",
+    "https://openai.example.test/chat",
+    "https://gemini.google.com.evil.test/app",
+    "https://claude.ai.evil.test/new",
+    "https://grok.example.test/chat",
+    "https://x.example.test/compose/post",
+    "https://example.test/"
+  ];
+
+  unsupportedUrls.forEach((url) => {
+    const location = new URL(url);
+    assert.strictEqual(
+      hostMatching.getFileHandoffAdapterForLocation(adapters, location),
+      null,
+      `${url} should not resolve to a provider adapter`
+    );
+    assert.strictEqual(
+      hostMatching.getCurrentHandoffDriverId(location.hostname),
+      "generic",
+      `${url} should use the generic handoff driver`
+    );
+  });
+}
+
+function testAdapterParityCapabilitiesStayStable() {
+  const adapters = createAdapters();
+  const expectedCapabilities = {
+    chatgpt: { directFileInput: true, directDropReplay: false, pendingAttach: false },
+    openai: { directFileInput: true, directDropReplay: false, pendingAttach: false },
+    gemini: { directFileInput: true, directDropReplay: false, pendingAttach: true },
+    grok: { directFileInput: true, directDropReplay: true, pendingAttach: true },
+    claude: { directFileInput: true, directDropReplay: false, pendingAttach: false },
+    x: { directFileInput: true, directDropReplay: false, pendingAttach: false }
+  };
+
+  for (const [id, expected] of Object.entries(expectedCapabilities)) {
+    const description = hostMatching.describeFileHandoffAdapter(adapters[id]);
+    assert.strictEqual(
+      adapters[id].supportsDirectFileInputAssignment,
+      expected.directFileInput,
+      `${id} direct file input capability should stay stable`
+    );
+    assert.strictEqual(
+      description.supportsDirectDropReplay,
+      expected.directDropReplay,
+      `${id} direct drop replay capability should stay stable`
+    );
+    assert.strictEqual(
+      description.pendingAttachEnabled,
+      expected.pendingAttach,
+      `${id} pending attach effective state should stay stable`
+    );
+    assert.strictEqual(
+      description.supportsTrustedAttachButton,
+      true,
+      `${id} trusted attach button capability should stay declared`
+    );
+  }
+}
+
 function testPendingAttachIsEnabledOnlyForGeminiAndGrok() {
   const adapters = createAdapters();
 
@@ -179,6 +242,8 @@ function testGeminiFallbackWriterLoadsAfterAdaptersBeforeContentWiring() {
 
 testAdapterRegistryExposesExpectedProviders();
 testHostMatchingRoutesExpectedUrlsToAdapters();
+testUnsupportedHostnamesDoNotReceiveSpecialAdapterBehavior();
+testAdapterParityCapabilitiesStayStable();
 testPendingAttachIsEnabledOnlyForGeminiAndGrok();
 testUploadAndUnsafeClickPredicatesStayPresent();
 testGeminiFallbackWriterLoadsAfterAdaptersBeforeContentWiring();

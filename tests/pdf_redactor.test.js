@@ -165,6 +165,19 @@ async function testLargeSanitizedPdfOutputIsBoundedAndSafe() {
   assert.strictEqual(extracted.text.includes("SAFE_LINE_AFTER_LIMIT"), false);
 }
 
+function testEmptySanitizedPdfTextDoesNotProduceProofPdf() {
+  const result = PdfRedactor.createRedactedPdfFromExtraction({
+    originalName: "empty-sanitized.pdf",
+    extraction: { status: EXTRACTOR_STATUS.OK, kind: "pdf", safeForScan: true },
+    sanitizedText: " \n\t "
+  });
+
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.status, "pdf_redacted_text_empty");
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(result, "bytes"), false);
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(result, "fileName"), false);
+}
+
 async function testProtectedSitePdfFallbackContractRemainsDocumentedByProof() {
   const source = require("fs").readFileSync(
     path.join(repoRoot, "src/content/files/contentFileExtractionPipeline.js"),
@@ -233,6 +246,7 @@ function testNoPersistenceLoggingOrOriginalStreamInputs() {
   await testGeneratedPdfExcludesSourcePdfStreamsAndMarkers();
   await testUnsafePdfInputsDoNotProduceProofPdf();
   await testLargeSanitizedPdfOutputIsBoundedAndSafe();
+  testEmptySanitizedPdfTextDoesNotProduceProofPdf();
   await testProtectedSitePdfFallbackContractRemainsDocumentedByProof();
   testScannerPageWiresPdfProofOutputFromSanitizedText();
   testNoPersistenceLoggingOrOriginalStreamInputs();

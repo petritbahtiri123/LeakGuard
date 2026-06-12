@@ -20,9 +20,10 @@ PDF/DOCX/XLSX redaction or original Office document reconstruction, does not
 preserve original image format for visual redaction, and does not run
 scanned-PDF OCR.
 
-Current builds must not include remote OCR calls, CDN loading, runtime model
-downloads, new permissions, or CSP changes beyond the reviewed local WASM
-support already used by extension pages.
+Current builds must stay local-only and must not include backend OCR/file
+processing, telemetry, cloud verification, remote OCR calls, CDN loading,
+runtime model downloads, new permissions, or CSP changes beyond the reviewed
+local WASM support already used by extension pages.
 
 The supported build targets remain:
 
@@ -88,5 +89,5 @@ Tests must continue to prove:
 - protected-site OCR failure blocks raw image upload
 - scanner/protected-site visual redaction outputs PNG only when boxes are
   eligible
-- no scanned-PDF OCR, non-English OCR, image format preservation, or
-  PDF/DOCX/XLSX rebuild claims appear in user-facing docs
+- unsupported scanned-PDF OCR, non-English OCR, image format preservation, or
+  PDF/DOCX/XLSX rebuild claims do not appear in user-facing docs

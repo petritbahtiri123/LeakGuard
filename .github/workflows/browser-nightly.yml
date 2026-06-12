@@ -1,0 +1,66 @@
+name: Browser Nightly
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "40 4 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  browser-gates:
+    name: Tier C browser/nightly checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Setup Chrome
+        uses: browser-actions/setup-chrome@v2
+
+      - name: Setup Firefox
+        uses: browser-actions/setup-firefox@v1
+
+      - name: Setup geckodriver
+        uses: browser-actions/setup-geckodriver@latest
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Edge
+        uses: browser-actions/setup-edge@v1
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Tier A fast checks
+        run: npm run test:fast
+
+      - name: Run Tier B release artifact gates
+        run: npm run test:release-gates
+
+      - name: Preflight browser environment
+        run: npm run preflight:browser
+
+      - name: Run Tier C browser gates
+        run: xvfb-run -a npm run test:browser-gates
+
+      - name: Upload browser smoke timings
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-nightly-smoke-timings
+          path: artifacts/runtime-budgets/smoke-timings.jsonl
+          if-no-files-found: warn
+          retention-days: 14

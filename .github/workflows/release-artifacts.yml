@@ -4,6 +4,8 @@ on:
   workflow_dispatch:
   push:
     tags: ["v*"]
+  schedule:
+    - cron: "25 4 * * 1"
 
 permissions:
   contents: read
@@ -36,11 +38,14 @@ jobs:
       - name: Check documentation links
         run: npm run docs:check-links
 
-      - name: Run tests
-        run: npm test
+      - name: Run Tier A fast checks
+        run: npm run test:fast
 
-      - name: Build packages and checksums
-        run: npm run release:artifacts
+      - name: Run Tier B release artifact gates
+        run: npm run test:release-gates
+
+      - name: Generate release checksums
+        run: npm run release:checksums
 
       - name: Upload release packages and checksums
         uses: actions/upload-artifact@v7
