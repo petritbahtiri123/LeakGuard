@@ -13,7 +13,10 @@ Result before Phase 18 edits: no modified or untracked files were reported.
 Current Phase 18 stabilization edits:
 
 - `docs/phase-18-final-pr-stabilization-closeout.md`
+- `docs/PRIVACY_POLICY.md`
+- `docs/RELEASE_QA_CHECKLIST.md`
 - `tests/productization.test.js`
+- `tests/release_artifacts.test.js`
 
 Phase grouping for current dirty tree:
 
@@ -24,13 +27,16 @@ Phase grouping for current dirty tree:
 - XLSX rebuilt outputs: none dirty.
 - Phase 17 automation: none dirty.
 - CI/workflows: none dirty.
-- Docs/store/privacy: `docs/phase-18-final-pr-stabilization-closeout.md`.
-- Tests/browser/security/productization/build: `tests/productization.test.js`.
+- Docs/store/privacy: `docs/phase-18-final-pr-stabilization-closeout.md`, `docs/PRIVACY_POLICY.md`, `docs/RELEASE_QA_CHECKLIST.md`.
+- Tests/browser/security/productization/build: `tests/productization.test.js`, `tests/release_artifacts.test.js`.
 
 ## Files to Include
 
-- `docs/phase-18-final-pr-stabilization-closeout.md`: final PR stabilization closeout, blocker status, validation record, and publish-readiness decision.
-- `tests/productization.test.js`: productization guard requiring the Phase 18 closeout doc and preserving the privacy contact release blocker.
+- `docs/phase-18-final-pr-stabilization-closeout.md`: final PR stabilization closeout, contact status, validation record, and publish-readiness decision.
+- `docs/PRIVACY_POLICY.md`: finalized support, privacy, and security contact details.
+- `docs/RELEASE_QA_CHECKLIST.md`: publication-contact finalization check and human store review reminder.
+- `tests/productization.test.js`: productization guard requiring finalized publication contacts and the Phase 18 closeout doc.
+- `tests/release_artifacts.test.js`: release artifact/store-readiness guard requiring finalized publication contacts and failing on returned placeholder or blocker text.
 
 ## Files to Exclude/Review
 
@@ -51,20 +57,13 @@ No private key, certificate, environment, or obvious secret file names were repo
 
 ## Release Blocker Status
 
-Blocker remains visible and must not be hidden:
+Publication contact blocker is resolved.
 
-- File: `docs/PRIVACY_POLICY.md`
-- Exact blocker text: "Release blocker: publication contacts are not finalized. The project owner must provide the support contact, privacy contact, and private security reporting contact or GitHub private vulnerability reporting path before this policy is published or submitted to browser stores."
+- Support: `petritbahtiri24@gmail.com`
+- Privacy: `petritbahtiri24@gmail.com`
+- Security: `petritbahtiri24@gmail.com`
 
-Publish-readiness decision: not publish-ready until publication contacts are finalized.
-
-When contacts are provided later, update and re-run:
-
-- `docs/PRIVACY_POLICY.md`: replace the blocker with the approved support, privacy, and private security reporting contacts.
-- `docs/RELEASE_QA_CHECKLIST.md`: update release blocker status.
-- `docs/phase-18-final-pr-stabilization-closeout.md`: update blocker and publish-readiness decision.
-- `tests/productization.test.js`: update the guard so it verifies finalized contacts instead of the unresolved blocker.
-- Validation: `node tests/productization.test.js`, `npm run test:ci`, `npm run test:release-gates`, `npm run test:browser-gates`, `git diff --check`.
+Publish-readiness decision: ready to publish after required human store listing review confirms the final contact values and release-facing copy.
 
 ## Tests Run
 
@@ -76,7 +75,7 @@ Final validation record:
 
 - `node tests/productization.test.js`: passed.
 - `npm run test:ci`: passed.
-- `npm run test:release-gates`: passed; release packages were generated and release artifact/store-readiness checks passed while preserving the unresolved privacy-contact release blocker.
+- `npm run test:release-gates`: passed; release packages were generated and release artifact/store-readiness checks passed.
 - `npm run test:browser-gates`: passed; Chrome, Firefox, Edge, and extension browser QA harness checks completed.
 - `git diff --check`: passed.
 - `npm run test:nightly`: not run separately; its component tiers were run individually in this closeout pass.
@@ -136,8 +135,11 @@ This PR completes the local file-processing and release-readiness work for LeakG
 
 ## Release blockers
 
-- Privacy publication contacts are not finalized.
-- Release is not publish-ready until support, privacy, and private security reporting contacts are provided and reviewed.
+- Publication contacts finalized:
+  - Support: `petritbahtiri24@gmail.com`
+  - Privacy: `petritbahtiri24@gmail.com`
+  - Security: `petritbahtiri24@gmail.com`
+- Human store listing review remains required before publishing.
 
 ## Tests run
 
@@ -150,11 +152,11 @@ This PR completes the local file-processing and release-readiness work for LeakG
 - Firefox package generated: YES.
 - release artifact scan passed: YES.
 - browser gates passed: YES.
-- privacy contacts finalized: NO.
+- privacy contacts finalized: YES.
 - human store listing review required: YES.
-- release publish-ready: NO until contact blocker resolved.
+- release publish-ready: YES after human store listing review.
 
 ## Publish-Readiness Decision
 
 - Ready to merge: YES, assuming reviewer acceptance of the Phase 18 documentation/test-only stabilization changes.
-- Ready to publish: NO until the privacy contact release blocker is resolved and human store listing review is complete.
+- Ready to publish: YES after human store listing review is complete.

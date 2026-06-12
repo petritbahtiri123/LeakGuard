@@ -930,15 +930,29 @@ function testPhase17fScriptsAndWorkflowsAreTiered() {
   );
 }
 
-function testPhase17fPrivacyContactBlockerIsCentralized() {
+function testPublicationContactsAreFinalized() {
+  const finalizedContact = "petritbahtiri24@gmail.com";
+  for (const [label, text] of Object.entries({
+    privacyPolicy,
+    releaseChecklist,
+    phase18FinalPrStabilizationCloseout
+  })) {
+    assert.strictEqual(
+      /Release blocker: publication contacts are not finalized|publication contacts are not finalized|NO until contact blocker resolved|TODO|TBD|CONTACT_PLACEHOLDER|contact@example\.com|your-email@example\.com/i.test(text),
+      false,
+      `${label} should not contain unresolved publication-contact blocker or placeholder text`
+    );
+  }
+  for (const prefix of ["Support", "Privacy", "Security"]) {
+    assert.ok(
+      privacyPolicy.includes(`${prefix}: ${finalizedContact}`),
+      `privacy policy should include finalized ${prefix.toLowerCase()} contact`
+    );
+  }
   assert.ok(
-    privacyPolicy.includes("Release blocker: publication contacts are not finalized"),
-    "privacy policy should centralize unknown publication contacts as a release blocker"
-  );
-  assert.strictEqual(/\bTODO\b/i.test(privacyPolicy), false, "privacy policy should not contain TODO placeholders");
-  assert.ok(
-    releaseChecklist.includes("Release blocker: publication contacts are not finalized"),
-    "release QA checklist should name the privacy contact blocker"
+    releaseChecklist.includes("publication contacts are finalized") &&
+      releaseChecklist.includes(finalizedContact),
+    "release QA checklist should mark publication contacts finalized"
   );
 }
 
@@ -954,13 +968,16 @@ function testPhase18FinalPrStabilizationCloseoutIsDocumented() {
     "Files to Exclude/Review",
     "Generated Artifact Status",
     "Release Blocker Status",
-    "Release blocker: publication contacts are not finalized",
+    "Publication contact blocker is resolved",
+    "Support: `petritbahtiri24@gmail.com`",
+    "Privacy: `petritbahtiri24@gmail.com`",
+    "Security: `petritbahtiri24@gmail.com`",
     "Suggested PR Title",
     "Suggested PR Body",
     "Store/Publish Readiness Checklist",
-    "privacy contacts finalized: NO",
+    "privacy contacts finalized: YES",
     "human store listing review required: YES",
-    "release publish-ready: NO until contact blocker resolved"
+    "release publish-ready: YES after human store listing review"
   ]) {
     assert.ok(
       phase18FinalPrStabilizationCloseout.includes(required),
@@ -1038,7 +1055,7 @@ async function run() {
   testPhase17eReleaseArtifactStoreReadinessAutomationIsDocumented();
   testPhase17fCiNightlyMatrixHardeningIsDocumented();
   testPhase17fScriptsAndWorkflowsAreTiered();
-  testPhase17fPrivacyContactBlockerIsCentralized();
+  testPublicationContactsAreFinalized();
   testPhase18FinalPrStabilizationCloseoutIsDocumented();
   testPhase17fBrowserDiagnosticsAreActionable();
   console.log("PASS productization static regressions");

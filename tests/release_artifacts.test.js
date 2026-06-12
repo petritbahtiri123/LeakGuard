@@ -233,6 +233,7 @@ function assertManifestSecurity(label, entries) {
 }
 
 function assertStoreDocsConsistency() {
+  const finalizedContact = "petritbahtiri24@gmail.com";
   const docs = {
     README: fs.readFileSync(path.join(repoRoot, "README.md"), "utf8"),
     PRIVACY_POLICY: fs.readFileSync(path.join(repoRoot, "docs/PRIVACY_POLICY.md"), "utf8"),
@@ -265,15 +266,19 @@ function assertStoreDocsConsistency() {
 
   const blockers = [];
   for (const [label, text] of Object.entries(docs)) {
-    const matches = text.match(/\b(?:TODO|TBD|CONTACT_PLACEHOLDER|contact@example\.com|your-email@example\.com)\b/gi) || [];
+    const matches =
+      text.match(
+        /\b(?:TODO|TBD|CONTACT_PLACEHOLDER|contact@example\.com|your-email@example\.com)\b|Release blocker: publication contacts are not finalized/gi
+      ) || [];
     if (matches.length) blockers.push(`${label}: ${[...new Set(matches)].join(", ")}`);
   }
-  if (/Release blocker: publication contacts are not finalized/i.test(docs.PRIVACY_POLICY)) {
-    blockers.push("PRIVACY_POLICY: publication contacts are not finalized");
+  for (const prefix of ["Support", "Privacy", "Security"]) {
+    assert.ok(
+      docs.PRIVACY_POLICY.includes(`${prefix}: ${finalizedContact}`),
+      `PRIVACY_POLICY should include finalized ${prefix.toLowerCase()} contact`
+    );
   }
-  if (blockers.length) {
-    console.warn(`RELEASE BLOCKER unresolved release blockers: ${blockers.join("; ")}`);
-  }
+  assert.deepStrictEqual(blockers, [], `release docs should not contain unresolved blockers: ${blockers.join("; ")}`);
 }
 
 function summarizePackage(label, entries, packageBytes) {

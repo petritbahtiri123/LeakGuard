@@ -157,7 +157,7 @@
 
 - Capture final screenshots for popup home, popup management, in-page panel, decision modal, and popup reveal.
 - Confirm [STORE_ASSETS_CHECKLIST.md](STORE_ASSETS_CHECKLIST.md) is complete for the target store.
-- Release blocker: publication contacts are not finalized. Complete the support, privacy, and security contacts in the privacy policy with real project contacts before publishing.
+- Confirm publication contacts are finalized in `docs/PRIVACY_POLICY.md`: support, privacy, and security all use `petritbahtiri24@gmail.com`.
 - Review the Chrome Web Store copy in `docs/CHROME_WEB_STORE_LISTING.md`.
 - Review the Firefox AMO submission notes in `docs/FIREFOX_AMO_CHECKLIST.md` if publishing a Firefox package.
 - Review release-facing wording for Firefox Add-ons suitability: local-only processing, no telemetry, no cloud processing, no remote model calls, and no perfect-protection claims.

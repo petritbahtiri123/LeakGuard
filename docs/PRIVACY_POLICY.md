@@ -90,6 +90,8 @@ Session-scoped placeholder mappings are kept in browser session storage when ava
 
 ## Contact
 
-Release blocker: publication contacts are not finalized. The project owner must provide the support contact, privacy contact, and private security reporting contact or GitHub private vulnerability reporting path before this policy is published or submitted to browser stores.
+Support: petritbahtiri24@gmail.com
 
-No project support or privacy contact is currently recorded in this repository. Do not publish this policy or submit store listings until those contacts are filled in and reviewed.
+Privacy: petritbahtiri24@gmail.com
+
+Security: petritbahtiri24@gmail.com
