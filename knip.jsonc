@@ -48,6 +48,9 @@
     "src/shared/ocr/ocrWorker.js",
     "src/shared/pdfRedactor.js",
     "src/shared/docxRedactor.js",
+    // Phase 16A proof-only XLSX generator. Not wired into scanner or
+    // protected-site uploads until a later phase.
+    "src/shared/xlsxRedactor.js",
     "src/shared/scannerOcr.js",
     "src/shared/imageRedactor.js",
 

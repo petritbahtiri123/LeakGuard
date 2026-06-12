@@ -29,7 +29,7 @@ LeakGuard also includes a local File Scanner page for text/source files, text PD
 
 For protected AI composers, supported local UTF-8 text files, text PDFs, DOCX documents, XLSX spreadsheets, and image metadata pasted, dropped, or selected in the page can be locally validated, redacted, and replaced with sanitized in-memory `File`/`Blob` objects where the browser and site upload flow accept synthetic file handoff. Larger supported text files above 4 MiB and up to 50 MB are redacted locally with streaming/chunked processing before sanitized handoff. Supported text files above 50 MB are blocked from local redaction with a clear too-large warning. If LeakGuard attempts sanitization and sanitized file handoff fails, LeakGuard blocks raw upload and shows a local message.
 
-Scanner and protected-site text PDFs can export regenerated `.redacted.pdf` from sanitized text only; protected-site PDFs fall back to `.redacted.txt` when regeneration would truncate. DOCX, XLSX, image metadata, and OCR text outputs export `.redacted.txt`; LeakGuard does not provide layout-preserving PDF redaction or rebuilt DOCX/XLSX outputs. Protected-site image OCR is opt-in and default off. When enabled, it runs locally, supports English only, and uploads a flattened `.redacted.png` only when OCR boxes are eligible. There is no scanned-PDF OCR, non-English OCR, remote OCR/backend processing, or image format preservation yet.
+Scanner and protected-site text PDFs can export regenerated `.redacted.pdf` from sanitized text only; protected-site PDFs fall back to `.redacted.txt` when regeneration would truncate. Scanner and protected-site DOCX results can export regenerated `.redacted.docx` from sanitized text only; original styles, images, comments, and metadata are not preserved, and protected-site DOCX falls back to `.redacted.txt` when regeneration would truncate. Scanner and protected-site XLSX results can export simple regenerated `.redacted.xlsx` from sanitized extracted text only; formulas, charts, styles, comments, hidden sheets, metadata, custom XML, calc chains, and media are not preserved, and protected-site XLSX falls back to `.redacted.txt` when regeneration would truncate. Image metadata and OCR text outputs export `.redacted.txt`. LeakGuard does not provide layout-preserving PDF/DOCX/XLSX redaction or original Office document reconstruction. Protected-site image OCR is opt-in and default off. When enabled, it runs locally, supports English only, and uploads a flattened `.redacted.png` only when OCR boxes are eligible. There is no scanned-PDF OCR, non-English OCR, remote OCR/backend processing, or image format preservation yet.
 
 LeakGuard also protects ChatGPT large-paste flows that can become generated `Plain Text` attachments, and includes Gemini-specific mitigations for sanitized file handoff and large text fallback behavior.
 
@@ -46,7 +46,7 @@ LeakGuard is designed for risk reduction, not as a complete data-loss-prevention
 - local text PDF, DOCX text, XLSX text, and image metadata scanning
 - local English-only scanner image OCR and eligible flattened `.redacted.png` scanner visual redaction
 - local text-file paste/drop/file-select redaction for supported UTF-8 text files in protected AI composers
-- protected-site text PDF extraction with complete regenerated `.redacted.pdf` handoff and `.redacted.txt` fallback, plus DOCX/XLSX/image metadata extraction with `.redacted.txt` outputs
+- protected-site text PDF, DOCX, and XLSX extraction with complete regenerated file handoff and `.redacted.txt` fallback, plus image metadata extraction with `.redacted.txt` outputs
 - protected-site image OCR opt-in that is default off and outputs `.redacted.png` only when boxes are eligible
 - streaming local redaction for supported text-file composer uploads above 4 MiB and up to 50 MB
 - ChatGPT large paste / generated Plain Text attachment protection
@@ -64,7 +64,7 @@ LeakGuard is designed for risk reduction, not as a complete data-loss-prevention
 - no remote model calls
 - no backend service
 - no promise of perfect privacy or complete secret protection
-- no layout-preserving PDF redaction or rebuilt DOCX/XLSX outputs in this release
+- no layout-preserving PDF/DOCX/XLSX redaction, original Office document reconstruction, or macro Office support in this release
 - no scanned-PDF OCR, non-English OCR, remote OCR/backend, or image format preservation
 - no archive, executable, or binary-file redaction in this release
 - no support for every editor, upload flow, browser, or synthetic `DataTransfer` file handoff path
@@ -118,7 +118,7 @@ Use real extension screenshots with production copy. Avoid showing raw real cred
 - The extension processes text locally in the browser.
 - The File Scanner processes explicitly selected text files locally and does not upload or store file contents.
 - Supported local text files pasted, dropped, or selected in protected AI composers are processed locally, including streaming/chunked local redaction for supported text files above 4 MiB and up to 50 MB.
-- Text PDFs, DOCX files, XLSX files, and image metadata are processed locally. Scanner and protected-site text PDFs can export regenerated `.redacted.pdf` from sanitized extracted text; protected-site PDFs fall back to `.redacted.txt` when regeneration would truncate, and DOCX, XLSX, and image metadata export `.redacted.txt`, not rebuilt originals.
+- Text PDFs, DOCX files, XLSX files, and image metadata are processed locally. Scanner and protected-site text PDFs can export regenerated `.redacted.pdf` from sanitized extracted text; protected-site PDFs fall back to `.redacted.txt` when regeneration would truncate. Scanner and protected-site DOCX can export regenerated `.redacted.docx` from sanitized text only; protected-site DOCX falls back to `.redacted.txt` when regeneration would truncate. Scanner and protected-site XLSX can export regenerated `.redacted.xlsx` from sanitized text only; protected-site XLSX falls back to `.redacted.txt` when regeneration would truncate. Image metadata exports `.redacted.txt`.
 - Scanner image OCR and protected-site image OCR run locally, use English only, and do not use remote OCR or backend services. Protected-site OCR is opt-in and default off.
 - Unsupported formats such as scanned PDFs, non-English OCR, archives, executables, legacy/macro Office files, and binary files are not represented as scanned, redacted, or protected.
 - Raw text-file uploads are blocked if sanitized file handoff cannot complete.

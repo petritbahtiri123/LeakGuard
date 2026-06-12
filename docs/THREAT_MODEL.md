@@ -31,7 +31,7 @@ It does not expand product scope. LeakGuard remains a local risk-reduction tool,
 | Raw prompt text | Process locally and avoid intentional persistence or logging. |
 | Raw secrets, emails, public IPv4 hosts, and public IPv4 ranges | Replace with placeholders before protected submission unless the user or policy allows otherwise. |
 | Supported local text-file contents and chunks | Read only after user selection, paste, or drop; redact locally; avoid raw upload after LeakGuard attempts sanitization. |
-| Supported document extracted text | Extract text from PDF, DOCX, and XLSX locally; redact before `.redacted.txt` export or handoff; do not rebuild original formats yet. |
+| Supported document extracted text | Extract text from PDF, DOCX, and XLSX locally; redact before `.redacted.txt` export/fallback or regenerated PDF/DOCX/XLSX handoff from sanitized text only. |
 | Image metadata, OCR text, and image bytes | Process locally for metadata, scanner OCR, and opt-in protected-site OCR; avoid persistence, logging, remote OCR, and raw image upload after LeakGuard attempts sanitization. |
 | Placeholder private state | Keep raw mappings background-owned and session-scoped for reveal only. |
 | Public placeholder state | Expose only safe state needed by content scripts, such as placeholder counts and trusted placeholder tokens. |
@@ -104,7 +104,7 @@ Rules:
 - Validate supported file type, size, UTF-8 text, extracted document text, image metadata, or OCR/image bounds locally.
 - Redact through the background-owned placeholder flow.
 - Create sanitized in-memory `File` or `Blob` objects.
-- Export scanner text PDFs as `.redacted.txt` plus regenerated `.redacted.pdf` from sanitized text only. Export protected-site text PDFs as regenerated `.redacted.pdf` only when complete, with `.redacted.txt` fallback when regeneration would truncate. Export DOCX, XLSX, image metadata, and OCR text as `.redacted.txt`; do not claim layout-preserving or rebuilt DOCX/XLSX originals.
+- Export scanner text PDFs as `.redacted.txt` plus regenerated `.redacted.pdf` from sanitized text only. Export scanner DOCX as `.redacted.txt` plus regenerated `.redacted.docx` from sanitized text only. Export scanner XLSX as `.redacted.txt` plus a simple regenerated `.redacted.xlsx` from sanitized text only. Export protected-site text PDFs as regenerated `.redacted.pdf` only when complete, with `.redacted.txt` fallback when regeneration would truncate. Export protected-site DOCX as regenerated `.redacted.docx` only when complete, with `.redacted.txt` fallback when regeneration would truncate. Export protected-site XLSX as regenerated `.redacted.xlsx` only when complete, with `.redacted.txt` fallback when regeneration would truncate. Export image metadata and OCR text as `.redacted.txt`; do not claim layout-preserving PDF/DOCX/XLSX redaction or original Office document reconstruction.
 - Export scanner or eligible protected-site visual image redaction as flattened `.redacted.png` only.
 - Keep protected-site OCR opt-in and default off.
 - Prefer proven direct file-input assignment.

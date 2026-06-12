@@ -38,7 +38,7 @@ The Firefox listing should match LeakGuard's local-only model:
 - no sale or transfer of user data
 - no collection of prompt text, file contents, raw secrets, email addresses, or raw network values by a remote service
 
-If AMO asks about selected local files, describe local file processing in the browser and keep scope precise: text/source files, text PDF extraction, DOCX text extraction, XLSX text extraction, image metadata, English-only scanner image OCR, and protected-site image OCR only when the user opts in. Scanner and protected-site text PDFs can export regenerated `.redacted.pdf` from sanitized text only; protected-site PDFs fall back to `.redacted.txt` when regeneration would truncate. DOCX, XLSX, image metadata, and OCR text outputs export `.redacted.txt`; eligible visual image redaction exports flattened `.redacted.png`.
+If AMO asks about selected local files, describe local file processing in the browser and keep scope precise: text/source files, text PDF extraction, DOCX text extraction, XLSX text extraction, image metadata, English-only scanner image OCR, and protected-site image OCR only when the user opts in. Scanner and protected-site text PDFs can export regenerated `.redacted.pdf` from sanitized text only; protected-site PDFs fall back to `.redacted.txt` when regeneration would truncate. Scanner and protected-site DOCX can export regenerated `.redacted.docx` from sanitized text only; protected-site DOCX falls back to `.redacted.txt` when regeneration would truncate. Scanner and protected-site XLSX can export regenerated `.redacted.xlsx` from sanitized text only; protected-site XLSX falls back to `.redacted.txt` when regeneration would truncate. Image metadata and OCR text outputs export `.redacted.txt`; eligible visual image redaction exports flattened `.redacted.png`.
 
 Do not publish the privacy/support contact fields until [PRIVACY_POLICY.md](PRIVACY_POLICY.md) and [STORE_ASSETS_CHECKLIST.md](STORE_ASSETS_CHECKLIST.md) have real project contacts. No correct support or privacy contact is currently discoverable in this repository.
 
@@ -59,7 +59,7 @@ Avoid unnecessary generated or vendored duplication if AMO requirements allow it
 
 - LeakGuard processes protected composer text locally in the browser.
 - Supported local UTF-8 text/source files, text PDFs, DOCX text, XLSX text, image metadata, and English-only image OCR flows are scanned and redacted locally.
-- Scanner and protected-site text PDFs can export regenerated `.redacted.pdf` from sanitized text only; protected-site PDFs fall back to `.redacted.txt` when regeneration would truncate. DOCX, XLSX, image metadata, and OCR text outputs export `.redacted.txt`, not rebuilt originals.
+- Scanner and protected-site text PDFs can export regenerated `.redacted.pdf` from sanitized text only; protected-site PDFs fall back to `.redacted.txt` when regeneration would truncate. Scanner and protected-site DOCX outputs can export regenerated `.redacted.docx` from sanitized text only; protected-site DOCX falls back to `.redacted.txt` when regeneration would truncate. Scanner and protected-site XLSX outputs can export regenerated `.redacted.xlsx` from sanitized text only; protected-site XLSX falls back to `.redacted.txt` when regeneration would truncate. Image metadata and OCR text outputs export `.redacted.txt`.
 - Scanner visual image redaction exports flattened `.redacted.png`; protected-site image OCR is opt-in, default off, and uploads `.redacted.png` only when OCR boxes are eligible.
 - Unsupported scanned PDFs, non-English OCR, remote OCR/backend flows, archives, executables, legacy/macro Office files, and binary files are not scanned or redacted in this release.
 - Unsupported files are not represented as scanned, sanitized, or protected; behavior can be warning-only pass-through or blocking when the browser/site path cannot be safely continued.
@@ -102,4 +102,4 @@ Firefox listing copy should stay aligned with:
 - [NON_GOALS.md](NON_GOALS.md)
 - [BROWSER_COMPATIBILITY_MATRIX.md](BROWSER_COMPATIBILITY_MATRIX.md)
 
-Do not claim full DLP, perfect detection, compliance certification, layout-preserving PDF redaction, rebuilt DOCX/XLSX outputs, scanned-PDF OCR, non-English OCR, remote OCR/backend processing, image format preservation, remote verification, or support for every editor/upload path.
+Do not claim full DLP, perfect detection, compliance certification, layout-preserving PDF/DOCX/XLSX redaction, original Office document reconstruction, macro Office support, scanned-PDF OCR, non-English OCR, remote OCR/backend processing, image format preservation, remote verification, or support for every editor/upload path.

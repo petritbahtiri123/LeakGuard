@@ -853,12 +853,22 @@ function testScannerUiCopyScopesOcrV1() {
   assert.ok(scannerHtml.includes("../shared/imageRedactor.js"));
   assert.ok(scannerHtml.includes("Scanned PDF OCR"));
   assert.ok(scannerHtml.includes("Text PDF scanner results can also export a .redacted.pdf regenerated from sanitized extracted text"));
+  assert.ok(scannerHtml.includes("DOCX scanner results can also export a .redacted.docx regenerated from sanitized extracted text"));
+  assert.ok(scannerHtml.includes("XLSX scanner results can also export a .redacted.xlsx regenerated from sanitized extracted text"));
+  assert.ok(scannerHtml.includes("original XLSX XML parts are not copied"));
+  assert.ok(scannerHtml.includes("formulas, charts, styles, comments, hidden sheets, metadata, custom XML, calc chains, and media are not preserved"));
+  assert.ok(scannerHtml.includes("Protected-site DOCX output can hand off a regenerated .redacted.docx when complete"));
+  assert.ok(scannerHtml.includes("truncated or unsafe DOCX regeneration falls back to .redacted.txt or blocks raw upload"));
+  assert.ok(scannerHtml.includes("Protected-site XLSX output can hand off a regenerated .redacted.xlsx when complete"));
+  assert.ok(scannerHtml.includes("truncated or unsafe XLSX regeneration falls back to .redacted.txt or blocks raw upload"));
+  assert.ok(scannerHtml.includes("Download Redacted DOCX"));
+  assert.ok(scannerHtml.includes("../shared/docxRedactor.js"));
   assert.ok(scannerHtml.includes("not layout-preserving"));
   assert.ok(scannerHtml.includes(".redacted.txt remains available as the fallback"));
   assert.ok(scannerHtml.includes("Protected-site text PDF output can hand off a regenerated .redacted.pdf when complete"));
   assert.ok(scannerHtml.includes("Protected-site upload OCR is off by default"));
   assert.ok(scannerHtml.includes("flattened redacted PNG only when OCR box confidence is eligible"));
-  assert.ok(scannerHtml.includes("DOCX/XLSX rebuilds"));
+  assert.ok(scannerHtml.includes("layout-preserving PDF/DOCX/XLSX redaction"));
   assert.ok(scannerHtml.includes("image format preservation"));
 }
 
@@ -884,6 +894,10 @@ function testScannerUiSerializesRepeatedScansAndRestoresControls() {
   assert.ok(
     scannerSource.includes("download-redacted-pdf-btn") || scannerSource.includes("downloadRedactedPdf"),
     "scanner UI should expose a separate regenerated redacted PDF export control"
+  );
+  assert.ok(
+    scannerSource.includes("download-redacted-docx-btn") || scannerSource.includes("downloadRedactedDocx"),
+    "scanner UI should expose a separate regenerated redacted DOCX export control"
   );
 }
 

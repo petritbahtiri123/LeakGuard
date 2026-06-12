@@ -275,7 +275,7 @@ function createHarnessPage() {
     <main>
       <h1>LeakGuard Browser QA Harness</h1>
       <textarea id="prompt-textarea" data-testid="prompt-textarea" placeholder="Message"></textarea>
-      <input id="qa-file-input" type="file" accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp">
+      <input id="qa-file-input" type="file" accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp,.docx,.xlsx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
       <button id="send-button" type="button">Send</button>
       <section id="echo-zone"></section>
     </main>
@@ -292,6 +292,7 @@ function createHarnessPage() {
             size: file.size,
             text: isText ? new TextDecoder().decode(bytes) : '',
             bytePrefix: Array.from(bytes.slice(0, 12)),
+            byteValues: Array.from(bytes),
             byteSum: Array.from(bytes).reduce((total, byte) => total + byte, 0)
           };
         }));
@@ -992,6 +993,182 @@ async function runProtectedSiteImageOcrQa(connection, page, extensionSessionId, 
   return result;
 }
 
+async function runProtectedSiteDocxHandoffQa(connection, page, tempDir) {
+  const rawSecret = "sk-proj-ProtectedSiteDocxBrowserQa1234567890abcdef";
+  const docxPath = path.join(tempDir, "protected-site-docx.docx");
+  fs.writeFileSync(docxPath, makeQaDocx(`DOCX_API_KEY=${rawSecret}`));
+  await evaluate(connection, page.sessionId, "window.__leakguardQaUploads = []");
+  await setFileInputFiles(connection, page.sessionId, "#qa-file-input", [docxPath]);
+
+  const result = await waitFor(
+    () =>
+      evaluate(
+        connection,
+        page.sessionId,
+        `(async () => {
+          const rawSecret = ${JSON.stringify(rawSecret)};
+          const describeFile = async (file) => {
+            const bytes = new Uint8Array(await file.arrayBuffer());
+            return {
+              name: file.name,
+              type: file.type,
+              size: file.size,
+              bytePrefix: Array.from(bytes.slice(0, 12)),
+              byteValues: Array.from(bytes)
+            };
+          };
+          const uploads = [
+            ...Array.from(window.__leakguardQaUploads || []),
+            {
+              items: await Promise.all(Array.from(document.querySelector('#qa-file-input')?.files || []).map(describeFile))
+            }
+          ];
+          const items = uploads.flatMap((upload) => upload.items || []);
+          const sanitized = items.find((item) =>
+            /\\.redacted\\.docx$/i.test(item.name || '') &&
+            item.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+          );
+          if (!sanitized) return null;
+          return {
+            name: sanitized.name,
+            type: sanitized.type,
+            size: sanitized.size,
+            bytePrefix: sanitized.bytePrefix,
+            byteValues: sanitized.byteValues,
+            hasRawName: String(sanitized.name || '').includes(rawSecret),
+            originalDocxPresent: items.some((item) => item.name === 'protected-site-docx.docx'),
+            textFallbackPresent: items.some((item) => /\\.redacted\\.txt$/i.test(item.name || ''))
+          };
+        })()`,
+        { awaitPromise: true }
+      ),
+    "protected-site DOCX sanitized handoff",
+    30000
+  );
+
+  assert.equal(result.name, "protected-site-docx.redacted.docx");
+  assert.equal(result.type, "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+  assert.deepEqual(result.bytePrefix.slice(0, 4), [80, 75, 3, 4], "protected-site DOCX handoff should be a ZIP/DOCX");
+  assert.equal(result.hasRawName, false, "protected-site DOCX handoff must not expose raw text in file name");
+  assert.equal(result.originalDocxPresent, false, "protected-site DOCX handoff must not upload the raw DOCX");
+  assert.equal(result.textFallbackPresent, false, "safe protected-site DOCX regeneration should not use txt fallback");
+
+  const docxBytes = Buffer.from(result.byteValues);
+  assert.equal(
+    docxBytes.toString("latin1").includes(rawSecret),
+    false,
+    "protected-site DOCX bytes must not contain raw DOCX secret"
+  );
+  assert.match(docxBytes.toString("latin1"), /DOCX_API_KEY=\[PWM_\d+\]/);
+  const extraction = await prepareFileExtractionAsync({
+    fileName: result.name,
+    mimeType: result.type,
+    buffer: docxBytes.buffer.slice(docxBytes.byteOffset, docxBytes.byteOffset + docxBytes.byteLength)
+  });
+  assert.equal(extraction.status, EXTRACTOR_STATUS.OK);
+  assert.equal(extraction.text.includes(rawSecret), false, "protected-site DOCX extracted text must not contain raw secret");
+  assert.match(extraction.text, /DOCX_API_KEY=\[PWM_\d+\]/);
+
+  return {
+    name: result.name,
+    type: result.type,
+    size: result.size
+  };
+}
+
+async function runProtectedSiteXlsxHandoffQa(connection, page, tempDir) {
+  const rawSecret = "sk-proj-ProtectedSiteXlsxBrowserQa1234567890abcdef";
+  const xlsxPath = path.join(tempDir, "protected-site-xlsx.xlsx");
+  fs.writeFileSync(xlsxPath, makeQaXlsx(`XLSX_API_KEY=${rawSecret}`));
+  await evaluate(connection, page.sessionId, "window.__leakguardQaUploads = []");
+  await setFileInputFiles(connection, page.sessionId, "#qa-file-input", [xlsxPath]);
+
+  const result = await waitFor(
+    () =>
+      evaluate(
+        connection,
+        page.sessionId,
+        `(async () => {
+          const rawSecret = ${JSON.stringify(rawSecret)};
+          const describeFile = async (file) => {
+            const bytes = new Uint8Array(await file.arrayBuffer());
+            return {
+              name: file.name,
+              type: file.type,
+              size: file.size,
+              bytePrefix: Array.from(bytes.slice(0, 12)),
+              byteValues: Array.from(bytes)
+            };
+          };
+          const uploads = [
+            ...Array.from(window.__leakguardQaUploads || []),
+            {
+              items: await Promise.all(Array.from(document.querySelector('#qa-file-input')?.files || []).map(describeFile))
+            }
+          ];
+          const items = uploads.flatMap((upload) => upload.items || []);
+          const sanitized = items.find((item) =>
+            /\\.redacted\\.xlsx$/i.test(item.name || '') &&
+            item.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+          );
+          if (!sanitized) return null;
+          return {
+            name: sanitized.name,
+            type: sanitized.type,
+            size: sanitized.size,
+            bytePrefix: sanitized.bytePrefix,
+            byteValues: sanitized.byteValues,
+            hasRawName: String(sanitized.name || '').includes(rawSecret),
+            originalXlsxPresent: items.some((item) => item.name === 'protected-site-xlsx.xlsx'),
+            textFallbackPresent: items.some((item) => /\\.redacted\\.txt$/i.test(item.name || ''))
+          };
+        })()`,
+        { awaitPromise: true }
+      ),
+    "protected-site XLSX sanitized handoff",
+    30000
+  );
+
+  assert.equal(result.name, "protected-site-xlsx.redacted.xlsx");
+  assert.equal(result.type, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  assert.deepEqual(result.bytePrefix.slice(0, 4), [80, 75, 3, 4], "protected-site XLSX handoff should be a ZIP/XLSX");
+  assert.equal(result.hasRawName, false, "protected-site XLSX handoff must not expose raw text in file name");
+  assert.equal(result.originalXlsxPresent, false, "protected-site XLSX handoff must not upload the raw XLSX");
+  assert.equal(result.textFallbackPresent, false, "safe protected-site XLSX regeneration should not use txt fallback");
+
+  const xlsxBytes = Buffer.from(result.byteValues);
+  const xlsxLatin1 = xlsxBytes.toString("latin1");
+  assert.equal(xlsxLatin1.includes(rawSecret), false, "protected-site XLSX bytes must not contain raw XLSX secret");
+  assert.match(xlsxLatin1, /XLSX_API_KEY=\[PWM_\d+\]/);
+  for (const forbiddenPart of [
+    "xl/sharedStrings.xml",
+    "xl/comments",
+    "docProps/",
+    "customXml/",
+    "xl/media/",
+    "xl/calcChain.xml",
+    "xl/charts",
+    "<f>"
+  ]) {
+    assert.equal(xlsxLatin1.includes(forbiddenPart), false, `protected-site XLSX must not copy ${forbiddenPart}`);
+  }
+
+  const extraction = await prepareFileExtractionAsync({
+    fileName: result.name,
+    mimeType: result.type,
+    buffer: xlsxBytes.buffer.slice(xlsxBytes.byteOffset, xlsxBytes.byteOffset + xlsxBytes.byteLength)
+  });
+  assert.equal(extraction.status, EXTRACTOR_STATUS.OK);
+  assert.equal(extraction.text.includes(rawSecret), false, "protected-site XLSX extracted text must not contain raw secret");
+  assert.match(extraction.text, /XLSX_API_KEY=\[PWM_\d+\]/);
+
+  return {
+    name: result.name,
+    type: result.type,
+    size: result.size
+  };
+}
+
 function assertScannerResult(result) {
   assert.equal(result.hasAnyRaw, false, "scanner preview still contains raw synthetic values");
   assert.equal(result.openAiRedacted, true);
@@ -1317,6 +1494,65 @@ async function runScannerQa(connection, extensionId, tempDir) {
   assert.equal(textDocx.hasRaw, false, "scanner DOCX preview must not expose raw DOCX secrets");
   assert.equal(textDocx.redacted, true, "scanner should redact text DOCX findings");
 
+  const docxDownloadPath = path.join(tempDir, "scanner-docx-downloads");
+  await configureDownloadDirectory(connection, scanner.sessionId, docxDownloadPath);
+  const docxExportState = await evaluate(
+    connection,
+    scanner.sessionId,
+    `({
+      docxAvailable: !document.querySelector('#download-redacted-docx-btn')?.disabled &&
+        !document.querySelector('#download-redacted-docx-btn')?.hidden,
+      textAvailable: !document.querySelector('#download-redacted-btn')?.disabled
+    })`
+  );
+  assert.equal(docxExportState.docxAvailable, true, "scanner should offer regenerated redacted DOCX for text DOCX files");
+  assert.equal(docxExportState.textAvailable, true, "scanner should keep .redacted.txt available for DOCX files");
+
+  const redactedDocxBytes = await clickDownloadAndReadBytes(
+    connection,
+    scanner.sessionId,
+    docxDownloadPath,
+    "#download-redacted-docx-btn",
+    "leakguard-browser-qa-text.redacted.docx"
+  );
+  const redactedDocxLatin1 = redactedDocxBytes.toString("latin1");
+  assert.ok(redactedDocxBytes.byteLength > 0, "scanner redacted DOCX download should be non-empty");
+  assert.equal(redactedDocxLatin1.includes(syntheticSecrets.openAi), false, "scanner redacted DOCX bytes must not contain raw DOCX secret");
+  assert.equal(redactedDocxLatin1.includes("DOCX_API_KEY=[PWM_"), true, "scanner redacted DOCX should contain sanitized text only");
+  assert.equal(redactedDocxLatin1.includes("word/header"), false, "scanner redacted DOCX should not copy original header parts");
+  assert.equal(redactedDocxLatin1.includes("word/footer"), false, "scanner redacted DOCX should not copy original footer parts");
+
+  const redactedDocxExtraction = await prepareFileExtractionAsync({
+    fileName: "leakguard-browser-qa-text.redacted.docx",
+    mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    buffer: redactedDocxBytes.buffer.slice(redactedDocxBytes.byteOffset, redactedDocxBytes.byteOffset + redactedDocxBytes.byteLength)
+  });
+  assert.equal(redactedDocxExtraction.status, EXTRACTOR_STATUS.OK);
+  assert.equal(redactedDocxExtraction.text.includes(syntheticSecrets.openAi), false, "scanner redacted DOCX text must not contain raw DOCX secret");
+  assert.match(redactedDocxExtraction.text, /DOCX_API_KEY=\[PWM_\d+\]/);
+
+  const docxRedactedText = await clickDownloadAndReadText(
+    connection,
+    scanner.sessionId,
+    docxDownloadPath,
+    "#download-redacted-btn",
+    "leakguard-browser-qa-text.redacted.txt"
+  );
+  assert.equal(docxRedactedText.includes(syntheticSecrets.openAi), false, "scanner DOCX .redacted.txt fallback must not expose raw secret");
+  assert.match(docxRedactedText, /^DOCX_API_KEY=\[PWM_\d+\]$/m);
+
+  const docxReportText = await clickDownloadAndReadText(
+    connection,
+    scanner.sessionId,
+    docxDownloadPath,
+    "#download-report-btn",
+    "leakguard-browser-qa-text.leakguard-report.json"
+  );
+  assert.equal(docxReportText.includes(syntheticSecrets.openAi), false, "scanner DOCX JSON report must not expose raw secret");
+  const docxReport = JSON.parse(docxReportText);
+  assert.equal(JSON.stringify(docxReport).includes("redactedText"), false);
+  assert.match(docxReport.redactedPreview || "", /DOCX_API_KEY=\[PWM_\d+\]/);
+
   await evaluate(connection, scanner.sessionId, "document.querySelector('#clear-btn').click()");
   await waitFor(
     () => evaluate(connection, scanner.sessionId, "document.querySelector('#scan-btn')?.disabled"),
@@ -1361,6 +1597,68 @@ async function runScannerQa(connection, extensionId, tempDir) {
   );
   assert.equal(textXlsx.hasRaw, false, "scanner XLSX preview must not expose raw XLSX secrets");
   assert.equal(textXlsx.redacted, true, "scanner should redact text XLSX findings");
+
+  const xlsxDownloadPath = path.join(tempDir, "scanner-xlsx-downloads");
+  await configureDownloadDirectory(connection, scanner.sessionId, xlsxDownloadPath);
+  const xlsxExportState = await evaluate(
+    connection,
+    scanner.sessionId,
+    `({
+      xlsxAvailable: !document.querySelector('#download-redacted-xlsx-btn')?.disabled &&
+        !document.querySelector('#download-redacted-xlsx-btn')?.hidden,
+      textAvailable: !document.querySelector('#download-redacted-btn')?.disabled
+    })`
+  );
+  assert.equal(xlsxExportState.xlsxAvailable, true, "scanner should offer regenerated redacted XLSX for text XLSX files");
+  assert.equal(xlsxExportState.textAvailable, true, "scanner should keep .redacted.txt available for XLSX files");
+
+  const redactedXlsxBytes = await clickDownloadAndReadBytes(
+    connection,
+    scanner.sessionId,
+    xlsxDownloadPath,
+    "#download-redacted-xlsx-btn",
+    "leakguard-browser-qa-text.redacted.xlsx"
+  );
+  const redactedXlsxLatin1 = redactedXlsxBytes.toString("latin1");
+  assert.ok(redactedXlsxBytes.byteLength > 0, "scanner redacted XLSX download should be non-empty");
+  assert.equal(redactedXlsxLatin1.includes(syntheticSecrets.openAi), false, "scanner redacted XLSX bytes must not contain raw XLSX secret");
+  assert.equal(redactedXlsxLatin1.includes("XLSX_API_KEY=[PWM_"), true, "scanner redacted XLSX should contain sanitized text only");
+  assert.equal(redactedXlsxLatin1.includes("xl/sharedStrings.xml"), false, "scanner redacted XLSX should not copy original shared strings");
+  assert.equal(redactedXlsxLatin1.includes("xl/comments"), false, "scanner redacted XLSX should not copy original comments");
+  assert.equal(redactedXlsxLatin1.includes("docProps/"), false, "scanner redacted XLSX should not copy original metadata");
+  assert.equal(redactedXlsxLatin1.includes("customXml/"), false, "scanner redacted XLSX should not copy custom XML");
+  assert.equal(redactedXlsxLatin1.includes("xl/media/"), false, "scanner redacted XLSX should not copy media");
+
+  const redactedXlsxExtraction = await prepareFileExtractionAsync({
+    fileName: "leakguard-browser-qa-text.redacted.xlsx",
+    mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    buffer: redactedXlsxBytes.buffer.slice(redactedXlsxBytes.byteOffset, redactedXlsxBytes.byteOffset + redactedXlsxBytes.byteLength)
+  });
+  assert.equal(redactedXlsxExtraction.status, EXTRACTOR_STATUS.OK);
+  assert.equal(redactedXlsxExtraction.text.includes(syntheticSecrets.openAi), false, "scanner redacted XLSX text must not contain raw XLSX secret");
+  assert.match(redactedXlsxExtraction.text, /XLSX_API_KEY=\[PWM_\d+\]/);
+
+  const xlsxRedactedText = await clickDownloadAndReadText(
+    connection,
+    scanner.sessionId,
+    xlsxDownloadPath,
+    "#download-redacted-btn",
+    "leakguard-browser-qa-text.redacted.txt"
+  );
+  assert.equal(xlsxRedactedText.includes(syntheticSecrets.openAi), false, "scanner XLSX .redacted.txt fallback must not expose raw secret");
+  assert.match(xlsxRedactedText, /^XLSX_API_KEY=\[PWM_\d+\]$/m);
+
+  const xlsxReportText = await clickDownloadAndReadText(
+    connection,
+    scanner.sessionId,
+    xlsxDownloadPath,
+    "#download-report-btn",
+    "leakguard-browser-qa-text.leakguard-report.json"
+  );
+  assert.equal(xlsxReportText.includes(syntheticSecrets.openAi), false, "scanner XLSX JSON report must not expose raw secret");
+  const xlsxReport = JSON.parse(xlsxReportText);
+  assert.equal(JSON.stringify(xlsxReport).includes("redactedText"), false);
+  assert.match(xlsxReport.redactedPreview || "", /XLSX_API_KEY=\[PWM_\d+\]/);
 
   await evaluate(connection, scanner.sessionId, "document.querySelector('#clear-btn').click()");
   await waitFor(
@@ -1437,7 +1735,12 @@ async function runScannerQa(connection, extensionId, tempDir) {
         }
         if (/could not find extractable text/i.test(status) && /Embedded images, macros, and OCR are not supported/i.test(status)) {
           clearInterval(timer);
-          resolve({ status, preview });
+          const docxButton = document.querySelector('#download-redacted-docx-btn');
+          resolve({
+            status,
+            preview,
+            docxAvailable: !docxButton?.disabled && !docxButton?.hidden
+          });
         } else if (Date.now() - started > 10000) {
           clearInterval(timer);
           reject(new Error('Timed out waiting for unsupported DOCX warning: ' + JSON.stringify({
@@ -1452,6 +1755,7 @@ async function runScannerQa(connection, extensionId, tempDir) {
   assert.match(unsupportedDocx.status, /could not find extractable text/i);
   assert.match(unsupportedDocx.status, /Embedded images, macros, and OCR are not supported/i);
   assert.equal(unsupportedDocx.preview, "");
+  assert.equal(unsupportedDocx.docxAvailable, false, "scanner must not offer redacted DOCX for image-only DOCX files");
 
   await evaluate(connection, scanner.sessionId, "document.querySelector('#clear-btn').click()");
   await waitFor(
@@ -1678,6 +1982,8 @@ async function runBrowserQa({ browserName, executable }) {
 
     const page = await openProtectedHarness(connection, harnessServer.origin);
     const prompt = await runPromptRedactionQa(connection, page);
+    const protectedSiteDocx = await runProtectedSiteDocxHandoffQa(connection, page, tempDir);
+    const protectedSiteXlsx = await runProtectedSiteXlsxHandoffQa(connection, page, tempDir);
     const protectedSiteImageOcr = await runProtectedSiteImageOcrQa(connection, page, popup.sessionId, tempDir);
     await runSecureRevealQa(connection, page, extensionId, prompt.firstPlaceholder);
     await runRefreshSafetyQa(connection, page);
@@ -1687,11 +1993,20 @@ async function runBrowserQa({ browserName, executable }) {
     console.log(`${browserName} browser QA: extension loaded (${extensionId})`);
     console.log(`${browserName} browser QA: local harness ${harnessServer.origin}`);
     console.log(
-      `${browserName} browser QA: protected-site lifecycle, prompt redaction, protected-site image OCR, reveal, refresh, scanner exports, unsupported file`
+      `${browserName} browser QA: protected-site lifecycle, prompt redaction, protected-site DOCX/XLSX handoff, protected-site image OCR, reveal, refresh, scanner exports, unsupported file`
     );
 
     behaviorChecksPassed = true;
-    return { browserName, extensionId, product: version.product, prompt, protectedSiteImageOcr, scanner };
+    return {
+      browserName,
+      extensionId,
+      product: version.product,
+      prompt,
+      protectedSiteDocx,
+      protectedSiteXlsx,
+      protectedSiteImageOcr,
+      scanner
+    };
   } catch (error) {
     if (browserProcess?.stderr?.()) console.error(browserProcess.stderr());
     throw error;

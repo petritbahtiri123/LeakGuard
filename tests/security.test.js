@@ -46,6 +46,14 @@ const pdfRedactorSource = fs.readFileSync(
   path.join(repoRoot, "src/shared/pdfRedactor.js"),
   "utf8"
 );
+const docxRedactorSource = fs.readFileSync(
+  path.join(repoRoot, "src/shared/docxRedactor.js"),
+  "utf8"
+);
+const xlsxRedactorSource = fs.readFileSync(
+  path.join(repoRoot, "src/shared/xlsxRedactor.js"),
+  "utf8"
+);
 const scannerSource = fs.readFileSync(path.join(repoRoot, "src/scanner/scanner.js"), "utf8");
 const fileAttachPipelineSource = fs.readFileSync(
   path.join(repoRoot, "src/content/files/fileAttachPipeline.js"),
@@ -617,6 +625,7 @@ function testDocumentExtractionDoesNotWriteRawTextToDebugStorageOrAuditSurfaces(
     ["fileExtractors", fileExtractorsSource],
     ["fileScanner", fileScannerSource],
     ["pdfRedactor", pdfRedactorSource],
+    ["docxRedactor", docxRedactorSource],
     ["scanner page", scannerSource]
   ]) {
     assertNotIncludes(source, "localStorage", `${label} must not persist extracted PDF/DOCX/XLSX/image metadata text to localStorage`);
@@ -629,7 +638,9 @@ function testDocumentExtractionDoesNotWriteRawTextToDebugStorageOrAuditSurfaces(
   for (const [label, source] of [
     ["fileExtractors", fileExtractorsSource],
     ["fileScanner", fileScannerSource],
-    ["pdfRedactor", pdfRedactorSource]
+    ["pdfRedactor", pdfRedactorSource],
+    ["docxRedactor", docxRedactorSource],
+    ["xlsxRedactor", xlsxRedactorSource]
   ]) {
     assertNotIncludes(source, "console.log", `${label} must not log extracted PDF/DOCX/XLSX/image metadata text`);
     assertNotIncludes(source, "console.error", `${label} must not log extracted document extraction failures`);
@@ -649,6 +660,54 @@ function testDocumentExtractionDoesNotWriteRawTextToDebugStorageOrAuditSurfaces(
     "downloadBlob(currentScanResult.redactedText",
     "scanner downloads should not bypass the redacted-copy helper path"
   );
+}
+
+function testXlsxRedactedOutputStaysTextDerived() {
+  assert.ok(
+    scannerSource.includes("createRedactedXlsxFromExtraction") &&
+      scannerSource.includes("sanitizedText: result?.redactedText") &&
+      scannerSource.includes("download-redacted-xlsx-btn"),
+    "scanner page should generate redacted XLSX only from sanitized scanner text"
+  );
+  assert.ok(
+    scannerSource.includes("redactedXlsx.mimeType") &&
+      scannerSource.includes("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+    "scanner redacted XLSX download should use generated XLSX bytes and XLSX MIME"
+  );
+  assert.ok(
+    contentFileExtractionPipelineSource.includes("createRedactedXlsxFromExtraction") &&
+      contentFileExtractionPipelineSource.includes("outputKind: \"redacted_xlsx_file\"") &&
+      contentFileExtractionPipelineSource.includes("xlsx-redaction:xlsx_redacted_text_truncated"),
+    "protected-site extraction pipeline should generate redacted XLSX only through sanitized extraction with truncation fallback"
+  );
+  for (const [label, source] of [
+    ["file attach pipeline", fileAttachPipelineSource],
+    ["content script", contentSource],
+    ["file paste helper", filePasteHelperSource],
+    ["Gemini fallback writer", geminiFallbackWriterSource]
+  ]) {
+    assertNotIncludes(source, "createRedactedXlsxFromExtraction", `${label} must not build .redacted.xlsx outputs`);
+    assertNotIncludes(source, "download-redacted-xlsx-btn", `${label} must not reference scanner XLSX UI`);
+  }
+  for (const forbidden of [
+    "xl/sharedStrings.xml",
+    "xl/comments",
+    "docProps/",
+    "customXml/",
+    "xl/media/",
+    "xl/calcChain.xml",
+    "vbaProject.bin",
+    "localStorage",
+    "sessionStorage",
+    "chrome.storage",
+    "browser.storage",
+    "pwm:audit",
+    "console.log",
+    "console.warn",
+    "console.error"
+  ]) {
+    assertNotIncludes(xlsxRedactorSource, forbidden, `XLSX redactor must not copy/persist/log unsafe spreadsheet data: ${forbidden}`);
+  }
 }
 
 function testPdfRedactedOutputStaysTextDerived() {
@@ -690,12 +749,54 @@ function testPdfRedactedOutputStaysTextDerived() {
   assertNotIncludes(pdfRedactorSource, "fillRect", "PDF redactor must not overlay black rectangles on original PDF pages");
 }
 
+function testDocxRedactedOutputStaysTextDerived() {
+  assert.ok(
+    scannerSource.includes("createRedactedDocxFromText") &&
+      scannerSource.includes("text: result?.redactedText") &&
+      scannerSource.includes("download-redacted-docx-btn"),
+    "scanner page should generate redacted DOCX only from sanitized scanner text"
+  );
+  assert.ok(
+    scannerSource.includes("originalBytes") &&
+      scannerSource.includes("selectedFile?.name") &&
+      scannerSource.includes("redactedDocx.mimeType"),
+    "scanner DOCX generation should validate the source envelope and download DOCX bytes with the DOCX MIME"
+  );
+  for (const [label, source] of [
+    ["file attach pipeline", fileAttachPipelineSource],
+    ["content script", contentSource],
+    ["file paste helper", filePasteHelperSource],
+    ["Gemini fallback writer", geminiFallbackWriterSource]
+  ]) {
+    assertNotIncludes(source, "createRedactedDocxFromText", `${label} must not build .redacted.docx outputs`);
+    assertNotIncludes(source, "download-redacted-docx-btn", `${label} must not reference scanner DOCX UI`);
+  }
+  assert.ok(
+    contentFileExtractionPipelineSource.includes("createRedactedDocxFromText") &&
+      contentFileExtractionPipelineSource.includes("text: sanitizedText") &&
+      contentFileExtractionPipelineSource.includes("redactedDocx.truncated !== true") &&
+      contentFileExtractionPipelineSource.includes("redacted_docx_file") &&
+      contentFileExtractionPipelineSource.includes("docx-redaction:docx_redacted_text_truncated"),
+    "protected-site pipeline should generate redacted DOCX only from complete sanitized extracted text"
+  );
+  assertNotIncludes(
+    contentFileExtractionPipelineSource,
+    "download-redacted-docx-btn",
+    "protected-site pipeline must not reference scanner DOCX UI"
+  );
+  assertNotIncludes(docxRedactorSource, "word/header", "DOCX redactor must not copy original header parts");
+  assertNotIncludes(docxRedactorSource, "word/footer", "DOCX redactor must not copy original footer parts");
+  assertNotIncludes(docxRedactorSource, "word/footnotes", "DOCX redactor must not copy original footnote parts");
+  assertNotIncludes(docxRedactorSource, "word/endnotes", "DOCX redactor must not copy original endnote parts");
+  assertNotIncludes(docxRedactorSource, "drawImage", "DOCX redactor must not attempt embedded image redaction");
+}
+
 function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const baseManifest = JSON.parse(fs.readFileSync(path.join(repoRoot, "manifests/base.json"), "utf8"));
   const staticScripts = baseManifest.content_scripts[0].js;
   const dynamicScripts = Array.from(
     backgroundSource.matchAll(
-      /"([^"]+(?:fileLimits|fileTypeRegistry|fileExtractors|fileScanner|pdfRedactor|ocrRuntime|scannerOcr|imageRedactor|file_paste_helpers|file_handoff_state|file_handoff_pending|file_handoff_flow|rewriteVerificationText|fileTransferPolicy|fileExtractionSessionCache|protectedSiteOcrBroker|contentFileExtractionPipeline|hostMatching|chatgptAdapter|openaiAdapter|geminiDiagnosticsAdapter|geminiAdapter|claudeAdapter|grokAdapter|xAdapter|index|geminiFallbackWriter|safeSnapshots|fileAttachPipeline|placeholderRehydrator|responseObserver|revealController|debugLogger|eventBindings|content)\.js)"/g
+      /"([^"]+(?:fileLimits|fileTypeRegistry|fileExtractors|fileScanner|pdfRedactor|docxRedactor|xlsxRedactor|ocrRuntime|scannerOcr|imageRedactor|file_paste_helpers|file_handoff_state|file_handoff_pending|file_handoff_flow|rewriteVerificationText|fileTransferPolicy|fileExtractionSessionCache|protectedSiteOcrBroker|contentFileExtractionPipeline|hostMatching|chatgptAdapter|openaiAdapter|geminiDiagnosticsAdapter|geminiAdapter|claudeAdapter|grokAdapter|xAdapter|index|geminiFallbackWriter|safeSnapshots|fileAttachPipeline|placeholderRehydrator|responseObserver|revealController|debugLogger|eventBindings|content)\.js)"/g
     )
   ).map((match) => match[1]);
   const adapterScripts = [
@@ -713,6 +814,8 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const staticFileExtractors = staticScripts.indexOf("shared/fileExtractors.js");
   const staticFileScanner = staticScripts.indexOf("shared/fileScanner.js");
   const staticPdfRedactor = staticScripts.indexOf("shared/pdfRedactor.js");
+  const staticDocxRedactor = staticScripts.indexOf("shared/docxRedactor.js");
+  const staticXlsxRedactor = staticScripts.indexOf("shared/xlsxRedactor.js");
   const staticOcrRuntime = staticScripts.indexOf("shared/ocr/ocrRuntime.js");
   const staticScannerOcr = staticScripts.indexOf("shared/scannerOcr.js");
   const staticImageRedactor = staticScripts.indexOf("shared/imageRedactor.js");
@@ -741,6 +844,8 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const dynamicFileExtractors = dynamicScripts.indexOf("shared/fileExtractors.js");
   const dynamicFileScanner = dynamicScripts.indexOf("shared/fileScanner.js");
   const dynamicPdfRedactor = dynamicScripts.indexOf("shared/pdfRedactor.js");
+  const dynamicDocxRedactor = dynamicScripts.indexOf("shared/docxRedactor.js");
+  const dynamicXlsxRedactor = dynamicScripts.indexOf("shared/xlsxRedactor.js");
   const dynamicOcrRuntime = dynamicScripts.indexOf("shared/ocr/ocrRuntime.js");
   const dynamicScannerOcr = dynamicScripts.indexOf("shared/scannerOcr.js");
   const dynamicImageRedactor = dynamicScripts.indexOf("shared/imageRedactor.js");
@@ -771,6 +876,8 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       staticFileExtractors > -1 &&
       staticFileScanner > -1 &&
       staticPdfRedactor > -1 &&
+      staticDocxRedactor > -1 &&
+      staticXlsxRedactor > -1 &&
       staticOcrRuntime > -1 &&
       staticScannerOcr > -1 &&
       staticImageRedactor > -1 &&
@@ -802,6 +909,8 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       dynamicFileExtractors > -1 &&
       dynamicFileScanner > -1 &&
       dynamicPdfRedactor > -1 &&
+      dynamicDocxRedactor > -1 &&
+      dynamicXlsxRedactor > -1 &&
       dynamicOcrRuntime > -1 &&
       dynamicScannerOcr > -1 &&
       dynamicImageRedactor > -1 &&
@@ -838,7 +947,9 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       staticFileTypeRegistry < staticFileExtractors &&
       staticFileExtractors < staticFileScanner &&
       staticFileScanner < staticPdfRedactor &&
-      staticPdfRedactor < staticOcrRuntime &&
+      staticPdfRedactor < staticDocxRedactor &&
+      staticDocxRedactor < staticXlsxRedactor &&
+      staticXlsxRedactor < staticOcrRuntime &&
       staticOcrRuntime < staticScannerOcr &&
       staticScannerOcr < staticImageRedactor &&
       staticImageRedactor < staticFilePaste &&
@@ -869,7 +980,9 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       dynamicFileTypeRegistry < dynamicFileExtractors &&
       dynamicFileExtractors < dynamicFileScanner &&
       dynamicFileScanner < dynamicPdfRedactor &&
-      dynamicPdfRedactor < dynamicOcrRuntime &&
+      dynamicPdfRedactor < dynamicDocxRedactor &&
+      dynamicDocxRedactor < dynamicXlsxRedactor &&
+      dynamicXlsxRedactor < dynamicOcrRuntime &&
       dynamicOcrRuntime < dynamicScannerOcr &&
       dynamicScannerOcr < dynamicImageRedactor &&
       dynamicImageRedactor < dynamicFilePaste &&
@@ -1089,6 +1202,8 @@ async function run() {
   testFileSnapshotDebugPayloadsStayMetadataOnly();
   testDocumentExtractionDoesNotWriteRawTextToDebugStorageOrAuditSurfaces();
   testPdfRedactedOutputStaysTextDerived();
+  testDocxRedactedOutputStaysTextDerived();
+  testXlsxRedactedOutputStaysTextDerived();
   testStaticAndDynamicFilePasteInjectionOrderStaysAligned();
   testBackgroundDeterministicRescanBackstopExists();
   testContentPublicStateIsMinimized();

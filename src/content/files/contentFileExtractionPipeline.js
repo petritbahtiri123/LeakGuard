@@ -33,6 +33,14 @@
     return root.PWM.PdfRedactor || {};
   }
 
+  function getDocxRedactor() {
+    return root.PWM.DocxRedactor || {};
+  }
+
+  function getXlsxRedactor() {
+    return root.PWM.XlsxRedactor || {};
+  }
+
   function getOcrRuntime() {
     return root.PWM.ProtectedSiteOcrBroker || root.PWM.OcrRuntime || {};
   }
@@ -603,6 +611,129 @@
         }
       } else {
         extractionWarnings = listWarnings(extractionWarnings, ["pdf-redaction:pdf_redactor_unavailable"]);
+      }
+    }
+
+    if (extractedKind === "docx") {
+      const docxRedactor = getDocxRedactor();
+      if (typeof docxRedactor.createRedactedDocxFromText === "function") {
+        const redactedDocx = await docxRedactor.createRedactedDocxFromText({
+          originalName,
+          originalBytes: buffer,
+          text: sanitizedText
+        });
+        if (redactedDocx?.ok && redactedDocx.bytes && redactedDocx.truncated !== true) {
+          const outputName = redactedDocx.fileName || `${splitFileName(originalName).base}.redacted.docx`;
+          const sanitizedFile = createBinaryFile(
+            redactedDocx.bytes,
+            outputName,
+            redactedDocx.mimeType || "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          );
+          if (sanitizedFile) {
+            const result = {
+              status: "ready",
+              originalName,
+              outputName,
+              outputKind: "redacted_docx_file",
+              extractedKind,
+              sanitizedText,
+              sanitizedFile,
+              metadata: {
+                original: {
+                  name: normalizeFileName(scan.file?.name || originalName),
+                  type: mimeType,
+                  size: sizeBytes
+                },
+                extraction: sanitizeExtractionMetadata(extractionMetadata),
+                scan: {
+                  findingsCount: Number(scan.summary?.findingsCount || 0),
+                  changed: scan.summary?.changed === true,
+                  redactedLength: sanitizedText.length
+                },
+                docxRedaction: {
+                  output: "docx",
+                  source: "sanitized_text",
+                  truncated: false
+                },
+                cache: {
+                  status: "miss"
+                }
+              },
+              warnings: listWarnings(extractionWarnings, scan.reportWarnings),
+              safeForUpload: true,
+              fallbackReason: ""
+            };
+            return result;
+          }
+          extractionWarnings = listWarnings(extractionWarnings, ["docx-redaction:docx_redacted_file_create_failed"]);
+        } else if (redactedDocx?.truncated === true) {
+          extractionWarnings = listWarnings(extractionWarnings, ["docx-redaction:docx_redacted_text_truncated"]);
+        } else if (redactedDocx?.status) {
+          extractionWarnings = listWarnings(extractionWarnings, [`docx-redaction:${redactedDocx.status}`]);
+        }
+      } else {
+        extractionWarnings = listWarnings(extractionWarnings, ["docx-redaction:docx_redactor_unavailable"]);
+      }
+    }
+
+    if (extractedKind === "xlsx") {
+      const xlsxRedactor = getXlsxRedactor();
+      if (typeof xlsxRedactor.createRedactedXlsxFromExtraction === "function") {
+        const redactedXlsx = xlsxRedactor.createRedactedXlsxFromExtraction({
+          originalName,
+          extraction,
+          sanitizedText
+        });
+        if (redactedXlsx?.ok && redactedXlsx.bytes && redactedXlsx.truncated !== true) {
+          const outputName = redactedXlsx.fileName || `${splitFileName(originalName).base}.redacted.xlsx`;
+          const sanitizedFile = createBinaryFile(
+            redactedXlsx.bytes,
+            outputName,
+            redactedXlsx.mimeType || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          );
+          if (sanitizedFile) {
+            return {
+              status: "ready",
+              originalName,
+              outputName,
+              outputKind: "redacted_xlsx_file",
+              extractedKind,
+              sanitizedText,
+              sanitizedFile,
+              metadata: {
+                original: {
+                  name: normalizeFileName(scan.file?.name || originalName),
+                  type: mimeType,
+                  size: sizeBytes
+                },
+                extraction: sanitizeExtractionMetadata(extractionMetadata),
+                scan: {
+                  findingsCount: Number(scan.summary?.findingsCount || 0),
+                  changed: scan.summary?.changed === true,
+                  redactedLength: sanitizedText.length
+                },
+                xlsxRedaction: {
+                  output: "xlsx",
+                  source: "sanitized_text",
+                  truncated: false
+                },
+                cache: {
+                  status: "miss"
+                }
+              },
+              warnings: listWarnings(extractionWarnings, scan.reportWarnings),
+              safeForUpload: true,
+              fallbackReason: ""
+            };
+          }
+          extractionWarnings = listWarnings(extractionWarnings, ["xlsx-redaction:xlsx_redacted_file_create_failed"]);
+        } else if (redactedXlsx?.truncated === true) {
+          extractionWarnings = listWarnings(extractionWarnings, ["xlsx-redaction:xlsx_redacted_text_truncated"]);
+        } else if (redactedXlsx?.status) {
+          extractionWarnings = listWarnings(extractionWarnings, [`xlsx-redaction:${redactedXlsx.status}`]);
+        }
+      } else {
+        extractionWarnings = listWarnings(extractionWarnings, ["xlsx-redaction:xlsx_redactor_unavailable"]);
       }
     }
 

@@ -21,6 +21,8 @@ require(path.join(repoRoot, "src/shared/fileTypeRegistry.js"));
 require(path.join(repoRoot, "src/shared/fileExtractors.js"));
 require(path.join(repoRoot, "src/shared/fileScanner.js"));
 require(path.join(repoRoot, "src/shared/pdfRedactor.js"));
+require(path.join(repoRoot, "src/shared/docxRedactor.js"));
+require(path.join(repoRoot, "src/shared/xlsxRedactor.js"));
 require(path.join(repoRoot, "src/shared/policy.js"));
 require(path.join(repoRoot, "src/shared/scannerOcr.js"));
 require(path.join(repoRoot, "src/shared/imageRedactor.js"));
@@ -143,12 +145,14 @@ function escapeXml(text) {
     .replace(/'/g, "&apos;");
 }
 
-function makeDocx(text) {
+function makeDocx(text, options = {}) {
+  if (options.malformed) return bufferFromText("not a zip");
   return makeZip([
     {
       name: "[Content_Types].xml",
       data: '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"></Types>'
     },
+    ...(options.encrypted ? [{ name: "EncryptedPackage", data: "encrypted", encrypted: true }] : []),
     {
       name: "word/document.xml",
       data: `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>${escapeXml(text)}</w:t></w:r></w:p></w:body></w:document>`
@@ -156,16 +160,22 @@ function makeDocx(text) {
   ]);
 }
 
-function makeXlsx(text) {
+function makeXlsx(text, options = {}) {
+  if (options.malformed) return bufferFromText("not a zip");
   return makeZip([
     {
       name: "xl/workbook.xml",
-      data: '<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheets><sheet name="Secrets" sheetId="1"/></sheets></workbook>'
+      data: options.noText
+        ? '<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheets></sheets></workbook>'
+        : '<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheets><sheet name="Secrets" sheetId="1"/></sheets></workbook>'
     },
+    ...(options.encrypted ? [{ name: "EncryptedPackage", data: "encrypted", encrypted: true }] : []),
+    ...(options.noText ? [] : [
     {
       name: "xl/worksheets/sheet1.xml",
       data: `<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>${escapeXml(text)}</t></is></c></row></sheetData></worksheet>`
     }
+    ])
   ]);
 }
 
@@ -177,6 +187,10 @@ async function readFileBuffer(file) {
   if (typeof file?.arrayBuffer !== "function") return Buffer.from([]);
   const buffer = await file.arrayBuffer();
   return Buffer.from(buffer);
+}
+
+function arrayBufferFromBuffer(buffer) {
+  return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
 }
 
 function assertNormalizedReadyResult(result, expected) {
@@ -280,7 +294,7 @@ async function testLargePdfFallsBackToRedactedTxtWhenRegeneratedPdfWouldTruncate
   assert.strictEqual(result.sanitizedText.includes(RAW_SECRET), false);
 }
 
-async function testDocxProducesRedactedTxtOutput() {
+async function testDocxProducesRedactedDocxOutputWhenCompleteAndSafe() {
   const file = fileFromBuffer(
     "brief.docx",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -290,13 +304,104 @@ async function testDocxProducesRedactedTxtOutput() {
 
   assertNormalizedReadyResult(result, {
     originalName: "brief.docx",
-    outputName: "brief.redacted.txt",
+    outputName: "brief.redacted.docx",
+    outputKind: "redacted_docx_file",
+    extractedKind: "docx"
+  });
+  assert.strictEqual(
+    result.sanitizedFile.type,
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  );
+  assert.strictEqual(result.outputName.endsWith(".redacted.docx"), true);
+  assert.strictEqual(result.sanitizedText.includes(RAW_SECRET), false);
+
+  const docxBytes = await readFileBuffer(result.sanitizedFile);
+  assert.strictEqual(docxBytes.toString("latin1").includes(RAW_SECRET), false);
+  assert.ok(docxBytes.toString("latin1").includes("[PWM_1]"));
+
+  const extracted = await globalThis.PWM.FileExtractors.prepareFileExtractionAsync({
+    fileName: result.outputName,
+    mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    sizeBytes: docxBytes.length,
+    buffer: arrayBufferFromBuffer(docxBytes)
+  });
+  assert.strictEqual(extracted.safeForScan, true);
+  assert.strictEqual(extracted.text.includes(RAW_SECRET), false);
+  assert.ok(extracted.text.includes("[PWM_1]"));
+}
+
+async function testLargeDocxFallsBackToRedactedTxtWhenRegeneratedDocxWouldTruncate() {
+  const originalScan = globalThis.PWM.FileScanner.scanTextContent;
+  const longSafeSuffix = `\n${"safe line ".repeat(25000)}`;
+  const file = fileFromBuffer(
+    "large-brief.docx",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    makeDocx(`token ${RAW_SECRET}`)
+  );
+  globalThis.PWM.FileScanner.scanTextContent = (...args) => {
+    const result = originalScan(...args);
+    return {
+      ...result,
+      redactedText: `${result.redactedText}${longSafeSuffix}`,
+      reportWarnings: Array.isArray(result.reportWarnings) ? result.reportWarnings.slice() : []
+    };
+  };
+
+  let result;
+  try {
+    result = await processFileForAdapterHandoff({ file, context: "drop" });
+  } finally {
+    globalThis.PWM.FileScanner.scanTextContent = originalScan;
+  }
+
+  assertNormalizedReadyResult(result, {
+    originalName: "large-brief.docx",
+    outputName: "large-brief.redacted.txt",
     outputKind: "redacted_text_file",
     extractedKind: "docx"
   });
+  assert.strictEqual(result.sanitizedFile.type, "text/plain");
+  assert.ok(result.warnings.includes("docx-redaction:docx_redacted_text_truncated"));
+  assert.strictEqual(JSON.stringify(result.warnings).includes(RAW_SECRET), false);
+  assert.strictEqual(result.sanitizedText.includes(RAW_SECRET), false);
 }
 
-async function testXlsxProducesRedactedTxtOutput() {
+async function testUnsafeDocxInputsDoNotUploadRawOrRedactedDocx() {
+  for (const [name, type, buffer, reason] of [
+    [
+      "malformed.docx",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      makeDocx("", { malformed: true }),
+      "docx_malformed_zip"
+    ],
+    [
+      "encrypted.docx",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      makeDocx(`token ${RAW_SECRET}`, { encrypted: true }),
+      "docx_encrypted"
+    ],
+    ["legacy.doc", "application/msword", bufferFromText(`token ${RAW_SECRET}`), "Unsupported file type for local text extraction."],
+    [
+      "macro.docm",
+      "application/vnd.ms-word.document.macroEnabled.12",
+      makeDocx(`token ${RAW_SECRET}`),
+      "Unsupported file type for local text extraction."
+    ]
+  ]) {
+    const result = await processFileForAdapterHandoff({
+      file: fileFromBuffer(name, type, buffer),
+      context: "drop"
+    });
+
+    assert.notStrictEqual(result.outputKind, "redacted_docx_file", name);
+    assert.strictEqual(result.safeForUpload, false, name);
+    assert.strictEqual(result.sanitizedFile, null, name);
+    assert.strictEqual(result.fallbackReason, reason, name);
+    assert.strictEqual(JSON.stringify(result).includes(RAW_SECRET), false, name);
+  }
+}
+
+async function testXlsxProducesRedactedXlsxOutputWhenCompleteAndSafe() {
   const file = fileFromBuffer(
     "sheet.xlsx",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -306,10 +411,120 @@ async function testXlsxProducesRedactedTxtOutput() {
 
   assertNormalizedReadyResult(result, {
     originalName: "sheet.xlsx",
-    outputName: "sheet.redacted.txt",
+    outputName: "sheet.redacted.xlsx",
+    outputKind: "redacted_xlsx_file",
+    extractedKind: "xlsx"
+  });
+  assert.strictEqual(
+    result.sanitizedFile.type,
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  );
+  assert.strictEqual(result.outputName.endsWith(".redacted.xlsx"), true);
+  assert.strictEqual(result.sanitizedText.includes(RAW_SECRET), false);
+
+  const xlsxBytes = await readFileBuffer(result.sanitizedFile);
+  const xlsxSource = xlsxBytes.toString("latin1");
+  assert.strictEqual(xlsxSource.includes(RAW_SECRET), false);
+  assert.ok(xlsxSource.includes("[PWM_1]"));
+  for (const forbiddenPart of [
+    "xl/sharedStrings.xml",
+    "xl/comments",
+    "docProps/",
+    "customXml/",
+    "xl/media/",
+    "xl/calcChain.xml",
+    "xl/charts",
+    "<f>"
+  ]) {
+    assert.strictEqual(xlsxSource.includes(forbiddenPart), false, forbiddenPart);
+  }
+
+  const extracted = await globalThis.PWM.FileExtractors.prepareFileExtractionAsync({
+    fileName: result.outputName,
+    mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    sizeBytes: xlsxBytes.length,
+    buffer: arrayBufferFromBuffer(xlsxBytes)
+  });
+  assert.strictEqual(extracted.safeForScan, true);
+  assert.strictEqual(extracted.text.includes(RAW_SECRET), false);
+  assert.ok(extracted.text.includes("[PWM_1]"));
+}
+
+async function testLargeXlsxFallsBackToRedactedTxtWhenRegeneratedXlsxWouldTruncate() {
+  const originalScan = globalThis.PWM.FileScanner.scanTextContent;
+  const longSafeSuffix = `\n${"safe line ".repeat(25000)}`;
+  const file = fileFromBuffer(
+    "large-sheet.xlsx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    makeXlsx(`token ${RAW_SECRET}`)
+  );
+  globalThis.PWM.FileScanner.scanTextContent = (...args) => {
+    const result = originalScan(...args);
+    return {
+      ...result,
+      redactedText: `${result.redactedText}${longSafeSuffix}`,
+      reportWarnings: Array.isArray(result.reportWarnings) ? result.reportWarnings.slice() : []
+    };
+  };
+
+  let result;
+  try {
+    result = await processFileForAdapterHandoff({ file, context: "drop" });
+  } finally {
+    globalThis.PWM.FileScanner.scanTextContent = originalScan;
+  }
+
+  assertNormalizedReadyResult(result, {
+    originalName: "large-sheet.xlsx",
+    outputName: "large-sheet.redacted.txt",
     outputKind: "redacted_text_file",
     extractedKind: "xlsx"
   });
+  assert.strictEqual(result.sanitizedFile.type, "text/plain");
+  assert.ok(result.warnings.includes("xlsx-redaction:xlsx_redacted_text_truncated"));
+  assert.strictEqual(JSON.stringify(result.warnings).includes(RAW_SECRET), false);
+  assert.strictEqual(result.sanitizedText.includes(RAW_SECRET), false);
+}
+
+async function testUnsafeXlsxInputsDoNotUploadRawOrRedactedXlsx() {
+  for (const [name, type, buffer, reason] of [
+    [
+      "malformed.xlsx",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      makeXlsx("", { malformed: true }),
+      "xlsx_malformed_zip"
+    ],
+    [
+      "encrypted.xlsx",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      makeXlsx(`token ${RAW_SECRET}`, { encrypted: true }),
+      "xlsx_encrypted"
+    ],
+    [
+      "empty.xlsx",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      makeXlsx("", { noText: true }),
+      "xlsx_no_extractable_text"
+    ],
+    ["legacy.xls", "application/vnd.ms-excel", bufferFromText(`token ${RAW_SECRET}`), "Unsupported file type for local text extraction."],
+    [
+      "macro.xlsm",
+      "application/vnd.ms-excel.sheet.macroEnabled.12",
+      makeXlsx(`token ${RAW_SECRET}`),
+      "Unsupported file type for local text extraction."
+    ]
+  ]) {
+    const result = await processFileForAdapterHandoff({
+      file: fileFromBuffer(name, type, buffer),
+      context: "drop"
+    });
+
+    assert.notStrictEqual(result.outputKind, "redacted_xlsx_file", name);
+    assert.strictEqual(result.safeForUpload, false, name);
+    assert.strictEqual(result.sanitizedFile, null, name);
+    assert.strictEqual(result.fallbackReason, reason, name);
+    assert.strictEqual(JSON.stringify(result).includes(RAW_SECRET), false, name);
+  }
 }
 
 async function testImageMetadataProducesRedactedTxtOutput() {
@@ -1229,8 +1444,12 @@ async function run() {
   await testTextFilePreservesExistingSanitizedOutputName();
   await testPdfProducesRedactedPdfOutputWhenCompleteAndSafe();
   await testLargePdfFallsBackToRedactedTxtWhenRegeneratedPdfWouldTruncate();
-  await testDocxProducesRedactedTxtOutput();
-  await testXlsxProducesRedactedTxtOutput();
+  await testDocxProducesRedactedDocxOutputWhenCompleteAndSafe();
+  await testLargeDocxFallsBackToRedactedTxtWhenRegeneratedDocxWouldTruncate();
+  await testUnsafeDocxInputsDoNotUploadRawOrRedactedDocx();
+  await testXlsxProducesRedactedXlsxOutputWhenCompleteAndSafe();
+  await testLargeXlsxFallsBackToRedactedTxtWhenRegeneratedXlsxWouldTruncate();
+  await testUnsafeXlsxInputsDoNotUploadRawOrRedactedXlsx();
   await testImageMetadataProducesRedactedTxtOutput();
   await testProtectedSiteOcrDisabledByDefaultAndLocalPersistence();
   await testProtectedSiteImageAttachStaysMetadataOnlyWhenOcrSettingEnabled();

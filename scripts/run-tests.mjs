@@ -30,6 +30,7 @@ const testFiles = [
   "tests/file_extractors.test.js",
   "tests/pdf_redactor.test.js",
   "tests/docx_redactor.test.js",
+  "tests/xlsx_redactor.test.js",
   "tests/file_scanner.test.js",
   "tests/scanner_ocr.test.js",
   "tests/content_file_extraction_pipeline.test.js",

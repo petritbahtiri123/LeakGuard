@@ -1270,11 +1270,18 @@ async function run() {
       scannerHtml.includes("Protected-site upload OCR is off by default") &&
       scannerHtml.includes("flattened redacted PNG only when OCR box confidence is eligible") &&
       scannerHtml.includes("Text PDF scanner results can also export a .redacted.pdf regenerated from sanitized extracted text") &&
+      scannerHtml.includes("DOCX scanner results can also export a .redacted.docx regenerated from sanitized extracted text") &&
       scannerHtml.includes("not layout-preserving") &&
       scannerHtml.includes(".redacted.txt remains available as the fallback") &&
+      scannerHtml.includes("Protected-site DOCX output can hand off a regenerated .redacted.docx when complete") &&
+      scannerHtml.includes("truncated or unsafe DOCX regeneration falls back to .redacted.txt or blocks raw upload") &&
+      scannerHtml.includes("Protected-site XLSX output can hand off a regenerated .redacted.xlsx when complete") &&
+      scannerHtml.includes("truncated or unsafe XLSX regeneration falls back to .redacted.txt or blocks raw upload") &&
       scannerHtml.includes("Protected-site text PDF output can hand off a regenerated .redacted.pdf when complete") &&
       scannerHtml.includes("Scanned PDF OCR") &&
-      scannerHtml.includes("DOCX/XLSX rebuilds") &&
+      scannerHtml.includes("XLSX scanner results can also export a .redacted.xlsx regenerated from sanitized extracted text") &&
+      scannerHtml.includes("original XLSX XML parts are not copied") &&
+      scannerHtml.includes("layout-preserving PDF/DOCX/XLSX redaction") &&
       scannerHtml.includes("image format preservation"),
     "scanner UI should scope OCR to local English image scanning, scanner/protected-site PNG visual redaction, default-off protected-site OCR, and explicitly exclude scanned PDFs, rebuilds, and format preservation"
   );
@@ -1349,6 +1356,8 @@ async function run() {
   const fileTypeRegistryIndex = contentScripts.indexOf("shared/fileTypeRegistry.js");
   const fileExtractorsIndex = contentScripts.indexOf("shared/fileExtractors.js");
   const fileScannerIndex = contentScripts.indexOf("shared/fileScanner.js");
+  const docxRedactorIndex = contentScripts.indexOf("shared/docxRedactor.js");
+  const xlsxRedactorIndex = contentScripts.indexOf("shared/xlsxRedactor.js");
   const ocrRuntimeIndex = contentScripts.indexOf("shared/ocr/ocrRuntime.js");
   const scannerOcrIndex = contentScripts.indexOf("shared/scannerOcr.js");
   const imageRedactorIndex = contentScripts.indexOf("shared/imageRedactor.js");
@@ -1393,6 +1402,8 @@ async function run() {
   assert.ok(fileLimitsIndex > -1, "content scripts should include shared file limit constants");
   assert.ok(fileTypeRegistryIndex > -1, "content scripts should include shared file type registry helpers");
   assert.ok(fileExtractorsIndex > -1, "content scripts should include shared file extractor helpers");
+  assert.ok(docxRedactorIndex > -1, "content scripts should include shared DOCX redactor helpers");
+  assert.ok(xlsxRedactorIndex > -1, "content scripts should include shared XLSX redactor helpers");
   assert.ok(ocrRuntimeIndex > -1, "content scripts should include shared OCR runtime helpers");
   assert.ok(scannerOcrIndex > -1, "content scripts should include shared scanner OCR helpers");
   assert.ok(imageRedactorIndex > -1, "content scripts should include shared image redactor helpers");
@@ -1426,7 +1437,9 @@ async function run() {
     fileLimitsIndex < fileTypeRegistryIndex &&
       fileTypeRegistryIndex < fileExtractorsIndex &&
       fileExtractorsIndex < fileScannerIndex &&
-      fileScannerIndex < ocrRuntimeIndex &&
+      fileScannerIndex < docxRedactorIndex &&
+      docxRedactorIndex < xlsxRedactorIndex &&
+      xlsxRedactorIndex < ocrRuntimeIndex &&
       ocrRuntimeIndex < scannerOcrIndex &&
       scannerOcrIndex < imageRedactorIndex &&
       imageRedactorIndex < streamingRedactorIndex &&

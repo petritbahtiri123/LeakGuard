@@ -2,6 +2,8 @@
   const scanner = globalThis.PWM?.FileScanner;
   const extractors = globalThis.PWM?.FileExtractors;
   const pdfRedactor = globalThis.PWM?.PdfRedactor;
+  const docxRedactor = globalThis.PWM?.DocxRedactor;
+  const xlsxRedactor = globalThis.PWM?.XlsxRedactor;
   const scannerOcr = globalThis.PWM?.ScannerOcr;
   const imageRedactor = globalThis.PWM?.ImageRedactor;
 
@@ -28,12 +30,16 @@
   const redactedPreviewEl = document.getElementById("redacted-preview");
   const downloadRedactedBtn = document.getElementById("download-redacted-btn");
   const downloadRedactedPdfBtn = document.getElementById("download-redacted-pdf-btn");
+  const downloadRedactedDocxBtn = document.getElementById("download-redacted-docx-btn");
+  const downloadRedactedXlsxBtn = document.getElementById("download-redacted-xlsx-btn");
   const downloadRedactedImageBtn = document.getElementById("download-redacted-image-btn");
   const downloadReportBtn = document.getElementById("download-report-btn");
 
   let selectedFile = null;
   let currentScanResult = null;
   let currentRedactedPdf = null;
+  let currentRedactedDocx = null;
+  let currentRedactedXlsx = null;
   let currentRedactedImage = null;
   let scanInFlight = null;
 
@@ -54,6 +60,10 @@
     downloadReportBtn.disabled = !enabled;
     downloadRedactedPdfBtn.disabled = !enabled || !currentRedactedPdf?.blob;
     downloadRedactedPdfBtn.hidden = !currentRedactedPdf?.blob;
+    downloadRedactedDocxBtn.disabled = !enabled || !currentRedactedDocx?.blob;
+    downloadRedactedDocxBtn.hidden = !currentRedactedDocx?.blob;
+    downloadRedactedXlsxBtn.disabled = !enabled || !currentRedactedXlsx?.blob;
+    downloadRedactedXlsxBtn.hidden = !currentRedactedXlsx?.blob;
     downloadRedactedImageBtn.disabled = !enabled || !currentRedactedImage?.blob;
     downloadRedactedImageBtn.hidden = !currentRedactedImage?.blob;
   }
@@ -162,6 +172,8 @@
     selectedFile = null;
     currentScanResult = null;
     currentRedactedPdf = null;
+    currentRedactedDocx = null;
+    currentRedactedXlsx = null;
     currentRedactedImage = null;
     fileInput.value = "";
     scanBtn.disabled = true;
@@ -318,6 +330,74 @@
     return currentRedactedPdf;
   }
 
+  async function createScannerRedactedDocx(extraction, result, originalBytes) {
+    currentRedactedDocx = null;
+    if (
+      extraction?.kind !== "docx" ||
+      extraction?.safeForScan !== true ||
+      !docxRedactor?.createRedactedDocxFromText
+    ) {
+      return null;
+    }
+
+    const redactedDocx = await docxRedactor.createRedactedDocxFromText({
+      originalName: selectedFile?.name,
+      originalBytes,
+      text: result?.redactedText || ""
+    });
+    if (!redactedDocx?.ok || !redactedDocx.bytes) {
+      if (result?.reportWarnings) {
+        result.reportWarnings.push(`docx-redaction:${redactedDocx?.status || "docx_redacted_unavailable"}`);
+      }
+      return null;
+    }
+    if (redactedDocx.truncated && result?.reportWarnings) {
+      result.reportWarnings.push("docx-redaction:docx_redacted_text_truncated");
+    }
+
+    currentRedactedDocx = {
+      blob: new Blob([redactedDocx.bytes], {
+        type: redactedDocx.mimeType || "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      }),
+      fileName: redactedDocx.fileName || "file.redacted.docx"
+    };
+    return currentRedactedDocx;
+  }
+
+  function createScannerRedactedXlsx(extraction, result) {
+    currentRedactedXlsx = null;
+    if (
+      extraction?.kind !== "xlsx" ||
+      extraction?.safeForScan !== true ||
+      !xlsxRedactor?.createRedactedXlsxFromExtraction
+    ) {
+      return null;
+    }
+
+    const redactedXlsx = xlsxRedactor.createRedactedXlsxFromExtraction({
+      originalName: selectedFile?.name,
+      extraction,
+      sanitizedText: result?.redactedText || ""
+    });
+    if (!redactedXlsx?.ok || !redactedXlsx.bytes) {
+      if (result?.reportWarnings) {
+        result.reportWarnings.push(`xlsx-redaction:${redactedXlsx?.status || "xlsx_redacted_unavailable"}`);
+      }
+      return null;
+    }
+    if (redactedXlsx.truncated && result?.reportWarnings) {
+      result.reportWarnings.push("xlsx-redaction:xlsx_redacted_text_truncated");
+    }
+
+    currentRedactedXlsx = {
+      blob: new Blob([redactedXlsx.bytes], {
+        type: redactedXlsx.mimeType || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      }),
+      fileName: redactedXlsx.fileName || "file.redacted.xlsx"
+    };
+    return currentRedactedXlsx;
+  }
+
   async function scanImageWithOcr(extraction, imageBuffer) {
     currentRedactedImage = null;
     if (!scannerOcr?.recognizeScannerImageFile || !scannerOcr?.buildScannerOcrScanText) {
@@ -461,6 +541,8 @@
     }
 
     currentRedactedPdf = null;
+    currentRedactedDocx = null;
+    currentRedactedXlsx = null;
     const extractedFile = isExtractedFile(extraction);
     const text = extractedFile ? extraction.text : scanner.decodeUtf8Text(buffer);
     const result = scanExtractedText(
@@ -469,10 +551,22 @@
       extractedFile ? extraction.metadata.textLength : selectedFile.size
     );
     const redactedPdf = createScannerRedactedPdf(extraction, result);
+    const redactedDocx = await createScannerRedactedDocx(extraction, result, buffer);
+    const redactedXlsx = createScannerRedactedXlsx(extraction, result);
     renderResult(result);
     if (redactedPdf) {
       setStatus(
         "Scan complete. Redacted text and a regenerated redacted PDF are available. The PDF is generated from sanitized text, is not layout-preserving, and scanned PDFs are unsupported.",
+        "success"
+      );
+    } else if (redactedDocx) {
+      setStatus(
+        "Scan complete. Redacted text and a regenerated redacted DOCX are available. The DOCX is generated from sanitized text, is not layout-preserving, original styles, images, comments, and metadata are not preserved, and embedded images, .doc, .docm, and macros are unsupported.",
+        "success"
+      );
+    } else if (redactedXlsx) {
+      setStatus(
+        "Scan complete. Redacted text and a regenerated redacted XLSX are available. The XLSX is generated from sanitized text, is not layout-preserving, formulas, charts, styles, comments, hidden sheets, metadata, custom XML, calc chains, and media are not preserved, and .xls, .xlsm, and macros are unsupported.",
         "success"
       );
     } else {
@@ -570,6 +664,16 @@
     downloadExistingBlob(currentRedactedPdf.blob, currentRedactedPdf.fileName || "file.redacted.pdf");
   }
 
+  function downloadRedactedDocx() {
+    if (!currentRedactedDocx?.blob) return;
+    downloadExistingBlob(currentRedactedDocx.blob, currentRedactedDocx.fileName || "file.redacted.docx");
+  }
+
+  function downloadRedactedXlsx() {
+    if (!currentRedactedXlsx?.blob) return;
+    downloadExistingBlob(currentRedactedXlsx.blob, currentRedactedXlsx.fileName || "file.redacted.xlsx");
+  }
+
   function downloadReport() {
     if (!currentScanResult) return;
     const report = scanner.buildSanitizedReport(currentScanResult);
@@ -589,6 +693,8 @@
     selectedFile = fileInput.files?.[0] || null;
     currentScanResult = null;
     currentRedactedPdf = null;
+    currentRedactedDocx = null;
+    currentRedactedXlsx = null;
     currentRedactedImage = null;
     resultPanel.hidden = true;
     setExportEnabled(false);
@@ -613,6 +719,8 @@
 
   downloadRedactedBtn.addEventListener("click", downloadRedactedCopy);
   downloadRedactedPdfBtn.addEventListener("click", downloadRedactedPdf);
+  downloadRedactedDocxBtn.addEventListener("click", downloadRedactedDocx);
+  downloadRedactedXlsxBtn.addEventListener("click", downloadRedactedXlsx);
   downloadRedactedImageBtn.addEventListener("click", downloadRedactedImage);
   downloadReportBtn.addEventListener("click", downloadReport);
 

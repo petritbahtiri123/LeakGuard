@@ -54,6 +54,8 @@ const CONTENT_SCRIPT_FILES = [
   "shared/fileExtractors.js",
   "shared/fileScanner.js",
   "shared/pdfRedactor.js",
+  "shared/docxRedactor.js",
+  "shared/xlsxRedactor.js",
   "shared/ocr/ocrRuntime.js",
   "shared/scannerOcr.js",
   "shared/imageRedactor.js",

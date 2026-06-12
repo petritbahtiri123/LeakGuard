@@ -11,12 +11,13 @@ page and an opt-in/default-off protected-site image OCR path. Protected-site
 visual image redaction uploads a flattened `.redacted.png` only when OCR boxes
 are eligible. Scanner visual image redaction also exports PNG.
 
-Scanner and protected-site text PDFs can export regenerated `.redacted.pdf` from
-sanitized text only; protected-site PDFs fall back to `.redacted.txt` when
-regeneration would truncate. DOCX, XLSX, image metadata, and OCR text outputs
-export `.redacted.txt`. LeakGuard does not provide layout-preserving PDF redaction
-or rebuild DOCX or XLSX originals,
-does not preserve original image format for visual redaction, and does not run
+Scanner and protected-site text PDFs, DOCX files, and XLSX files can export
+regenerated `.redacted.pdf`, `.redacted.docx`, and `.redacted.xlsx` outputs from
+sanitized text only; protected-site regenerated outputs fall back to
+`.redacted.txt` when regeneration would truncate. Image metadata and OCR text
+outputs export `.redacted.txt`. LeakGuard does not provide layout-preserving
+PDF/DOCX/XLSX redaction or original Office document reconstruction, does not
+preserve original image format for visual redaction, and does not run
 scanned-PDF OCR.
 
 Current builds must not include remote OCR calls, CDN loading, runtime model
