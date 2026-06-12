@@ -111,6 +111,13 @@ const phase17fCiNightlyMatrixPath = path.join(
 const phase17fCiNightlyMatrix = fs.existsSync(phase17fCiNightlyMatrixPath)
   ? fs.readFileSync(phase17fCiNightlyMatrixPath, "utf8")
   : "";
+const phase18FinalPrStabilizationCloseoutPath = path.join(
+  repoRoot,
+  "docs/phase-18-final-pr-stabilization-closeout.md"
+);
+const phase18FinalPrStabilizationCloseout = fs.existsSync(phase18FinalPrStabilizationCloseoutPath)
+  ? fs.readFileSync(phase18FinalPrStabilizationCloseoutPath, "utf8")
+  : "";
 const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
 const testWorkflow = fs.readFileSync(path.join(repoRoot, ".github/workflows/test.yml"), "utf8");
 const releaseArtifactsWorkflow = fs.readFileSync(
@@ -935,6 +942,33 @@ function testPhase17fPrivacyContactBlockerIsCentralized() {
   );
 }
 
+function testPhase18FinalPrStabilizationCloseoutIsDocumented() {
+  assert.ok(
+    fileExists("docs/phase-18-final-pr-stabilization-closeout.md"),
+    "Phase 18 final PR stabilization closeout should exist"
+  );
+
+  for (const required of [
+    "Dirty Tree Inventory",
+    "Files to Include",
+    "Files to Exclude/Review",
+    "Generated Artifact Status",
+    "Release Blocker Status",
+    "Release blocker: publication contacts are not finalized",
+    "Suggested PR Title",
+    "Suggested PR Body",
+    "Store/Publish Readiness Checklist",
+    "privacy contacts finalized: NO",
+    "human store listing review required: YES",
+    "release publish-ready: NO until contact blocker resolved"
+  ]) {
+    assert.ok(
+      phase18FinalPrStabilizationCloseout.includes(required),
+      `Phase 18 closeout should include: ${required}`
+    );
+  }
+}
+
 function testPhase17fBrowserDiagnosticsAreActionable() {
   assert.ok(fileExists("scripts/check-browser-environment.mjs"), "browser preflight script should exist");
   const preflightSource = fs.readFileSync(path.join(repoRoot, "scripts/check-browser-environment.mjs"), "utf8");
@@ -1005,6 +1039,7 @@ async function run() {
   testPhase17fCiNightlyMatrixHardeningIsDocumented();
   testPhase17fScriptsAndWorkflowsAreTiered();
   testPhase17fPrivacyContactBlockerIsCentralized();
+  testPhase18FinalPrStabilizationCloseoutIsDocumented();
   testPhase17fBrowserDiagnosticsAreActionable();
   console.log("PASS productization static regressions");
 }
