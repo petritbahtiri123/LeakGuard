@@ -2,6 +2,8 @@
 
 Phase 15D completed protected-site DOCX `.redacted.docx` handoff. This closeout supersedes the Phase 15C planning-only assertions for DOCX output support.
 
+Phase 16E supersedes this document's XLSX limitation note: regenerated XLSX output is now tracked separately in `docs/phase-16e-xlsx-rebuilt-output-closeout.md`.
+
 ## Current DOCX Boundary
 
 - scanner DOCX `.redacted.docx` export is supported for safe `.docx` files.
@@ -14,7 +16,7 @@ Phase 15D completed protected-site DOCX `.redacted.docx` handoff. This closeout 
 - .doc, .docm, and macros remain unsupported.
 - Malformed, encrypted, no-text/image-only, unsupported-compression, legacy, macro, and truncated DOCX cases do not hand off unsafe `.redacted.docx` output.
 - `.redacted.txt fallback` remains available for sanitized text output where regeneration is unsafe or incomplete.
-- XLSX rebuilds are not supported yet.
+- XLSX rebuilt-output status is superseded by Phase 16E.
 
 ## Release Audit Expectations
 

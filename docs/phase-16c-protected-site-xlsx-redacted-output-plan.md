@@ -4,6 +4,8 @@
 
 **Goal:** Plan protected-site XLSX `.redacted.xlsx` handoff after Phase 16B-H scanner-only hardening, without changing runtime behavior yet.
 
+> **Implementation note:** Phase 16D completed protected-site XLSX `.redacted.xlsx` handoff. Phase 16E closeout is tracked in `docs/phase-16e-xlsx-rebuilt-output-closeout.md`, which supersedes this document's planning-only status and current-behavior notes.
+
 **Architecture:** Reuse the Phase 16B-H regenerated-XLSX approach: extract XLSX text locally, redact with the existing protected-site file pipeline, then generate a brand-new minimal XLSX from sanitized text only. The future implementation must not copy original XLSX XML parts, relationships, media, styles, comments, properties, metadata, custom XML, calc chains, macros, formulas, charts, hidden sheets, or layout.
 
 **Tech Stack:** Existing MV3 extension code, `src/shared/fileExtractors.js`, `src/shared/fileScanner.js`, `src/shared/xlsxRedactor.js`, `src/content/files/contentFileExtractionPipeline.js`, current adapter handoff code, Node-based regression tests, browser QA.
@@ -229,4 +231,3 @@ Do not start implementation until these are true:
 - protected-site pipeline owners agree on the fallback/truncation default
 - browser QA can inspect the protected-site handoff file bytes and MIME
 - release copy owners agree that public docs stay planned until implementation passes QA
-

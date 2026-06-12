@@ -55,6 +55,20 @@ const phase15eDocxCloseoutPath = path.join(
 const phase15eDocxCloseout = fs.existsSync(phase15eDocxCloseoutPath)
   ? fs.readFileSync(phase15eDocxCloseoutPath, "utf8")
   : "";
+const phase16cProtectedSiteXlsxPlanPath = path.join(
+  repoRoot,
+  "docs/phase-16c-protected-site-xlsx-redacted-output-plan.md"
+);
+const phase16cProtectedSiteXlsxPlan = fs.existsSync(phase16cProtectedSiteXlsxPlanPath)
+  ? fs.readFileSync(phase16cProtectedSiteXlsxPlanPath, "utf8")
+  : "";
+const phase16eXlsxCloseoutPath = path.join(
+  repoRoot,
+  "docs/phase-16e-xlsx-rebuilt-output-closeout.md"
+);
+const phase16eXlsxCloseout = fs.existsSync(phase16eXlsxCloseoutPath)
+  ? fs.readFileSync(phase16eXlsxCloseoutPath, "utf8")
+  : "";
 const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
 const testWorkflow = fs.readFileSync(path.join(repoRoot, ".github/workflows/test.yml"), "utf8");
 const chromeSmokeSource = fs.readFileSync(path.join(repoRoot, "tests/browser/chrome_smoke.test.mjs"), "utf8");
@@ -486,7 +500,8 @@ function testPhase15cProtectedSiteDocxPlanIsSupersededByPhase15eCloseout() {
     "styles, images, comments, and metadata are not preserved",
     "embedded images are not redacted",
     ".doc, .docm, and macros remain unsupported",
-    "XLSX rebuilds are not supported yet",
+    "Phase 16E supersedes this document's XLSX limitation note",
+    "XLSX rebuilt-output status is superseded by Phase 16E",
     ".redacted.txt fallback"
   ]) {
     assert.ok(
@@ -494,6 +509,51 @@ function testPhase15cProtectedSiteDocxPlanIsSupersededByPhase15eCloseout() {
       `Phase 15E closeout should include: ${required}`
     );
   }
+}
+
+function testPhase16cProtectedSiteXlsxPlanIsSupersededByPhase16eCloseout() {
+  assert.ok(fileExists("docs/phase-16c-protected-site-xlsx-redacted-output-plan.md"), "Phase 16C plan should exist");
+  for (const required of [
+    "Phase 16D completed protected-site XLSX `.redacted.xlsx` handoff",
+    "Phase 16E closeout is tracked",
+    "supersedes this document's planning-only status"
+  ]) {
+    assert.ok(
+      phase16cProtectedSiteXlsxPlan.includes(required),
+      `Phase 16C plan should include implementation note: ${required}`
+    );
+  }
+
+  assert.ok(fileExists("docs/phase-16e-xlsx-rebuilt-output-closeout.md"), "Phase 16E XLSX closeout should exist");
+  for (const required of [
+    "Phase 16D completed",
+    "supersedes the Phase 16C planning-only assertions",
+    "scanner XLSX `.redacted.xlsx`",
+    "protected-site XLSX `.redacted.xlsx`",
+    "sanitized/redacted extracted text only",
+    "not layout-preserving",
+    "Original XLSX XML/OOXML parts are not copied",
+    "Formulas, charts, styles, comments, hidden sheets, metadata, custom XML, calc chains, and media are not preserved",
+    ".xls, .xlsm, .xlsb, .xltm",
+    ".redacted.txt fallback",
+    "Truncated or bounded protected-site regenerated XLSX output falls back to sanitized `.redacted.txt`",
+    "No raw XLSX extracted text in logs",
+    "JSON reports remain sanitized/redacted only",
+    "Release packages must not include raw XLSX fixture secrets",
+    "Generated XLSX bytes must not include original `xl/sharedStrings.xml`",
+    "Gemini/Grok pending attach gates"
+  ]) {
+    assert.ok(
+      phase16eXlsxCloseout.includes(required),
+      `Phase 16E closeout should include: ${required}`
+    );
+  }
+
+  assert.strictEqual(
+    /XLSX rebuilds are not supported yet/.test(phase15eDocxCloseout),
+    false,
+    "productization should not require stale planned-only XLSX wording after Phase 16D"
+  );
 }
 
 function testPhase14cProtectedSitePdfPlanIsPlanningOnly() {
@@ -606,6 +666,7 @@ async function run() {
   testPublishReadinessDocsCoverStorePrivacyAndQa();
   testFileCapabilityMatrixDocumentsCurrentFileScope();
   testPhase15cProtectedSiteDocxPlanIsSupersededByPhase15eCloseout();
+  testPhase16cProtectedSiteXlsxPlanIsSupersededByPhase16eCloseout();
   testPhase14cProtectedSitePdfPlanIsPlanningOnly();
   testPublicDocsAlignWithCurrentFileCapabilities();
   testBrowserQaScriptOwnsFirefoxSmokeCoverage();
