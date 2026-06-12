@@ -29,7 +29,7 @@ LeakGuard does not use a backend service, cloud processing, telemetry, or remote
 - Remote secret verification, credential rotation, or a secrets manager
 - Repository-history scanning, CI push protection, or a replacement for tools such as GitHub Secret Scanning, Gitleaks, detect-secrets, or TruffleHog
 - Cloud AI scanning, remote model inference, telemetry, or backend secret processing
-- PDF, DOCX, screenshot, image OCR, clipboard-history, malware, or endpoint protection
+- Layout-preserving PDF redaction, DOCX/XLSX rebuilds, scanned-PDF OCR, non-English OCR, remote OCR, screenshot monitoring, clipboard-history, malware, or endpoint protection
 
 See [docs/NON_GOALS.md](docs/NON_GOALS.md) for the maintained non-goals list.
 
@@ -71,6 +71,10 @@ https://ko-fi.com/petritbahtiri
 - Local-only email redaction for likely email addresses in protected prompts and supported text files
 - False-positive suppression for common documentation placeholders, example values, and development variable names
 - Local File Scanner for text-based files with redacted-copy and sanitized-report exports
+- Local text extraction for text PDFs, DOCX documents, and XLSX spreadsheets with `.redacted.txt` exports
+- Local image metadata scanning for PNG, JPG, JPEG, and WEBP images
+- Scanner image OCR for PNG, JPG, JPEG, and WEBP images, with English-only local OCR and flattened `.redacted.png` visual redaction exports when OCR boxes are eligible
+- Protected-site image OCR is opt-in, default off, local-only, images-only, and uploads `.redacted.png` only when OCR boxes are eligible
 - Popup-based site management for add, enable, disable, and remove flows
 - In-page top-center status menu on protected pages
 - Popup-only secure reveal for placeholders
@@ -87,11 +91,11 @@ https://ko-fi.com/petritbahtiri
 
 ## Local File Scanner
 
-LeakGuard includes an extension-owned File Scanner page for local text files. It reads files only after you choose them, scans them in the browser with the same deterministic detector used for prompts, and can export a redacted text copy or a sanitized JSON findings report.
+LeakGuard includes an extension-owned File Scanner page for local files. It reads files only after you choose them, scans supported content in the browser with the same deterministic detector used for prompts, and can export a redacted text copy, a sanitized JSON findings report, or an eligible flattened redacted PNG for scanner image visual redaction.
 
-Supported scanner files for this release: `.txt`, `.md`, `.markdown`, `.env`, `.log`, `.json`, `.yaml`, `.yml`, `.toml`, `.xml`, `.csv`, `.ini`, `.conf`, `.cfg`, `.ps1`, `.sh`, `.bash`, `.zsh`, `.bat`, `.cmd`, `.py`, `.js`, `.jsx`, `.ts`, `.tsx`, `.html`, `.css`, `.scss`, `.java`, `.c`, `.cpp`, `.h`, `.hpp`, `.cs`, `.go`, `.rs`, `.rb`, `.php`, `.sql`, `Dockerfile`, and `Makefile`.
+Supported scanner files for this release: `.txt`, `.md`, `.markdown`, `.env`, `.log`, `.json`, `.yaml`, `.yml`, `.toml`, `.xml`, `.csv`, `.ini`, `.conf`, `.cfg`, `.pem`, `.key`, `.ps1`, `.sh`, `.bash`, `.zsh`, `.bat`, `.cmd`, `.py`, `.js`, `.jsx`, `.ts`, `.tsx`, `.html`, `.css`, `.scss`, `.java`, `.c`, `.cpp`, `.h`, `.hpp`, `.cs`, `.go`, `.rs`, `.rb`, `.php`, `.sql`, `Dockerfile`, `Makefile`, text PDFs, DOCX text, XLSX text, and PNG/JPG/JPEG/WEBP image metadata. Scanner image OCR is English-only, local-only, and limited to PNG/JPG/JPEG/WEBP images.
 
-In v1.7.0, supported local UTF-8 text files pasted, dropped, or selected in protected AI composers can also be locally validated, redacted through the same background-owned placeholder flow, and replaced with sanitized in-memory `File`/`Blob` objects where browser and site upload flows accept synthetic file handoff. Files above 4 MiB and up to 50 MB use streaming/chunked local redaction so LeakGuard does not need to read the full raw file into one string before sanitizing it. Gemini and Grok can stage sanitized large files in a trusted pending attach prompt when the site requires a user-triggered upload flow. This is limited to supported text files and does not guarantee support for every editor or upload control. Unsupported files, invalid UTF-8 files, text files above 50 MB, and failed sanitized file handoff are blocked from raw upload with a local message.
+In v1.7.0, supported local UTF-8 text files, text PDFs, DOCX documents, XLSX spreadsheets, and image metadata pasted, dropped, or selected in protected AI composers can also be locally validated, redacted through the same background-owned placeholder flow, and replaced with sanitized in-memory `File`/`Blob` objects where browser and site upload flows accept synthetic file handoff. Scanner text PDFs can export `.redacted.txt` plus a regenerated `.redacted.pdf` built from sanitized extracted text; protected-site text PDFs can hand off a regenerated `.redacted.pdf` only when the sanitized PDF is complete, otherwise `.redacted.txt` remains the fallback. DOCX, XLSX, image metadata, and protected-site OCR text outputs are exported as `.redacted.txt`, not rebuilt original files. Protected-site image OCR is opt-in and default off; when enabled, eligible image visual redaction uploads a flattened `.redacted.png` only when OCR boxes are safe enough. Files above 4 MiB and up to 50 MB use streaming/chunked local redaction so LeakGuard does not need to read the full raw file into one string before sanitizing it. Gemini and Grok can stage sanitized large files in a trusted pending attach prompt when the site requires a user-triggered upload flow. This does not guarantee support for every editor or upload control. Unsupported files, invalid UTF-8 files, text files above 50 MB, unreadable documents, OCR failures, and failed sanitized file handoff are blocked from raw upload with a local message.
 
 File scanner limits:
 
@@ -101,7 +105,8 @@ File scanner limits:
 - deterministic detection only
 - raw file contents are not stored in extension storage
 - exported JSON reports do not include raw secrets by default
-- PDF, DOCX, and image redaction are planned but not enabled in this release
+- Scanner and protected-site text PDFs can export regenerated `.redacted.pdf` from sanitized text only; protected-site PDFs fall back to `.redacted.txt` when PDF regeneration would truncate, and DOCX/XLSX still export `.redacted.txt`, not rebuilt original formats
+- no scanned-PDF OCR, non-English OCR, remote OCR/backend, or image format preservation yet
 
 ## Detection Coverage
 
@@ -134,7 +139,7 @@ Training, export, browser smoke tests, and enterprise disable guidance live in [
 - Persistent local storage is limited to normalized protected-site rules.
 - Raw values are kept only in session-scoped background storage so secure reveal can work during the active tab session.
 - Secure reveal is restricted to extension-owned UI.
-- Extension pages use a restrictive CSP: `script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'`.
+- Extension pages use a restrictive CSP with packaged scripts and local WASM support: `script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'`.
 - The extension blocks submission if it cannot verify the rewritten composer safely.
 
 More detail lives in [SECURITY_REVIEW.md](SECURITY_REVIEW.md).

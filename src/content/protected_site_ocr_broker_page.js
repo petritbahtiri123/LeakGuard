@@ -36,7 +36,9 @@
     if (!Array.isArray(ports) || ports.length !== 1 || typeof ports[0]?.postMessage !== "function") return false;
 
     if (message.prepare === true) {
-      return hasOnlyKeys(message, ["source", "channelId", "requestId", "prepare"]);
+      if (!hasOnlyKeys(message, ["source", "channelId", "requestId", "prepare", "timeoutMs"])) return false;
+      if (message.timeoutMs === undefined) return true;
+      return Number.isFinite(Number(message.timeoutMs)) && Number(message.timeoutMs) > 0;
     }
 
     if (!hasOnlyKeys(message, ["source", "channelId", "requestId", "payload"])) return false;
@@ -72,23 +74,11 @@
       }
 
       if (message.prepare === true) {
-        const core =
-          typeof runtime.createTesseractCoreProbe === "function"
-            ? await runtime.createTesseractCoreProbe()
-            : sanitizeFailure("ocr_core_probe_unavailable");
-        if (!core?.ok) {
-          postResult(replyPort, message.requestId, sanitizeFailure(core?.reason || core?.status));
-          return;
-        }
-        const language =
-          typeof runtime.createLanguageProbe === "function"
-            ? await runtime.createLanguageProbe("eng")
-            : sanitizeFailure("ocr_language_probe_unavailable");
-        postResult(
-          replyPort,
-          message.requestId,
-          language?.ok ? { ok: true, status: "protected_site_ocr_broker_ready", language: "eng" } : sanitizeFailure(language?.reason || language?.status)
-        );
+        postResult(replyPort, message.requestId, {
+          ok: true,
+          status: "protected_site_ocr_broker_ready",
+          language: "eng"
+        });
         return;
       }
 

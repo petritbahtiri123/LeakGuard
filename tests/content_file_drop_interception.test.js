@@ -5832,7 +5832,9 @@ async function testDocumentAndImageFileInputUseContentExtractionPipelineForSanit
       fileName: "report.pdf",
       type: "application/pdf",
       rawText: "PDF bytes with raw secret",
-      outputName: "report.redacted.txt",
+      outputName: "report.redacted.pdf",
+      outputKind: "redacted_pdf_file",
+      outputType: "application/pdf",
       extractedKind: "pdf"
     },
     {
@@ -5840,6 +5842,8 @@ async function testDocumentAndImageFileInputUseContentExtractionPipelineForSanit
       type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
       rawText: "DOCX bytes with raw secret",
       outputName: "brief.redacted.txt",
+      outputKind: "redacted_text_file",
+      outputType: "text/plain",
       extractedKind: "docx"
     },
     {
@@ -5847,6 +5851,8 @@ async function testDocumentAndImageFileInputUseContentExtractionPipelineForSanit
       type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       rawText: "XLSX bytes with raw secret",
       outputName: "sheet.redacted.txt",
+      outputKind: "redacted_text_file",
+      outputType: "text/plain",
       extractedKind: "xlsx"
     },
     {
@@ -5854,6 +5860,8 @@ async function testDocumentAndImageFileInputUseContentExtractionPipelineForSanit
       type: "image/png",
       rawText: "PNG bytes with raw filename secret",
       outputName: "diagram-[PWM_1].redacted.txt",
+      outputKind: "redacted_text_file",
+      outputType: "text/plain",
       extractedKind: "image_metadata"
     }
   ];
@@ -5866,7 +5874,7 @@ async function testDocumentAndImageFileInputUseContentExtractionPipelineForSanit
     });
     const sanitizedFile = {
       name: item.outputName,
-      type: "text/plain",
+      type: item.outputType,
       size: 18,
       text: "API_KEY=[PWM_1]"
     };
@@ -5888,7 +5896,7 @@ async function testDocumentAndImageFileInputUseContentExtractionPipelineForSanit
           status: "ready",
           originalName: item.fileName,
           outputName: item.outputName,
-          outputKind: "redacted_text_file",
+          outputKind: item.outputKind,
           extractedKind: item.extractedKind,
           sanitizedText: sanitizedFile.text,
           sanitizedFile,

@@ -80,6 +80,16 @@ function wordBox(text, start, box, confidence = 94) {
   };
 }
 
+function lineBox(text, start, box, confidence = 88) {
+  return {
+    text,
+    start,
+    end: start + text.length,
+    confidence,
+    box
+  };
+}
+
 async function sharpCanvasAdapter({ imageBytes, boxes }) {
   let image = sharp(Buffer.from(imageBytes));
   for (const box of boxes) {
@@ -396,8 +406,179 @@ async function testOcrWordBoxesMapDetectedSecretToRedactionBoxes() {
   assert.ok(boxes.ok, boxes.message);
   assert.strictEqual(boxes.boxes.length, 1);
   assert.strictEqual(serializedBoxes.includes(rawSecret), false, "redaction box metadata must not contain raw OCR text");
+  assert.strictEqual(boxes.boxKind, "word");
+  assert.strictEqual(boxes.fallbackUsed, false);
+  assert.strictEqual(boxes.visualRedactionSafe, true);
+  assert.strictEqual(boxes.protectedSiteEligible, true);
+  assert.deepStrictEqual(boxes.warnings, []);
+  assert.strictEqual(boxes.boxes[0].boxKind, "word");
+  assert.strictEqual(boxes.boxes[0].fallbackUsed, false);
+  assert.strictEqual(boxes.boxes[0].visualRedactionSafe, true);
   assert.ok(boxes.boxes[0].width > 0);
   assert.ok(boxes.boxes[0].height > 0);
+}
+
+async function testOcrWordBoxesArePreferredOverLineBoxes() {
+  const rawSecret = "sk-proj-PreferWordBoxes1234567890abcdef";
+  const ocrText = `API_KEY=${rawSecret}`;
+  const runtime = {
+    recognizeImageBytes() {
+      return Promise.resolve({
+        ok: true,
+        status: "ocr_recognition_ready",
+        language: "eng",
+        text: ocrText,
+        textLength: ocrText.length,
+        confidenceBucket: "high",
+        warnings: [],
+        words: [wordBox(rawSecret, 8, { x: 220, y: 42, width: 360, height: 40 })],
+        lines: [lineBox(ocrText, 0, { x: 20, y: 30, width: 820, height: 70 })]
+      });
+    }
+  };
+  const imageBuffer = await makeSyntheticApiKeyPng(ocrText);
+  const ocr = await ScannerOcr.recognizeScannerImageFile(
+    makeFile("prefer-word.png", "image/png", imageBuffer.byteLength, imageBuffer),
+    { runtime, timeoutMs: 1000, dimensions: { width: 900, height: 140 } }
+  );
+  const scanText = ScannerOcr.buildScannerOcrScanText({
+    metadataText: "file_name=prefer-word.png",
+    ocrText: ocr.text,
+    ocrMetadata: ocr
+  });
+  const result = scanOcrText(scanText, "prefer-word.png");
+  const boxes = ScannerOcr.redactionBoxesForOcrFindings({ ocr, scanResult: result, scanText, ocrText: ocr.text });
+
+  assert.strictEqual(ocr.layout.source, "word");
+  assert.strictEqual(ocr.layout.boxes[0].boxKind, "word");
+  assert.strictEqual(boxes.ok, true);
+  assert.strictEqual(boxes.boxKind, "word");
+  assert.strictEqual(boxes.boxes[0].width, 360);
+  assert.deepStrictEqual(boxes.warnings, []);
+}
+
+async function testOcrLineBoxesAcceptedWithWarning() {
+  const rawSecret = "sk-proj-LineBoxVisual1234567890abcdef";
+  const ocrText = `API_KEY=${rawSecret}`;
+  const runtime = {
+    recognizeImageBytes() {
+      return Promise.resolve({
+        ok: true,
+        status: "ocr_recognition_ready",
+        language: "eng",
+        text: ocrText,
+        textLength: ocrText.length,
+        confidenceBucket: "high",
+        warnings: [],
+        lines: [lineBox(ocrText, 0, { x: 24, y: 36, width: 780, height: 58 }, 82)]
+      });
+    }
+  };
+  const imageBuffer = await makeSyntheticApiKeyPng(ocrText);
+  const ocr = await ScannerOcr.recognizeScannerImageFile(
+    makeFile("line.png", "image/png", imageBuffer.byteLength, imageBuffer),
+    { runtime, timeoutMs: 1000, dimensions: { width: 900, height: 140 } }
+  );
+  const scanText = ScannerOcr.buildScannerOcrScanText({
+    metadataText: "file_name=line.png",
+    ocrText: ocr.text,
+    ocrMetadata: ocr
+  });
+  const result = scanOcrText(scanText, "line.png");
+  const boxes = ScannerOcr.redactionBoxesForOcrFindings({ ocr, scanResult: result, scanText, ocrText: ocr.text });
+
+  assert.strictEqual(ocr.layout.source, "line");
+  assert.strictEqual(ocr.layout.boxes[0].boxKind, "line");
+  assert.strictEqual(boxes.ok, true);
+  assert.strictEqual(boxes.boxKind, "line");
+  assert.strictEqual(boxes.visualRedactionSafe, true);
+  assert.strictEqual(boxes.protectedSiteEligible, true);
+  assert.ok(boxes.warnings.includes("ocr_line_boxes_used"));
+}
+
+async function testFallbackBoxesAreMarkedScannerOnlyAndNotProtectedSiteEligible() {
+  const rawSecret = "sk-proj-FallbackVisual1234567890abcdef";
+  const ocrText = `API_KEY=${rawSecret}`;
+  const runtime = {
+    recognizeImageBytes() {
+      return Promise.resolve({
+        ok: true,
+        status: "ocr_recognition_ready",
+        language: "eng",
+        text: ocrText,
+        textLength: ocrText.length,
+        confidenceBucket: "high",
+        warnings: [],
+        layout: {
+          source: "fallback",
+          fallbackUsed: true,
+          visualRedactionSafe: false,
+          boxes: [
+            {
+              boxKind: "fallback",
+              kind: "fallback",
+              start: 0,
+              end: ocrText.length,
+              x: 0,
+              y: 0,
+              width: 900,
+              height: 140,
+              confidenceBucket: "high",
+              fallbackUsed: true,
+              visualRedactionSafe: false
+            }
+          ]
+        }
+      });
+    }
+  };
+  const imageBuffer = await makeSyntheticApiKeyPng(ocrText);
+  const ocr = await ScannerOcr.recognizeScannerImageFile(
+    makeFile("fallback.png", "image/png", imageBuffer.byteLength, imageBuffer),
+    { runtime, timeoutMs: 1000, dimensions: { width: 900, height: 140 } }
+  );
+  const scanText = ScannerOcr.buildScannerOcrScanText({
+    metadataText: "file_name=fallback.png",
+    ocrText: ocr.text,
+    ocrMetadata: ocr
+  });
+  const result = scanOcrText(scanText, "fallback.png");
+  const boxes = ScannerOcr.redactionBoxesForOcrFindings({ ocr, scanResult: result, scanText, ocrText: ocr.text });
+
+  assert.strictEqual(ocr.layout.source, "fallback");
+  assert.strictEqual(ocr.layout.fallbackUsed, true);
+  assert.strictEqual(ocr.layout.visualRedactionSafe, false);
+  assert.strictEqual(boxes.ok, true);
+  assert.strictEqual(boxes.boxKind, "fallback");
+  assert.strictEqual(boxes.fallbackUsed, true);
+  assert.strictEqual(boxes.visualRedactionSafe, false);
+  assert.strictEqual(boxes.protectedSiteEligible, false);
+  assert.ok(boxes.warnings.includes("ocr_fallback_boxes_used_scanner_only"));
+}
+
+async function testMissingBoxesFailClosedForVisualRedaction() {
+  const rawSecret = "sk-proj-MissingBoxes1234567890abcdef";
+  const ocrText = `API_KEY=${rawSecret}`;
+  const ocr = {
+    ok: true,
+    text: ocrText,
+    layout: {
+      source: "none",
+      boxes: []
+    }
+  };
+  const scanText = ScannerOcr.buildScannerOcrScanText({
+    metadataText: "file_name=missing.png",
+    ocrText,
+    ocrMetadata: { textLength: ocrText.length, confidenceBucket: "high" }
+  });
+  const result = scanOcrText(scanText, "missing.png");
+  const boxes = ScannerOcr.redactionBoxesForOcrFindings({ ocr, scanResult: result, scanText, ocrText });
+
+  assert.strictEqual(result.summary.findingsCount > 0, true);
+  assert.strictEqual(boxes.ok, false);
+  assert.strictEqual(boxes.status, "ocr_boxes_missing");
+  assert.strictEqual(boxes.protectedSiteEligible, false);
 }
 
 async function testRedactedPngProofGeneratesFlattenedOutputAndRescanIsClean() {
@@ -513,6 +694,44 @@ async function testVisualRedactionFailsClosedForMissingLowConfidenceAndOversized
   assert.strictEqual(Object.prototype.hasOwnProperty.call(corrupted, "blob"), false);
 }
 
+async function testLowConfidenceOcrBoxesFailClosedForVisualMapping() {
+  const rawSecret = "sk-proj-LowBoxConfidence1234567890abcdef";
+  const ocrText = `API_KEY=${rawSecret}`;
+  const ocr = {
+    ok: true,
+    text: ocrText,
+    layout: {
+      source: "word",
+      boxes: [
+        {
+          boxKind: "word",
+          kind: "word",
+          start: 8,
+          end: ocrText.length,
+          x: 120,
+          y: 40,
+          width: 600,
+          height: 48,
+          confidenceBucket: "low",
+          fallbackUsed: false,
+          visualRedactionSafe: false
+        }
+      ]
+    }
+  };
+  const scanText = ScannerOcr.buildScannerOcrScanText({
+    metadataText: "file_name=low-box.png",
+    ocrText,
+    ocrMetadata: { textLength: ocrText.length, confidenceBucket: "low" }
+  });
+  const result = scanOcrText(scanText, "low-box.png");
+  const boxes = ScannerOcr.redactionBoxesForOcrFindings({ ocr, scanResult: result, scanText, ocrText });
+
+  assert.strictEqual(boxes.ok, false);
+  assert.strictEqual(boxes.status, "ocr_box_confidence_too_low");
+  assert.strictEqual(boxes.protectedSiteEligible, false);
+}
+
 function testRawVisualRedactionMetadataIsNotPersistedOrLoggedByScannerCode() {
   const imageRedactorSource = fs.readFileSync(path.join(repoRoot, "src/shared/imageRedactor.js"), "utf8");
   const sources = [
@@ -532,7 +751,7 @@ function testRawVisualRedactionMetadataIsNotPersistedOrLoggedByScannerCode() {
   }
 }
 
-function testProtectedSiteUploadPathDoesNotUseVisualImageRedactor() {
+function testProtectedSiteUploadPathUsesVisualImageRedactorOnlyBehindEligibilityGate() {
   const pipelineSource = fs.readFileSync(
     path.join(repoRoot, "src/content/files/contentFileExtractionPipeline.js"),
     "utf8"
@@ -540,9 +759,12 @@ function testProtectedSiteUploadPathDoesNotUseVisualImageRedactor() {
   const brokerSource = fs.readFileSync(path.join(repoRoot, "src/content/files/protectedSiteOcrBroker.js"), "utf8");
   const manifestSource = fs.readFileSync(path.join(repoRoot, "manifests/base.json"), "utf8");
 
-  assert.strictEqual(pipelineSource.includes("ImageRedactor"), false);
+  assert.ok(pipelineSource.includes("ImageRedactor"));
+  assert.ok(pipelineSource.includes("protectedSiteEligible"));
+  assert.ok(pipelineSource.includes("fallbackUsed"));
+  assert.ok(pipelineSource.includes("redacted_image_file"));
   assert.strictEqual(brokerSource.includes("ImageRedactor"), false);
-  assert.strictEqual(manifestSource.includes("imageRedactor.js"), false);
+  assert.strictEqual(manifestSource.includes("shared/imageRedactor.js"), true);
 }
 
 async function testRuntimeTimeoutFailsSafelyWithoutRawText() {
@@ -630,9 +852,14 @@ function testScannerUiCopyScopesOcrV1() {
   assert.ok(scannerHtml.includes("Download Redacted PNG"));
   assert.ok(scannerHtml.includes("../shared/imageRedactor.js"));
   assert.ok(scannerHtml.includes("Scanned PDF OCR"));
-  assert.ok(scannerHtml.includes("protected-site image-redacted uploads"));
-  assert.ok(scannerHtml.includes("image rebuild"));
-  assert.ok(scannerHtml.includes("Protected-site upload OCR is available only when enabled in settings"));
+  assert.ok(scannerHtml.includes("Text PDF scanner results can also export a .redacted.pdf regenerated from sanitized extracted text"));
+  assert.ok(scannerHtml.includes("not layout-preserving"));
+  assert.ok(scannerHtml.includes(".redacted.txt remains available as the fallback"));
+  assert.ok(scannerHtml.includes("Protected-site text PDF output can hand off a regenerated .redacted.pdf when complete"));
+  assert.ok(scannerHtml.includes("Protected-site upload OCR is off by default"));
+  assert.ok(scannerHtml.includes("flattened redacted PNG only when OCR box confidence is eligible"));
+  assert.ok(scannerHtml.includes("DOCX/XLSX rebuilds"));
+  assert.ok(scannerHtml.includes("image format preservation"));
 }
 
 function testScannerUiSerializesRepeatedScansAndRestoresControls() {
@@ -653,6 +880,10 @@ function testScannerUiSerializesRepeatedScansAndRestoresControls() {
   assert.ok(
     scannerSource.includes("download-redacted-image-btn") || scannerSource.includes("downloadRedactedImageBtn"),
     "scanner UI should expose a separate redacted PNG export control"
+  );
+  assert.ok(
+    scannerSource.includes("download-redacted-pdf-btn") || scannerSource.includes("downloadRedactedPdf"),
+    "scanner UI should expose a separate regenerated redacted PDF export control"
   );
 }
 
@@ -700,16 +931,21 @@ function testDownloadedImageOutputNameIsRedactedTxtCompatible() {
   await testLowConfidenceRotatedImageWarnsAndStillRedacts();
   await testRuntimeRecognitionUsesExplicitMessageAndTimeout();
   await testOcrWordBoxesMapDetectedSecretToRedactionBoxes();
+  await testOcrWordBoxesArePreferredOverLineBoxes();
+  await testOcrLineBoxesAcceptedWithWarning();
+  await testFallbackBoxesAreMarkedScannerOnlyAndNotProtectedSiteEligible();
+  await testMissingBoxesFailClosedForVisualRedaction();
   await testRedactedPngProofGeneratesFlattenedOutputAndRescanIsClean();
   await testJpgAndJpegVisualRedactionOutputsPng();
   await testWebpVisualRedactionOutputsPngWhenSharpSupportsWebp();
   await testVisualRedactionFailsClosedForMissingLowConfidenceAndOversizedBoxes();
+  await testLowConfidenceOcrBoxesFailClosedForVisualMapping();
   await testRuntimeTimeoutFailsSafelyWithoutRawText();
   await testCorruptedImageFailsSafelyWithoutRawBytesOrText();
   testUnsupportedImageTypeFailsSafely();
   testRawOcrTextIsNotPersistedOrLoggedByScannerCode();
   testRawVisualRedactionMetadataIsNotPersistedOrLoggedByScannerCode();
-  testProtectedSiteUploadPathDoesNotUseVisualImageRedactor();
+  testProtectedSiteUploadPathUsesVisualImageRedactorOnlyBehindEligibilityGate();
   testScannerUiCopyScopesOcrV1();
   testScannerUiSerializesRepeatedScansAndRestoresControls();
   await testTinySyntheticOcrBenchmarkStaysResponsive();

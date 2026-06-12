@@ -57,6 +57,7 @@
     const width = Number(box?.width);
     const height = Number(box?.height);
     const confidenceBucket = String(box?.confidenceBucket || "unknown");
+    const boxKind = String(box?.boxKind || box?.kind || "line");
     if (
       !Number.isFinite(x) ||
       !Number.isFinite(y) ||
@@ -70,7 +71,17 @@
     ) {
       return null;
     }
-    return { x, y, width, height, confidenceBucket };
+    return {
+      x,
+      y,
+      width,
+      height,
+      confidenceBucket,
+      boxKind,
+      kind: boxKind,
+      fallbackUsed: box?.fallbackUsed === true || boxKind === "fallback",
+      visualRedactionSafe: box?.visualRedactionSafe === true && boxKind !== "fallback"
+    };
   }
 
   function normalizeBoxes(boxes, dimensions) {

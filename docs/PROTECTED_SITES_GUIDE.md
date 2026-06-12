@@ -49,7 +49,13 @@ For a user-managed site, LeakGuard requests the normalized exact origin match pa
 
 ## What Protection Means
 
-On a protected site, LeakGuard can inspect supported composer text and supported local text-file ingress paths before submission. If likely sensitive values are found, it can show a decision flow, redact values with placeholders, or block unsafe sends when rewrite verification fails.
+On a protected site, LeakGuard can inspect supported composer text and supported local file ingress paths before submission. Supported file paths include text/source files, text PDF extraction, DOCX text extraction, XLSX text extraction, and image metadata. If likely sensitive values are found, it can show a decision flow, redact values with placeholders, hand off sanitized files where safe, or block unsafe sends when rewrite verification or sanitized handoff fails.
+
+Text PDF outputs on protected sites can be regenerated as `.redacted.pdf` from sanitized extracted text only when complete; truncated or unsafe PDF regeneration falls back to `.redacted.txt` or blocks raw upload. DOCX, XLSX, image metadata, and OCR text outputs on protected sites are `.redacted.txt`. LeakGuard does not rebuild DOCX or XLSX originals.
+
+Protected-site image OCR is opt-in and default off. When enabled, it runs locally, supports English-only PNG/JPG/JPEG/WEBP image OCR, and uploads a flattened `.redacted.png` only when OCR boxes are eligible for visual redaction. If OCR fails, times out, or produces ineligible boxes for a raw image upload path, LeakGuard blocks raw upload rather than sending the original image.
+
+LeakGuard does not provide scanned-PDF OCR, non-English OCR, remote OCR/backend processing, remote model calls, or image format preservation.
 
 Protection is best-effort for supported editors and upload paths. Site DOM changes, hidden upload controls, unsupported file formats, browser limitations, or extension reloads can affect coverage.
 

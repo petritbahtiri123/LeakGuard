@@ -1,6 +1,7 @@
 (function () {
   const scanner = globalThis.PWM?.FileScanner;
   const extractors = globalThis.PWM?.FileExtractors;
+  const pdfRedactor = globalThis.PWM?.PdfRedactor;
   const scannerOcr = globalThis.PWM?.ScannerOcr;
   const imageRedactor = globalThis.PWM?.ImageRedactor;
 
@@ -26,11 +27,13 @@
   const findingsListEl = document.getElementById("findings-list");
   const redactedPreviewEl = document.getElementById("redacted-preview");
   const downloadRedactedBtn = document.getElementById("download-redacted-btn");
+  const downloadRedactedPdfBtn = document.getElementById("download-redacted-pdf-btn");
   const downloadRedactedImageBtn = document.getElementById("download-redacted-image-btn");
   const downloadReportBtn = document.getElementById("download-report-btn");
 
   let selectedFile = null;
   let currentScanResult = null;
+  let currentRedactedPdf = null;
   let currentRedactedImage = null;
   let scanInFlight = null;
 
@@ -49,6 +52,8 @@
   function setExportEnabled(enabled) {
     downloadRedactedBtn.disabled = !enabled;
     downloadReportBtn.disabled = !enabled;
+    downloadRedactedPdfBtn.disabled = !enabled || !currentRedactedPdf?.blob;
+    downloadRedactedPdfBtn.hidden = !currentRedactedPdf?.blob;
     downloadRedactedImageBtn.disabled = !enabled || !currentRedactedImage?.blob;
     downloadRedactedImageBtn.hidden = !currentRedactedImage?.blob;
   }
@@ -156,6 +161,7 @@
   function clearScan() {
     selectedFile = null;
     currentScanResult = null;
+    currentRedactedPdf = null;
     currentRedactedImage = null;
     fileInput.value = "";
     scanBtn.disabled = true;
@@ -280,6 +286,38 @@
     });
   }
 
+  function createScannerRedactedPdf(extraction, result) {
+    currentRedactedPdf = null;
+    if (
+      extraction?.kind !== "pdf" ||
+      extraction?.safeForScan !== true ||
+      !pdfRedactor?.createRedactedPdfFromExtraction
+    ) {
+      return null;
+    }
+
+    const redactedPdf = pdfRedactor.createRedactedPdfFromExtraction({
+      originalName: selectedFile?.name,
+      extraction,
+      sanitizedText: result?.redactedText || ""
+    });
+    if (!redactedPdf?.ok || !redactedPdf.bytes) {
+      if (result?.reportWarnings) {
+        result.reportWarnings.push(`pdf-redaction:${redactedPdf?.status || "pdf_redacted_unavailable"}`);
+      }
+      return null;
+    }
+    if (redactedPdf.truncated && result?.reportWarnings) {
+      result.reportWarnings.push("pdf-redaction:pdf_redacted_text_truncated");
+    }
+
+    currentRedactedPdf = {
+      blob: new Blob([redactedPdf.bytes], { type: redactedPdf.mimeType || "application/pdf" }),
+      fileName: redactedPdf.fileName || "file.redacted.pdf"
+    };
+    return currentRedactedPdf;
+  }
+
   async function scanImageWithOcr(extraction, imageBuffer) {
     currentRedactedImage = null;
     if (!scannerOcr?.recognizeScannerImageFile || !scannerOcr?.buildScannerOcrScanText) {
@@ -323,6 +361,9 @@
         ocrText: ocr.text
       });
       if (boxMapping?.ok && imageRedactor?.createRedactedPng) {
+        if (Array.isArray(boxMapping.warnings) && boxMapping.warnings.length) {
+          result.reportWarnings.push(...boxMapping.warnings.map((warning) => `image-redaction:${warning}`));
+        }
         const redactedImage = await imageRedactor.createRedactedPng({
           imageBytes: imageBuffer,
           mimeType: selectedFile.type,
@@ -331,8 +372,16 @@
         });
         if (redactedImage?.ok && redactedImage.blob) {
           currentRedactedImage = redactedImage;
-          statusMessage =
-            "Scan complete. English OCR ran locally for this image. Redacted text and a flattened redacted PNG are available.";
+          if (boxMapping.fallbackUsed) {
+            statusMessage =
+              "Scan complete. Redacted text and a scanner-only flattened redacted PNG are available. The PNG used broad fallback OCR boxes and is not eligible for protected-site image upload.";
+          } else if (boxMapping.boxKind === "line") {
+            statusMessage =
+              "Scan complete. Redacted text and a flattened redacted PNG are available. The PNG used OCR line boxes, which may redact more image area than word boxes.";
+          } else {
+            statusMessage =
+              "Scan complete. English OCR ran locally for this image. Redacted text and a flattened redacted PNG are available.";
+          }
         } else {
           result.reportWarnings.push(`image-redaction:${redactedImage?.status || "image_redaction_failed"}`);
           statusMessage =
@@ -411,6 +460,7 @@
       return;
     }
 
+    currentRedactedPdf = null;
     const extractedFile = isExtractedFile(extraction);
     const text = extractedFile ? extraction.text : scanner.decodeUtf8Text(buffer);
     const result = scanExtractedText(
@@ -418,8 +468,16 @@
       text,
       extractedFile ? extraction.metadata.textLength : selectedFile.size
     );
+    const redactedPdf = createScannerRedactedPdf(extraction, result);
     renderResult(result);
-    setStatus("Scan complete. Exports are generated only when you click a download button.", "success");
+    if (redactedPdf) {
+      setStatus(
+        "Scan complete. Redacted text and a regenerated redacted PDF are available. The PDF is generated from sanitized text, is not layout-preserving, and scanned PDFs are unsupported.",
+        "success"
+      );
+    } else {
+      setStatus("Scan complete. Exports are generated only when you click a download button.", "success");
+    }
     scanBtn.disabled = false;
   }
 
@@ -507,6 +565,11 @@
     );
   }
 
+  function downloadRedactedPdf() {
+    if (!currentRedactedPdf?.blob) return;
+    downloadExistingBlob(currentRedactedPdf.blob, currentRedactedPdf.fileName || "file.redacted.pdf");
+  }
+
   function downloadReport() {
     if (!currentScanResult) return;
     const report = scanner.buildSanitizedReport(currentScanResult);
@@ -525,6 +588,7 @@
   fileInput.addEventListener("change", () => {
     selectedFile = fileInput.files?.[0] || null;
     currentScanResult = null;
+    currentRedactedPdf = null;
     currentRedactedImage = null;
     resultPanel.hidden = true;
     setExportEnabled(false);
@@ -548,6 +612,7 @@
   });
 
   downloadRedactedBtn.addEventListener("click", downloadRedactedCopy);
+  downloadRedactedPdfBtn.addEventListener("click", downloadRedactedPdf);
   downloadRedactedImageBtn.addEventListener("click", downloadRedactedImage);
   downloadReportBtn.addEventListener("click", downloadReport);
 

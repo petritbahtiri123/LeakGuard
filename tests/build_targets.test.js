@@ -898,17 +898,39 @@ async function assertOcrWorkerEngineProof(targetRoot) {
         textLength: 8,
         confidenceBucket: "high",
         layout: {
-          source: "line",
+          source: "word",
+          boxKind: "word",
+          fallbackUsed: false,
+          visualRedactionSafe: true,
+          protectedSiteEligible: true,
           boxes: [
             {
-              kind: "line",
+              boxKind: "word",
+              kind: "word",
               start: 0,
+              end: 4,
+              x: 13,
+              y: 28,
+              width: 106,
+              height: 32,
+              confidenceBucket: "high",
+              fallbackUsed: false,
+              visualRedactionSafe: true,
+              protectedSiteEligible: true
+            },
+            {
+              boxKind: "word",
+              kind: "word",
+              start: 5,
               end: 8,
-              x: 0,
-              y: 0,
-              width: 260,
-              height: 90,
-              confidenceBucket: "high"
+              x: 133,
+              y: 28,
+              width: 91,
+              height: 32,
+              confidenceBucket: "high",
+              fallbackUsed: false,
+              visualRedactionSafe: true,
+              protectedSiteEligible: true
             }
           ]
         },
@@ -1245,11 +1267,16 @@ async function run() {
       scannerHtml.includes("limited to image files on this scanner page") &&
       scannerHtml.includes("Scanner image visual redaction outputs a flattened PNG") &&
       scannerHtml.includes("JPG, JPEG, and WEBP inputs are not preserved as their original format") &&
-      scannerHtml.includes("Protected-site upload OCR is available only when enabled in settings") &&
+      scannerHtml.includes("Protected-site upload OCR is off by default") &&
+      scannerHtml.includes("flattened redacted PNG only when OCR box confidence is eligible") &&
+      scannerHtml.includes("Text PDF scanner results can also export a .redacted.pdf regenerated from sanitized extracted text") &&
+      scannerHtml.includes("not layout-preserving") &&
+      scannerHtml.includes(".redacted.txt remains available as the fallback") &&
+      scannerHtml.includes("Protected-site text PDF output can hand off a regenerated .redacted.pdf when complete") &&
       scannerHtml.includes("Scanned PDF OCR") &&
-      scannerHtml.includes("protected-site image-redacted uploads") &&
-      scannerHtml.includes("image rebuild"),
-    "scanner UI should scope OCR to local English image scanning, scanner PNG visual redaction, settings-gated protected-site OCR, and explicitly exclude scanned PDFs, protected-site image-redacted uploads, and image rebuild"
+      scannerHtml.includes("DOCX/XLSX rebuilds") &&
+      scannerHtml.includes("image format preservation"),
+    "scanner UI should scope OCR to local English image scanning, scanner/protected-site PNG visual redaction, default-off protected-site OCR, and explicitly exclude scanned PDFs, rebuilds, and format preservation"
   );
   for (const [target, manifest] of [
     ["chrome", chromeManifest],
@@ -1324,6 +1351,7 @@ async function run() {
   const fileScannerIndex = contentScripts.indexOf("shared/fileScanner.js");
   const ocrRuntimeIndex = contentScripts.indexOf("shared/ocr/ocrRuntime.js");
   const scannerOcrIndex = contentScripts.indexOf("shared/scannerOcr.js");
+  const imageRedactorIndex = contentScripts.indexOf("shared/imageRedactor.js");
   const streamingRedactorIndex = contentScripts.indexOf("shared/streamingFileRedactor.js");
   const filePasteHelperIndex = contentScripts.indexOf("content/file_paste_helpers.js");
   const fileHandoffStateIndex = contentScripts.indexOf("content/file_handoff_state.js");
@@ -1367,6 +1395,7 @@ async function run() {
   assert.ok(fileExtractorsIndex > -1, "content scripts should include shared file extractor helpers");
   assert.ok(ocrRuntimeIndex > -1, "content scripts should include shared OCR runtime helpers");
   assert.ok(scannerOcrIndex > -1, "content scripts should include shared scanner OCR helpers");
+  assert.ok(imageRedactorIndex > -1, "content scripts should include shared image redactor helpers");
   assert.ok(streamingRedactorIndex > -1, "content scripts should include streaming file redactor helpers");
   assert.ok(filePasteHelperIndex > -1, "content scripts should include local file paste helpers");
   assert.ok(fileHandoffStateIndex > -1, "content scripts should include file handoff state helpers");
@@ -1399,7 +1428,8 @@ async function run() {
       fileExtractorsIndex < fileScannerIndex &&
       fileScannerIndex < ocrRuntimeIndex &&
       ocrRuntimeIndex < scannerOcrIndex &&
-      scannerOcrIndex < streamingRedactorIndex &&
+      scannerOcrIndex < imageRedactorIndex &&
+      imageRedactorIndex < streamingRedactorIndex &&
       streamingRedactorIndex < filePasteHelperIndex &&
       filePasteHelperIndex < fileHandoffStateIndex &&
       fileHandoffStateIndex < fileHandoffPendingIndex &&

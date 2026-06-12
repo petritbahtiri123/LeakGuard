@@ -12,6 +12,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import zlib from "node:zlib";
 import sharp from "sharp";
@@ -25,6 +26,10 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "../..");
+const require = createRequire(import.meta.url);
+require(path.join(repoRoot, "src/shared/fileTypeRegistry.js"));
+require(path.join(repoRoot, "src/shared/fileExtractors.js"));
+const { prepareFileExtractionAsync, EXTRACTOR_STATUS } = globalThis.PWM.FileExtractors;
 const sourceExtensionDir = path.join(repoRoot, "dist", "chrome");
 const qaTimeoutMs = Number(process.env.LEAKGUARD_BROWSER_QA_TIMEOUT_MS || 60000);
 const cleanupDelayMs = Number(process.env.LEAKGUARD_BROWSER_QA_CLEANUP_DELAY_MS || 500);
@@ -280,11 +285,14 @@ function createHarnessPage() {
         const files = Array.from(event.target.files || []);
         const items = await Promise.all(files.map(async (file) => {
           const isText = file.type === 'text/plain' || /\\.txt$/i.test(file.name || '');
+          const bytes = new Uint8Array(await file.arrayBuffer());
           return {
             name: file.name,
             type: file.type,
             size: file.size,
-            text: isText ? await file.text() : ''
+            text: isText ? new TextDecoder().decode(bytes) : '',
+            bytePrefix: Array.from(bytes.slice(0, 12)),
+            byteSum: Array.from(bytes).reduce((total, byte) => total + byte, 0)
           };
         }));
         window.__leakguardQaUploads.push({ items });
@@ -905,33 +913,40 @@ async function runProtectedSiteImageOcrQa(connection, page, extensionSessionId, 
           page.sessionId,
           `(async () => {
           const rawSecret = ${JSON.stringify(fixtureSecret)};
+          const describeFile = async (file) => {
+            const bytes = new Uint8Array(await file.arrayBuffer());
+            return {
+              name: file.name,
+              type: file.type,
+              size: file.size,
+              text: file.type === 'text/plain' || /\\.txt$/i.test(file.name || '') ? new TextDecoder().decode(bytes) : '',
+              bytePrefix: Array.from(bytes.slice(0, 12)),
+              byteSum: bytes.reduce((sum, byte) => sum + byte, 0)
+            };
+          };
           const uploads = [
             ...Array.from(window.__leakguardQaUploads || []),
             {
-              items: await Promise.all(Array.from(document.querySelector('#qa-file-input')?.files || []).map(async (file) => ({
-                name: file.name,
-                type: file.type,
-                size: file.size,
-                text: file.type === 'text/plain' || /\\.txt$/i.test(file.name || '') ? await file.text() : ''
-              })))
+              items: await Promise.all(Array.from(document.querySelector('#qa-file-input')?.files || []).map(describeFile))
             }
           ];
           const sanitized = uploads
             .flatMap((upload) => upload.items || [])
-            .find((item) => /\\.redacted\\.txt$/i.test(item.name || '') && item.type === 'text/plain');
+            .find((item) => /\\.redacted\\.png$/i.test(item.name || '') && item.type === 'image/png');
           if (!sanitized) return null;
-          const text = sanitized.text || '';
           return {
             name: sanitized.name,
             type: sanitized.type,
-            textPrefix: text.slice(0, 240),
-            hasRaw: text.includes(rawSecret),
-            visualTextScanned: /visual_text_scanned=true/.test(text),
-            ocrSupported: /image_ocr_supported=true/.test(text),
-            metadataOnlyClaim: /image_ocr_not_supported|visual_text_scanned=false/.test(text),
+            size: sanitized.size,
+            bytePrefix: sanitized.bytePrefix,
+            byteSum: sanitized.byteSum,
+            hasRawName: String(sanitized.name || '').includes(rawSecret),
             originalImagePresent: uploads
               .flatMap((upload) => upload.items || [])
-              .some((item) => item.name === 'protected-site-ocr.png' && item.type !== 'text/plain')
+              .some((item) => item.name === 'protected-site-ocr.png' && item.type === 'image/png'),
+            textFallbackPresent: uploads
+              .flatMap((upload) => upload.items || [])
+              .some((item) => /\\.redacted\\.txt$/i.test(item.name || ''))
           };
         })()`,
           { awaitPromise: true }
@@ -968,13 +983,12 @@ async function runProtectedSiteImageOcrQa(connection, page, extensionSessionId, 
     throw new Error(`${error.message} Diagnostic: ${JSON.stringify(diagnostic)}`);
   }
 
-  assert.equal(result.name, "protected-site-ocr.redacted.txt");
-  assert.equal(result.type, "text/plain");
-  assert.equal(result.hasRaw, false, "protected-site OCR handoff must not expose raw OCR text");
-  assert.equal(result.visualTextScanned, true, "protected-site OCR handoff should report scanned visual text");
-  assert.equal(result.ocrSupported, true, "protected-site OCR handoff should report OCR support");
-  assert.equal(result.metadataOnlyClaim, false, "enabled OCR handoff should not claim metadata-only scanning");
+  assert.equal(result.name, "protected-site-ocr.redacted.png");
+  assert.equal(result.type, "image/png");
+  assert.deepEqual(result.bytePrefix.slice(0, 8), [137, 80, 78, 71, 13, 10, 26, 10]);
+  assert.equal(result.hasRawName, false, "protected-site OCR handoff must not expose raw OCR text in image name");
   assert.equal(result.originalImagePresent, false, "protected-site OCR handoff must not upload the raw image");
+  assert.equal(result.textFallbackPresent, false, "safe protected-site visual redaction should hand off PNG, not txt");
   return result;
 }
 
@@ -1028,6 +1042,18 @@ async function waitForDownloadedText(downloadPath, fileName) {
   }, `scanner export download ${fileName}`);
 }
 
+async function waitForDownloadedBytes(downloadPath, fileName) {
+  const filePath = path.join(downloadPath, fileName);
+  return await waitFor(() => {
+    const entries = fs.existsSync(downloadPath) ? fs.readdirSync(downloadPath) : [];
+    const partialDownload = entries.some((entry) => entry.endsWith(".crdownload") || entry.endsWith(".tmp"));
+    if (!fs.existsSync(filePath) || partialDownload) return null;
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile() || stat.size <= 0) return null;
+    return fs.readFileSync(filePath);
+  }, `scanner export download ${fileName}`);
+}
+
 async function clickDownloadAndReadText(connection, sessionId, downloadPath, selector, fileName) {
   fs.rmSync(path.join(downloadPath, fileName), { force: true });
   await evaluate(
@@ -1037,6 +1063,17 @@ async function clickDownloadAndReadText(connection, sessionId, downloadPath, sel
     { userGesture: true }
   );
   return await waitForDownloadedText(downloadPath, fileName);
+}
+
+async function clickDownloadAndReadBytes(connection, sessionId, downloadPath, selector, fileName) {
+  fs.rmSync(path.join(downloadPath, fileName), { force: true });
+  await evaluate(
+    connection,
+    sessionId,
+    `document.querySelector(${JSON.stringify(selector)})?.click()`,
+    { userGesture: true }
+  );
+  return await waitForDownloadedBytes(downloadPath, fileName);
 }
 
 async function runScannerExportQa(connection, scannerSessionId, tempDir) {
@@ -1176,6 +1213,64 @@ async function runScannerQa(connection, extensionId, tempDir) {
   );
   assert.equal(textPdf.hasRaw, false, "scanner PDF preview must not expose raw PDF secrets");
   assert.equal(textPdf.redacted, true, "scanner should redact text PDF findings");
+
+  const pdfDownloadPath = path.join(tempDir, "scanner-pdf-downloads");
+  await configureDownloadDirectory(connection, scanner.sessionId, pdfDownloadPath);
+  const pdfExportState = await evaluate(
+    connection,
+    scanner.sessionId,
+    `({
+      pdfAvailable: !document.querySelector('#download-redacted-pdf-btn')?.disabled &&
+        !document.querySelector('#download-redacted-pdf-btn')?.hidden,
+      textAvailable: !document.querySelector('#download-redacted-btn')?.disabled
+    })`
+  );
+  assert.equal(pdfExportState.pdfAvailable, true, "scanner should offer regenerated redacted PDF for text PDFs");
+  assert.equal(pdfExportState.textAvailable, true, "scanner should keep .redacted.txt available for text PDFs");
+
+  const redactedPdfBytes = await clickDownloadAndReadBytes(
+    connection,
+    scanner.sessionId,
+    pdfDownloadPath,
+    "#download-redacted-pdf-btn",
+    "leakguard-browser-qa-text.redacted.pdf"
+  );
+  const redactedPdfLatin1 = redactedPdfBytes.toString("latin1");
+  assert.ok(redactedPdfBytes.byteLength > 0, "scanner redacted PDF download should be non-empty");
+  assert.ok(redactedPdfLatin1.startsWith("%PDF-1.4"), "scanner redacted PDF should be a regenerated PDF");
+  assert.equal(redactedPdfLatin1.includes(syntheticSecrets.openAi), false, "scanner redacted PDF bytes must not contain raw PDF secret");
+  assert.match(redactedPdfLatin1, /PDF_API_KEY=\[PWM_\d+\]/);
+
+  const redactedPdfExtraction = await prepareFileExtractionAsync({
+    fileName: "leakguard-browser-qa-text.redacted.pdf",
+    mimeType: "application/pdf",
+    buffer: redactedPdfBytes.buffer.slice(redactedPdfBytes.byteOffset, redactedPdfBytes.byteOffset + redactedPdfBytes.byteLength)
+  });
+  assert.equal(redactedPdfExtraction.status, EXTRACTOR_STATUS.OK);
+  assert.equal(redactedPdfExtraction.text.includes(syntheticSecrets.openAi), false, "scanner redacted PDF text must not contain raw PDF secret");
+  assert.match(redactedPdfExtraction.text, /PDF_API_KEY=\[PWM_\d+\]/);
+
+  const pdfRedactedText = await clickDownloadAndReadText(
+    connection,
+    scanner.sessionId,
+    pdfDownloadPath,
+    "#download-redacted-btn",
+    "leakguard-browser-qa-text.redacted.txt"
+  );
+  assert.equal(pdfRedactedText.includes(syntheticSecrets.openAi), false, "scanner PDF .redacted.txt fallback must not expose raw secret");
+  assert.match(pdfRedactedText, /^PDF_API_KEY=\[PWM_\d+\]$/m);
+
+  const pdfReportText = await clickDownloadAndReadText(
+    connection,
+    scanner.sessionId,
+    pdfDownloadPath,
+    "#download-report-btn",
+    "leakguard-browser-qa-text.leakguard-report.json"
+  );
+  assert.equal(pdfReportText.includes(syntheticSecrets.openAi), false, "scanner PDF JSON report must not expose raw secret");
+  const pdfReport = JSON.parse(pdfReportText);
+  assert.equal(JSON.stringify(pdfReport).includes("redactedText"), false);
+  assert.match(pdfReport.redactedPreview || "", /PDF_API_KEY=\[PWM_\d+\]/);
 
   await evaluate(connection, scanner.sessionId, "document.querySelector('#clear-btn').click()");
   await waitFor(
@@ -1378,13 +1473,14 @@ async function runScannerQa(connection, extensionId, tempDir) {
         const preview = document.querySelector('#redacted-preview')?.textContent || '';
         const scanDisabled = document.querySelector('#scan-btn')?.disabled;
         const scanButton = document.querySelector('#scan-btn');
+        const pdfButton = document.querySelector('#download-redacted-pdf-btn');
         if (!clicked && scanButton && !scanButton.disabled) {
           clicked = true;
           scanButton.click();
         }
         if (/could not find extractable text/i.test(status) && /OCR are not supported/i.test(status)) {
           clearInterval(timer);
-          resolve({ status, scanDisabled, preview });
+          resolve({ status, scanDisabled, preview, pdfAvailable: !pdfButton?.disabled && !pdfButton?.hidden });
         } else if (Date.now() - started > 10000) {
           clearInterval(timer);
           reject(new Error('Timed out waiting for unsupported PDF warning: ' + JSON.stringify({
@@ -1399,11 +1495,54 @@ async function runScannerQa(connection, extensionId, tempDir) {
   assert.match(unsupported.status, /could not find extractable text/i);
   assert.match(unsupported.status, /OCR are not supported/i);
   assert.equal(unsupported.preview, "");
+  assert.equal(unsupported.pdfAvailable, false, "scanner must not offer redacted PDF for scanned/image-only PDFs");
 
   await evaluate(connection, scanner.sessionId, "document.querySelector('#clear-btn').click()");
   await waitFor(
     () => evaluate(connection, scanner.sessionId, "document.querySelector('#scan-btn')?.disabled"),
     "scanner reset after unsupported PDF"
+  );
+
+  const emptyPdfPath = path.join(tempDir, "leakguard-browser-qa-empty.pdf");
+  fs.writeFileSync(emptyPdfPath, makeQaPdf(""));
+  await setFileInputFiles(connection, scanner.sessionId, "#file-input", [emptyPdfPath]);
+  const emptyPdf = await evaluate(
+    connection,
+    scanner.sessionId,
+    `new Promise((resolve, reject) => {
+      const started = Date.now();
+      let clicked = false;
+      const timer = setInterval(() => {
+        const status = document.querySelector('#status')?.textContent || '';
+        const preview = document.querySelector('#redacted-preview')?.textContent || '';
+        const scanButton = document.querySelector('#scan-btn');
+        const pdfButton = document.querySelector('#download-redacted-pdf-btn');
+        if (!clicked && scanButton && !scanButton.disabled) {
+          clicked = true;
+          scanButton.click();
+        }
+        if (/could not find extractable text/i.test(status) && /OCR are not supported/i.test(status)) {
+          clearInterval(timer);
+          resolve({ status, preview, pdfAvailable: !pdfButton?.disabled && !pdfButton?.hidden });
+        } else if (Date.now() - started > 10000) {
+          clearInterval(timer);
+          reject(new Error('Timed out waiting for empty PDF warning: ' + JSON.stringify({
+            status,
+            scanDisabled: scanButton?.disabled,
+            preview
+          })));
+        }
+      }, 50);
+    })`
+  );
+  assert.match(emptyPdf.status, /could not find extractable text/i);
+  assert.equal(emptyPdf.preview, "");
+  assert.equal(emptyPdf.pdfAvailable, false, "scanner must not offer redacted PDF for empty PDFs");
+
+  await evaluate(connection, scanner.sessionId, "document.querySelector('#clear-btn').click()");
+  await waitFor(
+    () => evaluate(connection, scanner.sessionId, "document.querySelector('#scan-btn')?.disabled"),
+    "scanner reset after empty PDF"
   );
 
   const encryptedPath = path.join(tempDir, "leakguard-browser-qa-encrypted.pdf");
@@ -1420,13 +1559,19 @@ async function runScannerQa(connection, extensionId, tempDir) {
         const status = document.querySelector('#status')?.textContent || '';
         const preview = document.querySelector('#redacted-preview')?.textContent || '';
         const scanButton = document.querySelector('#scan-btn');
+        const pdfButton = document.querySelector('#download-redacted-pdf-btn');
         if (!clicked && scanButton && !scanButton.disabled) {
           clicked = true;
           scanButton.click();
         }
         if (/encrypted PDF/i.test(status)) {
           clearInterval(timer);
-          resolve({ status, preview, hasRaw: preview.includes(rawSecret) || status.includes(rawSecret) });
+          resolve({
+            status,
+            preview,
+            hasRaw: preview.includes(rawSecret) || status.includes(rawSecret),
+            pdfAvailable: !pdfButton?.disabled && !pdfButton?.hidden
+          });
         } else if (Date.now() - started > 10000) {
           clearInterval(timer);
           reject(new Error('Timed out waiting for encrypted PDF warning: ' + JSON.stringify({
@@ -1441,6 +1586,7 @@ async function runScannerQa(connection, extensionId, tempDir) {
   assert.match(encrypted.status, /encrypted PDF/i);
   assert.equal(encrypted.preview, "");
   assert.equal(encrypted.hasRaw, false, "encrypted PDF scanner warning must not expose raw PDF secrets");
+  assert.equal(encrypted.pdfAvailable, false, "scanner must not offer redacted PDF for encrypted PDFs");
 
   await evaluate(connection, scanner.sessionId, "document.querySelector('#clear-btn').click()");
   await waitFor(
@@ -1462,13 +1608,19 @@ async function runScannerQa(connection, extensionId, tempDir) {
         const status = document.querySelector('#status')?.textContent || '';
         const preview = document.querySelector('#redacted-preview')?.textContent || '';
         const scanButton = document.querySelector('#scan-btn');
+        const pdfButton = document.querySelector('#download-redacted-pdf-btn');
         if (!clicked && scanButton && !scanButton.disabled) {
           clicked = true;
           scanButton.click();
         }
         if (/could not read this PDF/i.test(status)) {
           clearInterval(timer);
-          resolve({ status, preview, hasRaw: preview.includes(rawText) || status.includes(rawText) });
+          resolve({
+            status,
+            preview,
+            hasRaw: preview.includes(rawText) || status.includes(rawText),
+            pdfAvailable: !pdfButton?.disabled && !pdfButton?.hidden
+          });
         } else if (Date.now() - started > 10000) {
           clearInterval(timer);
           reject(new Error('Timed out waiting for malformed PDF warning: ' + JSON.stringify({
@@ -1483,6 +1635,7 @@ async function runScannerQa(connection, extensionId, tempDir) {
   assert.match(malformed.status, /could not read this PDF/i);
   assert.equal(malformed.preview, "");
   assert.equal(malformed.hasRaw, false, "malformed PDF scanner warning must not expose raw bytes");
+  assert.equal(malformed.pdfAvailable, false, "scanner must not offer redacted PDF for malformed PDFs");
 
   return {
     supported,
@@ -1492,6 +1645,7 @@ async function runScannerQa(connection, extensionId, tempDir) {
     imageMetadata,
     unsupportedDocx,
     unsupported,
+    emptyPdf,
     encrypted,
     malformed
   };

@@ -125,6 +125,9 @@
     const outputName = String(result.outputName || "");
     if (!outputName) return false;
     if (result.outputKind === "redacted_text_file") return outputName.toLowerCase().endsWith(".redacted.txt");
+    if (result.outputKind === "redacted_pdf_file") {
+      return result.extractedKind === "pdf" && outputName.toLowerCase().endsWith(".redacted.pdf");
+    }
     if (result.outputKind === "sanitized_text_file") return result.extractedKind === "text";
     return false;
   }

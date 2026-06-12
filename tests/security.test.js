@@ -42,6 +42,10 @@ const fileScannerSource = fs.readFileSync(
   path.join(repoRoot, "src/shared/fileScanner.js"),
   "utf8"
 );
+const pdfRedactorSource = fs.readFileSync(
+  path.join(repoRoot, "src/shared/pdfRedactor.js"),
+  "utf8"
+);
 const scannerSource = fs.readFileSync(path.join(repoRoot, "src/scanner/scanner.js"), "utf8");
 const fileAttachPipelineSource = fs.readFileSync(
   path.join(repoRoot, "src/content/files/fileAttachPipeline.js"),
@@ -612,6 +616,7 @@ function testDocumentExtractionDoesNotWriteRawTextToDebugStorageOrAuditSurfaces(
   for (const [label, source] of [
     ["fileExtractors", fileExtractorsSource],
     ["fileScanner", fileScannerSource],
+    ["pdfRedactor", pdfRedactorSource],
     ["scanner page", scannerSource]
   ]) {
     assertNotIncludes(source, "localStorage", `${label} must not persist extracted PDF/DOCX/XLSX/image metadata text to localStorage`);
@@ -623,7 +628,8 @@ function testDocumentExtractionDoesNotWriteRawTextToDebugStorageOrAuditSurfaces(
 
   for (const [label, source] of [
     ["fileExtractors", fileExtractorsSource],
-    ["fileScanner", fileScannerSource]
+    ["fileScanner", fileScannerSource],
+    ["pdfRedactor", pdfRedactorSource]
   ]) {
     assertNotIncludes(source, "console.log", `${label} must not log extracted PDF/DOCX/XLSX/image metadata text`);
     assertNotIncludes(source, "console.error", `${label} must not log extracted document extraction failures`);
@@ -645,12 +651,51 @@ function testDocumentExtractionDoesNotWriteRawTextToDebugStorageOrAuditSurfaces(
   );
 }
 
+function testPdfRedactedOutputStaysTextDerived() {
+  assert.ok(
+    scannerSource.includes("createRedactedPdfFromExtraction") &&
+      scannerSource.includes("sanitizedText: result?.redactedText") &&
+      scannerSource.includes("download-redacted-pdf-btn"),
+    "scanner page should generate redacted PDFs only from sanitized scanner text"
+  );
+  assert.ok(
+    contentFileExtractionPipelineSource.includes("createRedactedPdfFromExtraction") &&
+      contentFileExtractionPipelineSource.includes("sanitizedText") &&
+      contentFileExtractionPipelineSource.includes("redactedPdf.truncated !== true"),
+    "protected-site pipeline should generate redacted PDFs only from complete sanitized extracted text"
+  );
+  assert.ok(
+    contentFileExtractionPipelineSource.includes("pdf-redaction:pdf_redacted_text_truncated") &&
+      contentFileExtractionPipelineSource.includes("const outputKind = EXTRACTED_TEXT_OUTPUT_KINDS.has(extractedKind)") &&
+      contentFileExtractionPipelineSource.includes('"redacted_text_file"'),
+    "protected-site truncated PDF regeneration should fall back to sanitized redacted text"
+  );
+  assert.ok(
+    scannerSource.includes("new Blob([redactedPdf.bytes]") &&
+      scannerSource.includes('redactedPdf.mimeType || "application/pdf"'),
+    "scanner redacted PDF download should use regenerated PDF bytes and application/pdf MIME"
+  );
+  for (const [label, source] of [
+    ["file attach pipeline", fileAttachPipelineSource],
+    ["content script", contentSource],
+    ["file paste helper", filePasteHelperSource],
+    ["Gemini fallback writer", geminiFallbackWriterSource]
+  ]) {
+    assertNotIncludes(source, "createRedactedPdfFromExtraction", `${label} must not build .redacted.pdf outputs`);
+    assertNotIncludes(source, "download-redacted-pdf-btn", `${label} must not reference scanner PDF UI`);
+  }
+  assertNotIncludes(contentFileExtractionPipelineSource, "download-redacted-pdf-btn", "protected-site pipeline must not reference scanner PDF UI");
+  assertNotIncludes(contentFileExtractionPipelineSource, "originalPdf", "protected-site pipeline must not copy original PDF bytes");
+  assertNotIncludes(pdfRedactorSource, "drawImage", "PDF redactor must not overlay or rasterize original PDF pages");
+  assertNotIncludes(pdfRedactorSource, "fillRect", "PDF redactor must not overlay black rectangles on original PDF pages");
+}
+
 function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const baseManifest = JSON.parse(fs.readFileSync(path.join(repoRoot, "manifests/base.json"), "utf8"));
   const staticScripts = baseManifest.content_scripts[0].js;
   const dynamicScripts = Array.from(
     backgroundSource.matchAll(
-      /"([^"]+(?:fileLimits|fileTypeRegistry|fileExtractors|fileScanner|ocrRuntime|scannerOcr|file_paste_helpers|file_handoff_state|file_handoff_pending|file_handoff_flow|rewriteVerificationText|fileTransferPolicy|fileExtractionSessionCache|protectedSiteOcrBroker|contentFileExtractionPipeline|hostMatching|chatgptAdapter|openaiAdapter|geminiDiagnosticsAdapter|geminiAdapter|claudeAdapter|grokAdapter|xAdapter|index|geminiFallbackWriter|safeSnapshots|fileAttachPipeline|placeholderRehydrator|responseObserver|revealController|debugLogger|eventBindings|content)\.js)"/g
+      /"([^"]+(?:fileLimits|fileTypeRegistry|fileExtractors|fileScanner|pdfRedactor|ocrRuntime|scannerOcr|imageRedactor|file_paste_helpers|file_handoff_state|file_handoff_pending|file_handoff_flow|rewriteVerificationText|fileTransferPolicy|fileExtractionSessionCache|protectedSiteOcrBroker|contentFileExtractionPipeline|hostMatching|chatgptAdapter|openaiAdapter|geminiDiagnosticsAdapter|geminiAdapter|claudeAdapter|grokAdapter|xAdapter|index|geminiFallbackWriter|safeSnapshots|fileAttachPipeline|placeholderRehydrator|responseObserver|revealController|debugLogger|eventBindings|content)\.js)"/g
     )
   ).map((match) => match[1]);
   const adapterScripts = [
@@ -667,8 +712,10 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const staticFileTypeRegistry = staticScripts.indexOf("shared/fileTypeRegistry.js");
   const staticFileExtractors = staticScripts.indexOf("shared/fileExtractors.js");
   const staticFileScanner = staticScripts.indexOf("shared/fileScanner.js");
+  const staticPdfRedactor = staticScripts.indexOf("shared/pdfRedactor.js");
   const staticOcrRuntime = staticScripts.indexOf("shared/ocr/ocrRuntime.js");
   const staticScannerOcr = staticScripts.indexOf("shared/scannerOcr.js");
+  const staticImageRedactor = staticScripts.indexOf("shared/imageRedactor.js");
   const staticFilePaste = staticScripts.indexOf("content/file_paste_helpers.js");
   const staticFileHandoffState = staticScripts.indexOf("content/file_handoff_state.js");
   const staticFileHandoffPending = staticScripts.indexOf("content/file_handoff_pending.js");
@@ -693,8 +740,10 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const dynamicFileTypeRegistry = dynamicScripts.indexOf("shared/fileTypeRegistry.js");
   const dynamicFileExtractors = dynamicScripts.indexOf("shared/fileExtractors.js");
   const dynamicFileScanner = dynamicScripts.indexOf("shared/fileScanner.js");
+  const dynamicPdfRedactor = dynamicScripts.indexOf("shared/pdfRedactor.js");
   const dynamicOcrRuntime = dynamicScripts.indexOf("shared/ocr/ocrRuntime.js");
   const dynamicScannerOcr = dynamicScripts.indexOf("shared/scannerOcr.js");
+  const dynamicImageRedactor = dynamicScripts.indexOf("shared/imageRedactor.js");
   const dynamicFilePaste = dynamicScripts.indexOf("content/file_paste_helpers.js");
   const dynamicFileHandoffState = dynamicScripts.indexOf("content/file_handoff_state.js");
   const dynamicFileHandoffPending = dynamicScripts.indexOf("content/file_handoff_pending.js");
@@ -721,8 +770,10 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       staticFileTypeRegistry > -1 &&
       staticFileExtractors > -1 &&
       staticFileScanner > -1 &&
+      staticPdfRedactor > -1 &&
       staticOcrRuntime > -1 &&
       staticScannerOcr > -1 &&
+      staticImageRedactor > -1 &&
       staticFilePaste > -1 &&
       staticFileHandoffState > -1 &&
       staticFileHandoffPending > -1 &&
@@ -750,8 +801,10 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       dynamicFileTypeRegistry > -1 &&
       dynamicFileExtractors > -1 &&
       dynamicFileScanner > -1 &&
+      dynamicPdfRedactor > -1 &&
       dynamicOcrRuntime > -1 &&
       dynamicScannerOcr > -1 &&
+      dynamicImageRedactor > -1 &&
       dynamicFilePaste > -1 &&
       dynamicFileHandoffState > -1 &&
       dynamicFileHandoffPending > -1 &&
@@ -784,9 +837,11 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
     staticFileLimits < staticFileTypeRegistry &&
       staticFileTypeRegistry < staticFileExtractors &&
       staticFileExtractors < staticFileScanner &&
-      staticFileScanner < staticOcrRuntime &&
+      staticFileScanner < staticPdfRedactor &&
+      staticPdfRedactor < staticOcrRuntime &&
       staticOcrRuntime < staticScannerOcr &&
-      staticScannerOcr < staticFilePaste &&
+      staticScannerOcr < staticImageRedactor &&
+      staticImageRedactor < staticFilePaste &&
       staticFilePaste < staticFileHandoffState &&
       staticFileHandoffState < staticFileHandoffPending &&
       staticFileHandoffPending < staticFileHandoffFlow &&
@@ -813,9 +868,11 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
     dynamicFileLimits < dynamicFileTypeRegistry &&
       dynamicFileTypeRegistry < dynamicFileExtractors &&
       dynamicFileExtractors < dynamicFileScanner &&
-      dynamicFileScanner < dynamicOcrRuntime &&
+      dynamicFileScanner < dynamicPdfRedactor &&
+      dynamicPdfRedactor < dynamicOcrRuntime &&
       dynamicOcrRuntime < dynamicScannerOcr &&
-      dynamicScannerOcr < dynamicFilePaste &&
+      dynamicScannerOcr < dynamicImageRedactor &&
+      dynamicImageRedactor < dynamicFilePaste &&
       dynamicFilePaste < dynamicFileHandoffState &&
       dynamicFileHandoffState < dynamicFileHandoffPending &&
       dynamicFileHandoffPending < dynamicFileHandoffFlow &&
@@ -1031,6 +1088,7 @@ async function run() {
   testFileAttachPipelineStaysPureAndContentOwnsFileAttachSideEffects();
   testFileSnapshotDebugPayloadsStayMetadataOnly();
   testDocumentExtractionDoesNotWriteRawTextToDebugStorageOrAuditSurfaces();
+  testPdfRedactedOutputStaysTextDerived();
   testStaticAndDynamicFilePasteInjectionOrderStaysAligned();
   testBackgroundDeterministicRescanBackstopExists();
   testContentPublicStateIsMinimized();
@@ -1477,9 +1535,55 @@ async function testProtectedSiteOcrBrokerRejectsMalformedMessages() {
       }
     }
   });
+  await handler({
+    source: parent,
+    ports: [makePort()],
+    data: {
+      source: "LeakGuardProtectedSiteOcr",
+      channelId: "channel",
+      requestId: "malformed-prepare-extra-payload",
+      prepare: true,
+      payload: {
+        imageBytes: new ArrayBuffer(1),
+        mimeType: "image/png",
+        language: "eng"
+      }
+    }
+  });
+  await handler({
+    source: parent,
+    ports: [makePort()],
+    data: {
+      source: "LeakGuardProtectedSiteOcr",
+      channelId: "channel",
+      requestId: "malformed-prepare-timeout",
+      prepare: true,
+      timeoutMs: -1
+    }
+  });
 
   assert.strictEqual(runtimeCalls, 0, "malformed broker messages must not call OCR");
   assert.strictEqual(replies.length, 0, "malformed broker messages must not receive replies");
+
+  await handler({
+    source: parent,
+    ports: [makePort()],
+    data: {
+      source: "LeakGuardProtectedSiteOcr",
+      channelId: "channel",
+      requestId: "valid-prepare",
+      prepare: true,
+      timeoutMs: 1000
+    }
+  });
+
+  assert.strictEqual(runtimeCalls, 0, "valid broker prepare should not call OCR or expose OCR text");
+  assert.strictEqual(replies.length, 1, "valid broker prepare should reply through the private port");
+  assert.strictEqual(replies[0].requestId, "valid-prepare");
+  assert.strictEqual(replies[0].result.ok, true);
+  assert.strictEqual(replies[0].result.status, "protected_site_ocr_broker_ready");
+  assert.strictEqual(replies[0].result.language, "eng");
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(replies[0].result, "text"), false);
 
   await handler({
     source: parent,
@@ -1497,9 +1601,9 @@ async function testProtectedSiteOcrBrokerRejectsMalformedMessages() {
   });
 
   assert.strictEqual(runtimeCalls, 1, "valid private-channel broker message should call OCR once");
-  assert.strictEqual(replies.length, 1, "valid broker message should reply through the private port");
-  assert.strictEqual(replies[0].requestId, "valid");
-  assert.strictEqual(replies[0].result.text, "OCR:image/webp");
+  assert.strictEqual(replies.length, 2, "valid broker message should reply through the private port");
+  assert.strictEqual(replies[1].requestId, "valid");
+  assert.strictEqual(replies[1].result.text, "OCR:image/webp");
 }
 
 run().catch((error) => {

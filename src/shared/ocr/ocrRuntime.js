@@ -65,6 +65,14 @@
     return worker;
   }
 
+  function normalizeTimeoutMs(value, fallbackMs) {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric) && numeric > 0) {
+      return Math.max(1, numeric);
+    }
+    return fallbackMs;
+  }
+
   function classifyWorkerStartError(error) {
     const text = `${error?.name || ""} ${error?.message || ""}`.toLowerCase();
     if (text.includes("content security policy") || text.includes("security")) {
@@ -226,7 +234,7 @@
     });
   }
 
-  function createTesseractCoreProbe() {
+  function createTesseractCoreProbe(options = {}) {
     if (!isAvailable()) {
       return Promise.resolve({
         ok: false,
@@ -245,7 +253,7 @@
         activeWorker.onerror = null;
         workerStatus = "tesseract_core_probe_timeout";
         reject(new Error("OCR tesseract.js-core probe timed out."));
-      }, 3000);
+      }, normalizeTimeoutMs(options.timeoutMs, 3000));
 
       activeWorker.onmessage = (event) => {
         root.clearTimeout(timeout);
@@ -279,7 +287,7 @@
     });
   }
 
-  function createLanguageProbe(language = "eng") {
+  function createLanguageProbe(language = "eng", options = {}) {
     if (!isAvailable()) {
       return Promise.resolve({
         ok: false,
@@ -299,7 +307,7 @@
         activeWorker.onerror = null;
         workerStatus = "language_probe_timeout";
         reject(new Error("OCR language probe timed out."));
-      }, 5000);
+      }, normalizeTimeoutMs(options.timeoutMs, 5000));
 
       activeWorker.onmessage = (event) => {
         root.clearTimeout(timeout);
@@ -396,14 +404,17 @@
     const layoutBoxes = Array.isArray(response?.layout?.boxes)
       ? response.layout.boxes
           .map((box) => ({
-            kind: String(box?.kind || "line"),
+            boxKind: String(box?.boxKind || box?.kind || "line"),
+            kind: String(box?.boxKind || box?.kind || "line"),
             start: Math.max(0, Number(box?.start || 0)),
             end: Math.max(0, Number(box?.end || 0)),
             x: Math.max(0, Number(box?.x || 0)),
             y: Math.max(0, Number(box?.y || 0)),
             width: Math.max(0, Number(box?.width || 0)),
             height: Math.max(0, Number(box?.height || 0)),
-            confidenceBucket: String(box?.confidenceBucket || "unknown")
+            confidenceBucket: String(box?.confidenceBucket || "unknown"),
+            fallbackUsed: box?.fallbackUsed === true || box?.boxKind === "fallback" || box?.kind === "fallback",
+            visualRedactionSafe: box?.visualRedactionSafe === true
           }))
           .filter((box) => box.end > box.start && box.width > 0 && box.height > 0)
       : [];
@@ -417,8 +428,20 @@
       warnings: Array.isArray(response?.warnings) ? response.warnings.map(String).filter(Boolean) : []
     };
     if (layoutBoxes.length) {
+      const source =
+        response?.layout?.source === "fallback"
+          ? "fallback"
+          : response?.layout?.source === "word"
+            ? "word"
+            : "line";
+      const fallbackUsed = source === "fallback" || layoutBoxes.some((box) => box.fallbackUsed === true);
+      const visualRedactionSafe = layoutBoxes.every((box) => box.visualRedactionSafe === true);
       result.layout = {
-        source: response?.layout?.source === "word" ? "word" : "line",
+        source,
+        boxKind: source,
+        fallbackUsed,
+        visualRedactionSafe,
+        protectedSiteEligible: visualRedactionSafe && !fallbackUsed,
         boxes: layoutBoxes
       };
     }

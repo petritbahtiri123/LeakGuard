@@ -6,10 +6,22 @@ store listing, or alternate user-facing build.
 
 ## Current State
 
-OCR is not implemented yet. Current builds include only a tiny worker/WASM
-mechanics proof shell. They must not include OCR engine files, OCR model files,
-traineddata, OCR dependencies, remote OCR calls, CDN loading, runtime model
-downloads, new permissions, or CSP changes.
+LeakGuard now has local English-only image OCR for the extension-owned scanner
+page and an opt-in/default-off protected-site image OCR path. Protected-site
+visual image redaction uploads a flattened `.redacted.png` only when OCR boxes
+are eligible. Scanner visual image redaction also exports PNG.
+
+Scanner and protected-site text PDFs can export regenerated `.redacted.pdf` from
+sanitized text only; protected-site PDFs fall back to `.redacted.txt` when
+regeneration would truncate. DOCX, XLSX, image metadata, and OCR text outputs
+export `.redacted.txt`. LeakGuard does not provide layout-preserving PDF redaction
+or rebuild DOCX or XLSX originals,
+does not preserve original image format for visual redaction, and does not run
+scanned-PDF OCR.
+
+Current builds must not include remote OCR calls, CDN loading, runtime model
+downloads, new permissions, or CSP changes beyond the reviewed local WASM
+support already used by extension pages.
 
 The supported build targets remain:
 
@@ -18,11 +30,11 @@ The supported build targets remain:
 - `firefox`
 - `firefox-enterprise`
 
-## Future Runtime Direction
+## Runtime Direction
 
-When OCR is implemented, OCR code and assets must be packaged locally inside the
-same extension. Runtime loading must be lazy and must use extension-owned URLs
-only, such as `chrome.runtime.getURL(...)` or the Firefox-compatible equivalent.
+OCR code and assets must stay packaged locally inside the same extension.
+Runtime loading must be lazy and must use extension-owned URLs only, such as
+`chrome.runtime.getURL(...)` or the Firefox-compatible equivalent.
 Phase 11D-2 proved this local WASM loading shape with only `'wasm-unsafe-eval'`
 added to extension-page `script-src`; no remote script source or `'unsafe-eval'`
 is allowed.
@@ -39,9 +51,11 @@ OCR must not use:
 
 ## Rollout Order
 
-Scanner page OCR comes first. Protected-site OCR, drag/drop OCR, composer OCR,
-or automatic page-side OCR must wait until scanner OCR is stable, locally
-contained, and covered by browser QA.
+Scanner page OCR shipped first. Protected-site OCR remains an explicit opt-in
+and must stay default off until QA and product review approve any broader
+default. Drag/drop OCR outside the protected-site opt-in path, composer OCR, or
+automatic page-side OCR must wait until scanner/protected-site OCR remains
+stable, locally contained, and covered by browser QA.
 
 The first OCR language target is English only. Additional languages require a
 separate size, accuracy, privacy, and packaging review.
@@ -62,13 +76,16 @@ assets can ship.
 
 ## Security Gates
 
-Before OCR runtime proof work begins, tests must continue to prove:
+Tests must continue to prove:
 
-- default builds contain only the proof shell and tiny WASM loading asset
-- CSP remains unchanged
-- no OCR dependency has entered `package.json`
-- no remote OCR, CDN, traineddata, or model-download strings appear in runtime
-  packages
+- CSP keeps `'wasm-unsafe-eval'` but never `'unsafe-eval'`
+- protected-site OCR is opt-in and default off
+- no remote OCR, CDN, or model-download strings appear in runtime packages
 - OCR assets, when added later, are loaded only from extension package URLs
-- raw OCR result text is contained to scanner workflows until explicitly
-  promoted
+- raw OCR result text, raw image bytes, and redaction boxes are not persisted,
+  logged, sent remotely, or stored in audit metadata
+- protected-site OCR failure blocks raw image upload
+- scanner/protected-site visual redaction outputs PNG only when boxes are
+  eligible
+- no scanned-PDF OCR, non-English OCR, image format preservation, or
+  PDF/DOCX/XLSX rebuild claims appear in user-facing docs

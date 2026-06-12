@@ -387,6 +387,114 @@ function bucketConfidence(confidence) {
   return "none";
 }
 
+function findTextOffset(text, segment, cursor) {
+  const input = String(text || "");
+  const target = String(segment || "").trim();
+  if (!target) return -1;
+  const direct = input.indexOf(target, Math.max(0, cursor || 0));
+  if (direct >= 0) return direct;
+  return input.indexOf(target);
+}
+
+function qualityForBox(boxKind, confidence) {
+  const confidenceBucket = bucketConfidence(confidence);
+  const highEnough = confidenceBucket === "high" || confidenceBucket === "medium";
+  const fallbackUsed = boxKind === "fallback";
+  const visualRedactionSafe = highEnough && !fallbackUsed;
+  return {
+    boxKind,
+    kind: boxKind,
+    confidenceBucket,
+    fallbackUsed,
+    visualRedactionSafe,
+    protectedSiteEligible: visualRedactionSafe
+  };
+}
+
+function layoutSummary(source, boxes) {
+  const fallbackUsed = source === "fallback" || boxes.some((box) => box.fallbackUsed === true);
+  const visualRedactionSafe = boxes.length > 0 && boxes.every((box) => box.visualRedactionSafe === true);
+  return {
+    source,
+    boxKind: source,
+    fallbackUsed,
+    visualRedactionSafe,
+    protectedSiteEligible: visualRedactionSafe && !fallbackUsed,
+    boxes
+  };
+}
+
+function extractIteratorBoxes(module, api, text, level, boxKind) {
+  if (typeof api.GetIterator !== "function" || typeof level !== "number") return [];
+  let iterator = null;
+  try {
+    iterator = api.GetIterator();
+    if (!iterator || typeof iterator.Begin !== "function" || typeof iterator.Next !== "function") return [];
+    iterator.Begin();
+    const boxes = [];
+    let cursor = 0;
+    do {
+      const segment = String(iterator.GetUTF8Text(level) || "").trim();
+      const bounds = typeof iterator.getBoundingBox === "function" ? iterator.getBoundingBox(level) : null;
+      const start = findTextOffset(text, segment, cursor);
+      const end = start >= 0 ? start + segment.length : -1;
+      const x = Number(bounds?.x0);
+      const y = Number(bounds?.y0);
+      const width = Number(bounds?.x1) - x;
+      const height = Number(bounds?.y1) - y;
+      if (
+        start >= 0 &&
+        end > start &&
+        Number.isFinite(x) &&
+        Number.isFinite(y) &&
+        Number.isFinite(width) &&
+        Number.isFinite(height) &&
+        width > 0 &&
+        height > 0
+      ) {
+        boxes.push({
+          ...qualityForBox(boxKind, Number(iterator.Confidence(level) || 0)),
+          start,
+          end,
+          x,
+          y,
+          width,
+          height
+        });
+        cursor = end;
+      }
+    } while (iterator.Next(level));
+    return boxes;
+  } catch {
+    return [];
+  }
+}
+
+function buildOcrLayout(module, api, image, text, confidence) {
+  const wordBoxes = extractIteratorBoxes(module, api, text, module.RIL_WORD, "word");
+  if (wordBoxes.length) return layoutSummary("word", wordBoxes);
+
+  const lineBoxes = extractIteratorBoxes(module, api, text, module.RIL_TEXTLINE, "line");
+  if (lineBoxes.length) return layoutSummary("line", lineBoxes);
+
+  return layoutSummary(
+    text ? "fallback" : "none",
+    text
+      ? [
+          {
+            ...qualityForBox("fallback", confidence),
+            start: 0,
+            end: text.length,
+            x: 0,
+            y: 0,
+            width: image.width,
+            height: image.height
+          }
+        ]
+      : []
+  );
+}
+
 function classifyRecognitionError(error) {
   return error?.message || error?.name || "recognition_load_failed";
 }
@@ -465,23 +573,7 @@ function recognizeScannerImage(module, image) {
       text,
       textLength: text.length,
       confidenceBucket,
-      layout: {
-        source: text ? "line" : "none",
-        boxes: text
-          ? [
-              {
-                kind: "line",
-                start: 0,
-                end: text.length,
-                x: 0,
-                y: 0,
-                width: image.width,
-                height: image.height,
-                confidenceBucket
-              }
-            ]
-          : []
-      }
+      layout: buildOcrLayout(module, api, image, text, confidence)
     };
   } finally {
     try {

@@ -25,6 +25,14 @@
     return root.PWM.ScannerOcr || {};
   }
 
+  function getImageRedactor() {
+    return root.PWM.ImageRedactor || {};
+  }
+
+  function getPdfRedactor() {
+    return root.PWM.PdfRedactor || {};
+  }
+
   function getOcrRuntime() {
     return root.PWM.ProtectedSiteOcrBroker || root.PWM.OcrRuntime || {};
   }
@@ -68,6 +76,11 @@
   function buildRedactedTxtName(fileName) {
     const { base } = splitFileName(fileName);
     return `${base}.redacted.txt`;
+  }
+
+  function buildRedactedPngName(fileName) {
+    const { base } = splitFileName(fileName);
+    return `${base}.redacted.png`;
   }
 
   function listWarnings(...sources) {
@@ -161,6 +174,45 @@
     return null;
   }
 
+  function createImageFileFromBlob(blob, outputName) {
+    if (!blob) return null;
+    if (typeof root.File === "function") {
+      return new root.File([blob], outputName, {
+        type: "image/png",
+        lastModified: Date.now()
+      });
+    }
+    try {
+      Object.defineProperty(blob, "name", { value: outputName, configurable: true });
+      Object.defineProperty(blob, "lastModified", { value: Date.now(), configurable: true });
+    } catch {
+      // Blob metadata is best-effort; the bytes are still sanitized.
+    }
+    return blob;
+  }
+
+  function createBinaryFile(bytes, outputName, mimeType) {
+    if (!bytes || !outputName) return null;
+    const options = {
+      type: mimeType || "application/octet-stream",
+      lastModified: Date.now()
+    };
+    if (typeof root.File === "function") {
+      return new root.File([bytes], outputName, options);
+    }
+    if (typeof root.Blob === "function") {
+      const blob = new root.Blob([bytes], { type: options.type });
+      try {
+        Object.defineProperty(blob, "name", { value: outputName, configurable: true });
+        Object.defineProperty(blob, "lastModified", { value: options.lastModified, configurable: true });
+      } catch {
+        // Blob metadata is best-effort; the bytes are still sanitized.
+      }
+      return blob;
+    }
+    return null;
+  }
+
   async function readFileBuffer(file) {
     if (typeof file?.arrayBuffer !== "function") {
       throw new Error("file_array_buffer_unavailable");
@@ -238,7 +290,82 @@
         visualContentScanned: true,
         ocrSupported: true
       },
-      warnings: listWarnings(ocr.warnings)
+      warnings: listWarnings(ocr.warnings),
+      ocr
+    };
+  }
+
+  async function createProtectedSiteRedactedImage({ imageBytes, ocrExtraction, scan, originalName, mimeType } = {}) {
+    const scannerOcr = getScannerOcr();
+    const imageRedactor = getImageRedactor();
+    if (
+      typeof scannerOcr.redactionBoxesForOcrFindings !== "function" ||
+      typeof imageRedactor.createRedactedPng !== "function"
+    ) {
+      return {
+        ok: false,
+        status: "image_redactor_unavailable",
+        warnings: ["image_redactor_unavailable"]
+      };
+    }
+
+    const boxMapping = scannerOcr.redactionBoxesForOcrFindings({
+      ocr: ocrExtraction.ocr,
+      scanResult: scan,
+      scanText: ocrExtraction.text,
+      ocrText: ocrExtraction.ocr?.text
+    });
+    const warnings = listWarnings((boxMapping?.warnings || []).map((warning) => `image-redaction:${warning}`));
+
+    if (!boxMapping?.ok) {
+      return {
+        ok: false,
+        status: boxMapping?.status || "ocr_boxes_missing",
+        warnings
+      };
+    }
+
+    if (boxMapping.fallbackUsed === true || boxMapping.protectedSiteEligible !== true) {
+      return {
+        ok: true,
+        fallbackTextOnly: true,
+        status: "protected_site_visual_redaction_not_eligible",
+        warnings
+      };
+    }
+
+    const redactedImage = await imageRedactor.createRedactedPng({
+      imageBytes,
+      mimeType,
+      fileName: originalName,
+      boxes: boxMapping.boxes
+    });
+    if (!redactedImage?.ok || !redactedImage.blob) {
+      return {
+        ok: false,
+        status: redactedImage?.status || "image_redaction_failed",
+        warnings: listWarnings(warnings, [`image-redaction:${redactedImage?.status || "image_redaction_failed"}`])
+      };
+    }
+
+    const outputName = redactedImage.fileName || buildRedactedPngName(originalName);
+    const sanitizedFile = redactedImage.file || createImageFileFromBlob(redactedImage.blob, outputName);
+    if (!sanitizedFile) {
+      return {
+        ok: false,
+        status: "redacted_image_file_create_failed",
+        warnings: listWarnings(warnings, ["image-redaction:redacted_image_file_create_failed"])
+      };
+    }
+
+    return {
+      ok: true,
+      status: "protected_site_redacted_image_ready",
+      outputName,
+      outputKind: "redacted_image_file",
+      sanitizedFile,
+      warnings,
+      boxKind: boxMapping.boxKind
     };
   }
 
@@ -284,11 +411,27 @@
     if (!skipSessionCache && typeof sessionCache.get === "function") {
       const cached = sessionCache.get(file);
       if (cached?.status === "ready" && cached.safeForUpload === true) {
-        const sanitizedFile = createTextFile(
-          String(cached.sanitizedText || ""),
-          cached.outputName,
-          cached.outputKind === "redacted_text_file" ? "text/plain" : mimeType || "text/plain"
-        );
+        let sanitizedFile = null;
+        if (cached.outputKind === "redacted_pdf_file" && cached.extractedKind === "pdf") {
+          const pdfRedactor = getPdfRedactor();
+          const redactedPdf = pdfRedactor.createRedactedPdfFromText?.({
+            originalName,
+            text: cached.sanitizedText
+          });
+          if (redactedPdf?.ok && redactedPdf.bytes && redactedPdf.truncated !== true) {
+            sanitizedFile = createBinaryFile(
+              redactedPdf.bytes,
+              cached.outputName,
+              redactedPdf.mimeType || "application/pdf"
+            );
+          }
+        } else {
+          sanitizedFile = createTextFile(
+            String(cached.sanitizedText || ""),
+            cached.outputName,
+            cached.outputKind === "redacted_text_file" ? "text/plain" : mimeType || "text/plain"
+          );
+        }
         if (sanitizedFile) {
           return {
             ...cached,
@@ -353,6 +496,7 @@
       sizeBytes
     };
     let extractionWarnings = extraction?.warnings;
+    let protectedSiteImageOcrExtraction = null;
 
     if (!extraction?.safeForScan) {
       const status = extraction?.status === "unsupported" ? "unsupported" : "blocked";
@@ -384,6 +528,7 @@
       extractedText = ocrExtraction.text;
       extractionMetadata = ocrExtraction.metadata;
       extractionWarnings = ocrExtraction.warnings;
+      protectedSiteImageOcrExtraction = ocrExtraction;
     }
 
     const scan = scanner.scanTextContent({
@@ -395,6 +540,137 @@
       mode: options.mode || "hide_public"
     });
     const sanitizedText = String(scan.redactedText || "");
+
+    if (extractedKind === "pdf") {
+      const pdfRedactor = getPdfRedactor();
+      if (typeof pdfRedactor.createRedactedPdfFromExtraction === "function") {
+        const redactedPdf = pdfRedactor.createRedactedPdfFromExtraction({
+          originalName,
+          extraction,
+          sanitizedText
+        });
+        if (redactedPdf?.ok && redactedPdf.bytes && redactedPdf.truncated !== true) {
+          const outputName = redactedPdf.fileName || `${splitFileName(originalName).base}.redacted.pdf`;
+          const sanitizedFile = createBinaryFile(
+            redactedPdf.bytes,
+            outputName,
+            redactedPdf.mimeType || "application/pdf"
+          );
+          if (sanitizedFile) {
+            const result = {
+              status: "ready",
+              originalName,
+              outputName,
+              outputKind: "redacted_pdf_file",
+              extractedKind,
+              sanitizedText,
+              sanitizedFile,
+              metadata: {
+                original: {
+                  name: normalizeFileName(scan.file?.name || originalName),
+                  type: mimeType,
+                  size: sizeBytes
+                },
+                extraction: sanitizeExtractionMetadata(extractionMetadata),
+                scan: {
+                  findingsCount: Number(scan.summary?.findingsCount || 0),
+                  changed: scan.summary?.changed === true,
+                  redactedLength: sanitizedText.length
+                },
+                pdfRedaction: {
+                  output: "pdf",
+                  source: "sanitized_text",
+                  truncated: false
+                },
+                cache: {
+                  status: "miss"
+                }
+              },
+              warnings: listWarnings(extractionWarnings, scan.reportWarnings),
+              safeForUpload: true,
+              fallbackReason: ""
+            };
+            if (!skipSessionCache && typeof sessionCache.set === "function") {
+              sessionCache.set(file, result);
+            }
+            return result;
+          }
+          extractionWarnings = listWarnings(extractionWarnings, ["pdf-redaction:pdf_redacted_file_create_failed"]);
+        } else if (redactedPdf?.truncated === true) {
+          extractionWarnings = listWarnings(extractionWarnings, ["pdf-redaction:pdf_redacted_text_truncated"]);
+        } else if (redactedPdf?.status) {
+          extractionWarnings = listWarnings(extractionWarnings, [`pdf-redaction:${redactedPdf.status}`]);
+        }
+      } else {
+        extractionWarnings = listWarnings(extractionWarnings, ["pdf-redaction:pdf_redactor_unavailable"]);
+      }
+    }
+
+    if (
+      protectedSiteOcrEnabled &&
+      protectedSiteImageOcrExtraction &&
+      extractedKind === "image_ocr" &&
+      Number(scan.summary?.findingsCount || 0) > 0
+    ) {
+      const redactedImage = await createProtectedSiteRedactedImage({
+        imageBytes: buffer,
+        ocrExtraction: protectedSiteImageOcrExtraction,
+        scan,
+        originalName,
+        mimeType
+      });
+
+      if (!redactedImage.ok) {
+        return createEmptyResult("blocked", {
+          originalName,
+          mimeType,
+          sizeBytes,
+          extractedKind,
+          extractionMetadata,
+          warnings: redactedImage.warnings,
+          fallbackReason: redactedImage.status || "image_redaction_failed"
+        });
+      }
+
+      if (!redactedImage.fallbackTextOnly) {
+        return {
+          status: "ready",
+          originalName,
+          outputName: redactedImage.outputName,
+          outputKind: redactedImage.outputKind,
+          extractedKind,
+          sanitizedText,
+          sanitizedFile: redactedImage.sanitizedFile,
+          metadata: {
+            original: {
+              name: normalizeFileName(scan.file?.name || originalName),
+              type: mimeType,
+              size: sizeBytes
+            },
+            extraction: sanitizeExtractionMetadata(extractionMetadata),
+            scan: {
+              findingsCount: Number(scan.summary?.findingsCount || 0),
+              changed: scan.summary?.changed === true,
+              redactedLength: sanitizedText.length
+            },
+            visualRedaction: {
+              output: "png",
+              boxKind: redactedImage.boxKind || "",
+              protectedSiteEligible: true
+            },
+            cache: {
+              status: "miss"
+            }
+          },
+          warnings: listWarnings(extractionWarnings, scan.reportWarnings, redactedImage.warnings),
+          safeForUpload: true,
+          fallbackReason: ""
+        };
+      }
+
+      extractionWarnings = listWarnings(extractionWarnings, redactedImage.warnings);
+    }
+
     const outputName = EXTRACTED_TEXT_OUTPUT_KINDS.has(extractedKind)
       ? buildRedactedTxtName(scan.file?.name || originalName)
       : normalizeFileName(scan.file?.name || originalName);

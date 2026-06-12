@@ -30,6 +30,17 @@ const releaseChecklist = fs.readFileSync(
   path.join(repoRoot, "docs/RELEASE_QA_CHECKLIST.md"),
   "utf8"
 );
+const fileCapabilityMatrix = fs.readFileSync(
+  path.join(repoRoot, "docs/FILE_CAPABILITY_MATRIX.md"),
+  "utf8"
+);
+const phase14cProtectedSitePdfPlanPath = path.join(
+  repoRoot,
+  "docs/phase-14c-protected-site-pdf-redacted-output-plan.md"
+);
+const phase14cProtectedSitePdfPlan = fs.existsSync(phase14cProtectedSitePdfPlanPath)
+  ? fs.readFileSync(phase14cProtectedSitePdfPlanPath, "utf8")
+  : "";
 const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
 const testWorkflow = fs.readFileSync(path.join(repoRoot, ".github/workflows/test.yml"), "utf8");
 const chromeSmokeSource = fs.readFileSync(path.join(repoRoot, "tests/browser/chrome_smoke.test.mjs"), "utf8");
@@ -262,16 +273,23 @@ function testDocumentScannerCopyStaysV1Scoped() {
     "scanner UI should describe PDF, DOCX, XLSX, and scanner image support as scoped extraction only"
   );
   assert.ok(
-    scannerHtml.includes("Image OCR is English-only") &&
+      scannerHtml.includes("Image OCR is English-only") &&
       scannerHtml.includes("runs only after you select an image and click Scan File") &&
       scannerHtml.includes("limited to image files on this scanner page") &&
-      scannerHtml.includes("Protected-site upload OCR is available only when enabled in settings") &&
+      scannerHtml.includes("Protected-site upload OCR is off by default") &&
+      scannerHtml.includes("flattened redacted PNG only when OCR box confidence is eligible") &&
+      scannerHtml.includes("Text PDF scanner results can also export a .redacted.pdf regenerated from sanitized extracted text") &&
+      scannerHtml.includes("not layout-preserving") &&
+      scannerHtml.includes(".redacted.txt remains available as the fallback") &&
+      scannerHtml.includes("Protected-site text PDF output can hand off a regenerated .redacted.pdf when complete") &&
       scannerHtml.includes("Scanned PDF OCR") &&
+      scannerHtml.includes("DOCX/XLSX rebuilds") &&
+      scannerHtml.includes("image format preservation") &&
       scannerHtml.includes("legacy XLS") &&
       scannerHtml.includes("XLSM") &&
       scannerHtml.includes("embedded media") &&
-      /image redaction|image-redacted uploads|visual redaction/i.test(scannerHtml),
-    "scanner UI should explicitly scope English/local/images-only OCR, settings-gated protected-site OCR, and avoid scanned PDF, legacy XLS, XLSM, media, and image-redaction claims"
+      /visual redaction|redacted PNG/i.test(scannerHtml),
+    "scanner UI should explicitly scope English/local/images-only OCR, default-off confidence-gated protected-site OCR, and avoid scanned PDF, legacy XLS, XLSM, media, rebuild, and format-preservation claims"
   );
   assert.ok(
     !/image PDF support|full PDF|full DOCX|full XLSX|full image|rebuilt DOCX|rebuilt XLSX|rebuilt image|macro support/i.test(scannerHtml),
@@ -279,14 +297,17 @@ function testDocumentScannerCopyStaysV1Scoped() {
   );
   assert.ok(
     scannerHtml.includes("../shared/ocr/ocrRuntime.js") &&
+      scannerHtml.includes("../shared/pdfRedactor.js") &&
       scannerHtml.includes("../shared/scannerOcr.js") &&
       scannerJs.includes('extension === ".pdf"') &&
       scannerJs.includes('extension === ".docx"') &&
       scannerJs.includes('extension === ".xlsx"') &&
       scannerJs.includes('extension === ".png"') &&
       scannerJs.includes('extension === ".webp"') &&
-      scannerJs.includes('redacted.txt'),
-    "scanner redacted exports for PDFs, DOCX, XLSX, and images should be text files, not rebuilt documents or images"
+      scannerJs.includes('redacted.txt') &&
+      scannerJs.includes('redacted.pdf') &&
+      scannerJs.includes('redacted.png'),
+    "scanner redacted exports should keep text fallback, add scanner PDF proof output, and keep eligible image visual redaction PNG-only"
   );
 }
 
@@ -300,8 +321,14 @@ function testProtectedSiteOcrSettingsCopyIsAccurateAndScoped() {
     "local-only",
     "may be slower",
     "images only",
+    "flattened .redacted.png",
+    "OCR box confidence is eligible",
+    "JPG, JPEG, and WEBP inputs are exported as PNG",
     "No scanned PDF OCR",
-    "sanitized .redacted.txt",
+    "layout-preserving PDF redaction",
+    "DOCX/XLSX rebuilds",
+    "image format preservation",
+    "non-English OCR",
     "Raw image bytes and OCR text never leave your device"
   ]) {
     assert.ok(optionsHtml.includes(copy), `protected-site OCR settings copy should include: ${copy}`);
@@ -345,6 +372,108 @@ function testPublishReadinessDocsCoverStorePrivacyAndQa() {
       releaseChecklist.includes("manual smoke block"),
     "release checklist should cover popup flows and the manual smoke test"
   );
+}
+
+function testFileCapabilityMatrixDocumentsCurrentFileScope() {
+  assert.ok(fileExists("docs/FILE_CAPABILITY_MATRIX.md"), "file capability matrix should exist");
+
+  const matrixLower = fileCapabilityMatrix.toLowerCase();
+  for (const required of [
+    "local-only",
+    "text pdf",
+    "DOCX",
+    "XLSX",
+    "image metadata",
+    "Scanner image OCR",
+    "Protected-site image OCR opt-in",
+    "default off",
+    ".redacted.txt",
+    ".redacted.png",
+    "no scanned-PDF OCR",
+    "no non-English OCR",
+    "no remote OCR/backend",
+    "no image format preservation",
+    "Protected-site PDF output is regenerated from sanitized text only",
+    "DOCX/XLSX rebuild support"
+  ]) {
+    assert.ok(matrixLower.includes(required.toLowerCase()), `capability matrix should include: ${required}`);
+  }
+
+  assert.ok(
+    /Text PDF[\s\S]*Scanner: `\.redacted\.txt` and regenerated `\.redacted\.pdf`[\s\S]*Protected sites: regenerated `\.redacted\.pdf` only when complete/.test(fileCapabilityMatrix),
+    "matrix should state scanner and protected-site text PDFs can export regenerated PDFs with protected-site completeness gating"
+  );
+  assert.ok(
+    /DOCX[\s\S]*\.redacted\.txt[\s\S]*does not rebuild a DOCX/.test(fileCapabilityMatrix),
+    "matrix should state DOCX exports redacted text, not rebuilt DOCX"
+  );
+  assert.ok(
+    /XLSX[\s\S]*\.redacted\.txt[\s\S]*does not rebuild an XLSX/.test(fileCapabilityMatrix),
+    "matrix should state XLSX exports redacted text, not rebuilt XLSX"
+  );
+  assert.ok(
+    /Protected-site image OCR opt-in[\s\S]*default off[\s\S]*\.redacted\.png/.test(fileCapabilityMatrix),
+    "matrix should state protected-site OCR is opt-in/default off and PNG-only for visual upload"
+  );
+  assert.ok(
+    fileCapabilityMatrix.includes("Truncated regenerated PDFs are not handed off"),
+    "matrix should state truncated protected-site regenerated PDFs are not handed off"
+  );
+}
+
+function testPhase14cProtectedSitePdfPlanIsPlanningOnly() {
+  assert.ok(fileExists("docs/phase-14c-protected-site-pdf-redacted-output-plan.md"), "Phase 14C plan should exist");
+  for (const required of [
+    "protected-site PDF uploads only",
+    "text PDFs only",
+    "application/pdf",
+    ".redacted.pdf",
+    ".redacted.txt fallback",
+    "Gemini/Grok pending attach gates unchanged",
+    "do not upload raw PDF",
+    "prefer .redacted.txt fallback",
+    "not layout-preserving",
+    "original PDF streams are not copied",
+    "Do not implement in this phase"
+  ]) {
+    assert.ok(
+      phase14cProtectedSitePdfPlan.includes(required),
+      `Phase 14C plan should include: ${required}`
+    );
+  }
+}
+
+function testPublicDocsAlignWithCurrentFileCapabilities() {
+  const docs = {
+    readme,
+    storeListing,
+    privacyPolicy,
+    releaseChecklist,
+    fileCapabilityMatrix
+  };
+
+  for (const [label, doc] of Object.entries(docs)) {
+    for (const required of [
+      "remote OCR",
+      ".redacted.txt",
+      ".redacted.png",
+      "scanned-PDF OCR",
+      "non-English OCR"
+    ]) {
+      assert.ok(doc.includes(required), `${label} should mention current file capability boundary: ${required}`);
+    }
+  }
+
+  for (const forbidden of [
+    /PDF, DOCX, and image redaction are planned but not enabled/i,
+    /OCR is not implemented yet/i,
+    /no PDF, DOCX, image OCR, or visual image redaction in this release/i,
+    /Unsupported formats such as PDFs, DOCX files, images, archives, executables, and binary files are not scanned/i
+  ]) {
+    for (const [label, doc] of Object.entries(docs)) {
+      assert.strictEqual(forbidden.test(doc), false, `${label} should not contain stale file capability copy`);
+    }
+  }
 }
 
 function testBrowserQaScriptOwnsFirefoxSmokeCoverage() {
@@ -400,6 +529,9 @@ testDocumentScannerCopyStaysV1Scoped();
 testProtectedSiteOcrSettingsCopyIsAccurateAndScoped();
 testImageMetadataScannerAvoidsOcrDependencies();
 testPublishReadinessDocsCoverStorePrivacyAndQa();
+testFileCapabilityMatrixDocumentsCurrentFileScope();
+testPhase14cProtectedSitePdfPlanIsPlanningOnly();
+testPublicDocsAlignWithCurrentFileCapabilities();
   testBrowserQaScriptOwnsFirefoxSmokeCoverage();
   console.log("PASS productization static regressions");
 }

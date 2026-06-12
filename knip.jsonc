@@ -46,6 +46,8 @@
     // Scanner-only OCR classic scripts are loaded from scanner.html, not modules.
     "src/shared/ocr/ocrRuntime.js",
     "src/shared/ocr/ocrWorker.js",
+    "src/shared/pdfRedactor.js",
+    "src/shared/docxRedactor.js",
     "src/shared/scannerOcr.js",
     "src/shared/imageRedactor.js",
 

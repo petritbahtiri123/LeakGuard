@@ -5,7 +5,7 @@
   const REQUEST_SOURCE = "LeakGuardProtectedSiteOcr";
   const RESPONSE_SOURCE = "LeakGuardProtectedSiteOcrBroker";
   const BROKER_PATH = "content/protected_site_ocr_broker.html";
-  const DEFAULT_TIMEOUT_MS = 20000;
+  const DEFAULT_TIMEOUT_MS = 45000;
 
   let iframe = null;
   let iframeReady = null;
@@ -140,7 +140,12 @@
   }
 
   function prepare(payload = {}) {
-    return sendBrokerRequest({ prepare: true }, payload);
+    const timeoutMs = Number(payload.timeoutMs || 0);
+    const message = { prepare: true };
+    if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
+      message.timeoutMs = timeoutMs;
+    }
+    return sendBrokerRequest(message, payload);
   }
 
   function recognizeImageBytes(payload = {}) {

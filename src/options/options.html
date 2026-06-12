@@ -40,7 +40,8 @@
             <strong>Enable image OCR for protected-site uploads</strong>
             <small>
               English-only and local-only. It may be slower, works for images only, and does not scan PDFs.
-              No scanned PDF OCR, image redaction, or image rebuild. Future OCR output will be a sanitized .redacted.txt file.
+              It outputs a flattened .redacted.png only when OCR box confidence is eligible; JPG, JPEG, and WEBP inputs are exported as PNG.
+              No scanned PDF OCR, layout-preserving PDF redaction, DOCX/XLSX rebuilds, image format preservation, or non-English OCR.
               Raw image bytes and OCR text never leave your device.
             </small>
           </span>
