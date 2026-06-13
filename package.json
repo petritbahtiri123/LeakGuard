@@ -49,7 +49,7 @@
     "eslint": "^10.4.1",
     "globals": "^17.6.0",
     "knip": "^6.16.1",
-    "sharp": "^0.34.5",
+    "sharp": "^0.35.0",
     "yazl": "^3.3.1"
   },
   "dependencies": {
