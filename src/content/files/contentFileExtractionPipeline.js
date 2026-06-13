@@ -123,6 +123,9 @@
   }
 
   function createEmptyResult(status, options = {}) {
+    const metadataOriginalName = Object.prototype.hasOwnProperty.call(options, "metadataOriginalName")
+      ? normalizeFileName(options.metadataOriginalName)
+      : normalizeFileName(options.originalName);
     return {
       status,
       originalName: normalizeFileName(options.originalName),
@@ -133,7 +136,7 @@
       sanitizedFile: null,
       metadata: {
         original: {
-          name: normalizeFileName(options.originalName),
+          name: metadataOriginalName,
           type: normalizeMimeType(options.mimeType),
           size: Math.max(0, Number(options.sizeBytes || 0))
         },
@@ -160,6 +163,7 @@
       originalName: options.originalName,
       mimeType: options.mimeType,
       sizeBytes: options.sizeBytes,
+      metadataOriginalName: "",
       extractedKind: options.extractedKind || "image_ocr",
       extractionMetadata: options.extractionMetadata,
       warnings: listWarnings(options.warnings, [`image-redaction:${code}`]),

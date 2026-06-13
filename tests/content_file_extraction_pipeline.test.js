@@ -982,6 +982,33 @@ async function testProtectedSiteImageAttachBlocksWhenOcrDisabled() {
   }
 }
 
+async function testProtectedSiteImageBlockedMetadataDoesNotExposeRawFilenameSecret() {
+  const originalHelper = globalThis.PWM.isProtectedSiteOcrEnabled;
+  globalThis.PWM.isProtectedSiteOcrEnabled = async () => false;
+
+  try {
+    const file = fileFromBuffer(
+      `diagram-secret-filename-${RAW_SECRET}.png`,
+      "image/png",
+      bufferFromText("pixel bytes")
+    );
+    const result = await processFileForAdapterHandoff({ file, context: "drop" });
+    const serializedMetadata = JSON.stringify({
+      metadata: result.metadata,
+      warnings: result.warnings,
+      outputName: result.outputName,
+      fallbackReason: result.fallbackReason
+    });
+
+    assert.strictEqual(result.status, "blocked");
+    assert.strictEqual(result.fallbackReason, "protected_site_image_ocr_disabled");
+    assert.strictEqual(serializedMetadata.includes(RAW_SECRET), false);
+    assert.strictEqual(serializedMetadata.includes("secret-filename"), false);
+  } finally {
+    globalThis.PWM.isProtectedSiteOcrEnabled = originalHelper;
+  }
+}
+
 async function testProtectedSiteImageOcrRedactsSupportedFormatsWhenEnabled() {
   const originalHelper = globalThis.PWM.isProtectedSiteOcrEnabled;
   const rawSecret = "sk-proj-ProtectedSiteOcrApiKey1234567890abcdef";
@@ -1505,6 +1532,7 @@ async function run() {
   await testProtectedSiteImageOcrEnabledWithLineBoxesProducesPngWithWarning();
   await testProtectedSiteImageOcrFallbackBoxesFailClosedWithoutTextOutput();
   await testProtectedSiteImageOcrUnsafeBoxesFailClosed();
+  await testProtectedSiteImageBlockedMetadataDoesNotExposeRawFilenameSecret();
   await testProtectedSiteImageOcrRedactsSupportedFormatsWhenEnabled();
   await testProtectedSiteImageOcrEnabledLeavesUnsupportedImagesMetadataOnly();
   await testProtectedSiteImageOcrFailureFailsClosedWithoutCachingRawText();
