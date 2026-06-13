@@ -46,6 +46,10 @@
     createSanitizedTextFile
   } = FilePasteHelpers || {};
   const FileScanner = globalThis.PWM?.FileScanner || {};
+  const {
+    canExtractForAdapterHandoff,
+    processFileForAdapterHandoff
+  } = globalThis.PWM?.ContentFileExtractionPipeline || {};
   const StreamingFileRedactor = globalThis.PWM?.StreamingFileRedactor || {};
   const FileLimits = globalThis.PWM?.FileLimits || {};
   const {
@@ -230,7 +234,13 @@
     FileScanner.UNSUPPORTED_COMPOSER_FILE_MESSAGE ||
     FilePasteHelpers?.LOCAL_FILE_UNSUPPORTED_WARNING ||
     FileLimits.UNSUPPORTED_COMPOSER_FILE_MESSAGE ||
-    "LeakGuard did not scan or redact this file. Unsupported file types such as PDF, DOCX, images, archives, executables, and binary files are not protected in this release. Normal upload may continue through the site.";
+    "LeakGuard did not scan or redact this unsupported file. Supported text, text PDF, DOCX, XLSX, and PNG/JPG/JPEG/WEBP image paths are protected where available. Unsupported archives, executables, legacy Office files, unsupported images, and binary files are blocked on protected sites when LeakGuard cannot safely replace them.";
+  const UNSUPPORTED_PROTECTED_IMAGE_BLOCKED_TITLE = "Raw image upload blocked";
+  const UNSUPPORTED_PROTECTED_IMAGE_BLOCKED_MESSAGE =
+    "Raw image upload blocked. This image type is not supported for safe redaction.";
+  const SUPPORTED_IMAGE_REDACTION_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
+  const SUPPORTED_IMAGE_REDACTION_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+  const UNSUPPORTED_PROTECTED_IMAGE_EXTENSIONS = new Set([".gif", ".bmp", ".ico", ".svg"]);
   const FILE_DRAG_SESSION_RESET_MS = 5000;
   const GEMINI_UPLOAD_INPUT_WAIT_MS = 450;
   const GEMINI_GHOST_INGRESS_TIMEOUT_MS = 2200;
@@ -269,13 +279,15 @@
   let pendingGrokSanitizedFileObserver = null;
   let pendingGrokSanitizedFileTimer = 0;
   let pendingGrokSanitizedFileClickHandler = null;
+  let pendingGenericSanitizedFileHandoff = null;
+  let pendingGenericSanitizedFileTimer = 0;
   const FILE_HANDOFF_PENDING_ATTACH_ENABLED = Object.freeze({
     gemini: true,
     grok: true,
-    chatgpt: false,
-    claude: false,
-    openai: false,
-    x: false
+    chatgpt: true,
+    claude: true,
+    openai: true,
+    x: true
   });
   let dmzOverlayEl = null;
   let dmzOverlayStatusEl = null;
@@ -330,6 +342,7 @@
     attemptPendingGrokSanitizedFileHandoff,
     clearPendingGeminiSanitizedFileHandoff,
     clearPendingGrokSanitizedFileHandoff,
+    clearPendingGenericSanitizedFileHandoff,
     clearPendingSanitizedAttachPrompt,
     createSanitizedFileHandoffDetails,
     debugFileHandoffAdapterSelected,
@@ -344,6 +357,7 @@
     normalizeTarget,
     queuePendingGeminiSanitizedFileHandoff,
     queuePendingGrokSanitizedFileHandoff,
+    queuePendingGenericSanitizedFileHandoff,
     readSanitizedFileTextForFallback,
     refreshBadgeFromCurrentInput,
     setBadge,
@@ -456,6 +470,7 @@
     clearPendingGeminiGhostIngressClickInterceptor("extension-context-invalidated");
     clearPendingGeminiSanitizedFileHandoff("extension-context-invalidated");
     clearPendingGrokSanitizedFileHandoff("extension-context-invalidated");
+    clearPendingGenericSanitizedFileHandoff("extension-context-invalidated");
     setBadge("LeakGuard reloaded. Refresh this page.");
     hideBadgeSoon(5000);
   }
@@ -1120,6 +1135,22 @@
 
   function resolveFileDragGuardPolicy(dataTransfer) {
     const policy = resolveLocalFileTransferPolicy(dataTransfer);
+    const localTransferFiles = listLocalTransferFiles(dataTransfer);
+    if (
+      localTransferFiles.length === 1 &&
+      shouldUseContentFileExtractionPipeline(localTransferFiles[0])
+    ) {
+      return {
+        action: "block",
+        reason: "content_extraction_candidate"
+      };
+    }
+    if (shouldFailClosedProtectedUnsupportedFileTransfer(policy)) {
+      return {
+        action: "block",
+        reason: "unsupported_protected_file_blocked"
+      };
+    }
     if (isGeminiHost() && dataTransferLooksLikeFiles(dataTransfer)) {
       return {
         action: "block",
@@ -1148,7 +1179,16 @@
   }
 
   function getUnsupportedFileBlockedMessage(policy) {
+    if (isUnsupportedProtectedImageTransfer(policy)) {
+      return UNSUPPORTED_PROTECTED_IMAGE_BLOCKED_MESSAGE;
+    }
     return globalThis.PWM.FileTransferPolicy.getUnsupportedFileBlockedMessage(policy);
+  }
+
+  function getUnsupportedFileBlockedTitle(policy) {
+    return isUnsupportedProtectedImageTransfer(policy)
+      ? UNSUPPORTED_PROTECTED_IMAGE_BLOCKED_TITLE
+      : "Raw file upload blocked";
   }
 
   function clearDmzOverlayTimer() {
@@ -4514,7 +4554,11 @@
     if (id !== "generic") {
       return false;
     }
-    return currentPublicState.currentSite?.protected === true;
+    if (currentPublicState.currentSite?.protected === true) return true;
+    if (currentPublicState.currentSite?.protected === false) {
+      return getActiveProtection().protectionEnforced === true;
+    }
+    return getActiveProtection().paused !== true;
   }
 
   function shouldHandleChatGptLargeTextPaste(pasted, quickAnalysis) {
@@ -7619,6 +7663,90 @@
     };
   }
 
+  function clearPendingGenericSanitizedFileHandoff(reason = "") {
+    if (!pendingGenericSanitizedFileHandoff) {
+      clearPendingSanitizedAttachPrompt(reason || "generic-pending-cleared");
+      return;
+    }
+
+    const pending = pendingGenericSanitizedFileHandoff;
+    pendingGenericSanitizedFileHandoff = null;
+    clearPendingSanitizedAttachPrompt(reason || "generic-pending-cleared");
+
+    if (pendingGenericSanitizedFileTimer) {
+      clearTimeout(pendingGenericSanitizedFileTimer);
+      pendingGenericSanitizedFileTimer = 0;
+    }
+
+    debugReveal("file-handoff:generic-pending-cleared", {
+      site: pending.site || "",
+      reason,
+      ageMs: Math.max(0, Date.now() - Number(pending.createdAt || 0)),
+      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
+    });
+    debugReveal("file-handoff:pending-cleared", {
+      site: pending.site || "",
+      reason,
+      ageMs: Math.max(0, Date.now() - Number(pending.createdAt || 0)),
+      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
+    });
+  }
+
+  function queuePendingGenericSanitizedFileHandoff(adapter, event, input, sanitizedFile, details = null) {
+    const selectedAdapter = normalizeFileHandoffAdapter(adapter);
+    if (!selectedAdapter || !sanitizedFile) return false;
+    if (selectedAdapter.id === "gemini" || selectedAdapter.id === "grok" || selectedAdapter.id === "generic") {
+      return false;
+    }
+    if (!isFileHandoffAdapterPendingAttachEnabled(selectedAdapter)) return false;
+
+    const requestedHandoffStage = String(details?.handoffStage || "");
+    clearPendingGenericSanitizedFileHandoff("replaced");
+    pendingGenericSanitizedFileHandoff = {
+      site: selectedAdapter.id,
+      sanitizedFile,
+      input: input || null,
+      target: normalizeTarget(event?.target),
+      createdAt: Date.now(),
+      expiresAt: Date.now() + GROK_PENDING_SANITIZED_FILE_HANDOFF_MS
+    };
+
+    if (details) {
+      details.handoffStage = requestedHandoffStage || `${selectedAdapter.id}:pending-user-upload-input`;
+      details.failureReason = "pending_until_user_exposes_file_input";
+    }
+
+    pendingGenericSanitizedFileTimer = setTimeout(() => {
+      clearPendingGenericSanitizedFileHandoff("expired");
+    }, GROK_PENDING_SANITIZED_FILE_HANDOFF_MS);
+
+    debugReveal("file-handoff:generic-pending-queued", {
+      site: selectedAdapter.id,
+      ttlMs: GROK_PENDING_SANITIZED_FILE_HANDOFF_MS,
+      sanitizedFile: describeFileForDebug(sanitizedFile)
+    });
+    debugReveal("pending-attach-synthetic-loop-suppressed", {
+      site: selectedAdapter.id,
+      streaming: requestedHandoffStage.includes("streaming"),
+      sanitizedFile: describeFileForDebug(sanitizedFile)
+    });
+    hideDmzOverlay();
+    const pendingEvent = createPendingAttachEvent(
+      event,
+      `pending-${selectedAdapter.id}-sanitized-file-attach`
+    );
+    showPendingSanitizedAttachPrompt(selectedAdapter, {
+      site: selectedAdapter.id,
+      event: pendingEvent,
+      input,
+      sanitizedFile,
+      message: getPendingSanitizedAttachPromptMessage(selectedAdapter.id)
+    });
+    setBadge(getPendingSanitizedAttachPromptMessage(selectedAdapter.id));
+    hideBadgeSoon(6500);
+    return true;
+  }
+
   function clearFileDragSession(options = {}) {
     clearPendingGeminiGhostIngressClickInterceptor("drag-session-cleared");
     fileDragSessionId += 1;
@@ -9095,6 +9223,134 @@
     return "";
   }
 
+  function shouldUseContentFileExtractionPipeline(file) {
+    if (
+      !file ||
+      typeof canExtractForAdapterHandoff !== "function" ||
+      typeof processFileForAdapterHandoff !== "function"
+    ) {
+      return false;
+    }
+    if (isUnsupportedLegacyOfficeFile(file)) {
+      return false;
+    }
+    if (typeof FileScanner.isSupportedTextFile === "function" && FileScanner.isSupportedTextFile(file.name, file.type)) {
+      return false;
+    }
+    return canExtractForAdapterHandoff(file);
+  }
+
+  function isImageContentExtractionResult(result) {
+    const kind = String(result?.extractedKind || "");
+    const outputKind = String(result?.outputKind || "");
+    const mimeType = String(result?.metadata?.original?.type || "").toLowerCase();
+    return (
+      result?.fileOnlyUpload === true ||
+      outputKind === "redacted_image_file" ||
+      kind === "image_metadata" ||
+      kind === "image_ocr" ||
+      mimeType.startsWith("image/")
+    );
+  }
+
+  function getContentExtractionBlockedTitle(result) {
+    return isImageContentExtractionResult(result) ? "Raw image upload blocked" : "Raw file blocked";
+  }
+
+  function getContentExtractionBlockedMessage(reason, result) {
+    const code = String(reason || "content_file_extraction_failed");
+    if (isImageContentExtractionResult(result)) {
+      return "Raw image upload blocked.";
+    }
+    if (code === "pdf_no_extractable_text") {
+      return "LeakGuard blocked the raw upload because this appears to be a scanned or image-only PDF. Local PDF OCR is not available yet, so LeakGuard could not create a safe redacted replacement.";
+    }
+    return `LeakGuard blocked raw file upload because local file extraction did not produce safe text. Reason: ${code}.`;
+  }
+
+  function localFileFromContentExtractionResult(result) {
+    const fallbackReason = result?.fallbackReason || result?.status || "content_file_extraction_failed";
+    if (!result || result.status !== "ready" || !result.safeForUpload || !result.sanitizedFile) {
+      return {
+        handled: true,
+        ok: false,
+        code: fallbackReason,
+        title: getContentExtractionBlockedTitle(result),
+        message: getContentExtractionBlockedMessage(fallbackReason, result)
+      };
+    }
+
+    const imageRedactionMode = isImageContentExtractionResult(result);
+    const sanitizedFile = result.sanitizedFile;
+    return {
+      handled: true,
+      ok: true,
+      text: imageRedactionMode ? "" : result.sanitizedText,
+      file: {
+        name: result.outputName,
+        extension: FileScanner.getFileExtension?.(result.outputName) || ".txt",
+        type: sanitizedFile?.type || (imageRedactionMode ? "image/png" : "text/plain"),
+        sizeBytes: Number(sanitizedFile?.size || result.sanitizedText.length || 0)
+      },
+      fileOnlyUpload: imageRedactionMode || result.fileOnlyUpload === true,
+      imageRedactionMode,
+      skipTextFallback: imageRedactionMode || result.skipTextFallback === true,
+      successStatus: imageRedactionMode ? "Sanitized image attached." : "",
+      failureTitle: imageRedactionMode ? "Raw image upload blocked" : "",
+      contentExtraction: result
+    };
+  }
+
+  function isUnsupportedLegacyOfficeFile(file) {
+    return /\.(?:doc|docm|xls|xlsm)$/i.test(String(file?.name || "").toLowerCase());
+  }
+
+  function getLocalFileExtension(file) {
+    if (typeof FileScanner.getFileExtension === "function") {
+      return String(FileScanner.getFileExtension(file?.name || "") || "").toLowerCase();
+    }
+    const name = String(file?.name || "").split(/[\\/]/).pop().toLowerCase();
+    const index = name.lastIndexOf(".");
+    if (index <= 0 || index === name.length - 1) return "";
+    return name.slice(index);
+  }
+
+  function getLocalFileMimeType(file) {
+    return String(file?.type || "").split(";")[0].trim().toLowerCase();
+  }
+
+  function isUnsupportedImageFileForProtectedUpload(file) {
+    const extension = getLocalFileExtension(file);
+    const mimeType = getLocalFileMimeType(file);
+    if (UNSUPPORTED_PROTECTED_IMAGE_EXTENSIONS.has(extension)) {
+      return true;
+    }
+    if (!mimeType.startsWith("image/")) {
+      return false;
+    }
+    return (
+      !SUPPORTED_IMAGE_REDACTION_EXTENSIONS.has(extension) ||
+      !SUPPORTED_IMAGE_REDACTION_MIME_TYPES.has(mimeType)
+    );
+  }
+
+  function isUnsupportedProtectedImageTransfer(policy) {
+    const files = Array.from(policy?.files || []);
+    return files.length === 1 && isUnsupportedImageFileForProtectedUpload(files[0]);
+  }
+
+  function shouldFailClosedProtectedUnsupportedFileTransfer(policy) {
+    if (policy?.action !== "allow" || !isProtectedFileDropDriver(getCurrentHandoffDriverId())) {
+      return false;
+    }
+
+    const files = Array.from(policy.files || []);
+    return (
+      files.length === 1 &&
+      (isUnsupportedLegacyOfficeFile(files[0]) || isUnsupportedImageFileForProtectedUpload(files[0]))
+    );
+  }
+
   async function maybeHandleLocalFileInsert(event, input, dataTransfer, context) {
     if (
       !extensionRuntimeAvailable ||
@@ -9109,25 +9365,40 @@
       return false;
     }
 
+    const localTransferFiles = listLocalTransferFiles(dataTransfer);
+    const contentExtractionFile =
+      localTransferFiles.length === 1 && shouldUseContentFileExtractionPipeline(localTransferFiles[0])
+        ? localTransferFiles[0]
+        : null;
     const transferPolicy = resolveLocalFileTransferPolicy(dataTransfer);
-    if (transferPolicy.action === "allow") {
-      if (shouldBlockUnsupportedFileTransfer(transferPolicy)) {
+    if (transferPolicy.action === "allow" && !contentExtractionFile) {
+      const unsupportedFileMustBlock =
+        shouldBlockUnsupportedFileTransfer(transferPolicy) ||
+        shouldFailClosedProtectedUnsupportedFileTransfer(transferPolicy);
+      if (unsupportedFileMustBlock) {
+        const unsupportedBlockReason = shouldBlockUnsupportedFileTransfer(transferPolicy)
+          ? "firefox_unsupported_file_blocked"
+          : "unsupported_protected_file_blocked";
+        const unsupportedBlockTitle = getUnsupportedFileBlockedTitle(transferPolicy);
         if (!event.defaultPrevented) {
           consumeInterceptionEvent(event);
         }
-        showFileProcessingError("Raw file upload blocked", {
+        if (event?.target?.tagName === "INPUT" && String(event.target.type || "").toLowerCase() === "file") {
+          clearLocalFileInputSelection(event.target);
+        }
+        showFileProcessingError(unsupportedBlockTitle, {
           site: getCurrentHandoffDriverId(),
-          reason: "firefox_unsupported_file_blocked"
+          reason: unsupportedBlockReason
         });
-        hideFileProcessingOverlay("firefox_unsupported_file_blocked");
-        setBadge("Raw file upload blocked");
+        hideFileProcessingOverlay(unsupportedBlockReason);
+        setBadge(unsupportedBlockTitle);
         hideBadgeSoon(4200);
-        await showMessageModal("Raw file upload blocked", getUnsupportedFileBlockedMessage(transferPolicy));
+        await showMessageModal(unsupportedBlockTitle, getUnsupportedFileBlockedMessage(transferPolicy));
         refreshBadgeFromCurrentInput();
         return {
           handled: true,
           ok: false,
-          reason: "firefox_unsupported_file_blocked"
+          reason: unsupportedBlockReason
         };
       }
       showUnsupportedFilePassThroughNotice(transferPolicy);
@@ -9183,7 +9454,15 @@
     });
 
     try {
-    const localFile = await readLocalTextFileFromDataTransfer(dataTransfer);
+    const contentExtractionResult = contentExtractionFile
+      ? await processFileForAdapterHandoff({
+          file: contentExtractionFile,
+          context
+        })
+      : null;
+    const localFile = contentExtractionResult
+      ? localFileFromContentExtractionResult(contentExtractionResult)
+      : await readLocalTextFileFromDataTransfer(dataTransfer);
     if (context === "file-input") {
       logFileInterception("file scan result", {
         handled: Boolean(localFile.handled),
@@ -9235,12 +9514,18 @@
           blocking: true
         });
         const streamResult = await streamRedactLocalTextFile(localFile.sourceFile, localFile.file);
-        const isGeminiDrop = context === "drop" && isGeminiHost();
-        const isGrokDrop = context === "drop" && isGrokHost();
+        const streamingPendingAdapter = context === "drop" ? getFileHandoffAdapterForLocation() : null;
+        const streamingPendingAdapterId =
+          streamingPendingAdapter && isFileHandoffAdapterPendingAttachEnabled(streamingPendingAdapter)
+            ? streamingPendingAdapter.id
+            : "";
+        const isGeminiDrop = !streamingPendingAdapterId && context === "drop" && isGeminiHost();
+        const isGrokDrop = !streamingPendingAdapterId && context === "drop" && isGrokHost();
         const streamingPlan = globalThis.PWM.FileAttachPipeline.classifyStreamingAttachPlan({
           context,
           isGeminiDrop,
           isGrokDrop,
+          pendingAdapterId: streamingPendingAdapterId,
           streamResultAction: streamResult.action,
           hasSanitizedFile: Boolean(streamResult.sanitizedFile)
         });
@@ -9412,12 +9697,15 @@
         hideBadgeSoon(4200);
         await showMessageModal(STREAMING_BLOCK_TITLE, localFile.message || STREAMING_BLOCK_MESSAGE);
       } else {
-        const firefoxBlockedMessage = getFirefoxRawFileUploadBlockedMessage(context);
-        failProcessing(localFile.code || "file_scan_failed", "Raw file blocked");
-        setBadge("Raw file blocked");
+        const firefoxBlockedMessage = localFile.title === "Raw image upload blocked"
+          ? ""
+          : getFirefoxRawFileUploadBlockedMessage(context);
+        const blockedTitle = localFile.title || "Raw file blocked";
+        failProcessing(localFile.code || "file_scan_failed", blockedTitle);
+        setBadge(blockedTitle);
         hideBadgeSoon(4200);
         await showMessageModal(
-          "Raw file blocked",
+          blockedTitle,
           firefoxBlockedMessage || localFile.message || "LeakGuard blocked raw file upload because local scanning failed."
         );
       }
@@ -9429,22 +9717,31 @@
       };
     }
 
-    const sizeInfo = classifyLocalTextPayloadSize({
-      text: localFile.text,
-      sizeBytes: localFile.file?.sizeBytes
-    });
+    const imageRedactionMode = localFile.imageRedactionMode === true || localFile.fileOnlyUpload === true;
+    const sizeInfo = imageRedactionMode
+      ? {
+          zone: "fast",
+          bytes: Math.max(0, Number(localFile.file?.sizeBytes || 0))
+        }
+      : classifyLocalTextPayloadSize({
+          text: localFile.text,
+          sizeBytes: localFile.file?.sizeBytes
+        });
     if (sizeInfo.zone === "blocked") {
       failProcessing("local_text_payload_too_large", LOCAL_TEXT_HARD_BLOCK_TITLE);
       await blockLargeLocalTextPayload(event, sizeInfo);
       return true;
     }
 
-    const shouldSkipTextFallback = context === "file-input" && isFirefoxRuntime() && isGeminiHost();
+    const shouldSkipTextFallback =
+      localFile.skipTextFallback === true ||
+      (context === "file-input" && isFirefoxRuntime() && isGeminiHost());
     const preflightPlan = globalThis.PWM.FileAttachPipeline.classifyFileAttachPreflightPlan({
       context,
       sizeZone: sizeInfo.zone,
       usesDmzOverlay: getCurrentHandoffDriver()?.usesDmzOverlay === true,
       skipTextFallback: shouldSkipTextFallback,
+      imageRedactionMode,
       allowPendingFallback: context === "drop"
     });
     const optimizedStatus = preflightPlan.optimizedStatus.shouldShow;
@@ -9469,8 +9766,26 @@
         progress: preflightPlan.sanitizationStatus.processingProgress,
         blocking: preflightPlan.sanitizationStatus.processingBlocking
       });
-      result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
-      sanitizedFile = createSanitizedTextFile(localFile.file, result.redactedText);
+      if (contentExtractionResult?.status === "ready") {
+        const contentExtractionFileOnly =
+          localFile.fileOnlyUpload === true || contentExtractionResult.fileOnlyUpload === true;
+        result = {
+          redactedText: contentExtractionFileOnly ? "" : contentExtractionResult.sanitizedText,
+          replacements: []
+        };
+        sanitizedFile = contentExtractionResult.sanitizedFile;
+        analysis = {
+          normalizedText: contentExtractionResult.sanitizedText,
+          secretFindings: Array.from(
+            { length: Number(contentExtractionResult.metadata?.scan?.findingsCount || 0) },
+            () => ({})
+          ),
+          findings: []
+        };
+      } else {
+        result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
+        sanitizedFile = createSanitizedTextFile(localFile.file, result.redactedText);
+      }
     } catch (error) {
       if (optimizedStatus) {
         clearLocalPayloadOptimizationStatus(
@@ -9486,11 +9801,12 @@
         setDmzOverlayState("Raw file blocked", "failed");
         scheduleDmzOverlayCleanup(3600);
       }
-      failProcessing("local_file_sanitization_failed", "Raw file upload blocked");
-      setBadge("Raw file upload blocked");
+      const sanitizationFailureTitle = imageRedactionMode ? "Raw image upload blocked" : "Raw file upload blocked";
+      failProcessing("local_file_sanitization_failed", sanitizationFailureTitle);
+      setBadge(sanitizationFailureTitle);
       hideBadgeSoon(4200);
       await showMessageModal(
-        "Raw file upload blocked",
+        sanitizationFailureTitle,
         getFirefoxRawFileUploadBlockedMessage(context) ||
           "LeakGuard blocked raw file upload because local sanitization failed."
       );
@@ -9525,6 +9841,10 @@
       analysis,
       result
     });
+    if (imageRedactionMode) {
+      payload.allowFileOnlyHandoff = true;
+      payload.imageRedactionMode = true;
+    }
     const attachFlow = await globalThis.PWM.FileAttachPipeline.runSanitizedFileAttachFlow({
       context,
       tryDropHandoff: () =>
@@ -9536,6 +9856,7 @@
       allowPendingFallback: preflightPlan.attachFlowOptions.allowPendingFallback && Boolean(sanitizedFile),
       defaultSuccessStrategy: preflightPlan.attachFlowOptions.defaultSuccessStrategy,
       failureReason: preflightPlan.attachFlowOptions.failureReason,
+      successStatus: preflightPlan.attachFlowOptions.successStatus,
       fileStrategy: preflightPlan.attachFlowOptions.fileStrategy,
       textStrategy: preflightPlan.attachFlowOptions.textStrategy,
       usesDmzOverlay: driver.usesDmzOverlay === true,
@@ -9601,12 +9922,16 @@
         sanitizedFile: describeFileForDebug(sanitizedFile)
       });
       if (handoffClassification.shouldFailProcessing) {
-        failProcessing(handoffClassification.reason, "Raw file upload blocked");
+        failProcessing(
+          handoffClassification.reason,
+          imageRedactionMode ? "Raw image upload blocked" : "Raw file upload blocked"
+        );
       }
-      setBadge("Raw file upload blocked");
+      const handoffFailureTitle = imageRedactionMode ? "Raw image upload blocked" : "Raw file upload blocked";
+      setBadge(handoffFailureTitle);
       hideBadgeSoon(4200);
       await showMessageModal(
-        "Raw file upload blocked",
+        handoffFailureTitle,
         handoffResult.message ||
           "LeakGuard blocked raw file upload. Sanitized file handoff failed; use File Scanner or paste redacted text manually."
       );
@@ -9641,6 +9966,7 @@
     return {
       handled: handoffClassification.handled,
       ok: true,
+      stage: handoffClassification.stage,
       strategy: handoffClassification.strategy
     };
     } catch (error) {
@@ -9672,14 +9998,31 @@
       return;
     }
 
+    const localTransferFiles = listLocalTransferFiles(snapshotDataTransfer);
+    const contentExtractionFile =
+      localTransferFiles.length === 1 && shouldUseContentFileExtractionPipeline(localTransferFiles[0])
+        ? localTransferFiles[0]
+        : null;
     const transferPolicy = resolveLocalFileTransferPolicy(snapshotDataTransfer);
-    if (transferPolicy.action === "allow") {
-      if (shouldBlockUnsupportedFileTransfer(transferPolicy)) {
+    if (transferPolicy.action === "allow" && !contentExtractionFile) {
+      const unsupportedFileMustBlock =
+        shouldBlockUnsupportedFileTransfer(transferPolicy) ||
+        shouldFailClosedProtectedUnsupportedFileTransfer(transferPolicy);
+      if (unsupportedFileMustBlock) {
+        const unsupportedBlockReason = shouldBlockUnsupportedFileTransfer(transferPolicy)
+          ? "firefox_unsupported_file_blocked"
+          : "unsupported_protected_file_blocked";
+        const unsupportedBlockTitle = getUnsupportedFileBlockedTitle(transferPolicy);
         rawFileDropInterceptions.add(event);
         consumeInterceptionEvent(event);
-        setBadge("Raw file upload blocked");
+        showFileProcessingError(unsupportedBlockTitle, {
+          site: getCurrentHandoffDriverId(),
+          reason: unsupportedBlockReason
+        });
+        hideFileProcessingOverlay(unsupportedBlockReason);
+        setBadge(unsupportedBlockTitle);
         hideBadgeSoon(4200);
-        await showMessageModal("Raw file upload blocked", getUnsupportedFileBlockedMessage(transferPolicy));
+        await showMessageModal(unsupportedBlockTitle, getUnsupportedFileBlockedMessage(transferPolicy));
         refreshBadgeFromCurrentInput();
         clearFileDragSession();
         return;
@@ -9837,18 +10180,24 @@
     }
 
     const input = findComposer(event.target);
-    if (!input && !isGeminiHost()) {
+    const hasContentExtractionFile =
+      selectedFiles.length === 1 && shouldUseContentFileExtractionPipeline(selectedFiles[0]);
+    const selectedTransfer = {
+      files: selectedFiles,
+      types: ["Files"],
+      items: []
+    };
+    const selectedTransferPolicy = resolveLocalFileTransferPolicy(selectedTransfer);
+    const hasFailClosedProtectedUnsupportedFile =
+      shouldFailClosedProtectedUnsupportedFileTransfer(selectedTransferPolicy);
+    if (!input && !isGeminiHost() && !hasContentExtractionFile && !hasFailClosedProtectedUnsupportedFile) {
       if (!(isFirefoxRuntime() && isProtectedFileDropDriver(getCurrentHandoffDriverId()))) return;
     }
 
     const result = await maybeHandleLocalFileInsert(
       event,
       input,
-      {
-        files: selectedFiles,
-        types: ["Files"],
-        items: []
-      },
+      selectedTransfer,
       "file-input"
     );
     if (isFirefoxProtectedInput && transaction) {
@@ -10646,6 +10995,7 @@
     clearPendingGeminiGhostIngressClickInterceptor("navigation");
     clearPendingGeminiSanitizedFileHandoff("navigation");
     clearPendingGrokSanitizedFileHandoff("navigation");
+    clearPendingGenericSanitizedFileHandoff("navigation");
     clearAllRiskSessionState();
     await initState();
     ResponseObserver.rehydrateTree(document.body, getResponseObserverOptions());

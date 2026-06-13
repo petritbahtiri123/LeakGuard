@@ -12,6 +12,36 @@ Use this file as a short handoff log for AI-made changes. Add newest entries fir
 ```
 
 ## Entries
+### 2026-06-10 - Phase 11G synthetic OCR recognition proof
+- Goal: Prove local OCR recognition against a tiny packaged synthetic PNG through an explicit worker probe while keeping scanner UI, protected-site uploads, and user image processing disabled.
+- Files: `src/shared/ocr/ocrWorker.js`, `src/shared/ocr/ocrRuntime.js`, `src/shared/ocr/fixtures/synthetic-test-ocr.png`, `tests/build_targets.test.js`, `tests/security.test.js`, `tests/browser/chrome_smoke.test.mjs`, `tests/browser/firefox_smoke.test.mjs`, `docs/CODEX_CHANGELOG.md`
+- Tests: `npm run lint:unused` -> pass; `npm run deadcode` -> pass with existing Knip extension hints; `npm test` -> pass; `npm run build:all` -> pass; `npm run package:release` -> pass; `npm run bench:file-extraction` -> pass; `npm run smoke:chrome` -> pass; `npm run qa:browser` -> pass; `npm run smoke:firefox` -> pass; `git diff --check` -> pass
+- Notes: `{ type: "ocr_recognition_probe" }` returns `ocr_recognition_ready` in Chrome, Edge, and Firefox smoke after recognizing the packaged synthetic `TEST OCR` fixture. The worker returns metadata only: text length, expected-text boolean, and confidence bucket. Added fixture is 3,110 installed bytes and 2,945 compressed bytes per release zip; installed targets stay about 19.92 MiB, below the 50 MiB warning gate.
+
+### 2026-06-10 - Phase 11F local English traineddata proof
+- Goal: Prove packaged English `eng.traineddata.gz` loading from an explicit OCR worker language probe without enabling OCR recognition, scanner UI exposure, remote downloads, permissions, or CSP changes.
+- Files: `src/shared/ocr/ocrWorker.js`, `src/shared/ocr/ocrRuntime.js`, `src/shared/ocr/tessdata/eng.traineddata.gz`, `tests/build_targets.test.js`, `tests/security.test.js`, `tests/browser/chrome_smoke.test.mjs`, `tests/browser/firefox_smoke.test.mjs`, `docs/CODEX_CHANGELOG.md`
+- Tests: `npm run lint:unused` -> pass; `npm run deadcode` -> pass with existing Knip extension hints; `npm test` -> pass; `npm run build:all` -> pass; `npm run package:release` -> pass; `npm run bench:file-extraction` -> pass; `npm run smoke:chrome` -> pass; `npm run qa:browser` -> pass; `npm run smoke:firefox` -> pass; `git diff --check` -> pass
+- Notes: `{ type: "ocr_language_probe", language: "eng" }` returns `language_ready` in Chrome, Edge, and Firefox smoke after fetching the packaged gzip, decompressing in memory, and writing `/tessdata/eng.traineddata` into the initialized core MEMFS. Added English data is 2,952,873 installed bytes and 2,948,213 compressed bytes per release zip; installed targets stay about 19.91 MiB, below the 50 MiB warning gate.
+
+### 2026-06-10 - Phase 11E local tesseract.js-core proof
+- Goal: Prove minimal packaged `tesseract.js-core` core/WASM loading from the explicit OCR worker probe without enabling OCR, scanner UI exposure, language data, remote loading, permissions, or CSP changes.
+- Files: `src/shared/ocr/ocrWorker.js`, `src/shared/ocr/ocrRuntime.js`, `src/shared/ocr/tesseract-core/tesseract-core.js`, `src/shared/ocr/tesseract-core/tesseract-core.wasm`, `tests/build_targets.test.js`, `tests/security.test.js`, `tests/browser/chrome_smoke.test.mjs`, `tests/browser/firefox_smoke.test.mjs`, `eslint.config.mjs`, `knip.jsonc`, `docs/CODEX_CHANGELOG.md`
+- Tests: `npm run lint:unused` -> pass; `npm run deadcode` -> pass with existing Knip extension hints; `npm test` -> pass; `npm run build:all` -> pass; `npm run package:release` -> pass; `npm run bench:file-extraction` -> pass; `npm run smoke:chrome` -> pass; `npm run qa:browser` -> pass; `npm run smoke:firefox` -> pass; `git diff --check` -> pass
+- Notes: `{ type: "tesseract_core_probe" }` returns `tesseract_core_ready` in Chrome, Edge, and Firefox smoke. Added proof assets are 3,593,218 installed bytes and 1,336,377 compressed bytes per release zip; installed targets stay about 17.09 MiB, below the 50 MiB warning gate. OCR recognition and English traineddata remain deferred.
+
+### 2026-06-10 - Phase 11D-2 safe MV3 WASM CSP proof
+- Goal: Allow local packaged WASM compilation for the OCR proof worker with only `'wasm-unsafe-eval'`, while keeping OCR engine/model integration blocked.
+- Files: `manifests/base.json`, `src/shared/ocr/ocrWorker.js`, `tests/build_targets.test.js`, `tests/security.test.js`, `tests/browser/chrome_smoke.test.mjs`, `tests/browser/firefox_smoke.test.mjs`, `docs/phase-11d-mv3-wasm-worker-proof.md`, `docs/OCR_BUILD_STRATEGY.md`, `docs/CODEX_CHANGELOG.md`
+- Tests: `npm run lint:unused` -> pass; `npm run deadcode` -> pass; `npm test` -> pass; `npm run build:all` -> pass; `npm run package:release` -> pass; `npm run bench:file-extraction` -> pass; `npm run smoke:chrome` -> pass; `npm run qa:browser` -> pass after rerun for a scanner file-input flake; `npm run smoke:firefox` -> pass; `git diff --check` -> pass
+- Notes: Dedicated workers may not expose extension runtime URL helpers, so the proof worker falls back to resolving the WASM sidecar as a packaged sibling of `ocrWorker.js`. No OCR, Tesseract, traineddata, remote loading, permissions, or scanner UI exposure added.
+
+### 2026-06-10 - Phase 11D MV3 WASM worker proof
+- Goal: Prove local packaged WASM loading mechanics in the OCR worker shell without adding OCR, models, traineddata, dependencies, permissions, CSP changes, remote URLs, or image processing.
+- Files: `src/shared/ocr/ocrWorker.js`, `src/shared/ocr/ocrRuntime.js`, `src/shared/ocr/ocrWasmProbe.wasm`, `tests/build_targets.test.js`, `tests/security.test.js`, `docs/phase-11d-mv3-wasm-worker-proof.md`, `docs/OCR_BUILD_STRATEGY.md`, `docs/CODEX_CHANGELOG.md`
+- Tests: `npm run lint:unused` -> pass; `npm run deadcode` -> pass; `npm test` -> pass; `npm run build:all` -> pass; `npm run package:release` -> pass; `npm run bench:file-extraction` -> pass; `npm run smoke:chrome` -> pass; `npm run qa:browser` -> pass; `npm run smoke:firefox` -> pass; `git diff --check` -> pass
+- Notes: Worker `{ type: "wasm_probe" }` attempts only the 8-byte packaged proof module; real Chrome MV3 smoke currently reports `wasm_blocked` under the unchanged CSP posture. `{ type: "ocr_engine_probe" }` remains blocked, and scanner image handling remains metadata-only.
+
 ### 2026-05-29 - CI docs link gate
 - Goal: Added the roadmap Phase 0 documentation link check to the default GitHub test workflow so broken local Markdown links are caught in CI before the full suite.
 - Files: `.github/workflows/test.yml`, `docs/CODEX_CHANGELOG.md`

@@ -94,6 +94,19 @@ function findGeckodriverCommand() {
   };
 }
 
+function runVersionProbe(label, command, args) {
+  try {
+    const output = execFileSync(command, args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 15000
+    }).trim();
+    return output.split(/\r?\n/, 1)[0] || `${label} version probe returned no output`;
+  } catch (error) {
+    return `${label} version probe failed: ${error.message}`;
+  }
+}
+
 function quoteForWindowsCmd(value) {
   const text = String(value);
   if (!/[ \t"&^<>|()]/.test(text)) return text;
@@ -577,11 +590,18 @@ async function launchGeckodriver(port) {
   const geckodriver = findGeckodriverCommand();
   let command = geckodriver.command;
   let args = [...geckodriver.argsPrefix, "--host", "127.0.0.1", "--port", String(port)];
+  let versionCommand = command;
+  let versionArgs = [...geckodriver.argsPrefix, "--version"];
   if (geckodriver.wrapWithWindowsCmd) {
     const commandLine = [command, ...args].map(quoteForWindowsCmd).join(" ");
+    const versionCommandLine = [command, ...versionArgs].map(quoteForWindowsCmd).join(" ");
     command = process.env.ComSpec || "cmd.exe";
     args = ["/d", "/s", "/c", commandLine];
+    versionCommand = command;
+    versionArgs = ["/d", "/s", "/c", versionCommandLine];
   }
+  const geckodriverVersion = runVersionProbe("geckodriver version", versionCommand, versionArgs);
+  console.log(`Firefox smoke: geckodriver version: ${geckodriverVersion}`);
   const child = spawn(command, args, {
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -592,14 +612,29 @@ async function launchGeckodriver(port) {
   child.stdout.on("data", (chunk) => {
     stderr += chunk.toString();
   });
-  await waitFor(async () => {
-    try {
-      const status = await fetchJson(`http://127.0.0.1:${port}/status`);
-      return status.value?.ready || status.ready;
-    } catch {
-      return false;
-    }
-  }, "geckodriver status endpoint");
+  try {
+    await waitFor(async () => {
+      try {
+        const status = await fetchJson(`http://127.0.0.1:${port}/status`);
+        return status.value?.ready || status.ready;
+      } catch {
+        return false;
+      }
+    }, `geckodriver status endpoint on 127.0.0.1:${port}`);
+  } catch (error) {
+    const diagnostics = [
+      "Firefox environment failure: geckodriver status endpoint did not become ready.",
+      "This is not classified as a LeakGuard product failure because Firefox did not start far enough to load the extension.",
+      `geckodriver version: ${geckodriverVersion}`,
+      `geckodriver command: ${command} ${args.join(" ")}`,
+      `status endpoint: http://127.0.0.1:${port}/status`,
+      `geckodriver output: ${stderr || "(no geckodriver output captured)"}`,
+      `Original error: ${error.message}`,
+      "Remediation: update geckodriver, ensure FIREFOX_BIN points to a current Firefox executable, free the blocked port if one is stuck, and run smoke:firefox alone."
+    ].join("\n");
+    child.kill();
+    throw new Error(diagnostics);
+  }
   return { child, processTreeKill: geckodriver.processTreeKill, stderr: () => stderr };
 }
 
@@ -983,10 +1018,16 @@ async function runFirefoxScannerQa(webdriver, extensionOrigin, tempDir, download
   await webdriver.setFileInputFiles("#file-input", [unsupportedPath]);
   const unsupported = await webdriver.executeAsync(`const done = arguments[arguments.length - 1];
     const started = Date.now();
+    let clicked = false;
     const timer = setInterval(() => {
       const status = document.querySelector('#status')?.textContent || '';
-      const scanDisabled = document.querySelector('#scan-btn')?.disabled;
-      if (/Unsupported (?:file types|formats)/i.test(status) && scanDisabled) {
+      const scanButton = document.querySelector('#scan-btn');
+      const scanDisabled = scanButton?.disabled;
+      if (!clicked && scanButton && !scanButton.disabled) {
+        clicked = true;
+        scanButton.click();
+      }
+      if (/could not find extractable text/i.test(status) && /OCR are not supported/i.test(status)) {
         clearInterval(timer);
         done({ status, scanDisabled });
       } else if (Date.now() - started > 10000) {
@@ -995,14 +1036,103 @@ async function runFirefoxScannerQa(webdriver, extensionOrigin, tempDir, download
       }
     }, 50);`);
   assert.equal(unsupported.error, undefined, unsupported.error || "Firefox unsupported scanner case failed");
-  assert.equal(unsupported.scanDisabled, true);
-  assert.match(unsupported.status, /Unsupported (?:file types|formats)/i);
+  assert.match(unsupported.status, /could not find extractable text/i);
+  assert.match(unsupported.status, /OCR are not supported/i);
+}
+
+async function runFirefoxOcrWasmProbeQa(webdriver, extensionOrigin) {
+  await webdriver.navigate(`${extensionOrigin}/scanner/scanner.html`);
+  await waitFor(
+    () => webdriver.execute("return Boolean(document.querySelector('#file-input'));"),
+    "Firefox scanner UI"
+  );
+
+  const result = await webdriver.executeAsync(`const done = arguments[arguments.length - 1];
+    const script = document.createElement('script');
+    script.src = '/shared/ocr/ocrRuntime.js';
+    script.onload = async () => {
+      try {
+        const runtime = globalThis.PWM?.OcrRuntime;
+        const worker = await runtime.createWorkerProbe();
+        const wasm = await runtime.createWasmProbe();
+        const engine = await runtime.createEngineProbe();
+        const core = await runtime.createTesseractCoreProbe();
+        const language = await runtime.createLanguageProbe('eng');
+        const recognition = await runtime.createRecognitionProbe();
+        runtime.terminate();
+        done({ worker, wasm, engine, core, language, recognition });
+      } catch (error) {
+        done({ error: error?.message || 'OCR WASM probe failed' });
+      }
+    };
+    script.onerror = () => done({ error: 'OCR runtime script failed to load' });
+    document.documentElement.appendChild(script);`);
+
+  assert.equal(result.error, undefined, result.error || "Firefox OCR WASM worker proof failed");
+  assert.deepEqual(result.worker, {
+    ok: true,
+    status: "worker_ready",
+    ocrImplemented: false
+  });
+  console.log(
+    `Firefox smoke: OCR WASM worker proof result ${result.wasm.status}${
+      result.wasm.reason ? ` (${result.wasm.reason})` : ""
+    }`
+  );
+  assert.deepEqual(result.wasm, {
+    ok: true,
+    status: "wasm_ready",
+    wasmLoaded: true
+  });
+  assert.deepEqual(result.engine, {
+    ok: false,
+    status: "engine_blocked",
+    ocrImplemented: false,
+    engine: null,
+    reason: "no_candidate_passed_security_size_csp_gates"
+  });
+  console.log(
+    `Firefox smoke: tesseract.js-core proof result ${result.core.status}${
+      result.core.reason ? ` (${result.core.reason})` : ""
+    }`
+  );
+  assert.deepEqual(result.core, {
+    ok: true,
+    status: "tesseract_core_ready",
+    ocrImplemented: false
+  });
+  console.log(
+    `Firefox smoke: English traineddata proof result ${result.language.status}${
+      result.language.reason ? ` (${result.language.reason})` : ""
+    }`
+  );
+  assert.deepEqual(result.language, {
+    ok: true,
+    status: "language_ready",
+    language: "eng",
+    ocrImplemented: false
+  });
+  console.log(
+    `Firefox smoke: synthetic OCR recognition proof result ${result.recognition.status}${
+      result.recognition.reason ? ` (${result.recognition.reason})` : ""
+    }`
+  );
+  assert.deepEqual(result.recognition, {
+    ok: true,
+    status: "ocr_recognition_ready",
+    ocrImplemented: true,
+    language: "eng",
+    textLength: 8,
+    containsExpectedText: true,
+    confidenceBucket: "high"
+  });
 }
 
 async function runFirefoxSmoke() {
   assertBuiltExtensionExists();
   const firefoxPath = findFirefoxExecutable();
   assert.ok(firefoxPath, "Firefox stable was not found. Set FIREFOX_BIN to run this smoke test.");
+  console.log(`Firefox smoke: Firefox version: ${runVersionProbe("Firefox version", firefoxPath, ["--version"])}`);
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "leakguard-firefox-smoke-"));
   const profileDir = path.join(tempDir, "profile");
@@ -1077,6 +1207,8 @@ async function runFirefoxSmoke() {
     assertNoRawSyntheticValues(refreshed.body, "Firefox refreshed body");
     assertNoRawSyntheticValues(refreshed.value, "Firefox refreshed textarea");
 
+    console.log("Firefox smoke: OCR WASM worker proof");
+    await runFirefoxOcrWasmProbeQa(webdriver, extensionOrigin);
     console.log("Firefox smoke: file scanner");
     await runFirefoxScannerQa(webdriver, extensionOrigin, tempDir, downloadDir);
     console.log("Firefox smoke: protected-site removal");

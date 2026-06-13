@@ -7,10 +7,10 @@ const expectedProviderIds = ["chatgpt", "openai", "gemini", "claude", "grok", "x
 const pendingAttachEnabled = Object.freeze({
   gemini: true,
   grok: true,
-  chatgpt: false,
-  claude: false,
-  openai: false,
-  x: false
+  chatgpt: true,
+  claude: true,
+  openai: true,
+  x: true
 });
 
 require(path.join(repoRoot, "src/content/adapters/hostMatching.js"));
@@ -96,24 +96,78 @@ function testHostMatchingRoutesExpectedUrlsToAdapters() {
   });
 }
 
-function testPendingAttachIsEnabledOnlyForGeminiAndGrok() {
+function testUnsupportedHostnamesDoNotReceiveSpecialAdapterBehavior() {
+  const adapters = createAdapters();
+  const unsupportedUrls = [
+    "https://chatgpt.com.evil.test/c/123",
+    "https://openai.example.test/chat",
+    "https://gemini.google.com.evil.test/app",
+    "https://claude.ai.evil.test/new",
+    "https://grok.example.test/chat",
+    "https://x.example.test/compose/post",
+    "https://example.test/"
+  ];
+
+  unsupportedUrls.forEach((url) => {
+    const location = new URL(url);
+    assert.strictEqual(
+      hostMatching.getFileHandoffAdapterForLocation(adapters, location),
+      null,
+      `${url} should not resolve to a provider adapter`
+    );
+    assert.strictEqual(
+      hostMatching.getCurrentHandoffDriverId(location.hostname),
+      "generic",
+      `${url} should use the generic handoff driver`
+    );
+  });
+}
+
+function testAdapterParityCapabilitiesStayStable() {
+  const adapters = createAdapters();
+  const expectedCapabilities = {
+    chatgpt: { directFileInput: true, directDropReplay: false, pendingAttach: true },
+    openai: { directFileInput: true, directDropReplay: false, pendingAttach: true },
+    gemini: { directFileInput: true, directDropReplay: false, pendingAttach: true },
+    grok: { directFileInput: true, directDropReplay: true, pendingAttach: true },
+    claude: { directFileInput: true, directDropReplay: false, pendingAttach: true },
+    x: { directFileInput: true, directDropReplay: false, pendingAttach: true }
+  };
+
+  for (const [id, expected] of Object.entries(expectedCapabilities)) {
+    const description = hostMatching.describeFileHandoffAdapter(adapters[id]);
+    assert.strictEqual(
+      adapters[id].supportsDirectFileInputAssignment,
+      expected.directFileInput,
+      `${id} direct file input capability should stay stable`
+    );
+    assert.strictEqual(
+      description.supportsDirectDropReplay,
+      expected.directDropReplay,
+      `${id} direct drop replay capability should stay stable`
+    );
+    assert.strictEqual(
+      description.pendingAttachEnabled,
+      expected.pendingAttach,
+      `${id} pending attach effective state should stay stable`
+    );
+    assert.strictEqual(
+      description.supportsTrustedAttachButton,
+      true,
+      `${id} trusted attach button capability should stay declared`
+    );
+  }
+}
+
+function testPendingAttachIsEnabledForBuiltInProviders() {
   const adapters = createAdapters();
 
-  ["gemini", "grok"].forEach((id) => {
+  expectedProviderIds.forEach((id) => {
     assert.strictEqual(adapters[id].pendingAttachEnabled, true, `${id} pending attach should stay enabled`);
     assert.strictEqual(
       hostMatching.isFileHandoffAdapterPendingAttachEnabled(adapters[id]),
       true,
       `${id} pending attach gate should stay enabled`
-    );
-  });
-
-  ["chatgpt", "openai", "claude", "x"].forEach((id) => {
-    assert.strictEqual(adapters[id].pendingAttachEnabled, false, `${id} pending attach should stay disabled`);
-    assert.strictEqual(
-      hostMatching.isFileHandoffAdapterPendingAttachEnabled(adapters[id]),
-      false,
-      `${id} pending attach gate should stay disabled`
     );
   });
 }
@@ -179,7 +233,9 @@ function testGeminiFallbackWriterLoadsAfterAdaptersBeforeContentWiring() {
 
 testAdapterRegistryExposesExpectedProviders();
 testHostMatchingRoutesExpectedUrlsToAdapters();
-testPendingAttachIsEnabledOnlyForGeminiAndGrok();
+testUnsupportedHostnamesDoNotReceiveSpecialAdapterBehavior();
+testAdapterParityCapabilitiesStayStable();
+testPendingAttachIsEnabledForBuiltInProviders();
 testUploadAndUnsafeClickPredicatesStayPresent();
 testGeminiFallbackWriterLoadsAfterAdaptersBeforeContentWiring();
 

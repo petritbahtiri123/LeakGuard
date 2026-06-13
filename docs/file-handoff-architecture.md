@@ -1,6 +1,6 @@
 # LeakGuard File Handoff Architecture
 
-LeakGuard protects supported local text-file uploads by blocking the raw ingress first, redacting locally, and handing only a sanitized in-memory `File` or `Blob` back to the site when a safe path exists. Release v1.7.0 keeps this surface intentionally narrow: direct handoff remains where already proven, while pending trusted attach is enabled only for Gemini and Grok.
+LeakGuard protects supported local text-file uploads by blocking the raw ingress first, redacting locally, and handing only a sanitized in-memory `File` or `Blob` back to the site when a safe path exists. Release v1.7.0 keeps this surface intentionally narrow: direct handoff remains the first choice where already proven, while pending trusted attach is enabled for built-in adapters as a sanitized-only recovery path.
 
 ## Direct Handoff
 
@@ -36,7 +36,7 @@ The pending prompt is not a fullscreen overlay and must not block native upload 
 
 ## Streaming Files
 
-Files above `LOCAL_TEXT_HARD_BLOCK_BYTES` use `streamRedactLocalTextFile` before handoff. Files up to `LARGE_TEXT_STREAMING_MAX_BYTES` are supported through local streaming redaction. If streaming succeeds, the default large-file path is sanitized file handoff, and Gemini/Grok drops queue pending trusted attach.
+Files above `LOCAL_TEXT_HARD_BLOCK_BYTES` use `streamRedactLocalTextFile` before handoff. Files up to `LARGE_TEXT_STREAMING_MAX_BYTES` are supported through local streaming redaction. If streaming succeeds, the default large-file path is sanitized file handoff. Gemini and Grok drops keep their pending trusted attach path; ChatGPT, Claude, OpenAI Chat, and X try direct sanitized handoff first and queue pending trusted attach if that safe input handoff fails.
 
 LeakGuard does not read streamed sanitized files back into memory and does not auto-insert huge sanitized text. The only path that reads the sanitized file back as text is the explicit "Insert sanitized text instead" prompt action. Files above `LARGE_TEXT_STREAMING_MAX_BYTES` remain blocked.
 
@@ -59,7 +59,7 @@ The suppression TTL is 30 seconds. Matching redispatched `input` or `change` eve
 - `openai`
 - `x`
 
-Gemini and Grok enable pending trusted attach because those flows are covered by focused tests. ChatGPT, Claude, OpenAI Chat, and X have adapter definitions and diagnostics, while pending attach remains feature-gated until direct evidence shows a browser/site requires it.
+Gemini, Grok, ChatGPT, Claude, OpenAI Chat, and X enable pending trusted attach because those flows are covered by focused tests. Generic adapters use the shared pending queue after direct sanitized handoff fails, preserving sanitized-only assignment, duplicate suppression, and no raw-file pass-through.
 
 New sites must not enable pending attach without manual browser evidence and focused tests proving sanitized-only assignment, duplicate suppression, and no raw-file pass-through.
 

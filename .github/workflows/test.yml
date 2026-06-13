@@ -1,6 +1,7 @@
 name: Tests
 
 on:
+  workflow_dispatch:
   push:
     branches: ["main"]
   pull_request:
@@ -70,11 +71,14 @@ jobs:
       - name: Check documentation links
         run: npm run docs:check-links
 
-      - name: Run tests
-        run: npm test
+      - name: Run Tier A fast PR checks
+        run: npm run test:ci
 
       - name: Generate runtime size report
         run: npm run report:sizes -- --output-dir artifacts/runtime-budgets
+
+      - name: Run Tier C browser gates
+        run: xvfb-run -a npm run test:browser-gates
 
       - name: Upload runtime size report
         if: always()
@@ -84,15 +88,6 @@ jobs:
           path: artifacts/runtime-budgets/
           if-no-files-found: warn
           retention-days: 14
-
-      - name: Run Chrome extension smoke
-        run: xvfb-run -a npm run smoke:chrome
-
-      - name: Run Firefox extension smoke
-        run: xvfb-run -a npm run smoke:firefox
-
-      - name: Run Edge extension smoke
-        run: xvfb-run -a npm run smoke:edge
 
       - name: Upload browser smoke timings
         if: always()

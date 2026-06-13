@@ -15,7 +15,11 @@ require(path.join(repoRoot, "src/shared/placeholderAllocator.js"));
 require(path.join(repoRoot, "src/shared/knownSecretReuse.js"));
 require(path.join(repoRoot, "src/shared/transformOutboundPrompt.js"));
 require(path.join(repoRoot, "src/shared/fileLimits.js"));
+require(path.join(repoRoot, "src/shared/fileTypeRegistry.js"));
+require(path.join(repoRoot, "src/shared/fileExtractors.js"));
 require(path.join(repoRoot, "src/shared/fileScanner.js"));
+require(path.join(repoRoot, "src/shared/scannerOcr.js"));
+require(path.join(repoRoot, "src/shared/imageRedactor.js"));
 
 const {
   LOCAL_TEXT_FAST_MAX_BYTES,
@@ -38,6 +42,9 @@ const {
   scanTextContent,
   buildSanitizedReport
 } = globalThis.PWM.FileScanner;
+const { routeFileExtractor } = globalThis.PWM.FileExtractors;
+const { validateScannerOcrImage, redactionBoxesForOcrFindings } = globalThis.PWM.ScannerOcr;
+const { createRedactedPng, redactedPngFileName } = globalThis.PWM.ImageRedactor;
 
 function bufferFromText(text) {
   return new TextEncoder().encode(text).buffer;
@@ -61,9 +68,10 @@ function assertExplicitComposerUnsupportedWarning(message, context) {
   const text = String(message || "").toLowerCase();
   assert.ok(text.includes("did not scan"), `${context}: warning should say the file was not scanned`);
   assert.ok(text.includes("redact"), `${context}: warning should say the file was not redacted`);
-  assert.ok(text.includes("unsupported file types"), `${context}: warning should identify unsupported file types`);
-  assert.ok(text.includes("not protected in this release"), `${context}: warning should say unsupported files are not protected in this release`);
-  assert.ok(text.includes("normal upload may continue"), `${context}: warning should say normal upload may continue`);
+  assert.ok(text.includes("supported text"), `${context}: warning should identify supported file paths`);
+  assert.ok(text.includes("png/jpg/jpeg/webp"), `${context}: warning should identify supported image paths`);
+  assert.ok(text.includes("blocked on protected sites"), `${context}: warning should describe protected-site blocking`);
+  assert.strictEqual(text.includes("normal upload may continue"), false, `${context}: warning must not promise raw upload continuation`);
   assert.strictEqual(text.includes("sanitized"), false, `${context}: warning must not claim sanitization`);
 }
 
@@ -130,10 +138,6 @@ function testUnsupportedExtensionsRejected() {
     ".pdf",
     ".docx",
     ".xlsx",
-    ".png",
-    ".jpg",
-    ".jpeg",
-    ".webp",
     ".gif",
     ".bmp",
     ".ico",
@@ -154,13 +158,13 @@ function testUnsupportedExtensionsRejected() {
 
     assert.strictEqual(result.ok, false, `${extension} should be rejected`);
     assert.ok(
-      result.message.includes("scans text files only"),
-      `${extension} should show text-only unsupported message`
+      result.message.includes("PNG/JPG/JPEG/WEBP image metadata or OCR paths only"),
+      `${extension} should show scoped unsupported message`
     );
     assert.strictEqual(
       classifyFileForTextScan({ fileName: `sample${extension}` }).action,
       "allow",
-      `${extension} should be classified for pass-through upload`
+      `${extension} should keep legacy allow classification for the transfer policy`
     );
     assertExplicitComposerUnsupportedWarning(
       classifyFileForTextScan({ fileName: `sample${extension}` }).message,
@@ -170,6 +174,61 @@ function testUnsupportedExtensionsRejected() {
 
   assert.strictEqual(classifyFileForTextScan({ fileName: "sample.bin" }).kind, "known_unsupported");
   assert.strictEqual(classifyFileForTextScan({ fileName: "sample.bin" }).action, "allow");
+}
+
+function testPlannedUnsupportedExtensionsAreNotParsed() {
+  for (const [extension, family] of [
+    [".pdf", "document"],
+    [".docx", "document"],
+    [".xlsx", "document"]
+  ]) {
+    const classification = classifyFileForTextScan({
+      fileName: `sample${extension}`,
+      mimeType: "text/plain"
+    });
+    assert.strictEqual(classification.kind, "planned_unsupported", `${extension} should be planned`);
+    assert.strictEqual(classification.status, "planned_unsupported");
+    assert.strictEqual(classification.family, family);
+    assert.strictEqual(classification.action, "allow");
+    assert.strictEqual(classification.supported, false);
+
+    const validation = validateFileForTextScan({
+      fileName: `sample${extension}`,
+      mimeType: "text/plain",
+      sizeBytes: 8,
+      buffer: bufferFromText("content")
+    });
+    assert.strictEqual(validation.ok, false, `${extension} should not be parsed as UTF-8 text`);
+    assert.strictEqual(validation.code, "unsupported_binary_or_document");
+  }
+}
+
+function testSupportedImagesRouteToImageRedactionCandidate() {
+  for (const [extension, mimeType] of [
+    [".png", "image/png"],
+    [".jpg", "image/jpeg"],
+    [".jpeg", "image/jpeg"],
+    [".webp", "image/webp"]
+  ]) {
+    const fileName = `fake-secrets${extension}`;
+    const validation = validateScannerOcrImage({
+      fileName,
+      mimeType,
+      sizeBytes: 1024
+    });
+
+    const routed = routeFileExtractor({
+      fileName,
+      mimeType,
+      sizeBytes: 1024
+    });
+
+    assert.strictEqual(validation.ok, true, `${extension} should be valid for local image OCR`);
+    assert.strictEqual(routed.kind, "image_metadata", `${extension} should route to the image pipeline`);
+    assert.strictEqual(routed.safeForScan, true, `${extension} should be a protected image candidate`);
+    assert.strictEqual(routed.metadata.family, "image");
+    assert.strictEqual(routed.metadata.planned, false);
+  }
 }
 
 function testGenericMimeRequiresSupportedExtension() {
@@ -409,6 +468,103 @@ function testPublicIpRedactedPrivateIpVisible() {
   assert.ok(result.redactedText.includes("192.168.1.1"));
 }
 
+function testSplitAwsSecretLabelRedactedInTextFile() {
+  const rawSecret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+  const result = scanSample(["AWS Secret Key", rawSecret].join("\n"), "aws.env");
+  const report = buildSanitizedReport(result);
+
+  assert.strictEqual(result.redactedText.includes(rawSecret), false);
+  assert.match(result.redactedText, /AWS Secret Key\s+\[PWM_\d+\]/);
+  assert.strictEqual(JSON.stringify(report).includes(rawSecret), false);
+}
+
+async function testImageRedactorProducesRedactedPngWithoutRawSecretBytes() {
+  const rawSecret = "sk-proj-ImageVisibleSecret1234567890";
+  const imageBytes = bufferFromText(`PNG fixture pixels include ${rawSecret}`);
+  const ocrText = `API key ${rawSecret}`;
+  const scanText = globalThis.PWM.ScannerOcr.buildScannerOcrScanText({
+    metadataText: "file_name=fake_secrets_image.png\nvisual_text_scanned=false",
+    ocrText,
+    ocrMetadata: {
+      textLength: ocrText.length,
+      confidenceBucket: "high"
+    }
+  });
+  const scan = scanTextContent({
+    fileName: "fake_secrets_image.png",
+    mimeType: "image/png",
+    sizeBytes: imageBytes.byteLength,
+    text: scanText,
+    extractedText: true,
+    mode: "hide_public"
+  });
+  const mapping = redactionBoxesForOcrFindings({
+    ocr: {
+      text: ocrText,
+      layout: {
+        source: "word",
+        boxes: [
+          {
+            start: ocrText.indexOf(rawSecret),
+            end: ocrText.indexOf(rawSecret) + rawSecret.length,
+            x: 8,
+            y: 10,
+            width: 120,
+            height: 18,
+            confidenceBucket: "high",
+            boxKind: "word",
+            visualRedactionSafe: true
+          }
+        ]
+      }
+    },
+    scanResult: scan,
+    scanText,
+    ocrText
+  });
+
+  assert.strictEqual(scan.redactedText.includes(rawSecret), false);
+  assert.strictEqual(JSON.stringify(buildSanitizedReport(scan)).includes(rawSecret), false);
+  assert.strictEqual(mapping.ok, true);
+  assert.strictEqual(mapping.protectedSiteEligible, true);
+
+  const redacted = await createRedactedPng({
+    imageBytes,
+    mimeType: "image/png",
+    fileName: "fake_secrets_image.png",
+    boxes: mapping.boxes,
+    canvasAdapter: async ({ boxes }) =>
+      new Blob([`redacted-png boxes=${boxes.length} covered=true`], { type: "image/png" })
+  });
+  const outputText = await redacted.blob.text();
+
+  assert.strictEqual(redacted.ok, true);
+  assert.strictEqual(redacted.fileName, "fake_secrets_image.redacted.png");
+  assert.strictEqual(redactedPngFileName("original-name.webp"), "original-name.redacted.png");
+  assert.strictEqual(outputText.includes(rawSecret), false);
+  assert.ok(outputText.includes("covered=true"));
+}
+
+async function testImageRedactorCanProduceRedactedImageWithoutFindings() {
+  const imageBytes = bufferFromText("safe visible image bytes");
+  const redacted = await createRedactedPng({
+    imageBytes,
+    mimeType: "image/webp",
+    fileName: "safe-diagram.webp",
+    boxes: [],
+    allowNoBoxes: true,
+    canvasAdapter: async ({ boxes, mimeType }) => {
+      assert.strictEqual(mimeType, "image/webp");
+      assert.deepStrictEqual(boxes, []);
+      return new Blob(["re-encoded image bytes"], { type: "image/png" });
+    }
+  });
+
+  assert.strictEqual(redacted.ok, true);
+  assert.strictEqual(redacted.fileName, "safe-diagram.redacted.png");
+  assert.match(redacted.blob.type, /^image\/(?:png|jpeg|webp)$/);
+}
+
 function testLineColumnMapping() {
   const text = "first line\r\nsecond line\nAPI_KEY=value";
   assert.deepStrictEqual(getLineColumnFromOffset(text, 0), { line: 1, column: 1 });
@@ -424,6 +580,8 @@ function testLineColumnMapping() {
 
 testSupportedExtensionsAccepted();
 testUnsupportedExtensionsRejected();
+testPlannedUnsupportedExtensionsAreNotParsed();
+testSupportedImagesRouteToImageRedactionCandidate();
 testGenericMimeRequiresSupportedExtension();
 testUtf8DecodeFailureRejected();
 testNullHeavyContentRejected();
@@ -433,6 +591,15 @@ testJsonCredentialRedacted();
 testSanitizedScannerReportExcludesRawSecretBoundaries();
 testSupportedTextFormatFixturesRedactSecrets();
 testPublicIpRedactedPrivateIpVisible();
-testLineColumnMapping();
+testSplitAwsSecretLabelRedactedInTextFile();
+testImageRedactorProducesRedactedPngWithoutRawSecretBytes()
+  .then(() => testImageRedactorCanProduceRedactedImageWithoutFindings())
+  .then(() => {
+    testLineColumnMapping();
 
-console.log("PASS local file scanner regressions");
+    console.log("PASS local file scanner regressions");
+  })
+  .catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });

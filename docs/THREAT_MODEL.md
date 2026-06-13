@@ -17,7 +17,7 @@ Related docs:
 This model covers LeakGuard's current browser-extension behavior for:
 
 - protected composer text typed, pasted, or submitted on supported sites
-- supported UTF-8 text-file scanner and protected composer file-ingress paths
+- supported UTF-8 text/source files, text PDF extraction, DOCX text extraction, XLSX text extraction, image metadata, scanner OCR, and protected composer file-ingress paths
 - placeholder/session state and secure reveal
 - optional local AI assist over candidate windows
 - enterprise managed policy and metadata-only audit events
@@ -31,6 +31,8 @@ It does not expand product scope. LeakGuard remains a local risk-reduction tool,
 | Raw prompt text | Process locally and avoid intentional persistence or logging. |
 | Raw secrets, emails, public IPv4 hosts, and public IPv4 ranges | Replace with placeholders before protected submission unless the user or policy allows otherwise. |
 | Supported local text-file contents and chunks | Read only after user selection, paste, or drop; redact locally; avoid raw upload after LeakGuard attempts sanitization. |
+| Supported document extracted text | Extract text from PDF, DOCX, and XLSX locally; redact before `.redacted.txt` export/fallback or regenerated PDF/DOCX/XLSX handoff from sanitized text only. |
+| Image metadata, OCR text, and image bytes | Process locally for metadata, scanner OCR, and opt-in protected-site OCR; avoid persistence, logging, remote OCR, and raw image upload after LeakGuard attempts sanitization. |
 | Placeholder private state | Keep raw mappings background-owned and session-scoped for reveal only. |
 | Public placeholder state | Expose only safe state needed by content scripts, such as placeholder counts and trusted placeholder tokens. |
 | Secure reveal requests | Use opaque ids and session binding; return raw values only to extension-owned UI. |
@@ -49,6 +51,7 @@ It does not expand product scope. LeakGuard remains a local risk-reduction tool,
 | Background to extension UI | Popup/scanner/options extension pages | Any content-script or page sender | Verify extension UI sender before returning raw reveal values. |
 | Session storage to local storage | `chrome.storage.session` or ephemeral memory for private mappings | Persistent `storage.local` for user site rules | Never fall back to persistent local storage for raw placeholder/reveal mappings. |
 | Local file API to site upload | Sanitized in-memory `File` or `Blob` | Raw local file object and host upload pipeline | Block raw ingress first for supported files; hand off only sanitized files where safe. |
+| Local OCR runtime to scanner/protected-site flow | Packaged OCR worker/assets and image redactor | Raw image bytes and OCR text | English-only local OCR; no remote OCR/backend; protected-site OCR is settings-controlled/default-on for supported image uploads and `.redacted.png` only when boxes are eligible. |
 | AI assist candidate gate to classifier | Packaged local ONNX classifier | Full prompt and deterministic finding ranges | Send only leftover candidate windows; never use remote model calls. |
 | Managed policy/audit to admin review | Policy values and metadata-only audit records | Raw prompts, raw secrets, file contents, full URLs | Keep audit bounded and raw-free; avoid compliance or SIEM claims. |
 
@@ -93,20 +96,31 @@ Current residual risks:
 
 ## File Handoff Trust Boundaries
 
-Supported local text-file ingress is treated as high risk because the host page may try to read file contents immediately.
+Supported local file ingress is treated as high risk because the host page may try to read file contents immediately.
 
 Rules:
 
 - Consume supported paste/drop/file-input events before page handlers can use the raw file.
-- Validate supported file type, size, and UTF-8 text locally.
+- Validate supported file type, size, UTF-8 text, extracted document text, image metadata, or OCR/image bounds locally.
 - Redact through the background-owned placeholder flow.
 - Create sanitized in-memory `File` or `Blob` objects.
+- Export scanner text PDFs as `.redacted.txt` plus regenerated `.redacted.pdf` from sanitized text only. Export scanner DOCX as `.redacted.txt` plus regenerated `.redacted.docx` from sanitized text only. Export scanner XLSX as `.redacted.txt` plus a simple regenerated `.redacted.xlsx` from sanitized text only. Export protected-site text PDFs as regenerated `.redacted.pdf` only when complete, with `.redacted.txt` fallback when regeneration would truncate. Export protected-site DOCX as regenerated `.redacted.docx` only when complete, with `.redacted.txt` fallback when regeneration would truncate. Export protected-site XLSX as regenerated `.redacted.xlsx` only when complete, with `.redacted.txt` fallback when regeneration would truncate. Export image metadata and OCR text as `.redacted.txt`; do not claim layout-preserving PDF/DOCX/XLSX redaction or original Office document reconstruction.
+- Export scanner or eligible protected-site visual image redaction as flattened `.redacted.png` only.
+- Keep protected-site OCR settings-controlled with an explicit opt-out.
 - Prefer proven direct file-input assignment.
 - Use pending trusted attach only for adapters with focused evidence and tests.
 - Fall back to sanitized text or sanitized download when safe.
 - Block raw upload after LeakGuard attempts sanitization and no safe handoff remains.
 
 Unsupported files are not represented as scanned, protected, or sanitized. They receive honest warnings and either pass through where that path is safe or are blocked where LeakGuard cannot safely replay or pass through the original browser/site event.
+
+Current document/image limits:
+
+- no scanned-PDF OCR
+- no non-English OCR
+- no remote OCR, backend file processing, telemetry, or remote model calls
+- no image format preservation for visual redaction
+- no PDF/DOCX/XLSX rebuilt outputs
 
 ## AI Assist Boundaries
 
@@ -229,6 +243,7 @@ Invariant: local AI assist receives only candidate context windows and never bec
 | Trusted placeholders pass through while unknown placeholder-like secrets are handled safely. | [tests/placeholder_trust.test.js](../tests/placeholder_trust.test.js), [tests/typed_interception.test.js](../tests/typed_interception.test.js) |
 | Sensitive headers, URL credentials, repeated secrets, and public IPv4 values keep safe placeholder behavior. | [tests/break_pack.test.js](../tests/break_pack.test.js), [tests/ip_transform.test.js](../tests/ip_transform.test.js), [tests/ip_child_first_audit.test.js](../tests/ip_child_first_audit.test.js) |
 | Local text files are validated, decoded, redacted, and handed off without scanner placeholder isolation leaking into prompt reveal state. | [tests/file_scanner.test.js](../tests/file_scanner.test.js), [tests/file_paste_helpers.test.js](../tests/file_paste_helpers.test.js), [tests/content_file_drop_interception.test.js](../tests/content_file_drop_interception.test.js) |
+| PDF, DOCX, XLSX, image metadata, scanner OCR, settings-controlled protected-site OCR, eligible `.redacted.png`, failure blocking, and raw cache/report safety stay scoped. | [tests/file_extractors.test.js](../tests/file_extractors.test.js), [tests/content_file_extraction_pipeline.test.js](../tests/content_file_extraction_pipeline.test.js), [tests/scanner_ocr.test.js](../tests/scanner_ocr.test.js) |
 | Streaming file redaction handles chunk boundaries, repeated placeholders, invalid UTF-8, and over-limit blocking. | [tests/streaming_file_redactor.test.js](../tests/streaming_file_redactor.test.js), [tests/content_file_drop_interception.test.js](../tests/content_file_drop_interception.test.js) |
 | Pending file attach remains gated to proven adapters and cleans up memory-only state. | [tests/content_file_drop_interception.test.js](../tests/content_file_drop_interception.test.js) |
 | AI assist uses candidate windows, ignores deterministic ranges and placeholders, stays policy-controlled, and uses packaged local runtime assets. | [tests/ai_candidate_gate.test.js](../tests/ai_candidate_gate.test.js), [tests/transform_with_ai.test.js](../tests/transform_with_ai.test.js), [tests/ai_assist.test.js](../tests/ai_assist.test.js) |
@@ -241,6 +256,6 @@ Invariant: local AI assist receives only candidate context windows and never bec
 - Raw text exists transiently in browser memory during local processing.
 - Raw reveal values remain in private session state while reveal is available.
 - Host pages can change UI, upload controls, and event ordering in ways that require adapter updates.
-- Unsupported file formats are not scanned or redacted in this release.
+- Unsupported file formats and unsupported OCR/document rebuild cases are not scanned, rebuilt, or redacted in this release.
 - Manual QA and human legal/product review remain required before publication.
 - Browser policy guidance and store requirements can change and must be rechecked immediately before submission.

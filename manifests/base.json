@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "LeakGuard",
-  "version": "1.7.0",
+  "version": "2.0.0",
   "description": "Local-only prompt protection for secrets and sensitive network data before they reach AI chat sites.",
   "permissions": ["storage", "scripting", "activeTab", "downloads"],
   "optional_host_permissions": ["https://*/*", "http://*/*"],
@@ -17,7 +17,11 @@
     "service_worker": "background/service_worker.js"
   },
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none';"
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; base-uri 'none'; frame-ancestors 'none';",
+    "sandbox": "sandbox allow-scripts; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; object-src 'none'; base-uri 'none';"
+  },
+  "sandbox": {
+    "pages": ["content/protected_site_ocr_broker.html"]
   },
   "action": {
     "default_title": "LeakGuard",
@@ -61,7 +65,15 @@
         "shared/transformOutboundPromptWithAi.js",
         "shared/redactor.js",
         "shared/fileLimits.js",
+        "shared/fileTypeRegistry.js",
+        "shared/fileExtractors.js",
         "shared/fileScanner.js",
+        "shared/pdfRedactor.js",
+        "shared/docxRedactor.js",
+        "shared/xlsxRedactor.js",
+        "shared/ocr/ocrRuntime.js",
+        "shared/scannerOcr.js",
+        "shared/imageRedactor.js",
         "shared/streamingFileRedactor.js",
         "shared/protected_sites.js",
         "shared/policy.js",
@@ -72,6 +84,9 @@
         "content/file_handoff_flow.js",
         "content/input/rewriteVerificationText.js",
         "content/files/fileTransferPolicy.js",
+        "content/files/fileExtractionSessionCache.js",
+        "content/files/protectedSiteOcrBroker.js",
+        "content/files/contentFileExtractionPipeline.js",
         "content/adapters/hostMatching.js",
         "content/adapters/chatgptAdapter.js",
         "content/adapters/openaiAdapter.js",
@@ -111,6 +126,19 @@
         "https://grok.com/*",
         "https://x.com/*"
       ]
+    },
+    {
+      "resources": [
+        "shared/ocr/ocrWorker.js",
+        "shared/ocr/ocrWasmProbe.wasm",
+        "shared/ocr/tesseract-core/tesseract-core.js",
+        "shared/ocr/tesseract-core/tesseract-core.wasm",
+        "shared/ocr/tessdata/eng.traineddata.gz",
+        "shared/ocr/fixtures/synthetic-test-ocr.png",
+        "content/protected_site_ocr_broker.html",
+        "content/protected_site_ocr_broker_page.js"
+      ],
+      "matches": ["https://*/*", "http://*/*"]
     }
   ],
   "icons": {

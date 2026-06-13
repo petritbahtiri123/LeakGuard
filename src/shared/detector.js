@@ -2680,6 +2680,70 @@
       return findings;
     }
 
+    scanMultilineAwsCredentialLabels(text) {
+      const findings = [];
+      const regex =
+        /(?:^|\n)([^\r\n]*\bAWS[^\S\r\n]+(?:Secret[^\S\r\n]+(?:Access[^\S\r\n]+)?Key|Access[^\S\r\n]+Key(?:[^\S\r\n]+ID)?)[^\r\n]*)(?:(?:[^\S\r\n]*(?::|=|is|equals)[^\S\r\n]*)|(?:\r?\n[^\S\r\n]*))(?:"([A-Za-z0-9/+=]{12,})"|'([A-Za-z0-9/+=]{12,})'|([A-Za-z0-9/+=]{12,}))/gi;
+      let match;
+
+      while ((match = regex.exec(text)) !== null) {
+        const label = String(match[1] || "");
+        const rawCandidate = [match[2], match[3], match[4]].find(
+          (candidate) => typeof candidate === "string"
+        );
+        if (!rawCandidate) continue;
+
+        const labelIsSecret = /\bSecret\b/i.test(label);
+        const placeholderType = labelIsSecret ? "AWS_SECRET_KEY" : "AWS_KEY";
+        const key = labelIsSecret ? "aws_secret_access_key" : "aws_access_key_id";
+        const raw = normalizeCandidate(rawCandidate);
+        if (labelIsSecret) {
+          if (!/^[A-Za-z0-9/+=]{40}$/.test(raw)) continue;
+        } else if (!/^(?:AKIA|ASIA)[A-Z0-9]{16}$/.test(raw)) {
+          continue;
+        }
+
+        const rawOffset = match[0].lastIndexOf(rawCandidate);
+        if (rawOffset < 0) continue;
+        const start = match.index + rawOffset;
+        const end = start + rawCandidate.length;
+
+        if (this.isAllowlisted(raw)) continue;
+        if (isCleanPlaceholder(raw) && this.isTrustedVisiblePlaceholder(raw)) continue;
+        if (
+          this.shouldSuppress({
+            raw,
+            text,
+            start,
+            end,
+            patternName: labelIsSecret ? "aws_secret_access_key_assignment" : "aws_access_key",
+            key,
+            placeholderType,
+            source: "assignment"
+          })
+        ) {
+          continue;
+        }
+
+        const entropy = calculateEntropy(raw);
+        findings.push(
+          this.buildFinding({
+            category: "credential",
+            placeholderType,
+            raw,
+            start,
+            end,
+            score: labelIsSecret ? 98 : 94,
+            methods: ["assignment", "multiline-label", entropy >= 3.6 ? "entropy" : null].filter(
+              Boolean
+            )
+          })
+        );
+      }
+
+      return findings;
+    }
+
     scanSqlServerPasswordAttributes(text) {
       const findings = [];
       const candidates = collectSqlServerPasswordAttributeCandidates(text);
@@ -3438,6 +3502,7 @@
           ...this.scanExactInlineSecretAssignments(input),
           ...this.scanExplicitCredentialAssignments(input),
           ...this.scanLabelledProviderKeyValues(input),
+          ...this.scanMultilineAwsCredentialLabels(input),
           ...this.scanAdversarialAssignments(input),
           ...this.scanEmailAddresses(input),
           ...this.scanIdentityAssignments(input),

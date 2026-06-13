@@ -26,14 +26,23 @@ const testFiles = [
   "tests/protected_sites.test.js",
   "tests/enterprise_policy.test.js",
   "tests/ai_assist.test.js",
+  "tests/file_type_registry.test.js",
+  "tests/file_extractors.test.js",
+  "tests/pdf_redactor.test.js",
+  "tests/docx_redactor.test.js",
+  "tests/xlsx_redactor.test.js",
   "tests/file_scanner.test.js",
+  "tests/scanner_ocr.test.js",
+  "tests/content_file_extraction_pipeline.test.js",
   "tests/file_paste_helpers.test.js",
   "tests/streaming_file_redactor.test.js",
   "tests/productization.test.js",
   "tests/security.test.js",
   "tests/synthetic_pack.test.js",
   "tests/adversarial_redaction.test.js",
+  "tests/performance/redaction-benchmark-flake.test.mjs",
   "tests/performance/redaction-benchmark.mjs",
+  "tests/browser/extension_qa_harness_cleanup.test.mjs",
   "tests/build_targets.test.js"
 ];
 

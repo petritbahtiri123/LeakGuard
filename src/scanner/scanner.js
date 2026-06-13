@@ -1,5 +1,11 @@
 (function () {
   const scanner = globalThis.PWM?.FileScanner;
+  const extractors = globalThis.PWM?.FileExtractors;
+  const pdfRedactor = globalThis.PWM?.PdfRedactor;
+  const docxRedactor = globalThis.PWM?.DocxRedactor;
+  const xlsxRedactor = globalThis.PWM?.XlsxRedactor;
+  const scannerOcr = globalThis.PWM?.ScannerOcr;
+  const imageRedactor = globalThis.PWM?.ImageRedactor;
 
   if (!scanner) {
     throw new Error("LeakGuard File Scanner failed to initialize.");
@@ -23,10 +29,19 @@
   const findingsListEl = document.getElementById("findings-list");
   const redactedPreviewEl = document.getElementById("redacted-preview");
   const downloadRedactedBtn = document.getElementById("download-redacted-btn");
+  const downloadRedactedPdfBtn = document.getElementById("download-redacted-pdf-btn");
+  const downloadRedactedDocxBtn = document.getElementById("download-redacted-docx-btn");
+  const downloadRedactedXlsxBtn = document.getElementById("download-redacted-xlsx-btn");
+  const downloadRedactedImageBtn = document.getElementById("download-redacted-image-btn");
   const downloadReportBtn = document.getElementById("download-report-btn");
 
   let selectedFile = null;
   let currentScanResult = null;
+  let currentRedactedPdf = null;
+  let currentRedactedDocx = null;
+  let currentRedactedXlsx = null;
+  let currentRedactedImage = null;
+  let scanInFlight = null;
 
   function formatBytes(bytes) {
     const value = Number(bytes || 0);
@@ -43,6 +58,14 @@
   function setExportEnabled(enabled) {
     downloadRedactedBtn.disabled = !enabled;
     downloadReportBtn.disabled = !enabled;
+    downloadRedactedPdfBtn.disabled = !enabled || !currentRedactedPdf?.blob;
+    downloadRedactedPdfBtn.hidden = !currentRedactedPdf?.blob;
+    downloadRedactedDocxBtn.disabled = !enabled || !currentRedactedDocx?.blob;
+    downloadRedactedDocxBtn.hidden = !currentRedactedDocx?.blob;
+    downloadRedactedXlsxBtn.disabled = !enabled || !currentRedactedXlsx?.blob;
+    downloadRedactedXlsxBtn.hidden = !currentRedactedXlsx?.blob;
+    downloadRedactedImageBtn.disabled = !enabled || !currentRedactedImage?.blob;
+    downloadRedactedImageBtn.hidden = !currentRedactedImage?.blob;
   }
 
   function clearNode(node) {
@@ -148,6 +171,10 @@
   function clearScan() {
     selectedFile = null;
     currentScanResult = null;
+    currentRedactedPdf = null;
+    currentRedactedDocx = null;
+    currentRedactedXlsx = null;
+    currentRedactedImage = null;
     fileInput.value = "";
     scanBtn.disabled = true;
     resultPanel.hidden = true;
@@ -173,7 +200,26 @@
       };
     }
 
-    if (!scanner.isSupportedTextFile(file.name, file.type)) {
+    const routedExtraction = extractors?.routeFileExtractor?.({
+      fileName: file.name,
+      mimeType: file.type
+    });
+
+    if (routedExtraction?.kind === "image_metadata" && scannerOcr?.validateScannerOcrImage) {
+      const imageValidation = scannerOcr.validateScannerOcrImage({
+        fileName: file.name,
+        mimeType: file.type,
+        sizeBytes: file.size
+      });
+      if (!imageValidation.ok) {
+        return {
+          ok: false,
+          message: imageValidation.message
+        };
+      }
+    }
+
+    if (!scanner.isSupportedTextFile(file.name, file.type) && !isExtractedFile(routedExtraction)) {
       return {
         ok: false,
         message: scanner.UNSUPPORTED_TEXT_RELEASE_MESSAGE
@@ -183,7 +229,267 @@
     return { ok: true };
   }
 
-  async function scanSelectedFile() {
+  function isExtractedFile(extraction) {
+    return (
+      extraction?.kind === "pdf" ||
+      extraction?.kind === "docx" ||
+      extraction?.kind === "xlsx" ||
+      extraction?.kind === "image_metadata"
+    );
+  }
+
+  function formatExtractionFailureMessage(extraction) {
+    if (!isExtractedFile(extraction)) {
+      return extraction?.reason || "LeakGuard could not extract text from this file, so it was not scanned.";
+    }
+
+    const reason = extraction.reason || "";
+    if (extraction.kind === "docx") {
+      if (reason === "docx_encrypted") {
+        return "LeakGuard could not scan this encrypted DOCX. Save an unencrypted text DOCX and try again.";
+      }
+      if (reason === "docx_malformed_zip" || reason === "docx_unsupported_compression") {
+        return "LeakGuard could not read this DOCX, so it was not scanned.";
+      }
+      if (reason === "docx_text_too_large") {
+        return "LeakGuard extracted too much DOCX text to scan safely in this release. Split the document and try again.";
+      }
+      return "LeakGuard could not find extractable text in this DOCX. Embedded images, macros, and OCR are not supported in this release.";
+    }
+
+    if (extraction.kind === "xlsx") {
+      if (reason === "xlsx_encrypted") {
+        return "LeakGuard could not scan this encrypted XLSX. Save an unencrypted spreadsheet and try again.";
+      }
+      if (
+        reason === "xlsx_malformed_zip" ||
+        reason === "xlsx_unsupported_compression" ||
+        reason === "xlsx_xml_too_large" ||
+        reason === "xlsx_too_many_zip_entries"
+      ) {
+        return "LeakGuard could not read this XLSX, so it was not scanned.";
+      }
+      if (reason === "xlsx_text_too_large") {
+        return "LeakGuard extracted too much XLSX text to scan safely in this release. Split the spreadsheet and try again.";
+      }
+      return "LeakGuard could not find extractable spreadsheet text in this XLSX. Macros, legacy XLS, XLSM, images, embedded media, and OCR are not supported in this release.";
+    }
+
+    if (reason === "pdf_encrypted") {
+      return "LeakGuard could not scan this encrypted PDF. Save an unencrypted text PDF and try again.";
+    }
+    if (reason === "pdf_malformed" || reason === "pdf_read_failed") {
+      return "LeakGuard could not read this PDF, so it was not scanned.";
+    }
+    if (reason === "pdf_text_too_large") {
+      return "LeakGuard extracted too much PDF text to scan safely in this release. Split the document and try again.";
+    }
+    return "LeakGuard could not find extractable text in this PDF. Scanned-image PDFs and OCR are not supported in this release.";
+  }
+
+  function scanExtractedText(extraction, text, sizeBytes) {
+    return scanner.scanTextContent({
+      fileName: selectedFile.name,
+      mimeType: selectedFile.type,
+      sizeBytes,
+      text,
+      extractedText: isExtractedFile(extraction),
+      mode: "hide_public"
+    });
+  }
+
+  function createScannerRedactedPdf(extraction, result) {
+    currentRedactedPdf = null;
+    if (
+      extraction?.kind !== "pdf" ||
+      extraction?.safeForScan !== true ||
+      !pdfRedactor?.createRedactedPdfFromExtraction
+    ) {
+      return null;
+    }
+
+    const redactedPdf = pdfRedactor.createRedactedPdfFromExtraction({
+      originalName: selectedFile?.name,
+      extraction,
+      sanitizedText: result?.redactedText || ""
+    });
+    if (!redactedPdf?.ok || !redactedPdf.bytes) {
+      if (result?.reportWarnings) {
+        result.reportWarnings.push(`pdf-redaction:${redactedPdf?.status || "pdf_redacted_unavailable"}`);
+      }
+      return null;
+    }
+    if (redactedPdf.truncated && result?.reportWarnings) {
+      result.reportWarnings.push("pdf-redaction:pdf_redacted_text_truncated");
+    }
+
+    currentRedactedPdf = {
+      blob: new Blob([redactedPdf.bytes], { type: redactedPdf.mimeType || "application/pdf" }),
+      fileName: redactedPdf.fileName || "file.redacted.pdf"
+    };
+    return currentRedactedPdf;
+  }
+
+  async function createScannerRedactedDocx(extraction, result, originalBytes) {
+    currentRedactedDocx = null;
+    if (
+      extraction?.kind !== "docx" ||
+      extraction?.safeForScan !== true ||
+      !docxRedactor?.createRedactedDocxFromText
+    ) {
+      return null;
+    }
+
+    const redactedDocx = await docxRedactor.createRedactedDocxFromText({
+      originalName: selectedFile?.name,
+      originalBytes,
+      text: result?.redactedText || ""
+    });
+    if (!redactedDocx?.ok || !redactedDocx.bytes) {
+      if (result?.reportWarnings) {
+        result.reportWarnings.push(`docx-redaction:${redactedDocx?.status || "docx_redacted_unavailable"}`);
+      }
+      return null;
+    }
+    if (redactedDocx.truncated && result?.reportWarnings) {
+      result.reportWarnings.push("docx-redaction:docx_redacted_text_truncated");
+    }
+
+    currentRedactedDocx = {
+      blob: new Blob([redactedDocx.bytes], {
+        type: redactedDocx.mimeType || "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      }),
+      fileName: redactedDocx.fileName || "file.redacted.docx"
+    };
+    return currentRedactedDocx;
+  }
+
+  function createScannerRedactedXlsx(extraction, result) {
+    currentRedactedXlsx = null;
+    if (
+      extraction?.kind !== "xlsx" ||
+      extraction?.safeForScan !== true ||
+      !xlsxRedactor?.createRedactedXlsxFromExtraction
+    ) {
+      return null;
+    }
+
+    const redactedXlsx = xlsxRedactor.createRedactedXlsxFromExtraction({
+      originalName: selectedFile?.name,
+      extraction,
+      sanitizedText: result?.redactedText || ""
+    });
+    if (!redactedXlsx?.ok || !redactedXlsx.bytes) {
+      if (result?.reportWarnings) {
+        result.reportWarnings.push(`xlsx-redaction:${redactedXlsx?.status || "xlsx_redacted_unavailable"}`);
+      }
+      return null;
+    }
+    if (redactedXlsx.truncated && result?.reportWarnings) {
+      result.reportWarnings.push("xlsx-redaction:xlsx_redacted_text_truncated");
+    }
+
+    currentRedactedXlsx = {
+      blob: new Blob([redactedXlsx.bytes], {
+        type: redactedXlsx.mimeType || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      }),
+      fileName: redactedXlsx.fileName || "file.redacted.xlsx"
+    };
+    return currentRedactedXlsx;
+  }
+
+  async function scanImageWithOcr(extraction, imageBuffer) {
+    currentRedactedImage = null;
+    if (!scannerOcr?.recognizeScannerImageFile || !scannerOcr?.buildScannerOcrScanText) {
+      const metadataOnly = scanExtractedText(extraction, extraction.text, extraction.metadata.textLength);
+      renderResult(metadataOnly);
+      setStatus("Image metadata scanned, but local English OCR is unavailable. Visible text inside the image was not scanned.", "error");
+      return;
+    }
+
+    setStatus("Scanning image metadata and running local English OCR...", "");
+    const ocr = await scannerOcr.recognizeScannerImageFile(selectedFile, {
+      runtime: globalThis.PWM?.OcrRuntime,
+      readDimensions: true
+    });
+
+    if (!ocr.ok) {
+      const metadataOnly = scanExtractedText(extraction, extraction.text, extraction.metadata.textLength);
+      renderResult(metadataOnly);
+      setStatus("Image metadata scanned, but English OCR did not complete. Visible text inside the image was not scanned.", "error");
+      return;
+    }
+
+    const combinedText = scannerOcr.buildScannerOcrScanText({
+      metadataText: extraction.text,
+      ocrText: ocr.text,
+      ocrMetadata: ocr
+    });
+    const result = scanExtractedText(extraction, combinedText, combinedText.length);
+    if (Array.isArray(ocr.warnings) && ocr.warnings.length) {
+      result.reportWarnings.push(...ocr.warnings.map((warning) => `ocr:${warning}`));
+    }
+
+    let statusMessage =
+      "Scan complete. English OCR ran locally for this image. Redacted text is available.";
+    let statusKind = "success";
+    if (result.summary.findingsCount > 0) {
+      const boxMapping = scannerOcr.redactionBoxesForOcrFindings?.({
+        ocr,
+        scanResult: result,
+        scanText: combinedText,
+        ocrText: ocr.text
+      });
+      if (boxMapping?.ok && imageRedactor?.createRedactedPng) {
+        if (Array.isArray(boxMapping.warnings) && boxMapping.warnings.length) {
+          result.reportWarnings.push(...boxMapping.warnings.map((warning) => `image-redaction:${warning}`));
+        }
+        const redactedImage = await imageRedactor.createRedactedPng({
+          imageBytes: imageBuffer,
+          mimeType: selectedFile.type,
+          fileName: selectedFile.name,
+          boxes: boxMapping.boxes
+        });
+        if (redactedImage?.ok && redactedImage.blob) {
+          currentRedactedImage = redactedImage;
+          if (boxMapping.fallbackUsed) {
+            statusMessage =
+              "Scan complete. Redacted text and a scanner-only flattened redacted PNG are available. The PNG used broad fallback OCR boxes and is not eligible for protected-site image upload.";
+          } else if (boxMapping.boxKind === "line") {
+            statusMessage =
+              "Scan complete. Redacted text and a flattened redacted PNG are available. The PNG used OCR line boxes, which may redact more image area than word boxes.";
+          } else {
+            statusMessage =
+              "Scan complete. English OCR ran locally for this image. Redacted text and a flattened redacted PNG are available.";
+          }
+        } else {
+          result.reportWarnings.push(`image-redaction:${redactedImage?.status || "image_redaction_failed"}`);
+          statusMessage =
+            "Scan complete. Redacted text is available, but LeakGuard could not generate a visual redacted PNG for this image.";
+          statusKind = "error";
+        }
+      } else {
+        result.reportWarnings.push(`image-redaction:${boxMapping?.status || "ocr_boxes_missing"}`);
+        statusMessage =
+          "Scan complete. Redacted text is available, but OCR did not provide usable boxes for visual image redaction.";
+        statusKind = "error";
+      }
+    }
+
+    renderResult(result);
+    setStatus(statusMessage, statusKind);
+  }
+
+  function restoreScanControls() {
+    if (!selectedFile) {
+      scanBtn.disabled = true;
+      return;
+    }
+
+    scanBtn.disabled = !validateSelectedFile(selectedFile).ok;
+  }
+
+  async function runSelectedFileScan() {
     const metadataValidation = validateSelectedFile(selectedFile);
     if (!metadataValidation.ok) {
       setStatus(metadataValidation.message, "error");
@@ -196,33 +502,92 @@
     setStatus("Scanning locally...", "");
 
     const buffer = await selectedFile.arrayBuffer();
-    const validation = scanner.validateFileForTextScan({
+    const extraction = await extractors.prepareFileExtractionAsync({
       fileName: selectedFile.name,
       mimeType: selectedFile.type,
       sizeBytes: selectedFile.size,
       buffer
     });
 
-    if (!validation.ok) {
+    if (!isExtractedFile(extraction)) {
+      const validation = scanner.validateFileForTextScan({
+        fileName: selectedFile.name,
+        mimeType: selectedFile.type,
+        sizeBytes: selectedFile.size,
+        buffer
+      });
+
+      if (!validation.ok) {
+        currentScanResult = null;
+        resultPanel.hidden = true;
+        setStatus(validation.message, "error");
+        scanBtn.disabled = false;
+        return;
+      }
+    }
+
+    if (!extraction.safeForScan) {
       currentScanResult = null;
       resultPanel.hidden = true;
-      setStatus(validation.message, "error");
+      setStatus(formatExtractionFailureMessage(extraction), "error");
       scanBtn.disabled = false;
       return;
     }
 
-    const text = scanner.decodeUtf8Text(buffer);
-    const result = scanner.scanTextContent({
-      fileName: selectedFile.name,
-      mimeType: selectedFile.type,
-      sizeBytes: selectedFile.size,
-      text,
-      mode: "hide_public"
-    });
+    if (extraction.kind === "image_metadata") {
+      await scanImageWithOcr(extraction, buffer);
+      scanBtn.disabled = false;
+      return;
+    }
 
+    currentRedactedPdf = null;
+    currentRedactedDocx = null;
+    currentRedactedXlsx = null;
+    const extractedFile = isExtractedFile(extraction);
+    const text = extractedFile ? extraction.text : scanner.decodeUtf8Text(buffer);
+    const result = scanExtractedText(
+      extraction,
+      text,
+      extractedFile ? extraction.metadata.textLength : selectedFile.size
+    );
+    const redactedPdf = createScannerRedactedPdf(extraction, result);
+    const redactedDocx = await createScannerRedactedDocx(extraction, result, buffer);
+    const redactedXlsx = createScannerRedactedXlsx(extraction, result);
     renderResult(result);
-    setStatus("Scan complete. Exports are generated only when you click a download button.", "success");
+    if (redactedPdf) {
+      setStatus(
+        "Scan complete. Redacted text and a regenerated redacted PDF are available. The PDF is generated from sanitized text, is not layout-preserving, and scanned PDFs are unsupported.",
+        "success"
+      );
+    } else if (redactedDocx) {
+      setStatus(
+        "Scan complete. Redacted text and a regenerated redacted DOCX are available. The DOCX is generated from sanitized text, is not layout-preserving, original styles, images, comments, and metadata are not preserved, and embedded images, .doc, .docm, and macros are unsupported.",
+        "success"
+      );
+    } else if (redactedXlsx) {
+      setStatus(
+        "Scan complete. Redacted text and a regenerated redacted XLSX are available. The XLSX is generated from sanitized text, is not layout-preserving, formulas, charts, styles, comments, hidden sheets, metadata, custom XML, calc chains, and media are not preserved, and .xls, .xlsm, and macros are unsupported.",
+        "success"
+      );
+    } else {
+      setStatus("Scan complete. Exports are generated only when you click a download button.", "success");
+    }
     scanBtn.disabled = false;
+  }
+
+  function scanSelectedFile() {
+    if (scanInFlight) {
+      return scanInFlight;
+    }
+
+    scanInFlight = runSelectedFileScan().finally(() => {
+      scanInFlight = null;
+      restoreScanControls();
+      if (typeof globalThis.PWM?.OcrRuntime?.terminate === "function") {
+        globalThis.PWM?.OcrRuntime?.terminate();
+      }
+    });
+    return scanInFlight;
   }
 
   function splitFileName(fileName) {
@@ -239,6 +604,17 @@
 
   function redactedFileName(fileName) {
     const { base, extension } = splitFileName(fileName);
+    if (
+      extension === ".pdf" ||
+      extension === ".docx" ||
+      extension === ".xlsx" ||
+      extension === ".png" ||
+      extension === ".jpg" ||
+      extension === ".jpeg" ||
+      extension === ".webp"
+    ) {
+      return `${base}.redacted.txt`;
+    }
     return `${base}.redacted${extension}`;
   }
 
@@ -261,6 +637,19 @@
     setTimeout(() => URL.revokeObjectURL(url), 0);
   }
 
+  function downloadExistingBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download = filename;
+    link.rel = "noopener";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
   function downloadRedactedCopy() {
     if (!currentScanResult) return;
     downloadBlob(
@@ -268,6 +657,21 @@
       "text/plain;charset=utf-8",
       redactedFileName(currentScanResult.file.name)
     );
+  }
+
+  function downloadRedactedPdf() {
+    if (!currentRedactedPdf?.blob) return;
+    downloadExistingBlob(currentRedactedPdf.blob, currentRedactedPdf.fileName || "file.redacted.pdf");
+  }
+
+  function downloadRedactedDocx() {
+    if (!currentRedactedDocx?.blob) return;
+    downloadExistingBlob(currentRedactedDocx.blob, currentRedactedDocx.fileName || "file.redacted.docx");
+  }
+
+  function downloadRedactedXlsx() {
+    if (!currentRedactedXlsx?.blob) return;
+    downloadExistingBlob(currentRedactedXlsx.blob, currentRedactedXlsx.fileName || "file.redacted.xlsx");
   }
 
   function downloadReport() {
@@ -280,9 +684,18 @@
     );
   }
 
+  function downloadRedactedImage() {
+    if (!currentRedactedImage?.blob) return;
+    downloadExistingBlob(currentRedactedImage.blob, currentRedactedImage.fileName || "image.redacted.png");
+  }
+
   fileInput.addEventListener("change", () => {
     selectedFile = fileInput.files?.[0] || null;
     currentScanResult = null;
+    currentRedactedPdf = null;
+    currentRedactedDocx = null;
+    currentRedactedXlsx = null;
+    currentRedactedImage = null;
     resultPanel.hidden = true;
     setExportEnabled(false);
     renderFileMeta(selectedFile);
@@ -305,6 +718,10 @@
   });
 
   downloadRedactedBtn.addEventListener("click", downloadRedactedCopy);
+  downloadRedactedPdfBtn.addEventListener("click", downloadRedactedPdf);
+  downloadRedactedDocxBtn.addEventListener("click", downloadRedactedDocx);
+  downloadRedactedXlsxBtn.addEventListener("click", downloadRedactedXlsx);
+  downloadRedactedImageBtn.addEventListener("click", downloadRedactedImage);
   downloadReportBtn.addEventListener("click", downloadReport);
 
   clearScan();

@@ -98,7 +98,7 @@
         };
   }
 
-  function getSuccessDetailsForStage(stage) {
+  function getSuccessDetailsForStage(stage, options = {}) {
     if (stage === "text") {
       return {
         successStatus: "Sanitized content inserted.",
@@ -109,6 +109,12 @@
       return {
         successStatus: "Sanitized file ready.",
         successReason: "download"
+      };
+    }
+    if (stage === "file" && options.successStatus) {
+      return {
+        successStatus: options.successStatus,
+        successReason: options.successReason || "attached"
       };
     }
     return {
@@ -130,7 +136,10 @@
     const shouldContinueFallback = !ok && !cancelled && options.allowPendingFallback === true;
     const shouldShowSuccess = ok && stage !== "pending";
     const successDetails = shouldShowSuccess
-      ? getSuccessDetailsForStage(stage)
+      ? getSuccessDetailsForStage(stage, {
+          successStatus: options.successStatus,
+          successReason: options.successReason
+        })
       : {
           successStatus: "",
           successReason: ""
@@ -219,6 +228,7 @@
     const shouldUseDropDmz = context === "drop" && usesDmzOverlay;
     const skipTextFallback = options.skipTextFallback === true;
     const allowPendingFallback = options.allowPendingFallback === true;
+    const imageRedactionMode = options.imageRedactionMode === true;
 
     return {
       shouldContinueSanitizedFlow: sizeZone !== "blocked",
@@ -233,27 +243,47 @@
         shouldSetDmzRedacting: shouldUseDropDmz,
         dmzStatus: "Redacting...",
         dmzMode: "redacting",
-        processingStatus: "Sanitizing file locally...",
+        processingStatus: imageRedactionMode ? "Redacting image locally..." : "Sanitizing file locally...",
         processingProgress: "",
         processingBlocking: true
       },
       handoffStatus: {
         shouldSetDmzReady: shouldUseDropDmz,
-        dmzStatus: "Sanitized file ready",
+        dmzStatus: imageRedactionMode ? "Sanitized image ready" : "Sanitized file ready",
         dmzMode: "ready",
-        processingStatus: "Preparing sanitized upload...",
+        processingStatus: imageRedactionMode ? "Preparing sanitized image upload..." : "Preparing sanitized upload...",
         processingProgress: "Complete",
         processingBlocking: true
       },
       attachFlowOptions: {
         allowPendingFallback,
-        defaultSuccessStrategy: "sanitized-file-handoff",
-        failureReason: "sanitized_file_handoff_failed",
-        skipFallbackReason: skipTextFallback ? "firefox_gemini_file_input_replacement_failed" : "",
-        fileStrategy: "sanitized-file-handoff",
+        defaultSuccessStrategy: imageRedactionMode ? "sanitized-image-file-handoff" : "sanitized-file-handoff",
+        failureReason: imageRedactionMode ? "sanitized_image_handoff_failed" : "sanitized_file_handoff_failed",
+        skipFallbackReason: skipTextFallback
+          ? imageRedactionMode
+            ? "image_text_fallback_disabled"
+            : "firefox_gemini_file_input_replacement_failed"
+          : "",
+        successStatus: imageRedactionMode ? "Sanitized image attached." : "",
+        fileStrategy: imageRedactionMode ? "sanitized-image-file-handoff" : "sanitized-file-handoff",
         textStrategy: "sanitized-text-fallback"
       }
     };
+  }
+
+  function normalizeStreamingPendingProviderId(value) {
+    const id = String(value || "").trim().toLowerCase();
+    return /^(gemini|grok|chatgpt|claude|openai|x)$/.test(id) ? id : "";
+  }
+
+  function getStreamingPendingProviderLabel(provider) {
+    if (provider === "gemini") return "Gemini";
+    if (provider === "grok") return "Grok";
+    if (provider === "chatgpt") return "ChatGPT";
+    if (provider === "claude") return "Claude";
+    if (provider === "openai") return "OpenAI Chat";
+    if (provider === "x") return "X";
+    return provider || "site";
   }
 
   function classifyStreamingAttachPlan(options = {}) {
@@ -261,7 +291,11 @@
     const isGrokDrop = options.isGrokDrop === true;
     const streamResultAction = options.streamResultAction || "";
     const hasSanitizedFile = options.hasSanitizedFile === true;
-    const provider = isGeminiDrop ? "gemini" : isGrokDrop ? "grok" : "";
+    const provider =
+      normalizeStreamingPendingProviderId(options.pendingAdapterId) ||
+      (isGeminiDrop ? "gemini" : isGrokDrop ? "grok" : "");
+    const pendingOnlyProvider = provider === "gemini" || provider === "grok";
+    const providerLabel = getStreamingPendingProviderLabel(provider);
 
     return {
       shouldContinueStreamingAttach: streamResultAction === "redacted" && hasSanitizedFile,
@@ -287,15 +321,12 @@
         strategy: provider ? `${provider}-streaming-pending-sanitized-file-handoff` : "",
         queueFailureReason: provider ? `${provider}_pending_queue_failed` : "",
         queueFailureTitle: "Raw file upload blocked",
-        queueFailureMessage:
-          provider === "gemini"
-            ? "LeakGuard sanitized the large file but could not queue Gemini pending attach."
-            : provider === "grok"
-              ? "LeakGuard sanitized the large file but could not queue Grok pending attach."
-              : ""
+        queueFailureMessage: provider
+          ? `LeakGuard sanitized the large file but could not queue ${providerLabel} pending attach.`
+          : ""
       },
       genericAttach: {
-        shouldAttempt: provider === "",
+        shouldAttempt: !pendingOnlyProvider,
         fileStrategy: "streaming-sanitized-file-handoff",
         textStrategy: "streaming-sanitized-text-fallback",
         defaultSuccessStrategy: "streaming-sanitized-file-handoff",
@@ -330,6 +361,7 @@
       allowPendingFallback: options.allowPendingFallback === true,
       defaultSuccessStrategy: options.defaultSuccessStrategy || "sanitized-file-handoff",
       failureReason: options.failureReason || "sanitized_file_handoff_failed",
+      successStatus: options.successStatus,
       cancellationReason: options.cancellationReason,
       treatCancellation: options.treatCancellation
     });

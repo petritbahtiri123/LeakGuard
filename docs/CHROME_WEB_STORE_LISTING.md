@@ -25,11 +25,11 @@ Before text is sent from a protected site, LeakGuard can:
 - replace raw values with stable placeholders such as `[PWM_1]`, `[PUB_HOST_1]`, and `[NET_1]`
 - keep secure reveal local to the extension popup instead of exposing raw values in the page DOM
 
-LeakGuard also includes a local File Scanner page for text-based files such as `.env`, `.json`, `.log`, `.md`, source files, and config files. It can export redacted text copies and sanitized JSON findings reports without storing file contents or uploading them.
+LeakGuard also includes a local File Scanner page for text/source files, text PDFs, DOCX text, XLSX spreadsheet text, image metadata, and English-only scanner image OCR for PNG/JPG/JPEG/WEBP images. It can export redacted text copies, sanitized JSON findings reports, and eligible flattened `.redacted.png` scanner visual redaction outputs without storing file contents or uploading them.
 
-For protected AI composers, supported local UTF-8 text files pasted, dropped, or selected in the page can be locally validated, redacted, and replaced with sanitized in-memory `File`/`Blob` objects where the browser and site upload flow accept synthetic file handoff. Larger supported text files above 4 MiB and up to 50 MB are redacted locally with streaming/chunked processing before sanitized handoff. Supported text files above 50 MB are blocked from local redaction with a clear too-large warning. If LeakGuard attempts sanitization and sanitized file handoff fails, LeakGuard blocks raw upload and shows a local message.
+For protected AI composers, supported local UTF-8 text files, text PDFs, DOCX documents, XLSX spreadsheets, and image metadata pasted, dropped, or selected in the page can be locally validated, redacted, and replaced with sanitized in-memory `File`/`Blob` objects where the browser and site upload flow accept synthetic file handoff. Larger supported text files above 4 MiB and up to 50 MB are redacted locally with streaming/chunked processing before sanitized handoff. Supported text files above 50 MB are blocked from local redaction with a clear too-large warning. If LeakGuard attempts sanitization and sanitized file handoff fails, LeakGuard blocks raw upload and shows a local message.
 
-LeakGuard scans and redacts supported text files locally. Unsupported formats such as PDFs, DOCX files, images, archives, executables, and binary files are not scanned, redacted, or protected in this release. LeakGuard warns before these unsupported files continue through the normal site upload flow.
+Scanner and protected-site text PDFs can export regenerated `.redacted.pdf` from sanitized text only; protected-site PDFs fall back to `.redacted.txt` when regeneration would truncate. Scanner and protected-site DOCX results can export regenerated `.redacted.docx` from sanitized text only; original styles, images, comments, and metadata are not preserved, and protected-site DOCX falls back to `.redacted.txt` when regeneration would truncate. Scanner and protected-site XLSX results can export simple regenerated `.redacted.xlsx` from sanitized extracted text only; formulas, charts, styles, comments, hidden sheets, metadata, custom XML, calc chains, and media are not preserved, and protected-site XLSX falls back to `.redacted.txt` when regeneration would truncate. Image metadata and OCR text outputs export `.redacted.txt`. LeakGuard does not provide layout-preserving PDF/DOCX/XLSX redaction or original Office document reconstruction. Protected-site image OCR is settings-controlled and enabled by default for supported image uploads; users can turn it off. It runs locally, supports English only, and uploads a flattened `.redacted.png` only when OCR boxes are eligible. There is no scanned-PDF OCR, non-English OCR, remote OCR/backend processing, or image format preservation yet.
 
 LeakGuard also protects ChatGPT large-paste flows that can become generated `Plain Text` attachments, and includes Gemini-specific mitigations for sanitized file handoff and large text fallback behavior.
 
@@ -43,7 +43,11 @@ LeakGuard is designed for risk reduction, not as a complete data-loss-prevention
 - local-only email redaction for likely email addresses
 - false-positive suppression for common documentation placeholders, example values, and development variable names
 - local text-file scanning with redacted-copy and sanitized-report exports
+- local text PDF, DOCX text, XLSX text, and image metadata scanning
+- local English-only scanner image OCR and eligible flattened `.redacted.png` scanner visual redaction
 - local text-file paste/drop/file-select redaction for supported UTF-8 text files in protected AI composers
+- protected-site text PDF, DOCX, and XLSX extraction with complete regenerated file handoff and `.redacted.txt` fallback, plus image metadata extraction with `.redacted.txt` outputs
+- protected-site image OCR that is enabled by default, can be turned off in settings, and outputs `.redacted.png` only when boxes are eligible
 - streaming local redaction for supported text-file composer uploads above 4 MiB and up to 50 MB
 - ChatGPT large paste / generated Plain Text attachment protection
 - Gemini sanitized file handoff and large text fallback protection
@@ -60,7 +64,8 @@ LeakGuard is designed for risk reduction, not as a complete data-loss-prevention
 - no remote model calls
 - no backend service
 - no promise of perfect privacy or complete secret protection
-- no PDF, DOCX, image OCR, or visual image redaction in this release
+- no layout-preserving PDF/DOCX/XLSX redaction, original Office document reconstruction, or macro Office support in this release
+- no scanned-PDF OCR, non-English OCR, remote OCR/backend, or image format preservation
 - no archive, executable, or binary-file redaction in this release
 - no support for every editor, upload flow, browser, or synthetic `DataTransfer` file handoff path
 
@@ -113,7 +118,9 @@ Use real extension screenshots with production copy. Avoid showing raw real cred
 - The extension processes text locally in the browser.
 - The File Scanner processes explicitly selected text files locally and does not upload or store file contents.
 - Supported local text files pasted, dropped, or selected in protected AI composers are processed locally, including streaming/chunked local redaction for supported text files above 4 MiB and up to 50 MB.
-- Unsupported formats such as PDFs, DOCX files, images, archives, executables, and binary files are not scanned, redacted, or protected in this release; LeakGuard warns before those files continue through the normal site upload flow.
+- Text PDFs, DOCX files, XLSX files, and image metadata are processed locally. Scanner and protected-site text PDFs can export regenerated `.redacted.pdf` from sanitized extracted text; protected-site PDFs fall back to `.redacted.txt` when regeneration would truncate. Scanner and protected-site DOCX can export regenerated `.redacted.docx` from sanitized text only; protected-site DOCX falls back to `.redacted.txt` when regeneration would truncate. Scanner and protected-site XLSX can export regenerated `.redacted.xlsx` from sanitized text only; protected-site XLSX falls back to `.redacted.txt` when regeneration would truncate. Image metadata exports `.redacted.txt`.
+- Scanner image OCR and protected-site image OCR run locally, use English only, and do not use remote OCR or backend services. Protected-site OCR is settings-controlled, enabled by default for supported image uploads, and can be turned off.
+- Unsupported formats such as scanned PDFs, non-English OCR, archives, executables, legacy/macro Office files, and binary files are not represented as scanned, redacted, or protected.
 - Raw text-file uploads are blocked if sanitized file handoff cannot complete.
 - Raw secrets are not sent to external services by the extension.
 - Likely email addresses are redacted locally; LeakGuard does not upload email text for scanning.

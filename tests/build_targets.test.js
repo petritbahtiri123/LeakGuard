@@ -1,6 +1,7 @@
 const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
+const vm = require("vm");
 const { pathToFileURL } = require("url");
 
 const repoRoot = path.join(__dirname, "..");
@@ -8,7 +9,19 @@ const policyModule = require(path.join(repoRoot, "src/shared/policy.js"));
 const protectedSitesModule = require(path.join(repoRoot, "src/shared/protected_sites.js"));
 
 const restrictiveExtensionPageCsp =
-  "script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none';";
+  "script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; base-uri 'none'; frame-ancestors 'none';";
+const restrictiveSandboxCsp =
+  "sandbox allow-scripts; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; object-src 'none'; base-uri 'none';";
+const tesseractCoreProofFiles = Object.freeze([
+  "shared/ocr/tesseract-core/tesseract-core.js",
+  "shared/ocr/tesseract-core/tesseract-core.wasm"
+]);
+const englishLanguageProofFiles = Object.freeze([
+  "shared/ocr/tessdata/eng.traineddata.gz"
+]);
+const syntheticRecognitionProofFiles = Object.freeze([
+  "shared/ocr/fixtures/synthetic-test-ocr.png"
+]);
 const forbiddenPackageDirectories = new Set([
   ".git",
   ".github",
@@ -54,6 +67,10 @@ function walkFiles(rootDir) {
   }
 
   return files;
+}
+
+function dirSizeBytes(rootDir) {
+  return walkFiles(rootDir).reduce((total, file) => total + fs.statSync(file).size, 0);
 }
 
 function assertReleaseArtifactsAreSanitized(results) {
@@ -162,7 +179,10 @@ function assertPackageContentsAreRuntimeOnly(result) {
     "scanner/scanner.html",
     "scanner/scanner.js",
     "shared/fileLimits.js",
+    "shared/fileTypeRegistry.js",
+    "shared/fileExtractors.js",
     "shared/fileScanner.js",
+    "shared/imageRedactor.js",
     "vendor/onnxruntime/ort.wasm.min.js",
     "ai/models/leakguard_secret_classifier.features.json",
     "ai/models/leakguard_secret_classifier.onnx"
@@ -174,6 +194,11 @@ function assertPackageContentsAreRuntimeOnly(result) {
       `${result.target} package should include ${relativePath}`
     );
   });
+  const extractorBytes = fs.statSync(path.join(result.targetRoot, "shared/fileExtractors.js")).size;
+  assert.ok(
+    extractorBytes < 36000,
+    `${result.target} document extractor support should stay below the lightweight bundle budget`
+  );
 
   for (const file of files) {
     const relativePath = relativePackagePath(result.targetRoot, file);
@@ -204,6 +229,828 @@ function assertPackageContentsAreRuntimeOnly(result) {
   }
 }
 
+function assertOcrRuntimeAssets(result) {
+  const files = walkFiles(result.targetRoot);
+  const ocrFiles = files
+    .map((file) => relativePackagePath(result.targetRoot, file).split("\\").join("/"))
+    .filter((relativePath) => relativePath.startsWith("shared/ocr/"))
+    .sort();
+
+  assert.deepStrictEqual(
+    ocrFiles,
+    [
+      "shared/ocr/ocrRuntime.js",
+      "shared/ocr/ocrWasmProbe.wasm",
+      "shared/ocr/ocrWorker.js",
+      ...tesseractCoreProofFiles,
+      ...englishLanguageProofFiles,
+      ...syntheticRecognitionProofFiles
+    ].sort(),
+    `${result.target} should include only local OCR proof shell/assets, English traineddata, and the synthetic recognition fixture`
+  );
+  const wasmProbePath = path.join(result.targetRoot, "shared/ocr/ocrWasmProbe.wasm");
+  assert.ok(fs.statSync(wasmProbePath).size <= 64, `${result.target} WASM probe asset should stay tiny`);
+  assert.ok(
+    fs.statSync(path.join(result.targetRoot, "shared/ocr/tesseract-core/tesseract-core.js")).size < 160000,
+    `${result.target} tesseract.js-core loader proof should include the small external-WASM loader only`
+  );
+  assert.ok(
+    fs.statSync(path.join(result.targetRoot, "shared/ocr/tesseract-core/tesseract-core.wasm")).size < 4 * 1024 * 1024,
+    `${result.target} tesseract.js-core proof should include one local core WASM asset only`
+  );
+  assert.ok(
+    fs.statSync(path.join(result.targetRoot, "shared/ocr/tessdata/eng.traineddata.gz")).size < 3 * 1024 * 1024,
+    `${result.target} English language proof should include the smallest packaged compressed traineddata asset`
+  );
+  assert.ok(
+    fs.statSync(path.join(result.targetRoot, "shared/ocr/fixtures/synthetic-test-ocr.png")).size < 5000,
+    `${result.target} synthetic OCR fixture should stay tiny`
+  );
+
+  const ocrBytes = ocrFiles.reduce(
+    (total, relativePath) => total + fs.statSync(path.join(result.targetRoot, relativePath)).size,
+    0
+  );
+  assert.ok(
+    ocrBytes < 7 * 1024 * 1024,
+    `${result.target} OCR proof assets should stay below the English loading-only budget`
+  );
+
+  for (const file of files) {
+    const relativePath = relativePackagePath(result.targetRoot, file).toLowerCase();
+    const isAllowedTesseractCoreProof = tesseractCoreProofFiles.includes(
+      relativePackagePath(result.targetRoot, file).split("\\").join("/")
+    );
+    const isAllowedEnglishLanguageProof = englishLanguageProofFiles.includes(
+      relativePackagePath(result.targetRoot, file).split("\\").join("/")
+    );
+    const isAllowedSyntheticRecognitionProof = syntheticRecognitionProofFiles.includes(
+      relativePackagePath(result.targetRoot, file).split("\\").join("/")
+    );
+    if (!isAllowedTesseractCoreProof && !isAllowedEnglishLanguageProof && !isAllowedSyntheticRecognitionProof) {
+      assert.strictEqual(
+        /tesseract|ocrad|traineddata|ocr[-_.](?!wasmprobe\.wasm).*\.wasm|\.traineddata|ocr-model|ocr-assets/.test(
+          relativePath
+        ),
+        false,
+        `${result.target} should not contain OCR engine/model asset ${relativePath}`
+      );
+    }
+    assert.strictEqual(
+      /shared\/ocr\/tessdata\/(?!eng\.traineddata\.gz$).*traineddata/i.test(relativePath),
+      false,
+      `${result.target} should not package non-English traineddata assets`
+    );
+    if (/\.(?:js|json|html|css|txt|md)$/i.test(file)) {
+      const source = fs.readFileSync(file, "utf8").toLowerCase();
+      for (const forbidden of ["ocrad", "traineddata", "cdn.jsdelivr", "unpkg.com"]) {
+        const allowedEnglishTrainedDataReference =
+          forbidden === "traineddata" &&
+          (relativePath.startsWith("shared/ocr/") || relativePath === "manifest.json") &&
+          source.includes("eng.traineddata.gz") &&
+          !/tessdata\/(?!eng\.traineddata\.gz)/i.test(source);
+        if (!allowedEnglishTrainedDataReference) {
+          assert.strictEqual(
+            source.includes(forbidden),
+            false,
+            `${result.target}:${relativePath} should not contain OCR dependency or remote asset string ${forbidden}`
+          );
+        }
+      }
+      assert.strictEqual(
+        /https?:\/\//i.test(source) && relativePath.startsWith("shared/ocr/"),
+        false,
+        `${result.target}:${relativePath} should not contain remote URL strings`
+      );
+      assert.strictEqual(
+        /\beval\s*\(|\bnew\s+Function\b|\bFunction\s*\(/.test(source) && relativePath.startsWith("shared/ocr/"),
+        false,
+        `${result.target}:${relativePath} should not use eval or Function`
+      );
+    }
+  }
+}
+
+function plainObject(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function parseCspDirectives(csp) {
+  const directives = {};
+  for (const directive of String(csp || "").split(";")) {
+    const parts = directive.trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) continue;
+    directives[parts[0]] = parts.slice(1);
+  }
+  return directives;
+}
+
+async function assertOcrRuntimeProbeShell(targetRoot) {
+  const runtimeSource = fs.readFileSync(path.join(targetRoot, "shared/ocr/ocrRuntime.js"), "utf8");
+  const createdWorkers = [];
+  class ProbeWorker {
+    constructor(url) {
+      this.url = String(url);
+      this.messages = [];
+      this.terminated = false;
+      createdWorkers.push(this);
+    }
+
+    postMessage(message) {
+      this.messages.push(message);
+      if (message?.type === "wasm_probe") {
+        this.onmessage?.({
+          data: {
+            ok: true,
+            status: "wasm_ready",
+            wasmLoaded: true
+          }
+        });
+        return;
+      }
+      if (message?.type === "ocr_engine_probe") {
+        this.onmessage?.({
+          data: {
+            ok: false,
+            status: "engine_blocked",
+            ocrImplemented: false,
+            engine: null,
+            reason: "no_candidate_passed_security_size_csp_gates"
+          }
+        });
+        return;
+      }
+      if (message?.type === "tesseract_core_probe") {
+        this.onmessage?.({
+          data: {
+            ok: true,
+            status: "tesseract_core_ready",
+            ocrImplemented: false
+          }
+        });
+        return;
+      }
+      if (message?.type === "ocr_language_probe") {
+        this.onmessage?.({
+          data: {
+            ok: true,
+            status: "language_ready",
+            language: "eng",
+            ocrImplemented: false
+          }
+        });
+        return;
+      }
+      if (message?.type === "ocr_recognition_probe") {
+        this.onmessage?.({
+          data: {
+            ok: true,
+            status: "ocr_recognition_ready",
+            ocrImplemented: true,
+            language: "eng",
+            textLength: 8,
+            containsExpectedText: true,
+            confidenceBucket: "high"
+          }
+        });
+        return;
+      }
+      if (message?.type === "ocr_recognize_image") {
+        this.onmessage?.({
+          data: {
+            ok: true,
+            status: "ocr_recognition_ready",
+            language: "eng",
+            text: "API_KEY=sk-proj-LeakGuardScannerOcrApiKey1234567890abcdef",
+            textLength: 61,
+            confidenceBucket: "high",
+            warnings: []
+          }
+        });
+        return;
+      }
+      this.onmessage?.({
+        data: {
+          ok: true,
+          status: "worker_ready",
+          ocrImplemented: false
+        }
+      });
+    }
+
+    terminate() {
+      this.terminated = true;
+    }
+  }
+
+  const sandbox = {
+    globalThis: {
+      PWM: {},
+      PWM_BUILD_INFO: {
+        features: {
+          ocr: {
+            enabled: true,
+            status: "scanner_page_v1",
+            scope: "scanner_image_english_only"
+          }
+        }
+      },
+      chrome: {
+        runtime: {
+          getURL: (resourcePath) => `chrome-extension://test-id/${resourcePath}`
+        }
+      },
+      setTimeout,
+      clearTimeout,
+      Worker: ProbeWorker
+    }
+  };
+  sandbox.globalThis.globalThis = sandbox.globalThis;
+  sandbox.globalThis.self = sandbox.globalThis;
+  sandbox.globalThis.window = sandbox.globalThis;
+
+  vm.runInNewContext(runtimeSource, sandbox, {
+    filename: "ocrRuntime.js"
+  });
+
+  const runtime = sandbox.globalThis.PWM.OcrRuntime;
+  assert.strictEqual(runtime.isAvailable(), true, "OCR runtime shell should be available in normal builds");
+  assert.deepStrictEqual(
+    plainObject(runtime.getStatus()),
+    {
+      available: true,
+      status: "scanner_page_v1",
+      ocrImplemented: true,
+      workerStatus: "idle"
+    },
+    "OCR runtime shell should report scanner-page v1 idle status before probing"
+  );
+  assert.strictEqual(createdWorkers.length, 0, "OCR runtime should not create a worker before an explicit probe");
+
+  const probe = plainObject(await runtime.createWorkerProbe());
+  assert.deepStrictEqual(
+    probe,
+    {
+      ok: true,
+      status: "worker_ready",
+      ocrImplemented: false
+    },
+    "OCR runtime shell should round-trip the worker probe payload"
+  );
+  assert.strictEqual(
+    createdWorkers[0].url,
+    "chrome-extension://test-id/shared/ocr/ocrWorker.js",
+    "OCR runtime shell should load the packaged worker URL"
+  );
+  assert.deepStrictEqual(
+    plainObject(createdWorkers[0].messages),
+    [{ type: "ocr_probe" }],
+    "OCR runtime shell should only send the harmless probe message"
+  );
+
+  const wasmProbe = plainObject(await runtime.createWasmProbe());
+  assert.deepStrictEqual(
+    wasmProbe,
+    {
+      ok: true,
+      status: "wasm_ready",
+      wasmLoaded: true
+    },
+    "OCR WASM proof should report local packaged WASM readiness without enabling OCR"
+  );
+  assert.deepStrictEqual(
+    plainObject(createdWorkers[0].messages),
+    [{ type: "ocr_probe" }, { type: "wasm_probe" }],
+    "OCR WASM proof should send only the explicit data-free WASM probe message"
+  );
+
+  const engineProbe = plainObject(await runtime.createEngineProbe());
+  assert.deepStrictEqual(
+    engineProbe,
+    {
+      ok: false,
+      status: "engine_blocked",
+      ocrImplemented: false,
+      engine: null,
+      reason: "no_candidate_passed_security_size_csp_gates"
+    },
+    "OCR engine proof should report blocked when no candidate passes local/CSP/size gates"
+  );
+  assert.deepStrictEqual(
+    plainObject(createdWorkers[0].messages),
+    [{ type: "ocr_probe" }, { type: "wasm_probe" }, { type: "ocr_engine_probe" }],
+    "OCR engine proof should only send the explicit engine probe message after the worker probe"
+  );
+
+  const tesseractCoreProbe = plainObject(await runtime.createTesseractCoreProbe());
+  assert.deepStrictEqual(
+    tesseractCoreProbe,
+    {
+      ok: true,
+      status: "tesseract_core_ready",
+      ocrImplemented: false
+    },
+    "tesseract.js-core proof should round-trip only the explicit core probe payload"
+  );
+  assert.deepStrictEqual(
+    plainObject(createdWorkers[0].messages),
+    [{ type: "ocr_probe" }, { type: "wasm_probe" }, { type: "ocr_engine_probe" }, { type: "tesseract_core_probe" }],
+    "tesseract.js-core proof should remain explicit-only and separate from engine probing"
+  );
+
+  const languageProbe = plainObject(await runtime.createLanguageProbe("eng"));
+  assert.deepStrictEqual(
+    languageProbe,
+    {
+      ok: true,
+      status: "language_ready",
+      language: "eng",
+      ocrImplemented: false
+    },
+    "English language proof should round-trip only the explicit language probe payload"
+  );
+  assert.deepStrictEqual(
+    plainObject(createdWorkers[0].messages),
+    [
+      { type: "ocr_probe" },
+      { type: "wasm_probe" },
+      { type: "ocr_engine_probe" },
+      { type: "tesseract_core_probe" },
+      { type: "ocr_language_probe", language: "eng" }
+    ],
+    "English language proof should remain explicit-only and separate from engine probing"
+  );
+
+  const recognitionProbe = plainObject(await runtime.createRecognitionProbe());
+  assert.deepStrictEqual(
+    recognitionProbe,
+    {
+      ok: true,
+      status: "ocr_recognition_ready",
+      ocrImplemented: true,
+      language: "eng",
+      textLength: 8,
+      containsExpectedText: true,
+      confidenceBucket: "high"
+    },
+    "Synthetic OCR recognition proof should return metadata only"
+  );
+  assert.deepStrictEqual(
+    plainObject(createdWorkers[0].messages),
+    [
+      { type: "ocr_probe" },
+      { type: "wasm_probe" },
+      { type: "ocr_engine_probe" },
+      { type: "tesseract_core_probe" },
+      { type: "ocr_language_probe", language: "eng" },
+      { type: "ocr_recognition_probe" }
+    ],
+    "Synthetic OCR recognition proof should remain explicit-only and separate from engine probing"
+  );
+
+  const imageBytes = new Uint8Array([137, 80, 78, 71]);
+  const imageRecognition = plainObject(await runtime.recognizeImageBytes({
+    type: "ocr_recognize_image",
+    language: "eng",
+    imageBytes,
+    mimeType: "image/png"
+  }));
+  assert.deepStrictEqual(
+    imageRecognition,
+    {
+      ok: true,
+      status: "ocr_recognition_ready",
+      language: "eng",
+      text: "API_KEY=sk-proj-LeakGuardScannerOcrApiKey1234567890abcdef",
+      textLength: 61,
+      confidenceBucket: "high",
+      warnings: []
+    },
+    "Scanner OCR runtime should return raw OCR text only for the explicit image-recognition message"
+  );
+  const lastImageMessage = createdWorkers[0].messages.at(-1);
+  assert.strictEqual(lastImageMessage.type, "ocr_recognize_image");
+  assert.strictEqual(lastImageMessage.language, "eng");
+  assert.strictEqual(lastImageMessage.mimeType, "image/png");
+  assert.deepStrictEqual(
+    Array.from(lastImageMessage.imageBytes),
+    Array.from(imageBytes),
+    "Scanner OCR runtime should send only the explicit scanner image-recognition payload"
+  );
+
+  runtime.terminate();
+  assert.strictEqual(createdWorkers[0].terminated, true, "OCR runtime shell should terminate its worker");
+}
+
+async function assertOcrWorkerEngineProof(targetRoot) {
+  const workerSource = fs.readFileSync(path.join(targetRoot, "shared/ocr/ocrWorker.js"), "utf8");
+  const tesseractCoreSource = fs.readFileSync(
+    path.join(targetRoot, "shared/ocr/tesseract-core/tesseract-core.js"),
+    "utf8"
+  );
+  const postedMessages = [];
+  const fetchedUrls = [];
+  const wasmProbeBytes = fs.readFileSync(path.join(targetRoot, "shared/ocr/ocrWasmProbe.wasm"));
+  const tesseractCoreBytes = fs.readFileSync(
+    path.join(targetRoot, "shared/ocr/tesseract-core/tesseract-core.wasm")
+  );
+  const englishTrainedDataBytes = fs.readFileSync(
+    path.join(targetRoot, "shared/ocr/tessdata/eng.traineddata.gz")
+  );
+  const syntheticFixtureBytes = fs.readFileSync(
+    path.join(targetRoot, "shared/ocr/fixtures/synthetic-test-ocr.png")
+  );
+  const syntheticFixtureRaw = require("sharp")(syntheticFixtureBytes).grayscale().raw().toBuffer({
+    resolveWithObject: true
+  });
+  const wasmApi = {
+    instantiate: WebAssembly.instantiate,
+    instantiateStreaming: WebAssembly.instantiateStreaming,
+    async compile(bytes) {
+      assert.ok(ArrayBuffer.isView(bytes), "WASM proof should compile byte content only");
+      assert.deepStrictEqual(
+        Array.from(bytes),
+        Array.from(wasmProbeBytes),
+        "WASM proof should compile the packaged proof asset bytes"
+      );
+      return {};
+    }
+  };
+  const fetchApi = async (url) => {
+    fetchedUrls.push(String(url));
+    const bytes = String(url).endsWith("/shared/ocr/tesseract-core/tesseract-core.wasm")
+      ? tesseractCoreBytes
+      : String(url).endsWith("/shared/ocr/tessdata/eng.traineddata.gz")
+        ? englishTrainedDataBytes
+        : String(url).endsWith("/shared/ocr/fixtures/synthetic-test-ocr.png")
+          ? syntheticFixtureBytes
+      : wasmProbeBytes;
+    return {
+      ok: true,
+      status: 200,
+      async arrayBuffer() {
+        return bytes.buffer.slice(
+          bytes.byteOffset,
+          bytes.byteOffset + bytes.byteLength
+        );
+      }
+    };
+  };
+  const sandbox = vm.createContext({
+    console: {
+      log() {},
+      warn() {},
+      error() {}
+    },
+    WebAssembly: wasmApi,
+    fetch: fetchApi,
+    importScripts(url) {
+      assert.strictEqual(
+        String(url),
+        "chrome-extension://test-id/shared/ocr/tesseract-core/tesseract-core.js",
+        "tesseract.js-core proof should import only the packaged core loader script"
+      );
+      vm.runInContext(tesseractCoreSource, sandbox, {
+        filename: "tesseract-core.js"
+      });
+      sandbox.self.TesseractCore = sandbox.TesseractCore;
+    },
+    self: {
+      WebAssembly: wasmApi,
+      fetch: fetchApi,
+      importScripts(url) {
+        sandbox.importScripts(url);
+      },
+      location: {
+        href: "chrome-extension://test-id/shared/ocr/ocrWorker.js"
+      },
+      chrome: {
+        runtime: {
+          getURL: (resourcePath) => `chrome-extension://test-id/${resourcePath}`
+        }
+      },
+      postMessage(message) {
+        postedMessages.push(message);
+      }
+    },
+    setTimeout,
+    clearTimeout,
+    Promise,
+    URL,
+    Uint8Array,
+    Int8Array,
+    ArrayBuffer,
+    TextDecoder,
+    TextEncoder,
+    Blob,
+    Response,
+    DecompressionStream,
+    async createImageBitmap() {
+      const raw = await syntheticFixtureRaw;
+      return {
+        width: raw.info.width,
+        height: raw.info.height,
+        close() {}
+      };
+    },
+    OffscreenCanvas: class {
+      constructor(width, height) {
+        this.width = width;
+        this.height = height;
+      }
+
+      getContext() {
+        return {
+          drawImage() {},
+          getImageData: () => {
+            const raw = syntheticFixtureRawResult;
+            const rgba = new Uint8ClampedArray(raw.info.width * raw.info.height * 4);
+            for (let index = 0; index < raw.data.length; index += 1) {
+              const outputIndex = index * 4;
+              const value = raw.data[index];
+              rgba[outputIndex] = value;
+              rgba[outputIndex + 1] = value;
+              rgba[outputIndex + 2] = value;
+              rgba[outputIndex + 3] = 255;
+            }
+            return { data: rgba };
+          }
+        };
+      }
+    }
+  });
+  const syntheticFixtureRawResult = await syntheticFixtureRaw;
+  sandbox.globalThis = sandbox.self;
+
+  vm.runInContext(workerSource, sandbox, {
+    filename: "ocrWorker.js"
+  });
+
+  await sandbox.self.onmessage({ data: { type: "ocr_probe" } });
+  await sandbox.self.onmessage({
+    data: {
+      type: "wasm_probe",
+      imageData: "must-not-be-read",
+      pixels: [1, 2, 3],
+      userText: "must-not-be-read"
+    }
+  });
+  await sandbox.self.onmessage({ data: { type: "ocr_engine_probe", imageData: "must-not-be-read" } });
+  await sandbox.self.onmessage({
+    data: {
+      type: "tesseract_core_probe",
+      imageData: "must-not-be-read",
+      pixels: [1, 2, 3],
+      userText: "must-not-be-read"
+    }
+  });
+  await sandbox.self.onmessage({
+    data: {
+      type: "ocr_language_probe",
+      language: "eng",
+      imageData: "must-not-be-read",
+      pixels: [1, 2, 3],
+      userText: "must-not-be-read"
+    }
+  });
+  await sandbox.self.onmessage({
+    data: {
+      type: "ocr_recognition_probe",
+      imageData: "must-not-be-read",
+      pixels: [1, 2, 3],
+      userText: "must-not-be-read"
+    }
+  });
+  await sandbox.self.onmessage({
+    data: {
+      type: "ocr_recognize_image",
+      language: "eng",
+      imageBytes: syntheticFixtureBytes,
+      mimeType: "image/png",
+      userText: "must-not-be-read"
+    }
+  });
+  await sandbox.self.onmessage({
+    data: {
+      type: "ocr_language_probe",
+      language: "deu"
+    }
+  });
+  assert.deepStrictEqual(
+    fetchedUrls,
+    [
+      "chrome-extension://test-id/shared/ocr/ocrWasmProbe.wasm",
+      "chrome-extension://test-id/shared/ocr/tesseract-core/tesseract-core.wasm",
+      "chrome-extension://test-id/shared/ocr/tessdata/eng.traineddata.gz",
+      "chrome-extension://test-id/shared/ocr/fixtures/synthetic-test-ocr.png"
+    ],
+    "OCR recognition proof should fetch only packaged extension-local WASM, English traineddata, and synthetic fixture assets"
+  );
+  assert.ok(
+    fetchedUrls.every((url) => !/^https?:\/\//i.test(url) && !/cdn|unpkg/i.test(url)),
+    "OCR WASM proof must not use remote URLs"
+  );
+  assert.deepStrictEqual(
+    plainObject(postedMessages),
+    [
+      {
+        ok: true,
+        status: "worker_ready",
+        ocrImplemented: false
+      },
+      {
+        ok: true,
+        status: "wasm_ready",
+        wasmLoaded: true
+      },
+      {
+        ok: false,
+        status: "engine_blocked",
+        ocrImplemented: false,
+        engine: null,
+        reason: "no_candidate_passed_security_size_csp_gates"
+      },
+      {
+        ok: true,
+        status: "tesseract_core_ready",
+        ocrImplemented: false
+      },
+      {
+        ok: true,
+        status: "language_ready",
+        language: "eng",
+        ocrImplemented: false
+      },
+      {
+        ok: true,
+        status: "ocr_recognition_ready",
+        ocrImplemented: true,
+        language: "eng",
+        textLength: 8,
+        containsExpectedText: true,
+        confidenceBucket: "high"
+      },
+      {
+        ok: true,
+        status: "ocr_recognition_ready",
+        language: "eng",
+        text: "TEST OCR",
+        textLength: 8,
+        confidenceBucket: "high",
+        layout: {
+          source: "word",
+          boxKind: "word",
+          fallbackUsed: false,
+          visualRedactionSafe: true,
+          protectedSiteEligible: true,
+          boxes: [
+            {
+              boxKind: "word",
+              kind: "word",
+              start: 0,
+              end: 4,
+              x: 13,
+              y: 28,
+              width: 106,
+              height: 32,
+              confidenceBucket: "high",
+              fallbackUsed: false,
+              visualRedactionSafe: true,
+              protectedSiteEligible: true
+            },
+            {
+              boxKind: "word",
+              kind: "word",
+              start: 5,
+              end: 8,
+              x: 133,
+              y: 28,
+              width: 91,
+              height: 32,
+              confidenceBucket: "high",
+              fallbackUsed: false,
+              visualRedactionSafe: true,
+              protectedSiteEligible: true
+            }
+          ]
+        },
+        warnings: []
+      },
+      {
+        ok: false,
+        status: "language_blocked",
+        language: "deu",
+        reason: "unsupported_language"
+      }
+    ],
+    "OCR worker should keep probes metadata-only, prove WASM/core/English language/fixture recognition, and report engine_blocked"
+  );
+  assert.strictEqual(
+    postedMessages
+      .filter((message) => message.status !== "ocr_recognition_ready" || message.containsExpectedText === true)
+      .some((message) => Object.prototype.hasOwnProperty.call(message, "text")),
+    false,
+    "OCR probe messages must not post raw OCR text"
+  );
+}
+
+async function assertOcrWorkerWasmProofUsesSiblingFallback(targetRoot) {
+  const workerSource = fs.readFileSync(path.join(targetRoot, "shared/ocr/ocrWorker.js"), "utf8");
+  const postedMessages = [];
+  const fetchedUrls = [];
+  const wasmProbeBytes = fs.readFileSync(path.join(targetRoot, "shared/ocr/ocrWasmProbe.wasm"));
+  const sandbox = {
+    URL,
+    self: {
+      WebAssembly: {
+        async compile() {
+          return {};
+        }
+      },
+      fetch: async (url) => {
+        fetchedUrls.push(String(url));
+        return {
+          ok: true,
+          status: 200,
+          async arrayBuffer() {
+            return wasmProbeBytes.buffer.slice(
+              wasmProbeBytes.byteOffset,
+              wasmProbeBytes.byteOffset + wasmProbeBytes.byteLength
+            );
+          }
+        };
+      },
+      location: {
+        href: "chrome-extension://test-id/shared/ocr/ocrWorker.js"
+      },
+      postMessage(message) {
+        postedMessages.push(message);
+      }
+    }
+  };
+  sandbox.globalThis = sandbox.self;
+
+  vm.runInNewContext(workerSource, sandbox, {
+    filename: "ocrWorker.js"
+  });
+
+  await sandbox.self.onmessage({ data: { type: "wasm_probe" } });
+  assert.deepStrictEqual(
+    fetchedUrls,
+    ["chrome-extension://test-id/shared/ocr/ocrWasmProbe.wasm"],
+    "OCR WASM proof should resolve a packaged sibling asset when runtime APIs are unavailable in the worker"
+  );
+  assert.deepStrictEqual(plainObject(postedMessages), [
+    {
+      ok: true,
+      status: "wasm_ready",
+      wasmLoaded: true
+    }
+  ]);
+}
+
+function assertOcrWorkerStaticSafety(targetRoot) {
+  const workerSource = fs.readFileSync(path.join(targetRoot, "shared/ocr/ocrWorker.js"), "utf8");
+  assert.deepStrictEqual(
+    [/https?:\/\//i, /cdn/i, /unpkg/i, /\beval\s*\(/i, /\bFunction\s*\(/].map((pattern) => pattern.test(workerSource)),
+    [false, false, false, false, false],
+    "OCR worker proof should avoid remote URLs, eval, and Function"
+  );
+  assert.strictEqual(
+    /event\.data\.(?:imageData|pixels|userText|bitmap|canvas)/i.test(workerSource),
+    false,
+    "OCR worker should ignore probe-only user data fields"
+  );
+  assert.ok(
+    workerSource.includes("fixtures/synthetic-test-ocr.png"),
+    "OCR recognition proof worker should keep using the packaged synthetic fixture"
+  );
+  assert.strictEqual(
+    /ocr_recognition_probe[\s\S]*?postMessage\s*\([^)]*\btext\b/i.test(workerSource),
+    false,
+    "OCR recognition probe path should not post raw OCR text"
+  );
+
+  for (const relativePath of [...tesseractCoreProofFiles, ...englishLanguageProofFiles]) {
+    const sourcePath = path.join(targetRoot, relativePath);
+    const source = relativePath.endsWith(".gz") ? "" : fs.readFileSync(sourcePath, "utf8");
+    if (source) {
+      assert.strictEqual(
+        /https?:\/\/|cdn\.jsdelivr|unpkg/i.test(source),
+        false,
+        `${relativePath} should not contain remote URL or CDN strings`
+      );
+    }
+    if (relativePath.endsWith(".js")) {
+      assert.strictEqual(
+        /\beval\s*\(|\bnew\s+Function\b|\bFunction\s*\(/.test(source),
+        false,
+        `${relativePath} should not use eval or Function`
+      );
+    }
+  }
+}
+
 function assertManifestStructure(result, expectedHostPermissions) {
   const manifest = result.manifest;
   const contentScript = manifest.content_scripts?.[0] || {};
@@ -211,8 +1058,39 @@ function assertManifestStructure(result, expectedHostPermissions) {
   assert.strictEqual(manifest.manifest_version, 3, `${result.target} should remain MV3`);
   assert.deepStrictEqual(
     manifest.content_security_policy,
-    { extension_pages: restrictiveExtensionPageCsp },
-    `${result.target} should keep the restrictive extension-page CSP`
+    {
+      extension_pages: restrictiveExtensionPageCsp,
+      sandbox: restrictiveSandboxCsp
+    },
+    `${result.target} should keep the restrictive extension-page CSP with local WASM compilation only`
+  );
+  assert.deepStrictEqual(
+    manifest.sandbox,
+    { pages: ["content/protected_site_ocr_broker.html"] },
+    `${result.target} should sandbox only the protected-site OCR broker page`
+  );
+  const cspDirectives = parseCspDirectives(manifest.content_security_policy?.extension_pages);
+  assert.deepStrictEqual(
+    cspDirectives["script-src"],
+    ["'self'", "'wasm-unsafe-eval'"],
+    `${result.target} script-src should allow only packaged scripts and local WASM compilation`
+  );
+  assert.strictEqual(
+    cspDirectives["script-src"].includes("'unsafe-eval'"),
+    false,
+    `${result.target} script-src must not allow unsafe-eval`
+  );
+  assert.strictEqual(
+    cspDirectives["script-src"].some((source) => /^(?:https?:|wss?:|data:|blob:)|cdn|unpkg/i.test(source)),
+    false,
+    `${result.target} script-src must not allow remote, CDN, data, or blob sources`
+  );
+  assert.deepStrictEqual(cspDirectives["object-src"], ["'none'"], `${result.target} object-src should stay none`);
+  assert.deepStrictEqual(cspDirectives["base-uri"], ["'none'"], `${result.target} base-uri should stay none`);
+  assert.deepStrictEqual(
+    cspDirectives["frame-ancestors"],
+    ["'none'"],
+    `${result.target} frame-ancestors should stay none`
   );
   assert.deepStrictEqual(
     [...(manifest.host_permissions || [])].sort(),
@@ -291,12 +1169,28 @@ function assertPackageStructure(results) {
   for (const result of results) {
     assertManifestStructure(result, expectedHostPermissions);
     assertPackageContentsAreRuntimeOnly(result);
+    assertOcrRuntimeAssets(result);
   }
 }
 
 async function run() {
-  const { BUILD_TARGETS, buildTarget } = await import(
+  const { BUILD_TARGETS, OCR_SIZE_BUDGETS, buildTarget } = await import(
     pathToFileURL(path.join(repoRoot, "scripts/build-extension.mjs")).href
+  );
+  assert.deepStrictEqual(
+    BUILD_TARGETS.map((target) => target.folder).sort(),
+    ["chrome", "chrome-enterprise", "firefox", "firefox-enterprise"].sort(),
+    "build target matrix should stay single-extension without optional OCR editions"
+  );
+  assert.deepStrictEqual(
+    OCR_SIZE_BUDGETS,
+    Object.freeze({
+      currentInstalledWarningBytes: 50 * 1024 * 1024,
+      hardReviewInstalledBytes: 100 * 1024 * 1024,
+      firefoxUploadHardLimitBytes: 200 * 1000 * 1000,
+      chromeZipHardLimitBytes: 2 * 1024 * 1024 * 1024
+    }),
+    "OCR size budget should document internal warning/review gates and external store limits"
   );
 
   const results = BUILD_TARGETS.map((target) => buildTarget(target.browser, target.mode));
@@ -321,12 +1215,37 @@ async function run() {
   );
 
   assert.strictEqual(consumerBuildInfo.enterprise, false, "consumer build should stay non-enterprise");
+  assert.deepStrictEqual(
+    consumerBuildInfo.features?.ocr,
+    {
+      enabled: true,
+      status: "image_ocr_v1",
+      scope: "scanner_and_protected_site_image_english_only_default_on_with_setting"
+    },
+    "default consumer build should expose scanner OCR and default-on protected-site image OCR metadata"
+  );
   assert.strictEqual(chromeEnterpriseBuildInfo.enterprise, true, "chrome enterprise build should mark enterprise");
   assert.strictEqual(
     firefoxEnterpriseBuildInfo.enterprise,
     true,
     "firefox enterprise build should mark enterprise"
   );
+  for (const target of ["chrome", "chrome-enterprise", "firefox", "firefox-enterprise"]) {
+    const buildInfo = require(path.join(repoRoot, `dist/${target}/shared/build_info.js`));
+    assert.deepStrictEqual(
+      buildInfo.features?.ocr,
+      {
+        enabled: true,
+        status: "image_ocr_v1",
+        scope: "scanner_and_protected_site_image_english_only_default_on_with_setting"
+      },
+      `${target} should report image OCR v1 metadata`
+    );
+    await assertOcrRuntimeProbeShell(path.join(repoRoot, "dist", target));
+    await assertOcrWorkerEngineProof(path.join(repoRoot, "dist", target));
+    await assertOcrWorkerWasmProofUsesSiblingFallback(path.join(repoRoot, "dist", target));
+    assertOcrWorkerStaticSafety(path.join(repoRoot, "dist", target));
+  }
 
   const chromeEnterpriseManifest = JSON.parse(
     fs.readFileSync(path.join(repoRoot, "dist/chrome-enterprise/manifest.json"), "utf8")
@@ -341,6 +1260,32 @@ async function run() {
     fs.readFileSync(path.join(repoRoot, "dist/firefox-enterprise/manifest.json"), "utf8")
   );
   const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
+  const scannerHtml = fs.readFileSync(path.join(repoRoot, "dist/chrome/scanner/scanner.html"), "utf8");
+  assert.ok(
+    scannerHtml.includes("Image OCR is English-only") &&
+      scannerHtml.includes("scanned locally") &&
+      scannerHtml.includes("limited to image files on this scanner page") &&
+      scannerHtml.includes("Scanner image visual redaction outputs a flattened PNG") &&
+      scannerHtml.includes("JPG, JPEG, and WEBP inputs are not preserved as their original format") &&
+      scannerHtml.includes("Protected-site upload OCR is on by default for supported image uploads") &&
+      scannerHtml.includes("can be turned off in settings") &&
+      scannerHtml.includes("flattened redacted PNG only when OCR box confidence is eligible") &&
+      scannerHtml.includes("Text PDF scanner results can also export a .redacted.pdf regenerated from sanitized extracted text") &&
+      scannerHtml.includes("DOCX scanner results can also export a .redacted.docx regenerated from sanitized extracted text") &&
+      scannerHtml.includes("not layout-preserving") &&
+      scannerHtml.includes(".redacted.txt remains available as the fallback") &&
+      scannerHtml.includes("Protected-site DOCX output can hand off a regenerated .redacted.docx when complete") &&
+      scannerHtml.includes("truncated or unsafe DOCX regeneration falls back to .redacted.txt or blocks raw upload") &&
+      scannerHtml.includes("Protected-site XLSX output can hand off a regenerated .redacted.xlsx when complete") &&
+      scannerHtml.includes("truncated or unsafe XLSX regeneration falls back to .redacted.txt or blocks raw upload") &&
+      scannerHtml.includes("Protected-site text PDF output can hand off a regenerated .redacted.pdf when complete") &&
+      scannerHtml.includes("Scanned PDF OCR") &&
+      scannerHtml.includes("XLSX scanner results can also export a .redacted.xlsx regenerated from sanitized extracted text") &&
+      scannerHtml.includes("original XLSX XML parts are not copied") &&
+      scannerHtml.includes("layout-preserving PDF/DOCX/XLSX redaction") &&
+      scannerHtml.includes("image format preservation"),
+    "scanner UI should scope OCR to local English image scanning, scanner/protected-site PNG visual redaction, settings-controlled protected-site OCR, and explicitly exclude scanned PDFs, rebuilds, and format preservation"
+  );
   for (const [target, manifest] of [
     ["chrome", chromeManifest],
     ["chrome-enterprise", chromeEnterpriseManifest],
@@ -353,12 +1298,70 @@ async function run() {
       `${target} manifest should inherit package release version`
     );
   }
+  assert.strictEqual(
+    Object.keys(packageJson.scripts || {}).some((scriptName) =>
+      ["build:chrome-ocr", "prebuild:chrome-ocr", "build:firefox-ocr", "prebuild:firefox-ocr"].includes(scriptName)
+    ) || Object.values(packageJson.scripts || {}).some((script) => String(script).includes("--mode ocr")),
+    false,
+    "single-extension architecture should not expose optional OCR edition build scripts"
+  );
+  for (const dependencySet of [packageJson.dependencies || {}, packageJson.devDependencies || {}]) {
+    for (const forbidden of ["tesseract.js", "tesseract.js-core", "@tesseract.js-data/eng", "ocrad.js"]) {
+      assert.strictEqual(
+        Object.prototype.hasOwnProperty.call(dependencySet, forbidden),
+        false,
+        `OCR package ${forbidden} should not be installed; tesseract.js-core proof assets should be isolated vendored files`
+      );
+    }
+  }
+  const chromeBytes = dirSizeBytes(path.join(repoRoot, "dist/chrome"));
+  const firefoxBytes = dirSizeBytes(path.join(repoRoot, "dist/firefox"));
+  const tesseractCoreProofBytes = tesseractCoreProofFiles.reduce(
+    (total, relativePath) => total + fs.statSync(path.join(repoRoot, "dist/chrome", relativePath)).size,
+    0
+  );
+  assert.ok(
+    tesseractCoreProofBytes < 4 * 1024 * 1024,
+    "tesseract.js-core loading proof should add only the minimal local core JS/WASM pair"
+  );
+  const englishLanguageProofBytes = englishLanguageProofFiles.reduce(
+    (total, relativePath) => total + fs.statSync(path.join(repoRoot, "dist/chrome", relativePath)).size,
+    0
+  );
+  assert.ok(
+    englishLanguageProofBytes < 3 * 1024 * 1024,
+    "English language loading proof should add only the compressed eng.traineddata asset"
+  );
+  assert.ok(
+    chromeBytes < OCR_SIZE_BUDGETS.currentInstalledWarningBytes,
+    "Chrome installed package should stay below OCR planning warning threshold with core loading proof assets"
+  );
+  assert.ok(
+    firefoxBytes < OCR_SIZE_BUDGETS.currentInstalledWarningBytes,
+    "Firefox installed package should stay below OCR planning warning threshold with core loading proof assets"
+  );
+  for (const target of ["chrome", "chrome-enterprise", "firefox", "firefox-enterprise"]) {
+    const releaseZip = path.join(repoRoot, "artifacts", "release", `leakguard-${target}-v${packageJson.version}.zip`);
+    if (fs.existsSync(releaseZip)) {
+      assert.ok(
+        fs.statSync(releaseZip).size < OCR_SIZE_BUDGETS.currentInstalledWarningBytes,
+        `${target} release zip should stay below OCR planning warning threshold before OCR assets exist`
+      );
+    }
+  }
   const contentScripts = chromeManifest.content_scripts[0].js;
   const knownSecretReuseIndex = contentScripts.indexOf("shared/knownSecretReuse.js");
   const transformOutboundPromptIndex = contentScripts.indexOf("shared/transformOutboundPrompt.js");
   const redactorIndex = contentScripts.indexOf("shared/redactor.js");
   const fileLimitsIndex = contentScripts.indexOf("shared/fileLimits.js");
+  const fileTypeRegistryIndex = contentScripts.indexOf("shared/fileTypeRegistry.js");
+  const fileExtractorsIndex = contentScripts.indexOf("shared/fileExtractors.js");
   const fileScannerIndex = contentScripts.indexOf("shared/fileScanner.js");
+  const docxRedactorIndex = contentScripts.indexOf("shared/docxRedactor.js");
+  const xlsxRedactorIndex = contentScripts.indexOf("shared/xlsxRedactor.js");
+  const ocrRuntimeIndex = contentScripts.indexOf("shared/ocr/ocrRuntime.js");
+  const scannerOcrIndex = contentScripts.indexOf("shared/scannerOcr.js");
+  const imageRedactorIndex = contentScripts.indexOf("shared/imageRedactor.js");
   const streamingRedactorIndex = contentScripts.indexOf("shared/streamingFileRedactor.js");
   const filePasteHelperIndex = contentScripts.indexOf("content/file_paste_helpers.js");
   const fileHandoffStateIndex = contentScripts.indexOf("content/file_handoff_state.js");
@@ -366,6 +1369,9 @@ async function run() {
   const fileHandoffFlowIndex = contentScripts.indexOf("content/file_handoff_flow.js");
   const rewriteVerificationTextIndex = contentScripts.indexOf("content/input/rewriteVerificationText.js");
   const fileTransferPolicyIndex = contentScripts.indexOf("content/files/fileTransferPolicy.js");
+  const fileExtractionSessionCacheIndex = contentScripts.indexOf("content/files/fileExtractionSessionCache.js");
+  const protectedSiteOcrBrokerIndex = contentScripts.indexOf("content/files/protectedSiteOcrBroker.js");
+  const contentFileExtractionPipelineIndex = contentScripts.indexOf("content/files/contentFileExtractionPipeline.js");
   const hostMatchingIndex = contentScripts.indexOf("content/adapters/hostMatching.js");
   const adapterScripts = [
     "content/adapters/chatgptAdapter.js",
@@ -395,6 +1401,13 @@ async function run() {
   );
   assert.ok(fileScannerIndex > -1, "content scripts should include shared file scanner helpers");
   assert.ok(fileLimitsIndex > -1, "content scripts should include shared file limit constants");
+  assert.ok(fileTypeRegistryIndex > -1, "content scripts should include shared file type registry helpers");
+  assert.ok(fileExtractorsIndex > -1, "content scripts should include shared file extractor helpers");
+  assert.ok(docxRedactorIndex > -1, "content scripts should include shared DOCX redactor helpers");
+  assert.ok(xlsxRedactorIndex > -1, "content scripts should include shared XLSX redactor helpers");
+  assert.ok(ocrRuntimeIndex > -1, "content scripts should include shared OCR runtime helpers");
+  assert.ok(scannerOcrIndex > -1, "content scripts should include shared scanner OCR helpers");
+  assert.ok(imageRedactorIndex > -1, "content scripts should include shared image redactor helpers");
   assert.ok(streamingRedactorIndex > -1, "content scripts should include streaming file redactor helpers");
   assert.ok(filePasteHelperIndex > -1, "content scripts should include local file paste helpers");
   assert.ok(fileHandoffStateIndex > -1, "content scripts should include file handoff state helpers");
@@ -402,6 +1415,12 @@ async function run() {
   assert.ok(fileHandoffFlowIndex > -1, "content scripts should include file handoff flow helpers");
   assert.ok(rewriteVerificationTextIndex > -1, "content scripts should include rewrite verification text helpers");
   assert.ok(fileTransferPolicyIndex > -1, "content scripts should include file transfer policy helpers");
+  assert.ok(fileExtractionSessionCacheIndex > -1, "content scripts should include file extraction session cache helpers");
+  assert.ok(protectedSiteOcrBrokerIndex > -1, "content scripts should include protected-site OCR broker helpers");
+  assert.ok(
+    contentFileExtractionPipelineIndex > -1,
+    "content scripts should include content file extraction pipeline helpers"
+  );
   assert.ok(hostMatchingIndex > -1, "content scripts should include host matching helpers");
   assert.ok(adapterIndexes.every((index) => index > -1), "content scripts should include site adapter helpers");
   assert.ok(geminiFallbackWriterIndex > -1, "content scripts should include Gemini fallback writer helpers");
@@ -416,15 +1435,25 @@ async function run() {
     (index, offset) => offset === 0 || adapterIndexes[offset - 1] < index
   );
   assert.ok(
-    fileScannerIndex < streamingRedactorIndex &&
-      fileLimitsIndex < fileScannerIndex &&
+    fileLimitsIndex < fileTypeRegistryIndex &&
+      fileTypeRegistryIndex < fileExtractorsIndex &&
+      fileExtractorsIndex < fileScannerIndex &&
+      fileScannerIndex < docxRedactorIndex &&
+      docxRedactorIndex < xlsxRedactorIndex &&
+      xlsxRedactorIndex < ocrRuntimeIndex &&
+      ocrRuntimeIndex < scannerOcrIndex &&
+      scannerOcrIndex < imageRedactorIndex &&
+      imageRedactorIndex < streamingRedactorIndex &&
       streamingRedactorIndex < filePasteHelperIndex &&
       filePasteHelperIndex < fileHandoffStateIndex &&
       fileHandoffStateIndex < fileHandoffPendingIndex &&
       fileHandoffPendingIndex < fileHandoffFlowIndex &&
       fileHandoffFlowIndex < rewriteVerificationTextIndex &&
       rewriteVerificationTextIndex < fileTransferPolicyIndex &&
-      fileTransferPolicyIndex < hostMatchingIndex &&
+      fileTransferPolicyIndex < fileExtractionSessionCacheIndex &&
+      fileExtractionSessionCacheIndex < protectedSiteOcrBrokerIndex &&
+      protectedSiteOcrBrokerIndex < contentFileExtractionPipelineIndex &&
+      contentFileExtractionPipelineIndex < hostMatchingIndex &&
       hostMatchingIndex < adapterIndexes[0] &&
       adapterOrderAligned &&
       adapterIndexes.at(-1) < geminiFallbackWriterIndex &&

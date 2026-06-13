@@ -14,6 +14,8 @@ const {
   isBuiltinProtectedSiteRule,
   loadPolicy,
   getPolicySummary,
+  isProtectedSiteOcrEnabled,
+  setProtectedSiteOcrEnabled,
   evaluateDestinationPolicy,
   invalidatePolicyCache,
   ext,
@@ -48,7 +50,15 @@ const CONTENT_SCRIPT_FILES = [
   "shared/transformOutboundPromptWithAi.js",
   "shared/redactor.js",
   "shared/fileLimits.js",
+  "shared/fileTypeRegistry.js",
+  "shared/fileExtractors.js",
   "shared/fileScanner.js",
+  "shared/pdfRedactor.js",
+  "shared/docxRedactor.js",
+  "shared/xlsxRedactor.js",
+  "shared/ocr/ocrRuntime.js",
+  "shared/scannerOcr.js",
+  "shared/imageRedactor.js",
   "shared/streamingFileRedactor.js",
   "shared/protected_sites.js",
   "shared/policy.js",
@@ -59,6 +69,9 @@ const CONTENT_SCRIPT_FILES = [
   "content/file_handoff_flow.js",
   "content/input/rewriteVerificationText.js",
   "content/files/fileTransferPolicy.js",
+  "content/files/fileExtractionSessionCache.js",
+  "content/files/protectedSiteOcrBroker.js",
+  "content/files/contentFileExtractionPipeline.js",
   "content/adapters/hostMatching.js",
   "content/adapters/chatgptAdapter.js",
   "content/adapters/openaiAdapter.js",
@@ -1277,6 +1290,17 @@ ext.runtime?.onMessage?.addListener((message, sender, sendResponse) => {
     if (message?.type === "PWM_GET_PROTECTED_SITE_OVERVIEW") {
       const overview = await getProtectedSiteOverview(message.url, message.tabId ?? tabId);
       sendResponse({ ok: true, ...overview });
+      return;
+    }
+
+    if (message?.type === "PWM_GET_PROTECTED_SITE_OCR_SETTING") {
+      sendResponse({ ok: true, enabled: await isProtectedSiteOcrEnabled() });
+      return;
+    }
+
+    if (message?.type === "PWM_SET_PROTECTED_SITE_OCR_SETTING") {
+      const enabled = await setProtectedSiteOcrEnabled(message.enabled === true);
+      sendResponse({ ok: true, enabled });
       return;
     }
 

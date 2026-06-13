@@ -5,9 +5,21 @@
 - Reload the unpacked extension after the latest branch changes.
 - Confirm the popup opens and renders correctly on desktop width.
 - Confirm the popup still renders correctly on a smaller laptop display.
-- Confirm `npm test` passes locally.
+- Confirm Tier A fast validation passes: `npm run test:fast`.
+- Confirm Tier B release validation passes before publishing packages: `npm run test:release-gates`.
 - Confirm the built manifest includes `content_security_policy.extension_pages` with LeakGuard's restrictive extension-page CSP.
 - Confirm the built manifest does not add new host permissions for File Scanner.
+- Confirm protected-site image OCR is settings-controlled, enabled by default for supported image uploads, and can be turned off.
+- Confirm image redaction support is documented for PNG, JPG, JPEG, and WEBP inputs, with fail-closed behavior if OCR, canvas decode/draw, redaction, sanitized export, or provider handoff fails.
+
+## CI And Nightly Validation
+
+- PR-required validation is Tier A: `npm run test:ci`, which maps to `npm run test:fast`.
+- Release/manual validation is Tier A plus Tier B: `npm run test:fast` and `npm run test:release-gates`.
+- Nightly/browser validation is Tier A plus Tier B plus Tier C: `npm run test:nightly`.
+- Tier C browser validation is heavy and environment-sensitive: `npm run preflight:browser` followed by `npm run test:browser-gates`.
+- A browser startup failure before extension load, such as Chrome/Edge GPU/CDP startup failure or Firefox geckodriver status timeout, is a local or CI environment failure until rerun evidence shows the extension loaded and failed product assertions.
+- Product failures are failures after the extension loads and a LeakGuard behavior assertion fails, such as missing popup controls, missing protected-site panel, raw marker leakage, failed redaction, or missing scanner export behavior.
 
 ## Built-in Site Coverage
 
@@ -68,8 +80,15 @@
 - Download the JSON report and confirm raw secrets are absent from the report.
 - Select a supported text file between 2 MiB and 4 MiB and confirm it is accepted for local scanning.
 - Select a supported text file above 50 MB and confirm it is rejected before scanning.
-- Select unsupported files such as `.pdf`, `.docx`, `.png`, `.jpg`, `.zip`, and `.exe` and confirm the text-only release message appears.
-- Confirm PDF, DOCX, and image redaction are not claimed as supported.
+- Select a text PDF with a synthetic secret and confirm the scanner exports `.redacted.txt` plus a regenerated `.redacted.pdf` from sanitized text. Confirm the PDF is not layout-preserving and does not contain the raw secret.
+- Select a scanned/image-only PDF and confirm it fails closed with no scanned-PDF OCR claim.
+- Select a DOCX with a synthetic secret and confirm the scanner exports both `.redacted.txt` and regenerated `.redacted.docx` from sanitized text only.
+- Select an XLSX with a synthetic secret and confirm the scanner exports `.redacted.txt` plus a simple regenerated `.redacted.xlsx`, does not execute formulas, and does not preserve original XLSX XML parts.
+- Select PNG/JPG/JPEG/WEBP images and confirm metadata scanning is local and pixel OCR runs only when scanner OCR is explicitly started.
+- Run scanner image OCR on an English PNG/JPG/JPEG/WEBP with a synthetic secret and confirm redacted text export plus eligible flattened `.redacted.png` visual export.
+- Open the redacted image in a local viewer, visually inspect that the secret region is covered, and search the JSON report/redacted text export for the raw fake secret.
+- Confirm scanner OCR copy says English-only, local-only, no remote OCR/backend, no scanned-PDF OCR, no non-English OCR, no image format preservation, no layout-preserving PDF/DOCX/XLSX redaction, and no original Office document reconstruction.
+- Select unsupported files such as `.zip`, `.exe`, legacy `.doc`, legacy `.xls`, `.xlsm`, `.gif`, `.svg`, and arbitrary binary files and confirm the text-only release message appears.
 
 ## Local Text-File Paste/Drop Composer Flow
 
@@ -82,7 +101,12 @@
 - Confirm the sanitized attached/uploaded file keeps `token_limit=4096` visible.
 - Confirm the sanitized attached/uploaded file pseudonymizes the public IP with a `[PUB_HOST_N]` placeholder.
 - Confirm the sanitized attached/uploaded file keeps the private IP visible.
-- Confirm unsupported/binary/invalid UTF-8 files show this clear warning before or while normal upload continues: `LeakGuard did not scan or redact this file. Unsupported file types such as PDF, DOCX, images, archives, executables, and binary files are not protected in this release. Normal upload may continue through the site.`
+- Confirm PDF, DOCX, XLSX, and image metadata uploads on protected sites produce sanitized outputs where supported: complete text PDFs may hand off regenerated `.redacted.pdf`, complete DOCX files may hand off regenerated `.redacted.docx`, complete XLSX files may hand off regenerated `.redacted.xlsx`, and unsafe/truncated cases fall back to `.redacted.txt` or block raw upload.
+- Confirm protected-site OCR is off by default and image uploads use metadata-only `.redacted.txt` unless OCR has been explicitly enabled.
+- Enable protected-site OCR, upload an eligible PNG/JPG/JPEG/WEBP image with a synthetic secret, and confirm the site receives `.redacted.png` only when OCR boxes are eligible.
+- Gemini image upload check: with protected-site OCR enabled, upload or drag/drop a PNG/JPG/JPEG/WEBP image with a visible synthetic secret and confirm Gemini receives only the sanitized image file or a safe fallback/download path.
+- Enable protected-site OCR, upload an image with fallback/ineligible boxes or forced OCR failure, and confirm LeakGuard blocks raw upload.
+- Confirm unsupported/binary/invalid UTF-8 files show clear warning or blocking behavior without claiming they were scanned, sanitized, or protected.
 - Confirm unsupported files are not falsely marked as protected or sanitized.
 - Confirm supported text files above 50 MB are blocked from local redaction with a clear too-large warning.
 - Confirm supported text files are never uploaded raw if LeakGuard attempted sanitization and handoff failed.
@@ -93,7 +117,8 @@
 ## Firefox Protected-Site File/Drop Checks
 
 - Automated local Firefox smoke now covers popup loading, user-managed protected-site add/disable/re-enable/remove, secure reveal, refresh safety, File Scanner supported/unsupported files, and scanner exports. Keep live AI-site Firefox checks manual.
-- In Firefox on ChatGPT, upload unsupported files such as PDF, DOCX, image, archive, executable, binary, and invalid UTF-8 text files; confirm LeakGuard shows only a non-blocking warning that the file was not scanned/redacted and normal site upload continues.
+- In Firefox on ChatGPT, upload supported PDF/DOCX/XLSX/image metadata files and confirm text PDFs hand off `.redacted.pdf` only when complete, DOCX files hand off `.redacted.docx` only when complete, XLSX files hand off `.redacted.xlsx` only when complete, and sanitized `.redacted.txt` fallback remains available where required; image metadata remains `.redacted.txt`.
+- In Firefox on ChatGPT, upload unsupported files such as archive, executable, legacy/macro Office, binary, and invalid UTF-8 text files; confirm LeakGuard does not claim they were scanned/redacted and normal site upload continues only where safe.
 - In Firefox on ChatGPT, confirm unsupported and invalid UTF-8 uploads do not show `Local file not attached`, do not claim sanitization, and do not block native upload by default.
 - If Firefox ChatGPT login is blocked by account Advanced Security, mark Firefox ChatGPT as limited manual coverage and rely on Chrome live QA plus automated ChatGPT DOM/state tests for release gating.
 - In Firefox on Gemini, drag and drop a supported UTF-8 text file and confirm LeakGuard scans/redacts locally, then hands off a sanitized file or inserts sanitized text without leaking raw content.
@@ -135,7 +160,9 @@
 
 - Capture final screenshots for popup home, popup management, in-page panel, decision modal, and popup reveal.
 - Confirm [STORE_ASSETS_CHECKLIST.md](STORE_ASSETS_CHECKLIST.md) is complete for the target store.
-- Complete the support, privacy, and security contact TODOs in the privacy policy with real project contacts.
+- Confirm publication contacts are finalized in `docs/PRIVACY_POLICY.md`: support, privacy, and security all use `petritbahtiri24@gmail.com`.
 - Review the Chrome Web Store copy in `docs/CHROME_WEB_STORE_LISTING.md`.
 - Review the Firefox AMO submission notes in `docs/FIREFOX_AMO_CHECKLIST.md` if publishing a Firefox package.
 - Review release-facing wording for Firefox Add-ons suitability: local-only processing, no telemetry, no cloud processing, no remote model calls, and no perfect-protection claims.
+- Review [FILE_CAPABILITY_MATRIX.md](FILE_CAPABILITY_MATRIX.md) against release copy: scanner and protected-site text PDFs, DOCX, and XLSX can export regenerated files from sanitized text only, protected-site regenerated outputs fall back to `.redacted.txt` when regeneration would truncate, scanner visual image redaction exports PNG, protected-site OCR is settings-controlled/default-on for supported image uploads with opt-out, no scanned-PDF OCR, no non-English OCR, no remote OCR/backend, and no image format preservation.
+- GO/NO-GO for image redaction: GO only after supported image fixtures produce sanitized outputs with no visible/searchable raw fake secret; NO-GO if image OCR, canvas processing, redaction, export, or provider handoff fails without blocking raw upload.

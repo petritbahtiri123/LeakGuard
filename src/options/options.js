@@ -9,6 +9,8 @@
   const formEl = document.getElementById("add-site-form");
   const inputEl = document.getElementById("site-input");
   const feedbackEl = document.getElementById("form-feedback");
+  const protectedSiteOcrToggleEl = document.getElementById("protected-site-ocr-toggle");
+  const protectedSiteOcrFeedbackEl = document.getElementById("protected-site-ocr-feedback");
   const managedSiteListEl = document.getElementById("managed-site-list");
   const userSiteListEl = document.getElementById("user-site-list");
   const builtinSiteListEl = document.getElementById("builtin-site-list");
@@ -19,6 +21,10 @@
 
   function setFeedback(text) {
     feedbackEl.textContent = text || "";
+  }
+
+  function setProtectedSiteOcrFeedback(text) {
+    protectedSiteOcrFeedbackEl.textContent = text || "";
   }
 
   function updatePolicy(policy) {
@@ -206,9 +212,42 @@
     }
 
     updatePolicy(response.policy);
+    await refreshProtectedSiteOcrSetting();
     renderManagedSites(response.managedSites || []);
     renderUserSites(response.userSites || []);
     renderBuiltinSites();
+  }
+
+  async function refreshProtectedSiteOcrSetting() {
+    const response = await ext.runtime.sendMessage({
+      type: "PWM_GET_PROTECTED_SITE_OCR_SETTING"
+    });
+
+    if (!response?.ok) {
+      throw new Error(response?.error || "LeakGuard could not load protected-site OCR settings.");
+    }
+
+    protectedSiteOcrToggleEl.checked = response.enabled === true;
+  }
+
+  async function updateProtectedSiteOcrSetting(enabled) {
+    protectedSiteOcrToggleEl.disabled = true;
+    setProtectedSiteOcrFeedback("");
+    try {
+      const response = await ext.runtime.sendMessage({
+        type: "PWM_SET_PROTECTED_SITE_OCR_SETTING",
+        enabled: enabled === true
+      });
+
+      if (!response?.ok) {
+        throw new Error(response?.error || "LeakGuard could not save protected-site OCR settings.");
+      }
+
+      protectedSiteOcrToggleEl.checked = response.enabled === true;
+      setProtectedSiteOcrFeedback(response.enabled ? "Protected-site image OCR is on." : "Protected-site image OCR is off.");
+    } finally {
+      protectedSiteOcrToggleEl.disabled = false;
+    }
   }
 
   async function handleSubmit(event) {
@@ -258,6 +297,13 @@
   formEl.addEventListener("submit", (event) => {
     handleSubmit(event).catch((error) => {
       setFeedback(error?.message || "LeakGuard could not save this site.");
+    });
+  });
+
+  protectedSiteOcrToggleEl.addEventListener("change", (event) => {
+    updateProtectedSiteOcrSetting(event.target.checked).catch((error) => {
+      protectedSiteOcrToggleEl.checked = !event.target.checked;
+      setProtectedSiteOcrFeedback(error?.message || "LeakGuard could not save protected-site OCR settings.");
     });
   });
 

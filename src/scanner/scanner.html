@@ -20,14 +20,14 @@
 
       <section class="scanner-grid">
         <section class="panel scan-panel">
-          <h2>Choose a text file</h2>
+          <h2>Choose a text file, text PDF, DOCX, XLSX, or image</h2>
           <p class="copy">
-            Text-based files can be scanned and exported as redacted copies. PDF, DOCX, image, archive, executable, and binary-file redaction are not enabled in this release.
+            Text files, text PDFs, DOCX text, XLSX spreadsheet text, and PNG/JPG/JPEG/WEBP images can be scanned locally and exported as redacted text copies. Text PDF scanner results can also export a .redacted.pdf regenerated from sanitized extracted text; it is not layout-preserving, and .redacted.txt remains available as the fallback. DOCX scanner results can also export a .redacted.docx regenerated from sanitized extracted text; it is not layout-preserving, original styles, images, comments, and metadata are not preserved, it does not copy original DOCX XML parts, it does not redact embedded images, .doc, .docm, and macros are unsupported, and .redacted.txt remains available as the fallback. XLSX scanner results can also export a .redacted.xlsx regenerated from sanitized extracted text; it is not layout-preserving, formulas, charts, styles, comments, hidden sheets, metadata, custom XML, calc chains, and media are not preserved, original XLSX XML parts are not copied, .xls, .xlsm, and macros are unsupported, and .redacted.txt remains available as the fallback. Protected-site DOCX output can hand off a regenerated .redacted.docx when complete; truncated or unsafe DOCX regeneration falls back to .redacted.txt or blocks raw upload. Protected-site XLSX output can hand off a regenerated .redacted.xlsx when complete; truncated or unsafe XLSX regeneration falls back to .redacted.txt or blocks raw upload. Protected-site text PDF output can hand off a regenerated .redacted.pdf when complete; truncated or unsafe PDF regeneration falls back to .redacted.txt or blocks raw upload. Image OCR is English-only, runs only after you select an image and click Scan File, and is limited to image files on this scanner page. Scanner image visual redaction outputs a flattened PNG with black rectangles when OCR boxes are available; JPG, JPEG, and WEBP inputs are not preserved as their original format in this release. Protected-site upload OCR is on by default for supported image uploads, can be turned off in settings, and exports a flattened redacted PNG only when OCR box confidence is eligible; otherwise LeakGuard falls back safely or blocks raw image upload. XLSX formulas are scanned as text only and are not executed. Scanned PDF OCR, layout-preserving PDF/DOCX/XLSX redaction, image format preservation, macros, legacy DOC, DOCM, legacy XLS, XLSM, embedded media, archive, executable, and binary-file OCR are not enabled in this release.
           </p>
 
           <label class="file-picker">
             <span>Local file</span>
-            <input id="file-input" type="file" accept=".txt,.env,.log,.json,.yaml,.yml,.xml,.csv,.md,.ini,.conf,.ps1,.sh,.py,.js,.ts,.html,.css,text/*,application/json,application/xml">
+            <input id="file-input" type="file" accept=".txt,.env,.log,.json,.yaml,.yml,.xml,.csv,.md,.ini,.conf,.ps1,.sh,.py,.js,.ts,.html,.css,.pdf,.docx,.xlsx,.png,.jpg,.jpeg,.webp,text/*,application/json,application/xml,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/png,image/jpeg,image/webp">
           </label>
 
           <div class="file-meta" id="file-meta" hidden>
@@ -62,6 +62,10 @@
 
           <div class="actions export-actions">
             <button class="btn btn-primary" id="download-redacted-btn" type="button" disabled>Download Redacted Copy</button>
+            <button class="btn" id="download-redacted-pdf-btn" type="button" disabled hidden>Download Redacted PDF</button>
+            <button class="btn" id="download-redacted-docx-btn" type="button" disabled hidden>Download Redacted DOCX</button>
+            <button class="btn" id="download-redacted-xlsx-btn" type="button" disabled hidden>Download Redacted XLSX</button>
+            <button class="btn" id="download-redacted-image-btn" type="button" disabled hidden>Download Redacted PNG</button>
             <button class="btn" id="download-report-btn" type="button" disabled>Download JSON Report</button>
           </div>
 
@@ -90,7 +94,15 @@
     <script src="../shared/knownSecretReuse.js"></script>
     <script src="../shared/transformOutboundPrompt.js"></script>
     <script src="../shared/fileLimits.js"></script>
+    <script src="../shared/fileTypeRegistry.js"></script>
+    <script src="../shared/fileExtractors.js"></script>
     <script src="../shared/fileScanner.js"></script>
+    <script src="../shared/pdfRedactor.js"></script>
+    <script src="../shared/docxRedactor.js"></script>
+    <script src="../shared/xlsxRedactor.js"></script>
+    <script src="../shared/ocr/ocrRuntime.js"></script>
+    <script src="../shared/scannerOcr.js"></script>
+    <script src="../shared/imageRedactor.js"></script>
     <script src="scanner.js"></script>
   </body>
 </html>

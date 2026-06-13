@@ -8,19 +8,33 @@
  */
 
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { findExecutable } from "./chrome_smoke.test.mjs";
+import { createRequire } from "node:module";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import zlib from "node:zlib";
+import sharp from "sharp";
+import {
+  CdpPipeConnection as ChromiumPipeConnection,
+  CdpWebSocketConnection,
+  findCdpWebSocketUrl,
+  findExecutable,
+  launchChrome
+} from "./chrome_smoke.test.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "../..");
+const require = createRequire(import.meta.url);
+require(path.join(repoRoot, "src/shared/fileTypeRegistry.js"));
+require(path.join(repoRoot, "src/shared/fileExtractors.js"));
+const { prepareFileExtractionAsync, EXTRACTOR_STATUS } = globalThis.PWM.FileExtractors;
 const sourceExtensionDir = path.join(repoRoot, "dist", "chrome");
 const qaTimeoutMs = Number(process.env.LEAKGUARD_BROWSER_QA_TIMEOUT_MS || 60000);
-const cdpTimeoutMs = Number(process.env.LEAKGUARD_BROWSER_QA_CDP_TIMEOUT_MS || 30000);
+const cleanupDelayMs = Number(process.env.LEAKGUARD_BROWSER_QA_CLEANUP_DELAY_MS || 500);
+const cleanupMaxRetries = Number(process.env.LEAKGUARD_BROWSER_QA_CLEANUP_RETRIES || 10);
+const cleanupRetryDelayMs = Number(process.env.LEAKGUARD_BROWSER_QA_CLEANUP_RETRY_DELAY_MS || 300);
 
 const syntheticSecrets = {
   openAi: ["sk-proj", "A".repeat(48)].join("-"),
@@ -54,6 +68,117 @@ const rawValues = [
 const localProtectedSiteInput = "http://127.0.0.1";
 const localProtectedSiteId = "http://127.0.0.1";
 const localProtectedSitePermission = "http://127.0.0.1/*";
+
+function escapePdfText(text) {
+  return String(text)
+    .replace(/\\/g, "\\\\")
+    .replace(/\(/g, "\\(")
+    .replace(/\)/g, "\\)")
+    .replace(/\r/g, "\\r")
+    .replace(/\n/g, "\\n");
+}
+
+function makeQaPdf(text, options = {}) {
+  const stream = options.imageOnly
+    ? "q\n10 0 0 10 0 0 cm\n/Im1 Do\nQ\n"
+    : `BT\n/F1 12 Tf\n72 720 Td\n(${escapePdfText(text)}) Tj\nET\n`;
+  const encryptMarker = options.encrypted ? "\n/Encrypt 6 0 R" : "";
+  return Buffer.from([
+    "%PDF-1.4",
+    "1 0 obj",
+    `<< /Type /Catalog /Pages 2 0 R${encryptMarker} >>`,
+    "endobj",
+    "2 0 obj",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "endobj",
+    "3 0 obj",
+    "<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>",
+    "endobj",
+    "4 0 obj",
+    `<< /Length ${stream.length} >>`,
+    "stream",
+    stream,
+    "endstream",
+    "endobj",
+    "trailer",
+    "<< /Root 1 0 R >>",
+    "%%EOF"
+  ].join("\n"));
+}
+
+function makeQaZip(entries) {
+  const chunks = [];
+  for (const entry of entries) {
+    const name = Buffer.from(entry.name, "utf8");
+    const raw = Buffer.from(String(entry.data || ""), "utf8");
+    const compressed = zlib.deflateRawSync(raw);
+    const header = Buffer.alloc(30);
+    header.writeUInt32LE(0x04034b50, 0);
+    header.writeUInt16LE(20, 4);
+    header.writeUInt16LE(0, 6);
+    header.writeUInt16LE(8, 8);
+    header.writeUInt16LE(0, 10);
+    header.writeUInt16LE(0, 12);
+    header.writeUInt32LE(0, 14);
+    header.writeUInt32LE(compressed.length, 18);
+    header.writeUInt32LE(raw.length, 22);
+    header.writeUInt16LE(name.length, 26);
+    header.writeUInt16LE(0, 28);
+    chunks.push(header, name, compressed);
+  }
+  return Buffer.concat(chunks);
+}
+
+function makeQaDocx(text, options = {}) {
+  const body = options.imageOnly
+    ? "<w:p><w:r><w:drawing /></w:r></w:p>"
+    : String(text)
+      .split("\n")
+      .map((line) => `<w:p><w:r><w:t>${line.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</w:t></w:r></w:p>`)
+      .join("");
+  return makeQaZip([
+    {
+      name: "[Content_Types].xml",
+      data: '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"></Types>'
+    },
+    {
+      name: "word/document.xml",
+      data: `<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${body}</w:body></w:document>`
+    }
+  ]);
+}
+
+function makeQaXlsx(text) {
+  const escaped = String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  return makeQaZip([
+    {
+      name: "[Content_Types].xml",
+      data: '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"></Types>'
+    },
+    {
+      name: "xl/workbook.xml",
+      data: '<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheets><sheet name="Secrets" sheetId="1"/></sheets></workbook>'
+    },
+    {
+      name: "xl/worksheets/sheet1.xml",
+      data: `<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>${escaped}</t></is></c></row></sheetData></worksheet>`
+    }
+  ]);
+}
+
+async function makeSyntheticTextImage(text, format, options = {}) {
+  const width = options.width || 1400;
+  const height = options.height || 220;
+  const fontSize = options.fontSize || 48;
+  const textY = options.textY || 130;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
+    <rect width="100%" height="100%" fill="white"/>
+    <text x="32" y="${textY}" font-family="Arial" font-size="${fontSize}" fill="black">${String(text)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")}</text>
+  </svg>`;
+  return await sharp(Buffer.from(svg)).toFormat(format).toBuffer();
+}
 
 function findChromeExecutable() {
   const localAppData = process.env.LOCALAPPDATA || "";
@@ -144,86 +269,6 @@ async function waitFor(condition, label, timeoutMs = qaTimeoutMs) {
   throw new Error(`Timed out waiting for ${label}.${suffix}`);
 }
 
-class CdpPipeConnection {
-  constructor(input, output) {
-    this.input = input;
-    this.output = output;
-    this.buffer = "";
-    this.nextId = 1;
-    this.pending = new Map();
-  }
-
-  async connect() {
-    assert.ok(this.input, "Browser remote debugging input pipe is missing.");
-    assert.ok(this.output, "Browser remote debugging output pipe is missing.");
-    this.output.setEncoding("utf8");
-    this.output.on("data", (chunk) => {
-      this.buffer += chunk;
-      let separator = this.buffer.indexOf("\0");
-      while (separator !== -1) {
-        const payload = this.buffer.slice(0, separator);
-        this.buffer = this.buffer.slice(separator + 1);
-        if (payload) this.handleMessage(payload);
-        separator = this.buffer.indexOf("\0");
-      }
-    });
-    this.input.on("error", (error) => this.rejectPending(error));
-    this.output.on("error", (error) => this.rejectPending(error));
-    this.output.on("close", () => this.rejectPending(new Error("CDP pipe closed.")));
-    await this.send("Browser.getVersion");
-  }
-
-  handleMessage(payload) {
-    const message = JSON.parse(payload);
-    if (message.id === undefined || !this.pending.has(message.id)) return;
-    const pending = this.pending.get(message.id);
-    this.pending.delete(message.id);
-    if (message.error) {
-      pending.reject(
-        new Error(`${pending.method} ${message.error.message}: ${JSON.stringify(message.error.data || {})}`)
-      );
-    } else {
-      pending.resolve(message.result || {});
-    }
-  }
-
-  rejectPending(error) {
-    for (const { reject } of this.pending.values()) reject(error);
-    this.pending.clear();
-  }
-
-  send(method, params = {}, sessionId = null) {
-    const id = this.nextId;
-    this.nextId += 1;
-    const payload = { id, method, params, ...(sessionId ? { sessionId } : {}) };
-    const request = new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new Error(`CDP command timed out: ${method}`));
-      }, cdpTimeoutMs);
-      this.pending.set(id, {
-        method,
-        resolve: (value) => {
-          clearTimeout(timeout);
-          resolve(value);
-        },
-        reject: (error) => {
-          clearTimeout(timeout);
-          reject(error);
-        }
-      });
-    });
-    this.input.write(`${JSON.stringify(payload)}\0`);
-    return request;
-  }
-
-  async close() {
-    this.rejectPending(new Error("CDP pipe closed."));
-    this.input?.destroy();
-    this.output?.destroy();
-  }
-}
-
 function createHarnessPage() {
   return `<!doctype html>
 <html lang="en">
@@ -232,9 +277,60 @@ function createHarnessPage() {
     <main>
       <h1>LeakGuard Browser QA Harness</h1>
       <textarea id="prompt-textarea" data-testid="prompt-textarea" placeholder="Message"></textarea>
+      <div id="provider-editor" contenteditable="true" role="textbox" data-testid="provider-composer" aria-label="Message"></div>
+      <input id="qa-file-input" type="file" accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp,.pdf,application/pdf,.docx,.xlsx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+      <div id="qa-drop-zone" role="button" aria-label="Drop files here">Drop files here</div>
       <button id="send-button" type="button">Send</button>
       <section id="echo-zone"></section>
     </main>
+    <script>
+      window.__leakguardQaUploads = [];
+      window.__leakguardQaSubmissions = [];
+      window.__leakguardQaEvents = [];
+      window.__leakguardQaDescribeFile = async (file) => {
+        const isText = file.type === 'text/plain' || /\\.txt$/i.test(file.name || '');
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        return {
+          name: file.name,
+          type: file.type,
+          size: file.size,
+          text: isText ? new TextDecoder().decode(bytes) : '',
+          bytePrefix: Array.from(bytes.slice(0, 12)),
+          byteValues: Array.from(bytes),
+          byteSum: Array.from(bytes).reduce((total, byte) => total + byte, 0)
+        };
+      };
+      window.__leakguardQaRecordFiles = async (source, files) => {
+        const items = await Promise.all(Array.from(files || []).map(window.__leakguardQaDescribeFile));
+        window.__leakguardQaUploads.push({ source, items });
+        return items;
+      };
+      document.querySelector('#qa-file-input').addEventListener('change', async (event) => {
+        await window.__leakguardQaRecordFiles('file-input', event.target.files);
+      });
+      document.querySelector('#provider-editor').addEventListener('paste', (event) => {
+        setTimeout(() => {
+          if (event.defaultPrevented) return;
+          const text = event.clipboardData?.getData('text/plain') || '';
+          if (text) document.querySelector('#provider-editor').textContent += text;
+        }, 0);
+      });
+      document.querySelector('#qa-drop-zone').addEventListener('dragover', (event) => {
+        window.__leakguardQaEvents.push({ type: 'dragover', defaultPrevented: event.defaultPrevented });
+      });
+      document.querySelector('#qa-drop-zone').addEventListener('drop', async (event) => {
+        window.__leakguardQaEvents.push({ type: 'drop', defaultPrevented: event.defaultPrevented });
+        await window.__leakguardQaRecordFiles('drop', event.dataTransfer?.files || []);
+      });
+      document.querySelector('#send-button').addEventListener('click', () => {
+        const textarea = document.querySelector('#prompt-textarea');
+        const editor = document.querySelector('#provider-editor');
+        window.__leakguardQaSubmissions.push({
+          textarea: textarea?.value || '',
+          editor: editor?.innerText || editor?.textContent || ''
+        });
+      });
+    </script>
   </body>
 </html>`;
 }
@@ -267,34 +363,46 @@ function prepareQaExtension(tempDir) {
   return extensionDir;
 }
 
-function launchBrowser({ executable, extensionDir, profileDir, browserName }) {
-  assert.ok(executable, `${browserName} was not found. Set CHROME_BIN, EDGE_BIN, or MSEDGE_BIN.`);
-  const args = [
-    "--remote-debugging-pipe",
-    `--user-data-dir=${profileDir}`,
-    `--load-extension=${extensionDir}`,
-    "--enable-unsafe-extension-debugging",
-    "--disable-features=DisableLoadExtensionCommandLineSwitch",
-    "--disable-gpu",
-    "--no-first-run",
-    "--no-default-browser-check",
-    "--disable-background-networking",
-    "--disable-sync",
-    "--window-size=1280,900",
-    "--window-position=-2400,-2400",
-    "about:blank"
-  ];
-  if (process.platform === "linux") args.push("--no-sandbox");
+function normalizePathForCompare(value) {
+  return path.resolve(String(value || "")).toLowerCase();
+}
 
-  const child = spawn(executable, args, { stdio: ["ignore", "pipe", "pipe", "pipe", "pipe"] });
-  let stderr = "";
-  child.stderr.on("data", (chunk) => {
-    stderr += chunk.toString();
+function findExtensionIdInPreferences(preferences, expectedExtensionDir) {
+  const settings = preferences?.extensions?.settings || {};
+  const expectedPath = normalizePathForCompare(expectedExtensionDir);
+  for (const [id, setting] of Object.entries(settings)) {
+    const manifestName = setting?.manifest?.name || "";
+    const extensionPath = setting?.path || "";
+    if (manifestName === "LeakGuard" || normalizePathForCompare(extensionPath) === expectedPath) {
+      return id;
+    }
+  }
+  return "";
+}
+
+function getBrowserQaDebuggingMode({ mode = process.env.LEAKGUARD_BROWSER_QA_DEBUGGING || "" } = {}) {
+  const normalized = String(mode || "port").trim().toLowerCase();
+  if (normalized === "pipe" || normalized === "port") return normalized;
+  throw new Error(`Unsupported browser QA debugging mode "${mode}". Expected port or pipe.`);
+}
+
+async function launchBrowser({ executable, extensionDir, profileDir, browserName }) {
+  return await launchChrome({
+    extensionPath: extensionDir,
+    profileDir,
+    browserName,
+    browserExecutable: executable,
+    missingMessage: `${browserName} was not found. Set CHROME_BIN, EDGE_BIN, or MSEDGE_BIN.`,
+    remoteDebuggingMode: getBrowserQaDebuggingMode()
   });
-  child.on("exit", (code, signal) => {
-    if (code && code !== 0) stderr += `\n${browserName} exited with code ${code} signal ${signal || ""}`;
-  });
-  return { child, stderr: () => stderr };
+}
+
+async function createBrowserConnection(browserProcess, browserName) {
+  if (browserProcess.debuggingMode === "port") {
+    const webSocketUrl = await findCdpWebSocketUrl(browserProcess.debuggingPort, browserName);
+    return new CdpWebSocketConnection(webSocketUrl);
+  }
+  return new ChromiumPipeConnection(browserProcess.child.stdio[3], browserProcess.child.stdio[4]);
 }
 
 async function waitForBrowserExit(child, timeoutMs = 5000) {
@@ -303,6 +411,86 @@ async function waitForBrowserExit(child, timeoutMs = 5000) {
     new Promise((resolve) => child.once("exit", resolve)),
     new Promise((resolve) => setTimeout(resolve, timeoutMs))
   ]);
+}
+
+function assertHarnessTempDir(tempDir) {
+  const resolvedTempDir = path.resolve(tempDir);
+  const resolvedOsTempDir = path.resolve(os.tmpdir());
+  const relativeToTemp = path.relative(resolvedOsTempDir, resolvedTempDir);
+  const isInsideOsTemp =
+    relativeToTemp && !relativeToTemp.startsWith("..") && !path.isAbsolute(relativeToTemp);
+  const basename = path.basename(resolvedTempDir);
+
+  if (!isInsideOsTemp || !/^leakguard-(?:chrome|edge)-qa-/.test(basename)) {
+    throw new Error(`Refusing to remove non-harness temp dir: ${tempDir}`);
+  }
+}
+
+async function closeBrowserTargets(connection, diagnostics = console) {
+  if (!connection) return;
+  let targets = [];
+  try {
+    const response = await connection.send("Target.getTargets");
+    targets = response.targetInfos || [];
+  } catch (error) {
+    diagnostics.warn(`Browser QA cleanup warning: failed to list targets before close: ${error.message}`);
+    return;
+  }
+
+  const pageTargets = targets.filter((target) => target.type === "page" && target.targetId);
+  for (const target of pageTargets) {
+    await connection.send("Target.closeTarget", { targetId: target.targetId }).catch((error) => {
+      diagnostics.warn(`Browser QA cleanup warning: failed to close target ${target.targetId}: ${error.message}`);
+    });
+  }
+}
+
+async function cleanupBrowserQaRun({
+  browserName,
+  tempDir,
+  connection = null,
+  child = null,
+  harnessServer = null,
+  behaviorChecksPassed = false,
+  diagnostics = console,
+  rmFn = fs.promises.rm,
+  cleanupDelayMs: waitBeforeRemoveMs = cleanupDelayMs,
+  maxRetries = cleanupMaxRetries,
+  retryDelay = cleanupRetryDelayMs
+}) {
+  assertHarnessTempDir(tempDir);
+  const label = `${browserName} browser QA cleanup`;
+  diagnostics.log(
+    `${label}: tempDir=${tempDir} maxRetries=${maxRetries} retryDelay=${retryDelay}ms behaviorChecksPassed=${behaviorChecksPassed}`
+  );
+
+  await closeBrowserTargets(connection, diagnostics);
+  await connection?.send("Browser.close").catch(() => {});
+  await connection?.close().catch(() => {});
+  await waitForBrowserExit(child, 3000);
+  if (child && child.exitCode === null && child.signalCode === null) {
+    diagnostics.warn(`${label}: spawned browser process still running; terminating pid=${child.pid || "unknown"}`);
+    child.kill();
+    await waitForBrowserExit(child, 3000);
+  }
+  await harnessServer?.close().catch((error) => {
+    diagnostics.warn(`${label}: harness server close warning: ${error.message}`);
+  });
+  await delay(waitBeforeRemoveMs);
+
+  try {
+    await rmFn(tempDir, { recursive: true, force: true, maxRetries, retryDelay });
+    diagnostics.log(`${label}: final cleanup status=removed`);
+    return { removed: true, warningOnly: false };
+  } catch (error) {
+    const message = `${label}: final cleanup status=not-removed tempDir=${tempDir} behaviorChecksPassed=${behaviorChecksPassed} error=${error.message}`;
+    if (behaviorChecksPassed && ["EPERM", "EBUSY", "ENOTEMPTY"].includes(error.code)) {
+      diagnostics.warn(message);
+      return { removed: false, warningOnly: true, error };
+    }
+    diagnostics.warn(message);
+    throw error;
+  }
 }
 
 async function attachToTarget(connection, targetId) {
@@ -361,7 +549,7 @@ async function loadExtension(connection, profileDir, extensionDir, browserName) 
       path: extensionDir,
       enableInIncognito: false
     });
-    if (response.id) return response.id;
+    if (response.id || response.extensionId) return response.id || response.extensionId;
   } catch (error) {
     console.warn(`${browserName} browser QA: CDP extension load warning: ${error.message}`);
   }
@@ -380,11 +568,8 @@ async function loadExtension(connection, profileDir, extensionDir, browserName) 
     const preferencesPath = path.join(profileDir, "Default", "Preferences");
     if (!fs.existsSync(preferencesPath)) return null;
     const preferences = JSON.parse(fs.readFileSync(preferencesPath, "utf8"));
-    for (const [id, setting] of Object.entries(preferences.extensions?.settings || {})) {
-      if (setting?.manifest?.name === "LeakGuard") {
-        return { url: `chrome-extension://${id}/background/service_worker.js` };
-      }
-    }
+    const id = findExtensionIdInPreferences(preferences, extensionDir);
+    if (id) return { url: `chrome-extension://${id}/background/service_worker.js` };
     return null;
   }, `${browserName} LeakGuard extension service worker`).catch((error) => {
     const targetSummary = lastTargets
@@ -395,8 +580,10 @@ async function loadExtension(connection, profileDir, extensionDir, browserName) 
   return new URL(target.url).hostname;
 }
 
-async function setFileInputFiles(connection, sessionId, selector, files) {
+async function setFileInputFiles(connection, sessionId, selector, files, options = {}) {
   await connection.send("DOM.enable", {}, sessionId).catch(() => {});
+  const expectedNames = files.map((file) => path.basename(file));
+  const verifyAssignment = options.verifyAssignment !== false;
   let lastError = null;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
@@ -418,6 +605,23 @@ async function setFileInputFiles(connection, sessionId, selector, files) {
           return true;
         })()`
       );
+      if (!verifyAssignment) return;
+      await waitFor(
+        () =>
+          evaluate(
+            connection,
+            sessionId,
+            `(() => {
+              const expected = ${JSON.stringify(expectedNames)};
+              const actual = Array.from(document.querySelector(${JSON.stringify(selector)})?.files || [])
+                .map((file) => file.name);
+              return expected.length === actual.length &&
+                expected.every((name, index) => actual[index] === name);
+            })()`
+          ),
+        `file input assignment ${selector}`,
+        1000
+      );
       return;
     } catch (error) {
       lastError = error;
@@ -431,6 +635,164 @@ function assertNoRawSyntheticValues(text, label) {
   for (const raw of rawValues) {
     assert.equal(String(text || "").includes(raw), false, `${label} leaked raw synthetic value ${raw}`);
   }
+}
+
+function valueToSweepText(value) {
+  if (Buffer.isBuffer(value)) return value.toString("latin1");
+  if (value instanceof Uint8Array) return Buffer.from(value).toString("latin1");
+  if (typeof value === "string") return value;
+  return JSON.stringify(value || "");
+}
+
+function assertNoRawMarkers(value, label, markers = rawValues) {
+  const text = valueToSweepText(value);
+  for (const marker of markers) {
+    assert.equal(text.includes(marker), false, `${label} leaked raw marker ${marker}`);
+  }
+}
+
+function assertArtifactHasPlaceholder(value, label, pattern = /\[PWM_\d+\]/) {
+  assert.match(valueToSweepText(value), pattern, `${label} should contain a sanitized placeholder`);
+}
+
+async function captureProviderArtifacts(connection, sessionId) {
+  return await evaluate(
+    connection,
+    sessionId,
+    `(async () => ({
+      uploads: Array.from(window.__leakguardQaUploads || []),
+      submissions: Array.from(window.__leakguardQaSubmissions || []),
+      events: Array.from(window.__leakguardQaEvents || []),
+      inputFiles: await Promise.all(Array.from(document.querySelector('#qa-file-input')?.files || [])
+        .map(window.__leakguardQaDescribeFile)),
+      pageText: document.body.innerText || '',
+      modalText: document.querySelector('.pwm-modal')?.innerText || '',
+      overlayText: document.querySelector('.pwm-file-processing-overlay')?.innerText || '',
+      panelText: document.querySelector('.pwm-panel')?.innerText || ''
+    }))()`,
+    { awaitPromise: true }
+  );
+}
+
+function flattenCapturedUploadItems(capture) {
+  return [
+    ...(capture?.uploads || []).flatMap((upload) => upload.items || []),
+    ...(capture?.inputFiles || [])
+  ];
+}
+
+function assertCapturedStateHasNoRawMarkers(capture, label, markers = rawValues) {
+  const safeCapture = {
+    uploads: (capture?.uploads || []).map((upload) => ({
+      source: upload.source,
+      items: (upload.items || []).map((item) => ({
+        name: item.name,
+        type: item.type,
+        size: item.size,
+        text: item.text,
+        byteValues: item.byteValues,
+        bytePrefix: item.bytePrefix
+      }))
+    })),
+    submissions: capture?.submissions || [],
+    inputFiles: capture?.inputFiles || [],
+    pageText: capture?.pageText || "",
+    modalText: capture?.modalText || "",
+    overlayText: capture?.overlayText || "",
+    panelText: capture?.panelText || ""
+  };
+  assertNoRawMarkers(safeCapture, label, markers);
+}
+
+async function resetProviderCapture(connection, sessionId) {
+  await closeBlockingModalIfPresent(connection, sessionId);
+  await evaluate(
+    connection,
+    sessionId,
+    `(() => {
+      window.__leakguardQaUploads = [];
+      window.__leakguardQaSubmissions = [];
+      window.__leakguardQaEvents = [];
+      const input = document.querySelector('#qa-file-input');
+      if (input) input.value = '';
+      const textarea = document.querySelector('#prompt-textarea');
+      if (textarea) textarea.value = '';
+      const editor = document.querySelector('#provider-editor');
+      if (editor) editor.textContent = '';
+      return true;
+    })()`
+  );
+}
+
+async function closeBlockingModalIfPresent(connection, sessionId) {
+  await evaluate(
+    connection,
+    sessionId,
+    `(() => {
+      const button = Array.from(
+        document.querySelectorAll('.pwm-modal-backdrop button, .pwm-modal button')
+      ).find((candidate) => /Close|OK|Cancel/i.test(candidate.textContent || ''));
+      if (button) {
+        button.click();
+        return true;
+      }
+      return false;
+    })()`,
+    { userGesture: true }
+  );
+  try {
+    await waitFor(
+      () =>
+        evaluate(
+          connection,
+          sessionId,
+          `(() => !document.querySelector('.pwm-modal, .pwm-modal-backdrop'))()`
+        ),
+      "close blocking modal",
+      1500
+    );
+  } catch {
+    // Some flows do not show a blocking modal; reset should remain best-effort.
+  }
+}
+
+async function dispatchSyntheticFileDrop(connection, sessionId, { fileName, mimeType, bytes }) {
+  const base64 = Buffer.from(bytes).toString("base64");
+  await evaluate(
+    connection,
+    sessionId,
+    `(() => {
+      const zone = document.querySelector('#qa-drop-zone');
+      const binary = atob(${JSON.stringify(base64)});
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+      const file = new File([bytes], ${JSON.stringify(fileName)}, { type: ${JSON.stringify(mimeType)} });
+      const transfer = new DataTransfer();
+      transfer.items.add(file);
+      for (const type of ['dragenter', 'dragover', 'drop']) {
+        zone.dispatchEvent(new DragEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          dataTransfer: transfer
+        }));
+      }
+      return true;
+    })()`,
+    { userGesture: true }
+  );
+}
+
+async function waitForCapturedUpload(connection, sessionId, predicate, label, timeoutMs = 30000) {
+  return await waitFor(
+    async () => {
+      const capture = await captureProviderArtifacts(connection, sessionId);
+      const items = flattenCapturedUploadItems(capture);
+      const matched = items.find(predicate) || null;
+      return matched ? { capture, item: matched } : null;
+    },
+    label,
+    timeoutMs
+  );
 }
 
 function getUserProtectedSite(overview) {
@@ -635,6 +997,215 @@ async function runPromptRedactionQa(connection, page) {
   return result;
 }
 
+async function approveRedactionModalIfPresent(connection, sessionId) {
+  await evaluate(
+    connection,
+    sessionId,
+    `(() => {
+      const redactButton = Array.from(
+        document.querySelectorAll('.pwm-modal-backdrop button, .pwm-modal button')
+      ).find((button) => /Redact/i.test(button.textContent || ''));
+      if (redactButton) {
+        redactButton.click();
+        return true;
+      }
+      return false;
+    })()`
+  );
+}
+
+async function waitForInputPlaceholder(connection, sessionId, selector, expression, label) {
+  return await waitFor(async () => {
+    await approveRedactionModalIfPresent(connection, sessionId);
+    const state = await evaluate(
+      connection,
+      sessionId,
+      `(() => {
+        const node = document.querySelector(${JSON.stringify(selector)});
+        const value = ${expression};
+        return {
+          value,
+          hasPlaceholder: /\\[PWM_\\d+\\]/.test(value),
+          pageText: document.body.innerText || '',
+          submissions: Array.from(window.__leakguardQaSubmissions || [])
+        };
+      })()`
+    );
+    return state.hasPlaceholder ? state : null;
+  }, label, 15000);
+}
+
+function assertProviderSubmissionSanitized(submission, field, rawSecret, label) {
+  assert.ok(submission, `${label} should create a synthetic provider submission`);
+  assert.equal(String(submission[field] || "").includes(rawSecret), false, `${label} submitted raw secret`);
+  assert.match(String(submission[field] || ""), /\[PWM_\d+\]/, `${label} should submit a placeholder`);
+}
+
+async function runSyntheticProviderInputInterceptionQa(connection, page) {
+  const cases = [
+    {
+      label: "textarea typed",
+      selector: "#prompt-textarea",
+      field: "textarea",
+      valueExpression: "node?.value || ''",
+      rawSecret: "sk-proj-TextareaTypedBrowserQa1234567890abcdef",
+      async input() {
+        await evaluate(
+          connection,
+          page.sessionId,
+          `(() => {
+            const textarea = document.querySelector('#prompt-textarea');
+            textarea.value = '';
+            textarea.focus();
+          })()`
+        );
+        await connection.send("Input.insertText", { text: "TYPED_TEXTAREA_KEY=sk-proj-TextareaTypedBrowserQa1234567890abcdef" }, page.sessionId);
+      }
+    },
+    {
+      label: "textarea paste",
+      selector: "#prompt-textarea",
+      field: "textarea",
+      valueExpression: "node?.value || ''",
+      rawSecret: "sk-proj-TextareaPasteBrowserQa1234567890abcdef",
+      async input() {
+        await evaluate(
+          connection,
+          page.sessionId,
+          `(() => {
+            const textarea = document.querySelector('#prompt-textarea');
+            textarea.value = '';
+            textarea.focus();
+            const transfer = new DataTransfer();
+            transfer.setData('text/plain', 'PASTE_TEXTAREA_KEY=sk-proj-TextareaPasteBrowserQa1234567890abcdef');
+            textarea.dispatchEvent(new ClipboardEvent('paste', {
+              bubbles: true,
+              cancelable: true,
+              clipboardData: transfer
+            }));
+          })()`
+        );
+      }
+    },
+    {
+      label: "contenteditable typed",
+      selector: "#provider-editor",
+      field: "editor",
+      valueExpression: "node?.innerText || node?.textContent || ''",
+      rawSecret: "sk-proj-EditorTypedBrowserQa1234567890abcdef",
+      async input() {
+        await evaluate(
+          connection,
+          page.sessionId,
+          `(() => {
+            const textarea = document.querySelector('#prompt-textarea');
+            if (textarea) {
+              textarea.remove();
+            }
+            const editor = document.querySelector('#provider-editor');
+            editor.setAttribute('data-testid', 'prompt-textarea');
+            editor.textContent = '';
+            editor.focus();
+          })()`
+        );
+        await connection.send("Input.insertText", { text: "TYPED_EDITOR_KEY=sk-proj-EditorTypedBrowserQa1234567890abcdef" }, page.sessionId);
+      }
+    },
+    {
+      label: "contenteditable paste",
+      selector: "#provider-editor",
+      field: "editor",
+      valueExpression: "node?.innerText || node?.textContent || ''",
+      rawSecret: "sk-proj-EditorPasteBrowserQa1234567890abcdef",
+      expectFailClosed: true,
+      async input() {
+        await evaluate(
+          connection,
+          page.sessionId,
+          `(() => {
+            const textarea = document.querySelector('#prompt-textarea');
+            if (textarea) {
+              textarea.remove();
+            }
+            const editor = document.querySelector('#provider-editor');
+            editor.setAttribute('data-testid', 'prompt-textarea');
+            editor.textContent = '';
+            editor.focus();
+            const transfer = new DataTransfer();
+            transfer.setData('text/plain', 'PASTE_EDITOR_KEY=sk-proj-EditorPasteBrowserQa1234567890abcdef');
+            editor.dispatchEvent(new ClipboardEvent('paste', {
+              bubbles: true,
+              cancelable: true,
+              clipboardData: transfer
+            }));
+          })()`
+        );
+      }
+    }
+  ];
+
+  const results = [];
+  for (const testCase of cases) {
+    await resetProviderCapture(connection, page.sessionId);
+    await testCase.input();
+    let state;
+    try {
+      state = await waitForInputPlaceholder(
+        connection,
+        page.sessionId,
+        testCase.selector,
+        testCase.valueExpression,
+        testCase.label
+      );
+    } catch (error) {
+      const diagnostic = await evaluate(
+        connection,
+        page.sessionId,
+        `(() => ({
+          textarea: document.querySelector('#prompt-textarea')?.value || '',
+          editorText: document.querySelector('#provider-editor')?.innerText || document.querySelector('#provider-editor')?.textContent || '',
+          modal: document.querySelector('.pwm-modal')?.innerText || '',
+          overlay: document.querySelector('.pwm-file-processing-overlay')?.innerText || '',
+          badge: document.querySelector('.pwm-badge')?.textContent || '',
+          submissions: Array.from(window.__leakguardQaSubmissions || [])
+        }))()`
+      );
+      if (testCase.expectFailClosed && /Rewrite verification failed/i.test(diagnostic.modal || "")) {
+        assert.equal(diagnostic.editorText.includes(testCase.rawSecret), false, `${testCase.label} blocked editor should not retain raw secret`);
+        assert.equal(diagnostic.textarea.includes(testCase.rawSecret), false, `${testCase.label} blocked textarea should not retain raw secret`);
+        assert.equal(diagnostic.submissions.length, 0, `${testCase.label} blocked flow must not submit raw content`);
+        const capture = await captureProviderArtifacts(connection, page.sessionId);
+        assertCapturedStateHasNoRawMarkers(capture, `${testCase.label} fail-closed raw marker sweep`, [testCase.rawSecret]);
+        results.push({ label: testCase.label, blocked: true });
+        await closeBlockingModalIfPresent(connection, page.sessionId);
+        continue;
+      }
+      throw new Error(`${error.message} Diagnostic: ${JSON.stringify(diagnostic)}`);
+    }
+    assert.equal(state.value.includes(testCase.rawSecret), false, `${testCase.label} editor still contains raw secret`);
+    assert.match(state.value, /\[PWM_\d+\]/, `${testCase.label} editor should contain a placeholder`);
+    await evaluate(connection, page.sessionId, "document.querySelector('#send-button')?.click()", { userGesture: true });
+    const submitted = await waitFor(
+      () =>
+        evaluate(
+          connection,
+          page.sessionId,
+          `(() => {
+            const submissions = Array.from(window.__leakguardQaSubmissions || []);
+            return submissions.length ? submissions[submissions.length - 1] : null;
+          })()`
+        ),
+      `${testCase.label} synthetic provider submission`
+    );
+    assertProviderSubmissionSanitized(submitted, testCase.field, testCase.rawSecret, testCase.label);
+    const capture = await captureProviderArtifacts(connection, page.sessionId);
+    assertCapturedStateHasNoRawMarkers(capture, `${testCase.label} browser raw marker sweep`, [testCase.rawSecret]);
+    results.push({ label: testCase.label, submitted });
+  }
+
+  return results;
+}
+
 async function runSecureRevealQa(connection, page, extensionId, placeholder) {
   const revealState = await evaluate(
     connection,
@@ -723,6 +1294,532 @@ async function runRefreshSafetyQa(connection, page) {
   assert.equal(refreshed.textareaValue.includes("sk-"), false);
 }
 
+async function runProtectedSiteImageOcrQa(connection, page, extensionSessionId, tempDir) {
+  const settingResponse = await extensionMessage(connection, extensionSessionId, {
+    type: "PWM_SET_PROTECTED_SITE_OCR_SETTING",
+    enabled: true
+  });
+  assert.equal(settingResponse.ok, true, "protected-site OCR setting should be enabled for QA");
+
+  const fixtureSecret = "sk-proj-LeakGuardScannerOcrApiKey1234567890abcdef";
+  const imagePath = path.join(tempDir, "protected-site-ocr.png");
+  fs.writeFileSync(imagePath, await makeSyntheticTextImage(`API_KEY=${fixtureSecret}`, "png"));
+  await setFileInputFiles(connection, page.sessionId, "#qa-file-input", [imagePath], { verifyAssignment: false });
+
+  let result;
+  try {
+    result = await waitFor(
+      () =>
+        evaluate(
+          connection,
+          page.sessionId,
+          `(async () => {
+          const rawSecret = ${JSON.stringify(fixtureSecret)};
+          const describeFile = async (file) => {
+            const bytes = new Uint8Array(await file.arrayBuffer());
+            return {
+              name: file.name,
+              type: file.type,
+              size: file.size,
+              text: file.type === 'text/plain' || /\\.txt$/i.test(file.name || '') ? new TextDecoder().decode(bytes) : '',
+              bytePrefix: Array.from(bytes.slice(0, 12)),
+              byteSum: bytes.reduce((sum, byte) => sum + byte, 0)
+            };
+          };
+          const uploads = [
+            ...Array.from(window.__leakguardQaUploads || []),
+            {
+              items: await Promise.all(Array.from(document.querySelector('#qa-file-input')?.files || []).map(describeFile))
+            }
+          ];
+          const sanitized = uploads
+            .flatMap((upload) => upload.items || [])
+            .find((item) => /\\.redacted\\.png$/i.test(item.name || '') && item.type === 'image/png');
+          if (!sanitized) return null;
+          return {
+            name: sanitized.name,
+            type: sanitized.type,
+            size: sanitized.size,
+            bytePrefix: sanitized.bytePrefix,
+            byteSum: sanitized.byteSum,
+            hasRawName: String(sanitized.name || '').includes(rawSecret),
+            originalImagePresent: uploads
+              .flatMap((upload) => upload.items || [])
+              .some((item) => item.name === 'protected-site-ocr.png' && item.type === 'image/png'),
+            textFallbackPresent: uploads
+              .flatMap((upload) => upload.items || [])
+              .some((item) => /\\.redacted\\.txt$/i.test(item.name || ''))
+          };
+        })()`,
+          { awaitPromise: true }
+        ),
+      "protected-site image OCR sanitized handoff",
+      30000
+    );
+  } catch (error) {
+    const diagnostic = await evaluate(
+      connection,
+      page.sessionId,
+      `(async () => ({
+        inputFiles: await Promise.all(Array.from(document.querySelector('#qa-file-input')?.files || []).map(async (file) => ({
+          name: file.name,
+          type: file.type,
+          size: file.size,
+          textPrefix: (file.type === 'text/plain' || /\\.txt$/i.test(file.name || '')) ? (await file.text()).slice(0, 160) : ''
+        }))),
+        recordedUploads: Array.from(window.__leakguardQaUploads || []).map((upload) => ({
+          items: (upload.items || []).map((item) => ({
+            name: item.name,
+            type: item.type,
+            size: item.size,
+            textPrefix: String(item.text || '').slice(0, 160)
+          }))
+        })),
+        badge: document.querySelector('.pwm-badge')?.textContent || '',
+        modal: document.querySelector('.pwm-modal')?.innerText || '',
+        overlay: document.querySelector('.pwm-file-processing-overlay')?.innerText || '',
+        panel: document.querySelector('.pwm-panel')?.innerText || ''
+      }))()`,
+      { awaitPromise: true }
+    );
+    throw new Error(`${error.message} Diagnostic: ${JSON.stringify(diagnostic)}`);
+  }
+
+  assert.equal(result.name, "protected-site-ocr.redacted.png");
+  assert.equal(result.type, "image/png");
+  assert.deepEqual(result.bytePrefix.slice(0, 8), [137, 80, 78, 71, 13, 10, 26, 10]);
+  assert.equal(result.hasRawName, false, "protected-site OCR handoff must not expose raw OCR text in image name");
+  assert.equal(result.originalImagePresent, false, "protected-site OCR handoff must not upload the raw image");
+  assert.equal(result.textFallbackPresent, false, "safe protected-site visual redaction should hand off PNG, not txt");
+  assertCapturedStateHasNoRawMarkers(await captureProviderArtifacts(connection, page.sessionId), "protected-site OCR handoff capture", [fixtureSecret]);
+  return result;
+}
+
+function assertCapturedSanitizedUpload({ item, capture, expected, rawSecret, label }) {
+  assert.equal(item.name, expected.name, `${label} sanitized file name`);
+  assert.equal(item.type, expected.type, `${label} sanitized MIME`);
+  assert.equal(item.size > 0, true, `${label} sanitized file should be non-empty`);
+  assert.equal(String(item.name || "").includes(rawSecret), false, `${label} file name must not contain raw marker`);
+  assert.equal(
+    flattenCapturedUploadItems(capture).some((candidate) => candidate.name === expected.originalName),
+    false,
+    `${label} must not upload the raw original file`
+  );
+  assertCapturedStateHasNoRawMarkers(capture, `${label} capture`, [rawSecret]);
+}
+
+async function runProtectedSitePdfHandoffQa(connection, page, tempDir) {
+  const rawSecret = "sk-proj-ProtectedSitePdfBrowserQa1234567890abcdef";
+  const pdfPath = path.join(tempDir, "protected-site-pdf.pdf");
+  fs.writeFileSync(pdfPath, makeQaPdf(`PDF_API_KEY=${rawSecret}`));
+  await resetProviderCapture(connection, page.sessionId);
+  await setFileInputFiles(connection, page.sessionId, "#qa-file-input", [pdfPath], { verifyAssignment: false });
+
+  let result;
+  try {
+    result = await waitForCapturedUpload(
+      connection,
+      page.sessionId,
+      (item) => /\.redacted\.pdf$/i.test(item.name || "") && item.type === "application/pdf",
+      "protected-site PDF sanitized handoff",
+      45000
+    );
+  } catch (error) {
+    const diagnostic = await captureProviderArtifacts(connection, page.sessionId);
+    throw new Error(`${error.message} Diagnostic: ${JSON.stringify({
+      uploads: diagnostic.uploads,
+      inputFiles: diagnostic.inputFiles,
+      modalText: diagnostic.modalText,
+      overlayText: diagnostic.overlayText,
+      panelText: diagnostic.panelText
+    })}`);
+  }
+
+  assertCapturedSanitizedUpload({
+    item: result.item,
+    capture: result.capture,
+    expected: {
+      name: "protected-site-pdf.redacted.pdf",
+      type: "application/pdf",
+      originalName: "protected-site-pdf.pdf"
+    },
+    rawSecret,
+    label: "protected-site PDF handoff"
+  });
+  const pdfBytes = Buffer.from(result.item.byteValues);
+  assert.ok(pdfBytes.toString("latin1").startsWith("%PDF-1.4"), "protected-site PDF handoff should be a PDF");
+  assertNoRawMarkers(pdfBytes, "protected-site PDF bytes", [rawSecret]);
+  assertArtifactHasPlaceholder(pdfBytes, "protected-site PDF bytes", /PDF_API_KEY=\[PWM_\d+\]/);
+  const extraction = await prepareFileExtractionAsync({
+    fileName: result.item.name,
+    mimeType: result.item.type,
+    buffer: pdfBytes.buffer.slice(pdfBytes.byteOffset, pdfBytes.byteOffset + pdfBytes.byteLength)
+  });
+  assert.equal(extraction.status, EXTRACTOR_STATUS.OK);
+  assertNoRawMarkers(extraction.text, "protected-site PDF extracted text", [rawSecret]);
+  assert.match(extraction.text, /PDF_API_KEY=\[PWM_\d+\]/);
+
+  return {
+    name: result.item.name,
+    type: result.item.type,
+    size: result.item.size
+  };
+}
+
+async function runProtectedSiteDocxHandoffQa(connection, page, tempDir) {
+  const rawSecret = "sk-proj-ProtectedSiteDocxBrowserQa1234567890abcdef";
+  const docxPath = path.join(tempDir, "protected-site-docx.docx");
+  fs.writeFileSync(docxPath, makeQaDocx(`DOCX_API_KEY=${rawSecret}`));
+  await evaluate(connection, page.sessionId, "window.__leakguardQaUploads = []");
+  await setFileInputFiles(connection, page.sessionId, "#qa-file-input", [docxPath], { verifyAssignment: false });
+
+  let result;
+  try {
+    result = await waitFor(
+      () =>
+        evaluate(
+          connection,
+          page.sessionId,
+          `(async () => {
+          const rawSecret = ${JSON.stringify(rawSecret)};
+          const describeFile = async (file) => {
+            const bytes = new Uint8Array(await file.arrayBuffer());
+            return {
+              name: file.name,
+              type: file.type,
+              size: file.size,
+              bytePrefix: Array.from(bytes.slice(0, 12)),
+              byteValues: Array.from(bytes)
+            };
+          };
+          const uploads = [
+            ...Array.from(window.__leakguardQaUploads || []),
+            {
+              items: await Promise.all(Array.from(document.querySelector('#qa-file-input')?.files || []).map(describeFile))
+            }
+          ];
+          const items = uploads.flatMap((upload) => upload.items || []);
+          const sanitized = items.find((item) =>
+            /\\.redacted\\.docx$/i.test(item.name || '') &&
+            item.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+          );
+          if (!sanitized) return null;
+          return {
+            name: sanitized.name,
+            type: sanitized.type,
+            size: sanitized.size,
+            bytePrefix: sanitized.bytePrefix,
+            byteValues: sanitized.byteValues,
+            hasRawName: String(sanitized.name || '').includes(rawSecret),
+            originalDocxPresent: items.some((item) => item.name === 'protected-site-docx.docx'),
+            textFallbackPresent: items.some((item) => /\\.redacted\\.txt$/i.test(item.name || ''))
+          };
+          })()`,
+          { awaitPromise: true }
+        ),
+      "protected-site DOCX sanitized handoff",
+      30000
+    );
+  } catch {
+    const diagnostic = await captureProviderArtifacts(connection, page.sessionId);
+    throw new Error(`Timed out waiting for protected-site DOCX sanitized handoff. Diagnostic: ${JSON.stringify({
+      uploads: diagnostic.uploads,
+      inputFiles: diagnostic.inputFiles,
+      modalText: diagnostic.modalText,
+      overlayText: diagnostic.overlayText,
+      panelText: diagnostic.panelText
+    })}`);
+  }
+
+  assert.equal(result.name, "protected-site-docx.redacted.docx");
+  assert.equal(result.type, "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+  assert.deepEqual(result.bytePrefix.slice(0, 4), [80, 75, 3, 4], "protected-site DOCX handoff should be a ZIP/DOCX");
+  assert.equal(result.hasRawName, false, "protected-site DOCX handoff must not expose raw text in file name");
+  assert.equal(result.originalDocxPresent, false, "protected-site DOCX handoff must not upload the raw DOCX");
+  assert.equal(result.textFallbackPresent, false, "safe protected-site DOCX regeneration should not use txt fallback");
+
+  const docxBytes = Buffer.from(result.byteValues);
+  assert.equal(
+    docxBytes.toString("latin1").includes(rawSecret),
+    false,
+    "protected-site DOCX bytes must not contain raw DOCX secret"
+  );
+  assert.match(docxBytes.toString("latin1"), /DOCX_API_KEY=\[PWM_\d+\]/);
+  const extraction = await prepareFileExtractionAsync({
+    fileName: result.name,
+    mimeType: result.type,
+    buffer: docxBytes.buffer.slice(docxBytes.byteOffset, docxBytes.byteOffset + docxBytes.byteLength)
+  });
+  assert.equal(extraction.status, EXTRACTOR_STATUS.OK);
+  assert.equal(extraction.text.includes(rawSecret), false, "protected-site DOCX extracted text must not contain raw secret");
+  assert.match(extraction.text, /DOCX_API_KEY=\[PWM_\d+\]/);
+  assertCapturedStateHasNoRawMarkers(await captureProviderArtifacts(connection, page.sessionId), "protected-site DOCX handoff capture", [rawSecret]);
+
+  return {
+    name: result.name,
+    type: result.type,
+    size: result.size
+  };
+}
+
+async function runProtectedSiteXlsxHandoffQa(connection, page, tempDir) {
+  const rawSecret = "sk-proj-ProtectedSiteXlsxBrowserQa1234567890abcdef";
+  const xlsxPath = path.join(tempDir, "protected-site-xlsx.xlsx");
+  fs.writeFileSync(xlsxPath, makeQaXlsx(`XLSX_API_KEY=${rawSecret}`));
+  await evaluate(connection, page.sessionId, "window.__leakguardQaUploads = []");
+  await setFileInputFiles(connection, page.sessionId, "#qa-file-input", [xlsxPath], { verifyAssignment: false });
+
+  const result = await waitFor(
+    () =>
+      evaluate(
+        connection,
+        page.sessionId,
+        `(async () => {
+          const rawSecret = ${JSON.stringify(rawSecret)};
+          const describeFile = async (file) => {
+            const bytes = new Uint8Array(await file.arrayBuffer());
+            return {
+              name: file.name,
+              type: file.type,
+              size: file.size,
+              bytePrefix: Array.from(bytes.slice(0, 12)),
+              byteValues: Array.from(bytes)
+            };
+          };
+          const uploads = [
+            ...Array.from(window.__leakguardQaUploads || []),
+            {
+              items: await Promise.all(Array.from(document.querySelector('#qa-file-input')?.files || []).map(describeFile))
+            }
+          ];
+          const items = uploads.flatMap((upload) => upload.items || []);
+          const sanitized = items.find((item) =>
+            /\\.redacted\\.xlsx$/i.test(item.name || '') &&
+            item.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+          );
+          if (!sanitized) return null;
+          return {
+            name: sanitized.name,
+            type: sanitized.type,
+            size: sanitized.size,
+            bytePrefix: sanitized.bytePrefix,
+            byteValues: sanitized.byteValues,
+            hasRawName: String(sanitized.name || '').includes(rawSecret),
+            originalXlsxPresent: items.some((item) => item.name === 'protected-site-xlsx.xlsx'),
+            textFallbackPresent: items.some((item) => /\\.redacted\\.txt$/i.test(item.name || ''))
+          };
+        })()`,
+        { awaitPromise: true }
+      ),
+    "protected-site XLSX sanitized handoff",
+    30000
+  );
+
+  assert.equal(result.name, "protected-site-xlsx.redacted.xlsx");
+  assert.equal(result.type, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  assert.deepEqual(result.bytePrefix.slice(0, 4), [80, 75, 3, 4], "protected-site XLSX handoff should be a ZIP/XLSX");
+  assert.equal(result.hasRawName, false, "protected-site XLSX handoff must not expose raw text in file name");
+  assert.equal(result.originalXlsxPresent, false, "protected-site XLSX handoff must not upload the raw XLSX");
+  assert.equal(result.textFallbackPresent, false, "safe protected-site XLSX regeneration should not use txt fallback");
+
+  const xlsxBytes = Buffer.from(result.byteValues);
+  const xlsxLatin1 = xlsxBytes.toString("latin1");
+  assert.equal(xlsxLatin1.includes(rawSecret), false, "protected-site XLSX bytes must not contain raw XLSX secret");
+  assert.match(xlsxLatin1, /XLSX_API_KEY=\[PWM_\d+\]/);
+  for (const forbiddenPart of [
+    "xl/sharedStrings.xml",
+    "xl/comments",
+    "docProps/",
+    "customXml/",
+    "xl/media/",
+    "xl/calcChain.xml",
+    "xl/charts",
+    "<f>"
+  ]) {
+    assert.equal(xlsxLatin1.includes(forbiddenPart), false, `protected-site XLSX must not copy ${forbiddenPart}`);
+  }
+
+  const extraction = await prepareFileExtractionAsync({
+    fileName: result.name,
+    mimeType: result.type,
+    buffer: xlsxBytes.buffer.slice(xlsxBytes.byteOffset, xlsxBytes.byteOffset + xlsxBytes.byteLength)
+  });
+  assert.equal(extraction.status, EXTRACTOR_STATUS.OK);
+  assert.equal(extraction.text.includes(rawSecret), false, "protected-site XLSX extracted text must not contain raw secret");
+  assert.match(extraction.text, /XLSX_API_KEY=\[PWM_\d+\]/);
+  assertCapturedStateHasNoRawMarkers(await captureProviderArtifacts(connection, page.sessionId), "protected-site XLSX handoff capture", [rawSecret]);
+
+  return {
+    name: result.name,
+    type: result.type,
+    size: result.size
+  };
+}
+
+async function runProtectedSiteFileDropHandoffQa(connection, page) {
+  const rawSecret = "sk-proj-ProtectedSiteDropPdfBrowserQa1234567890abcdef";
+  await resetProviderCapture(connection, page.sessionId);
+  await dispatchSyntheticFileDrop(connection, page.sessionId, {
+    fileName: "drop-contract.pdf",
+    mimeType: "application/pdf",
+    bytes: makeQaPdf(`DROP_PDF_API_KEY=${rawSecret}`)
+  });
+
+  let result;
+  try {
+    result = await waitForCapturedUpload(
+      connection,
+      page.sessionId,
+      (item) => /drop-contract\.redacted\.pdf$/i.test(item.name || "") && item.type === "application/pdf",
+      "protected-site PDF drop sanitized handoff",
+      8000
+    );
+  } catch (_error) {
+    const diagnostic = await waitFor(async () => {
+      const capture = await captureProviderArtifacts(connection, page.sessionId);
+      const text = `${capture.modalText}\n${capture.overlayText}`;
+      if (/Raw file blocked|Raw file upload blocked|local file extraction did not produce safe text/i.test(text)) {
+        return capture;
+      }
+      const items = flattenCapturedUploadItems(capture);
+      if (items.length === 0 && (capture.events || []).length === 0) return capture;
+      return null;
+    }, "protected-site PDF drop fail-closed state", 25000);
+    assertCapturedStateHasNoRawMarkers(diagnostic, "protected-site PDF drop fail-closed capture", [rawSecret]);
+    assert.equal(
+      flattenCapturedUploadItems(diagnostic).some((item) => item.name === "drop-contract.pdf"),
+      false,
+      "protected-site PDF drop must not reach the provider as a raw file"
+    );
+    return {
+      name: "",
+      type: "",
+      size: 0,
+      blocked: true,
+      reason: "synthetic_drop_extraction_unavailable"
+    };
+  }
+  assertCapturedSanitizedUpload({
+    item: result.item,
+    capture: result.capture,
+    expected: {
+      name: "drop-contract.redacted.pdf",
+      type: "application/pdf",
+      originalName: "drop-contract.pdf"
+    },
+    rawSecret,
+    label: "protected-site PDF drop handoff"
+  });
+  assertNoRawMarkers(Buffer.from(result.item.byteValues), "protected-site PDF drop bytes", [rawSecret]);
+  assertArtifactHasPlaceholder(Buffer.from(result.item.byteValues), "protected-site PDF drop bytes", /DROP_PDF_API_KEY=\[PWM_\d+\]/);
+  return {
+    name: result.item.name,
+    type: result.item.type,
+    size: result.item.size
+  };
+}
+
+async function assertBlockedProtectedSiteUpload(connection, page, tempDir, testCase) {
+  const filePath = path.join(tempDir, testCase.fileName);
+  fs.writeFileSync(filePath, testCase.bytes);
+  await resetProviderCapture(connection, page.sessionId);
+  await setFileInputFiles(connection, page.sessionId, "#qa-file-input", [filePath], { verifyAssignment: false });
+  await delay(testCase.waitMs || 1200);
+  await approveRedactionModalIfPresent(connection, page.sessionId);
+  const capture = await captureProviderArtifacts(connection, page.sessionId);
+  const items = flattenCapturedUploadItems(capture);
+  assert.equal(
+    items.some((item) => item.name === testCase.fileName),
+    false,
+    `${testCase.label} must not upload the raw original file. Capture: ${JSON.stringify({
+      items: items.map((item) => ({ name: item.name, type: item.type, size: item.size })),
+      modalText: capture.modalText,
+      overlayText: capture.overlayText,
+      events: capture.events
+    })}`
+  );
+  assert.equal(
+    items.some((item) => testCase.forbiddenOutputPattern.test(item.name || "")),
+    false,
+    `${testCase.label} must not create an unsafe rebuilt output`
+  );
+  assertCapturedStateHasNoRawMarkers(capture, `${testCase.label} blocked upload capture`, [testCase.rawSecret]);
+  await closeBlockingModalIfPresent(connection, page.sessionId);
+  return {
+    label: testCase.label,
+    uploadedCount: items.length,
+    overlayText: capture.overlayText,
+    modalText: capture.modalText
+  };
+}
+
+async function runProtectedSiteFailureInjectionQa(connection, page, tempDir) {
+  const cases = [
+    {
+      label: "malformed PDF",
+      fileName: "malformed-protected.pdf",
+      rawSecret: "sk-proj-MalformedPdfProtectedQa1234567890abcdef",
+      bytes: Buffer.from("not a pdf sk-proj-MalformedPdfProtectedQa1234567890abcdef"),
+      forbiddenOutputPattern: /\.redacted\.pdf$/i
+    },
+    {
+      label: "image-only PDF",
+      fileName: "image-only-protected.pdf",
+      rawSecret: "sk-proj-ImageOnlyPdfProtectedQa1234567890abcdef",
+      bytes: makeQaPdf("", { imageOnly: true }),
+      forbiddenOutputPattern: /\.redacted\.pdf$/i
+    },
+    {
+      label: "malformed DOCX",
+      fileName: "malformed-protected.docx",
+      rawSecret: "sk-proj-MalformedDocxProtectedQa1234567890abcdef",
+      bytes: Buffer.from("not a docx sk-proj-MalformedDocxProtectedQa1234567890abcdef"),
+      forbiddenOutputPattern: /\.redacted\.docx$/i
+    },
+    {
+      label: "malformed XLSX",
+      fileName: "malformed-protected.xlsx",
+      rawSecret: "sk-proj-MalformedXlsxProtectedQa1234567890abcdef",
+      bytes: Buffer.from("not an xlsx sk-proj-MalformedXlsxProtectedQa1234567890abcdef"),
+      forbiddenOutputPattern: /\.redacted\.xlsx$/i
+    },
+    {
+      label: "unsupported DOC",
+      fileName: "unsupported-protected.doc",
+      rawSecret: "sk-proj-UnsupportedDocProtectedQa1234567890abcdef",
+      bytes: Buffer.from("legacy doc sk-proj-UnsupportedDocProtectedQa1234567890abcdef"),
+      forbiddenOutputPattern: /\.(?:redacted\.docx|redacted\.txt)$/i
+    },
+    {
+      label: "unsupported DOCM",
+      fileName: "unsupported-protected.docm",
+      rawSecret: "sk-proj-UnsupportedDocmProtectedQa1234567890abcdef",
+      bytes: Buffer.from("macro docm sk-proj-UnsupportedDocmProtectedQa1234567890abcdef"),
+      forbiddenOutputPattern: /\.(?:redacted\.docx|redacted\.txt)$/i
+    },
+    {
+      label: "unsupported XLS",
+      fileName: "unsupported-protected.xls",
+      rawSecret: "sk-proj-UnsupportedXlsProtectedQa1234567890abcdef",
+      bytes: Buffer.from("legacy xls sk-proj-UnsupportedXlsProtectedQa1234567890abcdef"),
+      forbiddenOutputPattern: /\.(?:redacted\.xlsx|redacted\.txt)$/i
+    },
+    {
+      label: "unsupported XLSM",
+      fileName: "unsupported-protected.xlsm",
+      rawSecret: "sk-proj-UnsupportedXlsmProtectedQa1234567890abcdef",
+      bytes: Buffer.from("macro xlsm sk-proj-UnsupportedXlsmProtectedQa1234567890abcdef"),
+      forbiddenOutputPattern: /\.(?:redacted\.xlsx|redacted\.txt)$/i
+    }
+  ];
+
+  const results = [];
+  for (const testCase of cases) {
+    results.push(await assertBlockedProtectedSiteUpload(connection, page, tempDir, testCase));
+  }
+  return results;
+}
+
 function assertScannerResult(result) {
   assert.equal(result.hasAnyRaw, false, "scanner preview still contains raw synthetic values");
   assert.equal(result.openAiRedacted, true);
@@ -773,6 +1870,18 @@ async function waitForDownloadedText(downloadPath, fileName) {
   }, `scanner export download ${fileName}`);
 }
 
+async function waitForDownloadedBytes(downloadPath, fileName) {
+  const filePath = path.join(downloadPath, fileName);
+  return await waitFor(() => {
+    const entries = fs.existsSync(downloadPath) ? fs.readdirSync(downloadPath) : [];
+    const partialDownload = entries.some((entry) => entry.endsWith(".crdownload") || entry.endsWith(".tmp"));
+    if (!fs.existsSync(filePath) || partialDownload) return null;
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile() || stat.size <= 0) return null;
+    return fs.readFileSync(filePath);
+  }, `scanner export download ${fileName}`);
+}
+
 async function clickDownloadAndReadText(connection, sessionId, downloadPath, selector, fileName) {
   fs.rmSync(path.join(downloadPath, fileName), { force: true });
   await evaluate(
@@ -782,6 +1891,17 @@ async function clickDownloadAndReadText(connection, sessionId, downloadPath, sel
     { userGesture: true }
   );
   return await waitForDownloadedText(downloadPath, fileName);
+}
+
+async function clickDownloadAndReadBytes(connection, sessionId, downloadPath, selector, fileName) {
+  fs.rmSync(path.join(downloadPath, fileName), { force: true });
+  await evaluate(
+    connection,
+    sessionId,
+    `document.querySelector(${JSON.stringify(selector)})?.click()`,
+    { userGesture: true }
+  );
+  return await waitForDownloadedBytes(downloadPath, fileName);
 }
 
 async function runScannerExportQa(connection, scannerSessionId, tempDir) {
@@ -822,7 +1942,9 @@ async function runScannerQa(connection, extensionId, tempDir) {
     () => evaluate(connection, scanner.sessionId, "Boolean(document.querySelector('#file-input'))"),
     "scanner UI"
   );
+  const scannerStep = (label) => console.log(`Chrome browser QA scanner step: ${label}`);
 
+  scannerStep("text env");
   const envPath = path.join(tempDir, "leakguard-browser-qa.env");
   fs.writeFileSync(envPath, promptPayload);
   await setFileInputFiles(connection, scanner.sessionId, "#file-input", [envPath]);
@@ -883,30 +2005,815 @@ async function runScannerQa(connection, extensionId, tempDir) {
     "scanner reset"
   );
 
-  const unsupportedPath = path.join(tempDir, "leakguard-browser-qa.pdf");
-  fs.writeFileSync(unsupportedPath, "%PDF-1.7\nsynthetic unsupported file\n");
+  scannerStep("PDF rebuilt download");
+  const textPdfPath = path.join(tempDir, "leakguard-browser-qa-text.pdf");
+  fs.writeFileSync(textPdfPath, makeQaPdf(`PDF_API_KEY=${syntheticSecrets.openAi}`));
+  await setFileInputFiles(connection, scanner.sessionId, "#file-input", [textPdfPath]);
+  const textPdf = await evaluate(
+    connection,
+    scanner.sessionId,
+    `new Promise((resolve, reject) => {
+      const rawSecret = ${JSON.stringify(syntheticSecrets.openAi)};
+      const started = Date.now();
+      let clicked = false;
+      const timer = setInterval(() => {
+        const preview = document.querySelector('#redacted-preview')?.textContent || '';
+        const status = document.querySelector('#status')?.textContent || '';
+        const scanButton = document.querySelector('#scan-btn');
+        if (!clicked && scanButton && !scanButton.disabled) {
+          clicked = true;
+          scanButton.click();
+        }
+        if (/Scan complete/i.test(status) && /PDF_API_KEY=\\[PWM_\\d+\\]/.test(preview)) {
+          clearInterval(timer);
+          resolve({
+            status,
+            hasRaw: preview.includes(rawSecret),
+            redacted: /PDF_API_KEY=\\[PWM_\\d+\\]/.test(preview)
+          });
+        } else if (Date.now() - started > 15000) {
+          clearInterval(timer);
+          reject(new Error('Timed out waiting for PDF scanner result: ' + JSON.stringify({
+            status,
+            scanDisabled: scanButton?.disabled,
+            preview
+          })));
+        }
+      }, 50);
+    })`
+  );
+  assert.equal(textPdf.hasRaw, false, "scanner PDF preview must not expose raw PDF secrets");
+  assert.equal(textPdf.redacted, true, "scanner should redact text PDF findings");
+
+  const pdfDownloadPath = path.join(tempDir, "scanner-pdf-downloads");
+  await configureDownloadDirectory(connection, scanner.sessionId, pdfDownloadPath);
+  const pdfExportState = await evaluate(
+    connection,
+    scanner.sessionId,
+    `({
+      pdfAvailable: !document.querySelector('#download-redacted-pdf-btn')?.disabled &&
+        !document.querySelector('#download-redacted-pdf-btn')?.hidden,
+      textAvailable: !document.querySelector('#download-redacted-btn')?.disabled
+    })`
+  );
+  assert.equal(pdfExportState.pdfAvailable, true, "scanner should offer regenerated redacted PDF for text PDFs");
+  assert.equal(pdfExportState.textAvailable, true, "scanner should keep .redacted.txt available for text PDFs");
+
+  const redactedPdfBytes = await clickDownloadAndReadBytes(
+    connection,
+    scanner.sessionId,
+    pdfDownloadPath,
+    "#download-redacted-pdf-btn",
+    "leakguard-browser-qa-text.redacted.pdf"
+  );
+  const redactedPdfLatin1 = redactedPdfBytes.toString("latin1");
+  assert.ok(redactedPdfBytes.byteLength > 0, "scanner redacted PDF download should be non-empty");
+  assert.ok(redactedPdfLatin1.startsWith("%PDF-1.4"), "scanner redacted PDF should be a regenerated PDF");
+  assert.equal(redactedPdfLatin1.includes(syntheticSecrets.openAi), false, "scanner redacted PDF bytes must not contain raw PDF secret");
+  assert.match(redactedPdfLatin1, /PDF_API_KEY=\[PWM_\d+\]/);
+
+  const redactedPdfExtraction = await prepareFileExtractionAsync({
+    fileName: "leakguard-browser-qa-text.redacted.pdf",
+    mimeType: "application/pdf",
+    buffer: redactedPdfBytes.buffer.slice(redactedPdfBytes.byteOffset, redactedPdfBytes.byteOffset + redactedPdfBytes.byteLength)
+  });
+  assert.equal(redactedPdfExtraction.status, EXTRACTOR_STATUS.OK);
+  assert.equal(redactedPdfExtraction.text.includes(syntheticSecrets.openAi), false, "scanner redacted PDF text must not contain raw PDF secret");
+  assert.match(redactedPdfExtraction.text, /PDF_API_KEY=\[PWM_\d+\]/);
+
+  const pdfRedactedText = await clickDownloadAndReadText(
+    connection,
+    scanner.sessionId,
+    pdfDownloadPath,
+    "#download-redacted-btn",
+    "leakguard-browser-qa-text.redacted.txt"
+  );
+  assert.equal(pdfRedactedText.includes(syntheticSecrets.openAi), false, "scanner PDF .redacted.txt fallback must not expose raw secret");
+  assert.match(pdfRedactedText, /^PDF_API_KEY=\[PWM_\d+\]$/m);
+
+  const pdfReportText = await clickDownloadAndReadText(
+    connection,
+    scanner.sessionId,
+    pdfDownloadPath,
+    "#download-report-btn",
+    "leakguard-browser-qa-text.leakguard-report.json"
+  );
+  assert.equal(pdfReportText.includes(syntheticSecrets.openAi), false, "scanner PDF JSON report must not expose raw secret");
+  const pdfReport = JSON.parse(pdfReportText);
+  assert.equal(JSON.stringify(pdfReport).includes("redactedText"), false);
+  assert.match(pdfReport.redactedPreview || "", /PDF_API_KEY=\[PWM_\d+\]/);
+
+  await evaluate(connection, scanner.sessionId, "document.querySelector('#clear-btn').click()");
+  await waitFor(
+    () => evaluate(connection, scanner.sessionId, "document.querySelector('#scan-btn')?.disabled"),
+    "scanner reset after text PDF"
+  );
+
+  scannerStep("DOCX rebuilt download");
+  const textDocxPath = path.join(tempDir, "leakguard-browser-qa-text.docx");
+  fs.writeFileSync(textDocxPath, makeQaDocx(`DOCX_API_KEY=${syntheticSecrets.openAi}`));
+  await setFileInputFiles(connection, scanner.sessionId, "#file-input", [textDocxPath]);
+  const textDocx = await evaluate(
+    connection,
+    scanner.sessionId,
+    `new Promise((resolve, reject) => {
+      const rawSecret = ${JSON.stringify(syntheticSecrets.openAi)};
+      const started = Date.now();
+      let clicked = false;
+      const timer = setInterval(() => {
+        const preview = document.querySelector('#redacted-preview')?.textContent || '';
+        const status = document.querySelector('#status')?.textContent || '';
+        const scanButton = document.querySelector('#scan-btn');
+        if (!clicked && scanButton && !scanButton.disabled) {
+          clicked = true;
+          scanButton.click();
+        }
+        if (/Scan complete/i.test(status) && /DOCX_API_KEY=\\[PWM_\\d+\\]/.test(preview)) {
+          clearInterval(timer);
+          resolve({
+            status,
+            hasRaw: preview.includes(rawSecret),
+            redacted: /DOCX_API_KEY=\\[PWM_\\d+\\]/.test(preview)
+          });
+        } else if (Date.now() - started > 15000) {
+          clearInterval(timer);
+          reject(new Error('Timed out waiting for DOCX scanner result: ' + JSON.stringify({
+            status,
+            scanDisabled: scanButton?.disabled,
+            preview
+          })));
+        }
+      }, 50);
+    })`
+  );
+  assert.equal(textDocx.hasRaw, false, "scanner DOCX preview must not expose raw DOCX secrets");
+  assert.equal(textDocx.redacted, true, "scanner should redact text DOCX findings");
+
+  const docxDownloadPath = path.join(tempDir, "scanner-docx-downloads");
+  await configureDownloadDirectory(connection, scanner.sessionId, docxDownloadPath);
+  const docxExportState = await evaluate(
+    connection,
+    scanner.sessionId,
+    `({
+      docxAvailable: !document.querySelector('#download-redacted-docx-btn')?.disabled &&
+        !document.querySelector('#download-redacted-docx-btn')?.hidden,
+      textAvailable: !document.querySelector('#download-redacted-btn')?.disabled
+    })`
+  );
+  assert.equal(docxExportState.docxAvailable, true, "scanner should offer regenerated redacted DOCX for text DOCX files");
+  assert.equal(docxExportState.textAvailable, true, "scanner should keep .redacted.txt available for DOCX files");
+
+  const redactedDocxBytes = await clickDownloadAndReadBytes(
+    connection,
+    scanner.sessionId,
+    docxDownloadPath,
+    "#download-redacted-docx-btn",
+    "leakguard-browser-qa-text.redacted.docx"
+  );
+  const redactedDocxLatin1 = redactedDocxBytes.toString("latin1");
+  assert.ok(redactedDocxBytes.byteLength > 0, "scanner redacted DOCX download should be non-empty");
+  assert.equal(redactedDocxLatin1.includes(syntheticSecrets.openAi), false, "scanner redacted DOCX bytes must not contain raw DOCX secret");
+  assert.equal(redactedDocxLatin1.includes("DOCX_API_KEY=[PWM_"), true, "scanner redacted DOCX should contain sanitized text only");
+  assert.equal(redactedDocxLatin1.includes("word/header"), false, "scanner redacted DOCX should not copy original header parts");
+  assert.equal(redactedDocxLatin1.includes("word/footer"), false, "scanner redacted DOCX should not copy original footer parts");
+
+  const redactedDocxExtraction = await prepareFileExtractionAsync({
+    fileName: "leakguard-browser-qa-text.redacted.docx",
+    mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    buffer: redactedDocxBytes.buffer.slice(redactedDocxBytes.byteOffset, redactedDocxBytes.byteOffset + redactedDocxBytes.byteLength)
+  });
+  assert.equal(redactedDocxExtraction.status, EXTRACTOR_STATUS.OK);
+  assert.equal(redactedDocxExtraction.text.includes(syntheticSecrets.openAi), false, "scanner redacted DOCX text must not contain raw DOCX secret");
+  assert.match(redactedDocxExtraction.text, /DOCX_API_KEY=\[PWM_\d+\]/);
+
+  const docxRedactedText = await clickDownloadAndReadText(
+    connection,
+    scanner.sessionId,
+    docxDownloadPath,
+    "#download-redacted-btn",
+    "leakguard-browser-qa-text.redacted.txt"
+  );
+  assert.equal(docxRedactedText.includes(syntheticSecrets.openAi), false, "scanner DOCX .redacted.txt fallback must not expose raw secret");
+  assert.match(docxRedactedText, /^DOCX_API_KEY=\[PWM_\d+\]$/m);
+
+  const docxReportText = await clickDownloadAndReadText(
+    connection,
+    scanner.sessionId,
+    docxDownloadPath,
+    "#download-report-btn",
+    "leakguard-browser-qa-text.leakguard-report.json"
+  );
+  assert.equal(docxReportText.includes(syntheticSecrets.openAi), false, "scanner DOCX JSON report must not expose raw secret");
+  const docxReport = JSON.parse(docxReportText);
+  assert.equal(JSON.stringify(docxReport).includes("redactedText"), false);
+  assert.match(docxReport.redactedPreview || "", /DOCX_API_KEY=\[PWM_\d+\]/);
+
+  await evaluate(connection, scanner.sessionId, "document.querySelector('#clear-btn').click()");
+  await waitFor(
+    () => evaluate(connection, scanner.sessionId, "document.querySelector('#scan-btn')?.disabled"),
+    "scanner reset after text DOCX"
+  );
+
+  scannerStep("XLSX rebuilt download");
+  const textXlsxPath = path.join(tempDir, "leakguard-browser-qa-text.xlsx");
+  fs.writeFileSync(textXlsxPath, makeQaXlsx(`XLSX_API_KEY=${syntheticSecrets.openAi}`));
+  await setFileInputFiles(connection, scanner.sessionId, "#file-input", [textXlsxPath]);
+  const textXlsx = await evaluate(
+    connection,
+    scanner.sessionId,
+    `new Promise((resolve, reject) => {
+      const rawSecret = ${JSON.stringify(syntheticSecrets.openAi)};
+      const started = Date.now();
+      let clicked = false;
+      const timer = setInterval(() => {
+        const preview = document.querySelector('#redacted-preview')?.textContent || '';
+        const status = document.querySelector('#status')?.textContent || '';
+        const scanButton = document.querySelector('#scan-btn');
+        if (!clicked && scanButton && !scanButton.disabled) {
+          clicked = true;
+          scanButton.click();
+        }
+        if (/Scan complete/i.test(status) && /XLSX_API_KEY=\\[PWM_\\d+\\]/.test(preview)) {
+          clearInterval(timer);
+          resolve({
+            status,
+            hasRaw: preview.includes(rawSecret),
+            redacted: /XLSX_API_KEY=\\[PWM_\\d+\\]/.test(preview)
+          });
+        } else if (Date.now() - started > 15000) {
+          clearInterval(timer);
+          reject(new Error('Timed out waiting for XLSX scanner result: ' + JSON.stringify({
+            status,
+            scanDisabled: scanButton?.disabled,
+            preview
+          })));
+        }
+      }, 50);
+    })`
+  );
+  assert.equal(textXlsx.hasRaw, false, "scanner XLSX preview must not expose raw XLSX secrets");
+  assert.equal(textXlsx.redacted, true, "scanner should redact text XLSX findings");
+
+  const xlsxDownloadPath = path.join(tempDir, "scanner-xlsx-downloads");
+  await configureDownloadDirectory(connection, scanner.sessionId, xlsxDownloadPath);
+  const xlsxExportState = await evaluate(
+    connection,
+    scanner.sessionId,
+    `({
+      xlsxAvailable: !document.querySelector('#download-redacted-xlsx-btn')?.disabled &&
+        !document.querySelector('#download-redacted-xlsx-btn')?.hidden,
+      textAvailable: !document.querySelector('#download-redacted-btn')?.disabled
+    })`
+  );
+  assert.equal(xlsxExportState.xlsxAvailable, true, "scanner should offer regenerated redacted XLSX for text XLSX files");
+  assert.equal(xlsxExportState.textAvailable, true, "scanner should keep .redacted.txt available for XLSX files");
+
+  const redactedXlsxBytes = await clickDownloadAndReadBytes(
+    connection,
+    scanner.sessionId,
+    xlsxDownloadPath,
+    "#download-redacted-xlsx-btn",
+    "leakguard-browser-qa-text.redacted.xlsx"
+  );
+  const redactedXlsxLatin1 = redactedXlsxBytes.toString("latin1");
+  assert.ok(redactedXlsxBytes.byteLength > 0, "scanner redacted XLSX download should be non-empty");
+  assert.equal(redactedXlsxLatin1.includes(syntheticSecrets.openAi), false, "scanner redacted XLSX bytes must not contain raw XLSX secret");
+  assert.equal(redactedXlsxLatin1.includes("XLSX_API_KEY=[PWM_"), true, "scanner redacted XLSX should contain sanitized text only");
+  assert.equal(redactedXlsxLatin1.includes("xl/sharedStrings.xml"), false, "scanner redacted XLSX should not copy original shared strings");
+  assert.equal(redactedXlsxLatin1.includes("xl/comments"), false, "scanner redacted XLSX should not copy original comments");
+  assert.equal(redactedXlsxLatin1.includes("docProps/"), false, "scanner redacted XLSX should not copy original metadata");
+  assert.equal(redactedXlsxLatin1.includes("customXml/"), false, "scanner redacted XLSX should not copy custom XML");
+  assert.equal(redactedXlsxLatin1.includes("xl/media/"), false, "scanner redacted XLSX should not copy media");
+
+  const redactedXlsxExtraction = await prepareFileExtractionAsync({
+    fileName: "leakguard-browser-qa-text.redacted.xlsx",
+    mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    buffer: redactedXlsxBytes.buffer.slice(redactedXlsxBytes.byteOffset, redactedXlsxBytes.byteOffset + redactedXlsxBytes.byteLength)
+  });
+  assert.equal(redactedXlsxExtraction.status, EXTRACTOR_STATUS.OK);
+  assert.equal(redactedXlsxExtraction.text.includes(syntheticSecrets.openAi), false, "scanner redacted XLSX text must not contain raw XLSX secret");
+  assert.match(redactedXlsxExtraction.text, /XLSX_API_KEY=\[PWM_\d+\]/);
+
+  const xlsxRedactedText = await clickDownloadAndReadText(
+    connection,
+    scanner.sessionId,
+    xlsxDownloadPath,
+    "#download-redacted-btn",
+    "leakguard-browser-qa-text.redacted.txt"
+  );
+  assert.equal(xlsxRedactedText.includes(syntheticSecrets.openAi), false, "scanner XLSX .redacted.txt fallback must not expose raw secret");
+  assert.match(xlsxRedactedText, /^XLSX_API_KEY=\[PWM_\d+\]$/m);
+
+  const xlsxReportText = await clickDownloadAndReadText(
+    connection,
+    scanner.sessionId,
+    xlsxDownloadPath,
+    "#download-report-btn",
+    "leakguard-browser-qa-text.leakguard-report.json"
+  );
+  assert.equal(xlsxReportText.includes(syntheticSecrets.openAi), false, "scanner XLSX JSON report must not expose raw secret");
+  const xlsxReport = JSON.parse(xlsxReportText);
+  assert.equal(JSON.stringify(xlsxReport).includes("redactedText"), false);
+  assert.match(xlsxReport.redactedPreview || "", /XLSX_API_KEY=\[PWM_\d+\]/);
+
+  await evaluate(connection, scanner.sessionId, "document.querySelector('#clear-btn').click()");
+  await waitFor(
+    () => evaluate(connection, scanner.sessionId, "document.querySelector('#scan-btn')?.disabled"),
+    "scanner reset after text XLSX"
+  );
+
+  scannerStep("image metadata fallback");
+  const imageSecretName = `image-${syntheticSecrets.openAi}.png`;
+  const imageSecretPath = path.join(tempDir, imageSecretName);
+  fs.writeFileSync(imageSecretPath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  await setFileInputFiles(connection, scanner.sessionId, "#file-input", [imageSecretPath]);
+  const imageMetadata = await evaluate(
+    connection,
+    scanner.sessionId,
+    `new Promise((resolve, reject) => {
+      const rawSecret = ${JSON.stringify(syntheticSecrets.openAi)};
+      const started = Date.now();
+      let clicked = false;
+      const timer = setInterval(() => {
+        const preview = document.querySelector('#redacted-preview')?.textContent || '';
+        const status = document.querySelector('#status')?.textContent || '';
+        const scanButton = document.querySelector('#scan-btn');
+        if (!clicked && scanButton && !scanButton.disabled) {
+          clicked = true;
+          scanButton.click();
+        }
+        if (/Image metadata scanned/i.test(status) && /Visible text inside the image was not scanned/i.test(status) && /file_name=image-\\[PWM_\\d+\\]\\.png/.test(preview)) {
+          clearInterval(timer);
+          resolve({
+            status,
+            hasRaw: preview.includes(rawSecret),
+            redacted: /file_name=image-\\[PWM_\\d+\\]\\.png/.test(preview),
+            noOcrClaim: /visual_text_scanned=false/.test(preview),
+            ocrFailedSafely: /English OCR did not complete/i.test(status)
+          });
+        } else if (Date.now() - started > 15000) {
+          clearInterval(timer);
+          reject(new Error('Timed out waiting for image metadata scanner result: ' + JSON.stringify({
+            status,
+            scanDisabled: scanButton?.disabled,
+            preview
+          })));
+        }
+      }, 50);
+    })`
+  );
+  assert.equal(imageMetadata.hasRaw, false, "scanner image metadata preview must not expose raw filename secrets");
+  assert.equal(imageMetadata.redacted, true, "scanner should redact image filename metadata findings");
+  assert.equal(imageMetadata.noOcrClaim, true, "scanner should mark visual text as unscanned");
+  assert.equal(imageMetadata.ocrFailedSafely, true, "scanner should not treat invalid-image OCR failure as a visual-text scan");
+
+  await evaluate(connection, scanner.sessionId, "document.querySelector('#clear-btn').click()");
+  await waitFor(
+    () => evaluate(connection, scanner.sessionId, "document.querySelector('#scan-btn')?.disabled"),
+    "scanner reset after image metadata"
+  );
+
+  scannerStep("image OCR redacted PNG");
+  const scannerOcrSecret = "LeakGuardScannerSecret12345";
+  const scannerOcrImagePath = path.join(tempDir, "scanner-ocr.png");
+  fs.writeFileSync(
+    scannerOcrImagePath,
+    await makeSyntheticTextImage(`PASSWORD=${scannerOcrSecret}`, "png", {
+      width: 1800,
+      height: 280,
+      fontSize: 72,
+      textY: 170
+    })
+  );
+  await setFileInputFiles(connection, scanner.sessionId, "#file-input", [scannerOcrImagePath]);
+  const scannerOcrImage = await evaluate(
+    connection,
+    scanner.sessionId,
+    `new Promise((resolve, reject) => {
+      const rawSecret = ${JSON.stringify(scannerOcrSecret)};
+      const started = Date.now();
+      let clicked = false;
+      const timer = setInterval(() => {
+        const preview = document.querySelector('#redacted-preview')?.textContent || '';
+        const status = document.querySelector('#status')?.textContent || '';
+        const scanButton = document.querySelector('#scan-btn');
+        const imageButton = document.querySelector('#download-redacted-image-btn');
+        if (!clicked && scanButton && !scanButton.disabled) {
+          clicked = true;
+          scanButton.click();
+        }
+        if (/flattened redacted PNG/i.test(status) && /PASSWORD=\\[PWM_\\d+\\]/.test(preview) && imageButton && !imageButton.disabled && !imageButton.hidden) {
+          clearInterval(timer);
+          resolve({
+            status,
+            preview,
+            hasRaw: preview.includes(rawSecret),
+            imageAvailable: true,
+            textAvailable: !document.querySelector('#download-redacted-btn')?.disabled
+          });
+        } else if (Date.now() - started > 30000) {
+          clearInterval(timer);
+          reject(new Error('Timed out waiting for scanner OCR image result: ' + JSON.stringify({
+            status,
+            scanDisabled: scanButton?.disabled,
+            imageDisabled: imageButton?.disabled,
+            imageHidden: imageButton?.hidden,
+            preview
+          })));
+        }
+      }, 50);
+    })`
+  );
+  assert.equal(scannerOcrImage.hasRaw, false, "scanner OCR preview must not expose raw image text secret");
+  assert.equal(scannerOcrImage.imageAvailable, true, "scanner should offer flattened redacted PNG when OCR boxes are usable");
+  assert.equal(scannerOcrImage.textAvailable, true, "scanner OCR should keep .redacted.txt available");
+
+  const imageDownloadPath = path.join(tempDir, "scanner-image-downloads");
+  await configureDownloadDirectory(connection, scanner.sessionId, imageDownloadPath);
+  const redactedImageBytes = await clickDownloadAndReadBytes(
+    connection,
+    scanner.sessionId,
+    imageDownloadPath,
+    "#download-redacted-image-btn",
+    "scanner-ocr.redacted.png"
+  );
+  assert.deepEqual(
+    Array.from(redactedImageBytes.subarray(0, 8)),
+    [137, 80, 78, 71, 13, 10, 26, 10],
+    "scanner redacted image download should be a PNG"
+  );
+  assertNoRawMarkers(redactedImageBytes, "scanner redacted PNG download", [scannerOcrSecret]);
+
+  const imageRedactedText = await clickDownloadAndReadText(
+    connection,
+    scanner.sessionId,
+    imageDownloadPath,
+    "#download-redacted-btn",
+    "scanner-ocr.redacted.txt"
+  );
+  assertNoRawMarkers(imageRedactedText, "scanner OCR .redacted.txt download", [scannerOcrSecret]);
+  assert.match(imageRedactedText, /^PASSWORD=\[PWM_\d+\]$/m);
+
+  const imageReportText = await clickDownloadAndReadText(
+    connection,
+    scanner.sessionId,
+    imageDownloadPath,
+    "#download-report-btn",
+    "scanner-ocr.leakguard-report.json"
+  );
+  assertNoRawMarkers(imageReportText, "scanner OCR JSON report download", [scannerOcrSecret]);
+  const imageReport = JSON.parse(imageReportText);
+  assert.equal(JSON.stringify(imageReport).includes("redactedText"), false);
+  assert.match(imageReport.redactedPreview || "", /PASSWORD=\[PWM_\d+\]/);
+
+  await evaluate(connection, scanner.sessionId, "document.querySelector('#clear-btn').click()");
+  await waitFor(
+    () => evaluate(connection, scanner.sessionId, "document.querySelector('#scan-btn')?.disabled"),
+    "scanner reset after OCR image"
+  );
+
+  scannerStep("unsupported DOCX");
+  const unsupportedDocxPath = path.join(tempDir, "leakguard-browser-qa-image-only.docx");
+  fs.writeFileSync(unsupportedDocxPath, makeQaDocx("", { imageOnly: true }));
+  await setFileInputFiles(connection, scanner.sessionId, "#file-input", [unsupportedDocxPath]);
+  const unsupportedDocx = await evaluate(
+    connection,
+    scanner.sessionId,
+    `new Promise((resolve, reject) => {
+      const started = Date.now();
+      let clicked = false;
+      const timer = setInterval(() => {
+        const status = document.querySelector('#status')?.textContent || '';
+        const preview = document.querySelector('#redacted-preview')?.textContent || '';
+        const scanButton = document.querySelector('#scan-btn');
+        if (!clicked && scanButton && !scanButton.disabled) {
+          clicked = true;
+          scanButton.click();
+        }
+        if (/could not find extractable text/i.test(status) && /Embedded images, macros, and OCR are not supported/i.test(status)) {
+          clearInterval(timer);
+          const docxButton = document.querySelector('#download-redacted-docx-btn');
+          resolve({
+            status,
+            preview,
+            docxAvailable: !docxButton?.disabled && !docxButton?.hidden
+          });
+        } else if (Date.now() - started > 10000) {
+          clearInterval(timer);
+          reject(new Error('Timed out waiting for unsupported DOCX warning: ' + JSON.stringify({
+            status,
+            scanDisabled: scanButton?.disabled,
+            preview
+          })));
+        }
+      }, 50);
+    })`
+  );
+  assert.match(unsupportedDocx.status, /could not find extractable text/i);
+  assert.match(unsupportedDocx.status, /Embedded images, macros, and OCR are not supported/i);
+  assert.equal(unsupportedDocx.preview, "");
+  assert.equal(unsupportedDocx.docxAvailable, false, "scanner must not offer redacted DOCX for image-only DOCX files");
+
+  await evaluate(connection, scanner.sessionId, "document.querySelector('#clear-btn').click()");
+  await waitFor(
+    () => evaluate(connection, scanner.sessionId, "document.querySelector('#scan-btn')?.disabled"),
+    "scanner reset after unsupported DOCX"
+  );
+
+  scannerStep("malformed DOCX");
+  const malformedDocxPath = path.join(tempDir, "leakguard-browser-qa-malformed.docx");
+  fs.writeFileSync(malformedDocxPath, "not a docx with DOCX_MALFORMED_KEY=raw");
+  await setFileInputFiles(connection, scanner.sessionId, "#file-input", [malformedDocxPath]);
+  const malformedDocx = await evaluate(
+    connection,
+    scanner.sessionId,
+    `new Promise((resolve, reject) => {
+      const rawText = 'DOCX_MALFORMED_KEY=raw';
+      const started = Date.now();
+      let clicked = false;
+      const timer = setInterval(() => {
+        const status = document.querySelector('#status')?.textContent || '';
+        const preview = document.querySelector('#redacted-preview')?.textContent || '';
+        const scanButton = document.querySelector('#scan-btn');
+        const docxButton = document.querySelector('#download-redacted-docx-btn');
+        if (!clicked && scanButton && !scanButton.disabled) {
+          clicked = true;
+          scanButton.click();
+        }
+        if (/could not read this DOCX/i.test(status)) {
+          clearInterval(timer);
+          resolve({
+            status,
+            preview,
+            hasRaw: preview.includes(rawText) || status.includes(rawText),
+            docxAvailable: !docxButton?.disabled && !docxButton?.hidden
+          });
+        } else if (Date.now() - started > 10000) {
+          clearInterval(timer);
+          reject(new Error('Timed out waiting for malformed DOCX warning: ' + JSON.stringify({
+            status,
+            scanDisabled: scanButton?.disabled,
+            preview
+          })));
+        }
+      }, 50);
+    })`
+  );
+  assert.match(malformedDocx.status, /could not read this DOCX/i);
+  assert.equal(malformedDocx.preview, "");
+  assert.equal(malformedDocx.hasRaw, false, "malformed DOCX scanner warning must not expose raw bytes");
+  assert.equal(malformedDocx.docxAvailable, false, "scanner must not offer redacted DOCX for malformed DOCX files");
+
+  await evaluate(connection, scanner.sessionId, "document.querySelector('#clear-btn').click()");
+  await waitFor(
+    () => evaluate(connection, scanner.sessionId, "document.querySelector('#scan-btn')?.disabled"),
+    "scanner reset after malformed DOCX"
+  );
+
+  scannerStep("malformed XLSX");
+  const malformedXlsxPath = path.join(tempDir, "leakguard-browser-qa-malformed.xlsx");
+  fs.writeFileSync(malformedXlsxPath, "not an xlsx with XLSX_MALFORMED_KEY=raw");
+  await setFileInputFiles(connection, scanner.sessionId, "#file-input", [malformedXlsxPath]);
+  const malformedXlsx = await evaluate(
+    connection,
+    scanner.sessionId,
+    `new Promise((resolve, reject) => {
+      const rawText = 'XLSX_MALFORMED_KEY=raw';
+      const started = Date.now();
+      let clicked = false;
+      const timer = setInterval(() => {
+        const status = document.querySelector('#status')?.textContent || '';
+        const preview = document.querySelector('#redacted-preview')?.textContent || '';
+        const scanButton = document.querySelector('#scan-btn');
+        const xlsxButton = document.querySelector('#download-redacted-xlsx-btn');
+        if (!clicked && scanButton && !scanButton.disabled) {
+          clicked = true;
+          scanButton.click();
+        }
+        if (/could not read this XLSX/i.test(status)) {
+          clearInterval(timer);
+          resolve({
+            status,
+            preview,
+            hasRaw: preview.includes(rawText) || status.includes(rawText),
+            xlsxAvailable: !xlsxButton?.disabled && !xlsxButton?.hidden
+          });
+        } else if (Date.now() - started > 10000) {
+          clearInterval(timer);
+          reject(new Error('Timed out waiting for malformed XLSX warning: ' + JSON.stringify({
+            status,
+            scanDisabled: scanButton?.disabled,
+            preview
+          })));
+        }
+      }, 50);
+    })`
+  );
+  assert.match(malformedXlsx.status, /could not read this XLSX/i);
+  assert.equal(malformedXlsx.preview, "");
+  assert.equal(malformedXlsx.hasRaw, false, "malformed XLSX scanner warning must not expose raw bytes");
+  assert.equal(malformedXlsx.xlsxAvailable, false, "scanner must not offer redacted XLSX for malformed XLSX files");
+
+  await evaluate(connection, scanner.sessionId, "document.querySelector('#clear-btn').click()");
+  await waitFor(
+    () => evaluate(connection, scanner.sessionId, "document.querySelector('#scan-btn')?.disabled"),
+    "scanner reset after malformed XLSX"
+  );
+
+  scannerStep("image-only PDF");
+  const unsupportedPath = path.join(tempDir, "leakguard-browser-qa-image-only.pdf");
+  fs.writeFileSync(unsupportedPath, makeQaPdf("", { imageOnly: true }));
   await setFileInputFiles(connection, scanner.sessionId, "#file-input", [unsupportedPath]);
   const unsupported = await evaluate(
     connection,
     scanner.sessionId,
     `new Promise((resolve, reject) => {
       const started = Date.now();
+      let clicked = false;
       const timer = setInterval(() => {
         const status = document.querySelector('#status')?.textContent || '';
+        const preview = document.querySelector('#redacted-preview')?.textContent || '';
         const scanDisabled = document.querySelector('#scan-btn')?.disabled;
-        if (/Unsupported (?:file types|formats)/i.test(status) && scanDisabled) {
+        const scanButton = document.querySelector('#scan-btn');
+        const pdfButton = document.querySelector('#download-redacted-pdf-btn');
+        if (!clicked && scanButton && !scanButton.disabled) {
+          clicked = true;
+          scanButton.click();
+        }
+        if (/could not find extractable text/i.test(status) && /OCR are not supported/i.test(status)) {
           clearInterval(timer);
-          resolve({ status, scanDisabled });
+          resolve({ status, scanDisabled, preview, pdfAvailable: !pdfButton?.disabled && !pdfButton?.hidden });
         } else if (Date.now() - started > 10000) {
           clearInterval(timer);
-          reject(new Error('Timed out waiting for unsupported warning: ' + status));
+          reject(new Error('Timed out waiting for unsupported PDF warning: ' + JSON.stringify({
+            status,
+            scanDisabled,
+            preview
+          })));
         }
       }, 50);
     })`
   );
-  assert.equal(unsupported.scanDisabled, true);
-  assert.match(unsupported.status, /Unsupported (?:file types|formats)/i);
-  return { supported, unsupported };
+  assert.match(unsupported.status, /could not find extractable text/i);
+  assert.match(unsupported.status, /OCR are not supported/i);
+  assert.equal(unsupported.preview, "");
+  assert.equal(unsupported.pdfAvailable, false, "scanner must not offer redacted PDF for scanned/image-only PDFs");
+
+  await evaluate(connection, scanner.sessionId, "document.querySelector('#clear-btn').click()");
+  await waitFor(
+    () => evaluate(connection, scanner.sessionId, "document.querySelector('#scan-btn')?.disabled"),
+    "scanner reset after unsupported PDF"
+  );
+
+  scannerStep("empty PDF");
+  const emptyPdfPath = path.join(tempDir, "leakguard-browser-qa-empty.pdf");
+  fs.writeFileSync(emptyPdfPath, makeQaPdf(""));
+  await setFileInputFiles(connection, scanner.sessionId, "#file-input", [emptyPdfPath]);
+  const emptyPdf = await evaluate(
+    connection,
+    scanner.sessionId,
+    `new Promise((resolve, reject) => {
+      const started = Date.now();
+      let clicked = false;
+      const timer = setInterval(() => {
+        const status = document.querySelector('#status')?.textContent || '';
+        const preview = document.querySelector('#redacted-preview')?.textContent || '';
+        const scanButton = document.querySelector('#scan-btn');
+        const pdfButton = document.querySelector('#download-redacted-pdf-btn');
+        if (!clicked && scanButton && !scanButton.disabled) {
+          clicked = true;
+          scanButton.click();
+        }
+        if (/could not find extractable text/i.test(status) && /OCR are not supported/i.test(status)) {
+          clearInterval(timer);
+          resolve({ status, preview, pdfAvailable: !pdfButton?.disabled && !pdfButton?.hidden });
+        } else if (Date.now() - started > 10000) {
+          clearInterval(timer);
+          reject(new Error('Timed out waiting for empty PDF warning: ' + JSON.stringify({
+            status,
+            scanDisabled: scanButton?.disabled,
+            preview
+          })));
+        }
+      }, 50);
+    })`
+  );
+  assert.match(emptyPdf.status, /could not find extractable text/i);
+  assert.equal(emptyPdf.preview, "");
+  assert.equal(emptyPdf.pdfAvailable, false, "scanner must not offer redacted PDF for empty PDFs");
+
+  await evaluate(connection, scanner.sessionId, "document.querySelector('#clear-btn').click()");
+  await waitFor(
+    () => evaluate(connection, scanner.sessionId, "document.querySelector('#scan-btn')?.disabled"),
+    "scanner reset after empty PDF"
+  );
+
+  scannerStep("encrypted PDF");
+  const encryptedPath = path.join(tempDir, "leakguard-browser-qa-encrypted.pdf");
+  fs.writeFileSync(encryptedPath, makeQaPdf(`PDF_ENCRYPTED_KEY=${syntheticSecrets.openAi}`, { encrypted: true }));
+  await setFileInputFiles(connection, scanner.sessionId, "#file-input", [encryptedPath]);
+  const encrypted = await evaluate(
+    connection,
+    scanner.sessionId,
+    `new Promise((resolve, reject) => {
+      const rawSecret = ${JSON.stringify(syntheticSecrets.openAi)};
+      const started = Date.now();
+      let clicked = false;
+      const timer = setInterval(() => {
+        const status = document.querySelector('#status')?.textContent || '';
+        const preview = document.querySelector('#redacted-preview')?.textContent || '';
+        const scanButton = document.querySelector('#scan-btn');
+        const pdfButton = document.querySelector('#download-redacted-pdf-btn');
+        if (!clicked && scanButton && !scanButton.disabled) {
+          clicked = true;
+          scanButton.click();
+        }
+        if (/encrypted PDF/i.test(status)) {
+          clearInterval(timer);
+          resolve({
+            status,
+            preview,
+            hasRaw: preview.includes(rawSecret) || status.includes(rawSecret),
+            pdfAvailable: !pdfButton?.disabled && !pdfButton?.hidden
+          });
+        } else if (Date.now() - started > 10000) {
+          clearInterval(timer);
+          reject(new Error('Timed out waiting for encrypted PDF warning: ' + JSON.stringify({
+            status,
+            scanDisabled: scanButton?.disabled,
+            preview
+          })));
+        }
+      }, 50);
+    })`
+  );
+  assert.match(encrypted.status, /encrypted PDF/i);
+  assert.equal(encrypted.preview, "");
+  assert.equal(encrypted.hasRaw, false, "encrypted PDF scanner warning must not expose raw PDF secrets");
+  assert.equal(encrypted.pdfAvailable, false, "scanner must not offer redacted PDF for encrypted PDFs");
+
+  await evaluate(connection, scanner.sessionId, "document.querySelector('#clear-btn').click()");
+  await waitFor(
+    () => evaluate(connection, scanner.sessionId, "document.querySelector('#scan-btn')?.disabled"),
+    "scanner reset after encrypted PDF"
+  );
+
+  scannerStep("malformed PDF");
+  const malformedPath = path.join(tempDir, "leakguard-browser-qa-malformed.pdf");
+  fs.writeFileSync(malformedPath, "not a pdf with PDF_MALFORMED_KEY=raw");
+  await setFileInputFiles(connection, scanner.sessionId, "#file-input", [malformedPath]);
+  const malformed = await evaluate(
+    connection,
+    scanner.sessionId,
+    `new Promise((resolve, reject) => {
+      const rawText = 'PDF_MALFORMED_KEY=raw';
+      const started = Date.now();
+      let clicked = false;
+      const timer = setInterval(() => {
+        const status = document.querySelector('#status')?.textContent || '';
+        const preview = document.querySelector('#redacted-preview')?.textContent || '';
+        const scanButton = document.querySelector('#scan-btn');
+        const pdfButton = document.querySelector('#download-redacted-pdf-btn');
+        if (!clicked && scanButton && !scanButton.disabled) {
+          clicked = true;
+          scanButton.click();
+        }
+        if (/could not read this PDF/i.test(status)) {
+          clearInterval(timer);
+          resolve({
+            status,
+            preview,
+            hasRaw: preview.includes(rawText) || status.includes(rawText),
+            pdfAvailable: !pdfButton?.disabled && !pdfButton?.hidden
+          });
+        } else if (Date.now() - started > 10000) {
+          clearInterval(timer);
+          reject(new Error('Timed out waiting for malformed PDF warning: ' + JSON.stringify({
+            status,
+            scanDisabled: scanButton?.disabled,
+            preview
+          })));
+        }
+      }, 50);
+    })`
+  );
+  assert.match(malformed.status, /could not read this PDF/i);
+  assert.equal(malformed.preview, "");
+  assert.equal(malformed.hasRaw, false, "malformed PDF scanner warning must not expose raw bytes");
+  assert.equal(malformed.pdfAvailable, false, "scanner must not offer redacted PDF for malformed PDFs");
+
+  return {
+    supported,
+    textPdf,
+    textDocx,
+    textXlsx,
+    imageMetadata,
+    unsupportedDocx,
+    unsupported,
+    emptyPdf,
+    encrypted,
+    malformed
+  };
 }
 
 async function runBrowserQa({ browserName, executable }) {
@@ -918,57 +2825,120 @@ async function runBrowserQa({ browserName, executable }) {
   let harnessServer = null;
   let browserProcess = null;
   let connection = null;
+  let behaviorChecksPassed = false;
+  let extensionLoaded = false;
   try {
     harnessServer = await startHarnessServer();
-    browserProcess = launchBrowser({ executable, extensionDir, profileDir, browserName });
-    connection = new CdpPipeConnection(browserProcess.child.stdio[3], browserProcess.child.stdio[4]);
+    browserProcess = await launchBrowser({ executable, extensionDir, profileDir, browserName });
+    connection = await createBrowserConnection(browserProcess, browserName);
     await connection.connect();
     const version = await connection.send("Browser.getVersion");
     const extensionId = await loadExtension(connection, profileDir, extensionDir, browserName);
+    extensionLoaded = true;
+    const runStep = async (label, action) => {
+      console.log(`${browserName} browser QA step: ${label}`);
+      const result = await action();
+      console.log(`${browserName} browser QA step: ${label} complete`);
+      return result;
+    };
 
     const popup = await createPage(connection, `chrome-extension://${extensionId}/popup/popup.html`);
     await waitFor(
       () => evaluate(connection, popup.sessionId, "Boolean(document.querySelector('#manage-btn'))"),
       `${browserName} popup ready`
     );
-    await runProtectedSiteManagementQa(connection, popup.sessionId, harnessServer.origin);
+    await runStep("protected-site management", () => runProtectedSiteManagementQa(connection, popup.sessionId, harnessServer.origin));
 
-    const page = await openProtectedHarness(connection, harnessServer.origin);
-    const prompt = await runPromptRedactionQa(connection, page);
-    await runSecureRevealQa(connection, page, extensionId, prompt.firstPlaceholder);
-    await runRefreshSafetyQa(connection, page);
-    const scanner = await runScannerQa(connection, extensionId, tempDir);
+    const page = await runStep("open protected harness", () => openProtectedHarness(connection, harnessServer.origin));
+    const prompt = await runStep("prompt redaction", () => runPromptRedactionQa(connection, page));
+    const syntheticProviderInputs = await runStep("synthetic provider inputs", () => runSyntheticProviderInputInterceptionQa(connection, page));
+    const protectedSitePdf = await runStep("protected-site PDF handoff", () => runProtectedSitePdfHandoffQa(connection, page, tempDir));
+    const protectedSiteDocx = await runStep("protected-site DOCX handoff", () => runProtectedSiteDocxHandoffQa(connection, page, tempDir));
+    const protectedSiteXlsx = await runStep("protected-site XLSX handoff", () => runProtectedSiteXlsxHandoffQa(connection, page, tempDir));
+    const protectedSiteImageOcr = await runStep("protected-site image OCR handoff", () => runProtectedSiteImageOcrQa(connection, page, popup.sessionId, tempDir));
+    const protectedSiteDrop = await runStep("protected-site file drop", () => runProtectedSiteFileDropHandoffQa(connection, page));
+    const protectedSiteFailures = await runStep("protected-site failure injection", () => runProtectedSiteFailureInjectionQa(connection, page, tempDir));
+    await runStep("secure reveal", () => runSecureRevealQa(connection, page, extensionId, prompt.firstPlaceholder));
+    await runStep("refresh safety", () => runRefreshSafetyQa(connection, page));
+    const scanner = await runStep("scanner downloads", () => runScannerQa(connection, extensionId, tempDir));
 
     console.log(`${browserName} browser QA: ${version.product}`);
     console.log(`${browserName} browser QA: extension loaded (${extensionId})`);
     console.log(`${browserName} browser QA: local harness ${harnessServer.origin}`);
     console.log(
-      `${browserName} browser QA: protected-site lifecycle, prompt redaction, reveal, refresh, scanner exports, unsupported file`
+      `${browserName} browser QA: protected-site lifecycle, synthetic provider input interception, protected-site PDF/DOCX/XLSX/image handoff, file drop handoff, failure injection, reveal, refresh, scanner downloads`
     );
 
-    return { browserName, extensionId, product: version.product, prompt, scanner };
+    behaviorChecksPassed = true;
+    return {
+      browserName,
+      extensionId,
+      product: version.product,
+      prompt,
+      syntheticProviderInputs,
+      protectedSitePdf,
+      protectedSiteDocx,
+      protectedSiteXlsx,
+      protectedSiteImageOcr,
+      protectedSiteDrop,
+      protectedSiteFailures,
+      scanner
+    };
   } catch (error) {
     if (browserProcess?.stderr?.()) console.error(browserProcess.stderr());
+    if (!extensionLoaded) {
+      const logDir = path.join(tempDir, "logs");
+      fs.mkdirSync(logDir, { recursive: true });
+      const stderrLogPath = path.join(logDir, `${browserName.toLowerCase()}-browser-qa-stderr.log`);
+      fs.writeFileSync(stderrLogPath, browserProcess?.stderr?.() || "(no browser stderr captured)\n");
+      throw new Error(
+        [
+          `${browserName} environment failure: browser crashed before extension load or CDP was unavailable.`,
+          "This is not classified as a LeakGuard product failure unless the extension loads and a product assertion fails.",
+          `stderr log: ${stderrLogPath}`,
+          `Original error: ${error?.message || error}`,
+          "Remediation: run npm run preflight:browser, run this browser command alone, close stale browser processes, and update the browser binary if startup still fails."
+        ].join("\n")
+      );
+    }
     throw error;
   } finally {
-    await connection?.send("Browser.close").catch(() => {});
-    await connection?.close().catch(() => {});
-    await waitForBrowserExit(browserProcess?.child, 3000);
-    if (browserProcess?.child && browserProcess.child.exitCode === null && browserProcess.child.signalCode === null) {
-      browserProcess.child.kill();
-      await waitForBrowserExit(browserProcess.child, 3000);
-    }
-    await harnessServer?.close().catch(() => {});
-    fs.rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    await cleanupBrowserQaRun({
+      browserName,
+      tempDir,
+      connection,
+      child: browserProcess?.child,
+      harnessServer,
+      behaviorChecksPassed
+    });
   }
+}
+
+function getBrowserQaTargets({
+  chromeExecutable = findChromeExecutable(),
+  edgeExecutable = findEdgeExecutable(),
+  targetList = process.env.LEAKGUARD_BROWSER_QA_TARGETS || ""
+} = {}) {
+  const requested = String(targetList || "chrome")
+    .split(",")
+    .map((target) => target.trim().toLowerCase())
+    .filter(Boolean);
+  const uniqueTargets = Array.from(new Set(requested));
+  const browsers = [];
+
+  if (uniqueTargets.includes("chrome")) {
+    browsers.push({ browserName: "Chrome", executable: chromeExecutable });
+  }
+  if (uniqueTargets.includes("edge")) {
+    browsers.push({ browserName: "Edge", executable: edgeExecutable });
+  }
+
+  return browsers;
 }
 
 async function main() {
   assertBuiltExtensionExists();
-  const browsers = [
-    { browserName: "Chrome", executable: findChromeExecutable() },
-    { browserName: "Edge", executable: findEdgeExecutable() }
-  ];
+  const browsers = getBrowserQaTargets();
 
   for (const browser of browsers) {
     await runBrowserQa(browser);
@@ -976,7 +2946,19 @@ async function main() {
   console.log("PASS extension browser QA harness");
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+}
+
+export {
+  assertHarnessTempDir,
+  cleanupBrowserQaRun,
+  closeBrowserTargets,
+  findExtensionIdInPreferences,
+  getBrowserQaDebuggingMode,
+  getBrowserQaTargets,
+  runBrowserQa
+};

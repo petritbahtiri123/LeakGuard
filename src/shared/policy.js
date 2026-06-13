@@ -7,6 +7,7 @@
     consumer: "config/policy.consumer.json",
     enterprise: "config/policy.enterprise.json"
   });
+  const PROTECTED_SITE_OCR_ENABLED_STORAGE_KEY = "pwm:protectedSiteOcrEnabled";
   const DEFAULT_CONSUMER_POLICY = Object.freeze({
     enterpriseMode: false,
     allowReveal: true,
@@ -636,13 +637,48 @@
     return summarizePolicy(loaded.policy, url, loaded.meta);
   }
 
+  function getLocalSettingsStorage(options = {}) {
+    return options.storageArea || ext?.storage?.local || null;
+  }
+
+  async function isProtectedSiteOcrEnabled(options = {}) {
+    const storageArea = getLocalSettingsStorage(options);
+    if (!storageArea || typeof storageArea.get !== "function") return true;
+
+    try {
+      const stored = await storageArea.get(PROTECTED_SITE_OCR_ENABLED_STORAGE_KEY);
+      if (!stored || !Object.prototype.hasOwnProperty.call(stored, PROTECTED_SITE_OCR_ENABLED_STORAGE_KEY)) {
+        return true;
+      }
+      return stored?.[PROTECTED_SITE_OCR_ENABLED_STORAGE_KEY] === true;
+    } catch {
+      return true;
+    }
+  }
+
+  async function setProtectedSiteOcrEnabled(enabled, options = {}) {
+    const storageArea = getLocalSettingsStorage(options);
+    if (!storageArea || typeof storageArea.set !== "function") {
+      throw new Error("Local extension storage is unavailable.");
+    }
+
+    await storageArea.set({
+      [PROTECTED_SITE_OCR_ENABLED_STORAGE_KEY]: enabled === true
+    });
+
+    return enabled === true;
+  }
+
   root.PWM.DEFAULT_CONSUMER_POLICY = DEFAULT_CONSUMER_POLICY;
   root.PWM.DEFAULT_ENTERPRISE_POLICY = DEFAULT_ENTERPRISE_POLICY;
+  root.PWM.PROTECTED_SITE_OCR_ENABLED_STORAGE_KEY = PROTECTED_SITE_OCR_ENABLED_STORAGE_KEY;
   root.PWM.getBuildInfo = getBuildInfo;
   root.PWM.getBundledDefaultPolicy = getBundledDefaultPolicy;
   root.PWM.loadDefaultPolicy = loadDefaultPolicy;
   root.PWM.loadPolicy = loadPolicy;
   root.PWM.getPolicySummary = getPolicySummary;
+  root.PWM.isProtectedSiteOcrEnabled = isProtectedSiteOcrEnabled;
+  root.PWM.setProtectedSiteOcrEnabled = setProtectedSiteOcrEnabled;
   root.PWM.invalidatePolicyCache = invalidatePolicyCache;
   root.PWM.evaluateDestinationPolicy = evaluateDestinationPolicy;
   root.PWM.shouldBlockDestination = shouldBlockDestination;
@@ -652,11 +688,14 @@
     module.exports = {
       DEFAULT_CONSUMER_POLICY,
       DEFAULT_ENTERPRISE_POLICY,
+      PROTECTED_SITE_OCR_ENABLED_STORAGE_KEY,
       getBuildInfo,
       getBundledDefaultPolicy,
       loadDefaultPolicy,
       loadPolicy,
       getPolicySummary,
+      isProtectedSiteOcrEnabled,
+      setProtectedSiteOcrEnabled,
       invalidatePolicyCache,
       matchPattern,
       evaluateDestinationPolicy,

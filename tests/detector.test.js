@@ -1168,6 +1168,33 @@ function testAwsSecretAssignmentWithExamplePrefixStillFailsClosedButDocsPlacehol
   );
 }
 
+function testAwsSecretLabelOnPreviousLineRedactsValue() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const rawSecret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+  const text = [
+    "AWS Access Key",
+    "AKIAQ4EXAMPLE7K9M2P1",
+    "AWS Secret Key",
+    rawSecret
+  ].join("\n");
+
+  const findings = detector.scan(text);
+  const result = redactor.redact(text, findings);
+  const lines = result.redactedText.split("\n");
+
+  assert.ok(
+    findings.some(
+      (finding) => finding.type === "AWS_SECRET_KEY" && finding.raw === rawSecret
+    ),
+    "AWS secret values on the line after an AWS Secret Key label should be detected"
+  );
+  assert.strictEqual(result.redactedText.includes(rawSecret), false);
+  assert.ok(/^\[PWM_\d+\]$/.test(lines[1]), "AWS access key value should still be redacted");
+  assert.ok(/^\[PWM_\d+\]$/.test(lines[3]), "split AWS secret value should be redacted");
+}
+
 function testConcatenatedPlaceholderAssignmentsDoNotCreateCompositeFalsePositives() {
   const detector = new Detector();
   const text = [
@@ -2257,6 +2284,7 @@ function run() {
   testGenericKeyAssignmentWithProviderPrefixRedactsShortProjectKey();
   testGenericKeyAssignmentAfterProseLabelRedactsShortProjectKey();
   testAwsSecretAssignmentWithExamplePrefixStillFailsClosedButDocsPlaceholderStaysVisible();
+  testAwsSecretLabelOnPreviousLineRedactsValue();
   testConcatenatedPlaceholderAssignmentsDoNotCreateCompositeFalsePositives();
   testUserStressEdgeCasesRedactSecretsButKeepSafeLiterals();
   testInlineStructuredAssignmentsStillMatchAfterEarlierInlineAssignments();

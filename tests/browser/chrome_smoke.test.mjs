@@ -13,7 +13,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "../..");
 const extensionDir = path.join(repoRoot, "dist", "chrome");
 const smokeTimeoutMs = Number(process.env.LEAKGUARD_CHROME_SMOKE_TIMEOUT_MS || 60000);
-const cdpCommandTimeoutMs = Number(process.env.LEAKGUARD_CHROME_SMOKE_CDP_TIMEOUT_MS || 30000);
+const cdpCommandTimeoutMs = Number(process.env.LEAKGUARD_CHROME_SMOKE_CDP_TIMEOUT_MS || 60000);
 const smokeTimingWarningMs = Number(process.env.LEAKGUARD_SMOKE_TIMING_WARN_MS || 5000);
 
 function assertBuiltExtensionExists(sourceExtensionDir = extensionDir, buildCommand = "npm run build:chrome") {
@@ -760,6 +760,7 @@ async function launchChrome({
     "--enable-unsafe-extension-debugging",
     "--disable-features=DisableLoadExtensionCommandLineSwitch",
     "--disable-gpu",
+    "--disable-dev-shm-usage",
     "--no-first-run",
     "--no-default-browser-check",
     "--disable-background-networking",
@@ -774,7 +775,7 @@ async function launchChrome({
   if (debuggingMode === "port") {
     args.push("--remote-debugging-address=127.0.0.1");
   }
-  if (process.env[headlessEnvName] === "1") {
+  if (process.env[headlessEnvName] !== "0") {
     args.push("--headless=new");
   }
   if (process.platform === "linux") {
@@ -799,6 +800,36 @@ async function launchChrome({
   });
 
   return { child, debuggingMode, debuggingPort, stderr: () => stderr };
+}
+
+function writeBrowserStderrLog({ browserName, tempDir, stderr }) {
+  const logDir = path.join(tempDir, "logs");
+  fs.mkdirSync(logDir, { recursive: true });
+  const logPath = path.join(logDir, `${browserName.toLowerCase()}-stderr.log`);
+  fs.writeFileSync(logPath, stderr || "(no browser stderr captured)\n");
+  return logPath;
+}
+
+function classifyChromiumStartupError({ browserName, tempDir, error, browserProcess, extensionLoaded }) {
+  if (extensionLoaded) return error;
+  const stderr = browserProcess?.stderr?.() || "";
+  const stderrLogPath = writeBrowserStderrLog({ browserName, tempDir, stderr });
+  const crashed =
+    browserProcess?.child?.exitCode !== null ||
+    /GPU process isn't usable|exited with code|ECONNRESET|CDP websocket is not connected/i.test(
+      `${stderr}\n${error?.message || ""}`
+    );
+  const reason = crashed
+    ? "browser crashed before extension load"
+    : "browser did not expose the CDP endpoint before extension load";
+  const diagnostics = [
+    `${browserName} environment failure: ${reason}.`,
+    `This is not classified as a LeakGuard product failure unless the extension loads and a product assertion fails.`,
+    `stderr log: ${stderrLogPath}`,
+    `Original error: ${error?.message || error}`,
+    `Remediation: run the smoke command alone, confirm the ${browserName} executable is current, close stale browser processes, and rerun npm run preflight:browser.`
+  ].join("\n");
+  return new Error(diagnostics);
 }
 
 async function waitForChromeExit(child, timeoutMs = 5000) {
@@ -1277,7 +1308,12 @@ async function runUserManagedSiteSmoke(connection, extensionSessionId, userOrigi
 
 async function runScannerSmoke(connection, extensionId, tempDir) {
   const scanner = await createPage(connection, `chrome-extension://${extensionId}/scanner/scanner.html`);
-  await waitForEval(connection, scanner.sessionId, "Boolean(document.querySelector('#file-input'))", "scanner UI");
+  await waitForEval(
+    connection,
+    scanner.sessionId,
+    "document.readyState === 'complete' && Boolean(document.querySelector('#file-input'))",
+    "scanner UI"
+  );
 
   const supportedPath = path.join(tempDir, "smoke.env");
   fs.writeFileSync(supportedPath, "API_KEY=sk_live_7Qm2Lp9Xv4Nc8Tr6Yh1Zw5Kd3Bj0Pf\n");
@@ -1331,10 +1367,16 @@ async function runScannerSmoke(connection, extensionId, tempDir) {
   await setFileInputFiles(connection, scanner.sessionId, "#file-input", [unsupportedPath]);
   const unsupported = await evaluate(connection, scanner.sessionId, `new Promise((resolve, reject) => {
     const started = Date.now();
+    let scanClicked = false;
     const timer = setInterval(() => {
       const status = document.querySelector('#status')?.textContent || '';
-      const scanDisabled = document.querySelector('#scan-btn')?.disabled;
-      if (/Unsupported (?:file types|formats)/.test(status) && scanDisabled) {
+      const scanBtn = document.querySelector('#scan-btn');
+      const scanDisabled = scanBtn?.disabled;
+      if (!scanClicked && scanBtn && !scanBtn.disabled) {
+        scanClicked = true;
+        scanBtn.click();
+      }
+      if (/could not find extractable text/i.test(status) && /OCR are not supported/i.test(status)) {
         clearInterval(timer);
         resolve({ status, scanDisabled });
       } else if (Date.now() - started > 10000) {
@@ -1353,8 +1395,103 @@ async function runScannerSmoke(connection, extensionId, tempDir) {
       }
     }, 50);
   })`);
-  assert.equal(unsupported.scanDisabled, true);
-  assert.match(unsupported.status, /Unsupported (?:file types|formats)/);
+  assert.match(unsupported.status, /could not find extractable text/i);
+  assert.match(unsupported.status, /OCR are not supported/i);
+}
+
+async function runOcrWasmProbeSmoke(connection, extensionId, browserName = "Chrome") {
+  const page = await createPage(connection, `chrome-extension://${extensionId}/scanner/scanner.html`);
+  await waitForEval(
+    connection,
+    page.sessionId,
+    "document.readyState === 'complete' && Boolean(document.querySelector('#file-input'))",
+    "scanner UI"
+  );
+
+  const result = await evaluate(
+    connection,
+    page.sessionId,
+    `new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = '/shared/ocr/ocrRuntime.js';
+      script.onload = async () => {
+        try {
+          const runtime = globalThis.PWM?.OcrRuntime;
+          const worker = await runtime.createWorkerProbe();
+          const wasm = await runtime.createWasmProbe();
+          const engine = await runtime.createEngineProbe();
+          const core = await runtime.createTesseractCoreProbe();
+          const language = await runtime.createLanguageProbe('eng');
+          const recognition = await runtime.createRecognitionProbe();
+          runtime.terminate();
+          resolve({ worker, wasm, engine, core, language, recognition });
+        } catch (error) {
+          reject(new Error(error?.message || 'OCR WASM probe failed'));
+        }
+      };
+      script.onerror = () => reject(new Error('OCR runtime script failed to load'));
+      document.documentElement.appendChild(script);
+    })`,
+    { awaitPromise: true }
+  );
+
+  assert.deepEqual(result.worker, {
+    ok: true,
+    status: "worker_ready",
+    ocrImplemented: false
+  });
+  console.log(
+    `${browserName} smoke: OCR WASM worker proof result ${result.wasm.status}${
+      result.wasm.reason ? ` (${result.wasm.reason})` : ""
+    }`
+  );
+  assert.deepEqual(result.wasm, {
+    ok: true,
+    status: "wasm_ready",
+    wasmLoaded: true
+  });
+  assert.deepEqual(result.engine, {
+    ok: false,
+    status: "engine_blocked",
+    ocrImplemented: false,
+    engine: null,
+    reason: "no_candidate_passed_security_size_csp_gates"
+  });
+  console.log(
+    `${browserName} smoke: tesseract.js-core proof result ${result.core.status}${
+      result.core.reason ? ` (${result.core.reason})` : ""
+    }`
+  );
+  assert.deepEqual(result.core, {
+    ok: true,
+    status: "tesseract_core_ready",
+    ocrImplemented: false
+  });
+  console.log(
+    `${browserName} smoke: English traineddata proof result ${result.language.status}${
+      result.language.reason ? ` (${result.language.reason})` : ""
+    }`
+  );
+  assert.deepEqual(result.language, {
+    ok: true,
+    status: "language_ready",
+    language: "eng",
+    ocrImplemented: false
+  });
+  console.log(
+    `${browserName} smoke: synthetic OCR recognition proof result ${result.recognition.status}${
+      result.recognition.reason ? ` (${result.recognition.reason})` : ""
+    }`
+  );
+  assert.deepEqual(result.recognition, {
+    ok: true,
+    status: "ocr_recognition_ready",
+    ocrImplemented: true,
+    language: "eng",
+    textLength: 8,
+    containsExpectedText: true,
+    confidenceBucket: "high"
+  });
 }
 
 async function runChromiumSmoke(options = {}) {
@@ -1365,7 +1502,7 @@ async function runChromiumSmoke(options = {}) {
     findBrowserExecutable = findChromeExecutable,
     headlessEnvName = "LEAKGUARD_CHROME_HEADLESS",
     missingMessage = "Chrome stable or Chromium was not found. Set CHROME_BIN to run this smoke test.",
-    remoteDebuggingMode = "pipe"
+    remoteDebuggingMode = "port"
   } = options;
   const debuggingMode = normalizeRemoteDebuggingMode(remoteDebuggingMode);
   assertBuiltExtensionExists(sourceExtensionDir, buildCommand);
@@ -1379,6 +1516,7 @@ async function runChromiumSmoke(options = {}) {
   let httpsServer = null;
   let chrome = null;
   let connection = null;
+  let extensionLoaded = false;
 
   try {
     httpServer = await startHttpServer();
@@ -1404,6 +1542,7 @@ async function runChromiumSmoke(options = {}) {
     await connection.send("Target.setDiscoverTargets", { discover: true });
 
     const extensionId = await loadExtension(connection, profileDir, smokeExtensionDir, browserName);
+    extensionLoaded = true;
     console.log(`${browserName} smoke: extension loaded (${extensionId})`);
     console.log(`${browserName} smoke: popup`);
     const popup = await runPopupSmoke(connection, extensionId);
@@ -1415,6 +1554,8 @@ async function runChromiumSmoke(options = {}) {
     await runSecureRevealSmoke(connection, builtInPage, extensionId, rawSecret, placeholder);
     console.log(`${browserName} smoke: user-managed protected site`);
     await runUserManagedSiteSmoke(connection, popup.sessionId, httpServer.origin);
+    console.log(`${browserName} smoke: OCR WASM worker proof`);
+    await runOcrWasmProbeSmoke(connection, extensionId, browserName);
     console.log(`${browserName} smoke: file scanner`);
     await runScannerSmoke(connection, extensionId, tempDir);
 
@@ -1423,7 +1564,13 @@ async function runChromiumSmoke(options = {}) {
     if (chrome?.stderr?.()) {
       console.error(chrome.stderr());
     }
-    throw error;
+    throw classifyChromiumStartupError({
+      browserName,
+      tempDir,
+      error,
+      browserProcess: chrome,
+      extensionLoaded
+    });
   } finally {
     await connection?.send("Browser.close").catch(() => {});
     await connection?.close().catch(() => {});
@@ -1450,6 +1597,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 }
 
 export {
+  CdpPipeConnection,
+  CdpWebSocketConnection,
   findExecutable,
+  findCdpWebSocketUrl,
+  launchChrome,
   runChromiumSmoke
 };

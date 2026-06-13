@@ -1,11 +1,11 @@
 # File Upload And Scanning Guide
 
-LeakGuard has two local text-file protection paths:
+LeakGuard has two local file-protection paths:
 
 - an extension-owned File Scanner page
-- protected composer paste, drop, and file-select handling for supported UTF-8 text files
+- protected composer paste, drop, and file-select handling for supported file types
 
-Both paths run locally in the browser. LeakGuard does not upload file contents to a backend service.
+Both paths run locally in the browser. LeakGuard does not upload file contents to a backend service, remote OCR service, CDN, telemetry endpoint, or remote model.
 
 ## Supported File Types
 
@@ -21,16 +21,31 @@ Supported text file names and extensions include:
 
 Files must be valid UTF-8 text. Binary-looking text files are rejected.
 
-## Unsupported File Types
+Supported document and image paths:
+
+| Type | Scanner | Protected-site uploads | Output |
+| --- | --- | --- | --- |
+| Text PDF | Local text extraction; scanner can also export regenerated `.redacted.pdf` from sanitized text | Local text extraction | Scanner: `.redacted.txt` or regenerated `.redacted.pdf`; protected sites: regenerated `.redacted.pdf` when complete or `.redacted.txt` fallback |
+| DOCX | Local text extraction; scanner can also export regenerated `.redacted.docx` from sanitized text | Local text extraction | Scanner: `.redacted.txt` or regenerated `.redacted.docx`; protected sites: regenerated `.redacted.docx` when complete or `.redacted.txt` fallback |
+| XLSX | Local text extraction; scanner can also export simple regenerated `.redacted.xlsx` from sanitized text; formulas are scanned as text and not executed | Local text extraction | Scanner: `.redacted.txt` or regenerated `.redacted.xlsx`; protected sites: regenerated `.redacted.xlsx` when complete or `.redacted.txt` fallback |
+| PNG/JPG/JPEG/WEBP metadata | Local metadata scan | Local metadata scan when protected-site OCR is turned off | `.redacted.txt` |
+| PNG/JPG/JPEG/WEBP OCR | English-only scanner OCR after user action | English-only protected-site OCR is enabled by default for supported image uploads and can be turned off in settings | `.redacted.txt`, or `.redacted.png` only when visual redaction boxes are eligible |
+
+See [FILE_CAPABILITY_MATRIX.md](FILE_CAPABILITY_MATRIX.md) for the authoritative capability matrix.
+
+## Unsupported Or Limited File Types
 
 This release does not scan or redact:
 
-- PDF or DOCX files
-- images or screenshots
+- scanned/image-only PDFs
+- non-English OCR
+- remote OCR/backend processing
+- layout-preserving PDF/DOCX/XLSX redaction or original Office document reconstruction
+- image format preservation for visual redaction; visual image redaction exports PNG
 - archives
 - executables
 - binary files
-- OCR or visual redaction flows
+- legacy or macro Office formats such as `.doc`, `.docm`, `.xls`, `.xlsm`, `.xlsb`, and `.xltm`
 
 Unsupported files are not marked as scanned, protected, or sanitized. In composer paths, LeakGuard shows a local warning before normal site upload continues where that pass-through is safe for the browser/site path. For some Firefox protected-site drop paths, unsupported files may be blocked when LeakGuard cannot safely pass them through.
 
@@ -51,17 +66,19 @@ The extension-owned File Scanner validates supported text files up to the same 5
 
 The File Scanner page is opened from the popup. It:
 
-- reads a selected local text file only after you choose it
+- reads a selected local file only after you choose it
 - scans with the same deterministic detector used for prompts
 - displays a redacted preview
 - can export a redacted text copy
 - can export a sanitized JSON findings report
+- can export a simple regenerated `.redacted.xlsx` from sanitized XLSX text
+- can export a flattened `.redacted.png` for scanner image visual redaction when OCR boxes are eligible
 
 Raw file contents stay in the scanner page's memory while the page is open. Exported JSON reports do not include raw detected secrets by default.
 
 ## Protected Composer File Handling
 
-On protected sites, LeakGuard attempts to intercept supported local text files before the site reads or uploads raw content.
+On protected sites, LeakGuard attempts to intercept supported local files before the site reads or uploads raw content.
 
 Supported paths include:
 
@@ -77,7 +94,7 @@ The preferred flow is:
 4. create a sanitized in-memory `File` or `Blob`
 5. hand only the sanitized file to the site when a safe path exists
 
-If safe sanitized file handoff is not available, LeakGuard may insert sanitized text, offer a sanitized download, or block raw upload depending on the site and browser path.
+If safe sanitized file handoff is not available, LeakGuard may insert sanitized text, offer a sanitized download, or block raw upload depending on the site and browser path. For text PDFs, DOCX files, and XLSX files, protected-site output can be regenerated from sanitized extracted text when complete; truncated or unsafe regeneration falls back to `.redacted.txt` or blocks raw upload. Image metadata and OCR text protected-site output remains `.redacted.txt`. Protected-site visual image upload produces `.redacted.png` when protected-site OCR is on and eligible boxes are available; OCR failure or ineligible visual redaction blocks raw image upload.
 
 ## Site-Specific Notes
 
