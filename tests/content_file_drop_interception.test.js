@@ -1170,6 +1170,11 @@ function createHarness(overrides = {}) {
       "const LARGE_TEXT_STREAMING_MAX_BYTES = 50 * 1024 * 1024;",
       'const LOCAL_FILE_STREAMING_REQUIRED_MESSAGE = "LeakGuard will stream-redact this large text file locally before upload.";',
       'const LOCAL_FILE_UNSUPPORTED_WARNING = "LeakGuard did not scan or redact this unsupported file. Supported text, text PDF, DOCX, XLSX, and PNG/JPG/JPEG/WEBP image paths are protected where available. Unsupported archives, executables, legacy Office files, unsupported images, and binary files are blocked on protected sites when LeakGuard cannot safely replace them.";',
+      'const UNSUPPORTED_PROTECTED_IMAGE_BLOCKED_TITLE = "Raw image upload blocked";',
+      'const UNSUPPORTED_PROTECTED_IMAGE_BLOCKED_MESSAGE = "Raw image upload blocked. This image type is not supported for safe redaction.";',
+      'const SUPPORTED_IMAGE_REDACTION_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);',
+      'const SUPPORTED_IMAGE_REDACTION_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);',
+      'const UNSUPPORTED_PROTECTED_IMAGE_EXTENSIONS = new Set([".gif", ".bmp", ".ico", ".svg"]);',
       "let suppressInputScanUntil = 0;",
       "let syntheticFileListCapabilityCache = null;",
       "let inputFileAssignmentCapabilityCache = null;",
@@ -1242,6 +1247,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "showUnsupportedFilePassThroughNotice"),
       extractFunctionSource(contentSource, "shouldBlockUnsupportedFileTransfer"),
       extractFunctionSource(contentSource, "getUnsupportedFileBlockedMessage"),
+      extractFunctionSource(contentSource, "getUnsupportedFileBlockedTitle"),
       extractFunctionSource(contentSource, "getContentExtractionBlockedMessage"),
       extractFunctionSource(contentSource, "getLocalTextPayloadByteLength"),
       extractFunctionSource(contentSource, "classifyLocalTextPayloadSize"),
@@ -1439,6 +1445,10 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "getContentExtractionBlockedMessage"),
       extractFunctionSource(contentSource, "localFileFromContentExtractionResult"),
       extractFunctionSource(contentSource, "isUnsupportedLegacyOfficeFile"),
+      extractFunctionSource(contentSource, "getLocalFileExtension"),
+      extractFunctionSource(contentSource, "getLocalFileMimeType"),
+      extractFunctionSource(contentSource, "isUnsupportedImageFileForProtectedUpload"),
+      extractFunctionSource(contentSource, "isUnsupportedProtectedImageTransfer"),
       extractFunctionSource(contentSource, "shouldFailClosedProtectedUnsupportedFileTransfer"),
       extractFunctionSource(contentSource, "maybeHandleLocalFileInsert"),
       extractFunctionSource(contentSource, "maybeHandlePaste"),
@@ -9254,6 +9264,35 @@ function testBackgroundSkipsDuplicateDetectorScanForStreamingChunks() {
   );
 }
 
+function testProtectedUnsupportedImageDropBranchBlocksBeforeOriginalReplay() {
+  const helperSource = extractFunctionSource(contentSource, "isUnsupportedImageFileForProtectedUpload");
+  for (const extension of ['".gif"', '".bmp"', '".ico"', '".svg"']) {
+    assert.ok(contentSource.includes(extension), `unsupported image helper should cover ${extension}`);
+  }
+  assert.ok(
+    helperSource.includes("UNSUPPORTED_PROTECTED_IMAGE_EXTENSIONS"),
+    "unsupported image helper should use the protected image denylist"
+  );
+  assert.ok(helperSource.includes("image/"), "unsupported image helper should cover unsupported image/* MIME types");
+
+  const failClosedSource = extractFunctionSource(contentSource, "shouldFailClosedProtectedUnsupportedFileTransfer");
+  assert.ok(
+    failClosedSource.includes("isUnsupportedImageFileForProtectedUpload"),
+    "protected unsupported fail-closed helper should include unsupported image files"
+  );
+
+  const dropSource = extractFunctionSource(contentSource, "maybeHandleDrop");
+  const protectedBlockIndex = dropSource.indexOf("shouldFailClosedProtectedUnsupportedFileTransfer(transferPolicy)");
+  const replayIndex = dropSource.indexOf('handOffOriginalLocalFile(event, snapshotDataTransfer, "drop")');
+  assert.notStrictEqual(protectedBlockIndex, -1, "drop handler should check protected unsupported fail-closed policy");
+  if (replayIndex !== -1) {
+    assert.ok(
+      protectedBlockIndex < replayIndex,
+      "protected unsupported image blocking must run before the Gemini raw original replay branch"
+    );
+  }
+}
+
 async function testGeminiTextLikeFileExtensionsAreSanitized() {
   for (const name of ["secrets.env", "notes.txt", "payload.json"]) {
     const rawSecret = "LeakGuardFileApiKey1234567890";
@@ -9538,6 +9577,78 @@ async function testDmzOverlayFailedStateWhenLocalRedactionFails() {
   assert.ok(calls.dmzStates.some((entry) => entry.message === "Redacting..." && entry.state === "redacting"));
   assert.ok(calls.dmzStates.some((entry) => entry.message === "Raw file blocked" && entry.state === "failed"));
   assert.ok(calls.dmzCleanups.includes(3600));
+}
+
+async function testProtectedUnsupportedImageDropsFailClosedWithoutOriginalReplay() {
+  for (const [extension, mimeType] of [
+    [".gif", "image/gif"],
+    [".bmp", "image/bmp"],
+    [".ico", "image/x-icon"],
+    [".svg", "image/svg+xml"],
+    [".tiff", "image/tiff"]
+  ]) {
+    const rawSecret = `sk-proj-UnsupportedImageReplay${extension.replace(".", "")}1234567890abcdef`;
+    const rawFile = createTextFile({
+      name: `raw-image${extension}`,
+      type: mimeType,
+      text: `RAW_IMAGE_SECRET=${rawSecret}`
+    });
+    const target = {
+      nodeType: 1,
+      tagName: "DIV",
+      dispatchedEvents: [],
+      closest: () => null,
+      dispatchEvent(event) {
+        this.dispatchedEvents.push(event);
+        return true;
+      }
+    };
+    const { maybeHandleDrop, resolveFileDragGuardPolicy, calls } = createHarness({
+      location: { hostname: "gemini.google.com" },
+      document: {
+        activeElement: target
+      }
+    });
+    const transfer = {
+      types: ["Files"],
+      files: [rawFile],
+      items: [],
+      dropEffect: "none"
+    };
+    const dragPolicy = resolveFileDragGuardPolicy(transfer);
+    const { event, calls: eventCalls } = createEvent({
+      dataTransfer: transfer,
+      target
+    });
+
+    await maybeHandleDrop(event);
+
+    assert.strictEqual(dragPolicy.action, "block", `${extension} drag policy should fail closed`);
+    assert.strictEqual(dragPolicy.reason, "unsupported_protected_file_blocked", `${extension} block reason`);
+    assert.strictEqual(event.defaultPrevented, true, `${extension} drop should be consumed`);
+    assert.strictEqual(eventCalls.stopImmediatePropagation, 1, `${extension} drop should stop page handlers`);
+    assert.strictEqual(target.dispatchedEvents.length, 0, `${extension} must not replay the raw original drop`);
+    assert.strictEqual(calls.reads.length, 0, `${extension} should not read unsupported image bytes as text`);
+    assert.strictEqual(calls.redactions.length, 0, `${extension} should not run text redaction`);
+    assert.strictEqual(calls.createdFiles.length, 0, `${extension} should not create a sanitized output`);
+    assert.strictEqual(calls.handoffs.length, 0, `${extension} should not hand off a local file`);
+    assert.strictEqual(calls.textFallbacks.length, 0, `${extension} should not insert OCR/text fallback`);
+    assert.strictEqual(calls.runtimeMessages.length, 0, `${extension} should not start protected-site OCR`);
+    assert.ok(
+      calls.modals.some(
+        ([title, message]) =>
+          title === "Raw image upload blocked" &&
+          String(message || "").includes("This image type is not supported for safe redaction")
+      ),
+      `${extension} should explain unsupported image blocking`
+    );
+    assert.strictEqual(
+      calls.badges.some(([message]) => String(message || "").includes("normal upload may continue")),
+      false,
+      `${extension} should not show pass-through upload copy`
+    );
+    assert.strictEqual(JSON.stringify(calls).includes(rawSecret), false, `${extension} debug/UI state leaked raw marker`);
+  }
 }
 
 async function testUnsupportedDocumentAndImageFilesPassThroughByDefault() {
@@ -13206,6 +13317,8 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testFileDropIsConsumedBeforeComposerLookup();
   testProtectedRebuiltFileDropBlocksAtDragGuard();
   testDropRoutesContentExtractionCandidatesBeforeUnsupportedPassThrough();
+  testProtectedUnsupportedImageDropBranchBlocksBeforeOriginalReplay();
+  await testProtectedUnsupportedImageDropsFailClosedWithoutOriginalReplay();
   await testDuplicateDropListenerDoesNotDoubleHandleSameEvent();
   await testFileDropHandlesEarlierPreventDefaultWithoutComposerTarget();
   await testNonFileDragoverIsIgnored();

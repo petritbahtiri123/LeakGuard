@@ -1221,6 +1221,7 @@ async function run() {
   testOcrSpikeDoesNotEnterProductionPackage(manifest);
   testProtectedSiteOcrOptInStaysLocalAndGateBound();
   testImageRedactionCopyDoesNotPromiseRawUploadPassThrough();
+  testUnsupportedProtectedImagesCannotReachRawReplayBranch();
   await testProtectedSiteOcrBrokerRejectsMalformedMessages();
   testProtectedSiteOcrBrokerMessageSurfaceIsNarrow();
   testPageUiNoLongerLeaksClassificationsOrMaskedFragments();
@@ -1545,6 +1546,40 @@ function testImageRedactionCopyDoesNotPromiseRawUploadPassThrough() {
       source,
       "Normal upload may continue through the site.",
       `${label} must not promise raw upload continuation for protected-site file failures`
+    );
+  }
+}
+
+function testUnsupportedProtectedImagesCannotReachRawReplayBranch() {
+  assert.ok(
+    contentSource.includes("isUnsupportedImageFileForProtectedUpload"),
+    "content script should identify unsupported image uploads for protected fail-closed handling"
+  );
+  for (const extension of ['".gif"', '".bmp"', '".ico"', '".svg"']) {
+    assert.ok(contentSource.includes(extension), `protected unsupported image guard should cover ${extension}`);
+  }
+  assert.ok(
+    contentSource.includes("image/"),
+    "protected unsupported image guard should cover unsupported image/* MIME types"
+  );
+  assert.ok(
+    contentSource.includes("Raw image upload blocked. This image type is not supported for safe redaction."),
+    "protected unsupported image UX should explain fail-closed image blocking"
+  );
+
+  const failClosedSource = extractFunctionSource(contentSource, "shouldFailClosedProtectedUnsupportedFileTransfer");
+  assert.ok(
+    failClosedSource.includes("isUnsupportedImageFileForProtectedUpload"),
+    "protected unsupported fail-closed helper should include unsupported images"
+  );
+
+  const blockIndex = contentSource.indexOf("shouldFailClosedProtectedUnsupportedFileTransfer(transferPolicy)");
+  const replayIndex = contentSource.indexOf('handOffOriginalLocalFile(event, snapshotDataTransfer, "drop")');
+  assert.notStrictEqual(blockIndex, -1, "drop handler should check protected unsupported fail-closed policy");
+  if (replayIndex !== -1) {
+    assert.ok(
+      blockIndex < replayIndex,
+      "protected unsupported image block must run before any raw original Gemini replay"
     );
   }
 }

@@ -535,6 +535,31 @@ function testFileCapabilityMatrixDocumentsCurrentFileScope() {
   );
 }
 
+function testUnsupportedProtectedImageReleaseSafetyIsGuarded() {
+  assert.ok(
+    contentSource.includes("UNSUPPORTED_PROTECTED_IMAGE_EXTENSIONS"),
+    "content script should keep an explicit unsupported protected-image denylist"
+  );
+  assert.ok(
+    contentSource.includes('new Set([".gif", ".bmp", ".ico", ".svg"])'),
+    "unsupported protected-image denylist should cover GIF, BMP, ICO, and SVG"
+  );
+  assert.ok(
+    contentSource.includes('mimeType.startsWith("image/")'),
+    "unsupported protected-image guard should include unsupported image/* MIME types"
+  );
+  assert.ok(
+    contentSource.includes("Raw image upload blocked. This image type is not supported for safe redaction."),
+    "protected unsupported image UX should fail closed with clear release-safe copy"
+  );
+  const blockIndex = contentSource.indexOf("shouldFailClosedProtectedUnsupportedFileTransfer(transferPolicy)");
+  const replayIndex = contentSource.indexOf('handOffOriginalLocalFile(event, snapshotDataTransfer, "drop")');
+  assert.notStrictEqual(blockIndex, -1, "drop handler should check protected unsupported fail-closed policy");
+  if (replayIndex !== -1) {
+    assert.ok(blockIndex < replayIndex, "protected unsupported image blocking should run before Gemini raw replay");
+  }
+}
+
 function testPhase15cProtectedSiteDocxPlanIsSupersededByPhase15eCloseout() {
   assert.ok(fileExists("docs/phase-15c-protected-site-docx-redacted-output-plan.md"), "Phase 15C plan should exist");
   for (const required of [
@@ -1079,6 +1104,7 @@ async function run() {
   testImageMetadataScannerAvoidsOcrDependencies();
   testPublishReadinessDocsCoverStorePrivacyAndQa();
   testFileCapabilityMatrixDocumentsCurrentFileScope();
+  testUnsupportedProtectedImageReleaseSafetyIsGuarded();
   testPhase15cProtectedSiteDocxPlanIsSupersededByPhase15eCloseout();
   testPhase16cProtectedSiteXlsxPlanIsSupersededByPhase16eCloseout();
   testPhase14cProtectedSitePdfPlanIsPlanningOnly();

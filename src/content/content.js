@@ -235,6 +235,12 @@
     FilePasteHelpers?.LOCAL_FILE_UNSUPPORTED_WARNING ||
     FileLimits.UNSUPPORTED_COMPOSER_FILE_MESSAGE ||
     "LeakGuard did not scan or redact this unsupported file. Supported text, text PDF, DOCX, XLSX, and PNG/JPG/JPEG/WEBP image paths are protected where available. Unsupported archives, executables, legacy Office files, unsupported images, and binary files are blocked on protected sites when LeakGuard cannot safely replace them.";
+  const UNSUPPORTED_PROTECTED_IMAGE_BLOCKED_TITLE = "Raw image upload blocked";
+  const UNSUPPORTED_PROTECTED_IMAGE_BLOCKED_MESSAGE =
+    "Raw image upload blocked. This image type is not supported for safe redaction.";
+  const SUPPORTED_IMAGE_REDACTION_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
+  const SUPPORTED_IMAGE_REDACTION_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+  const UNSUPPORTED_PROTECTED_IMAGE_EXTENSIONS = new Set([".gif", ".bmp", ".ico", ".svg"]);
   const FILE_DRAG_SESSION_RESET_MS = 5000;
   const GEMINI_UPLOAD_INPUT_WAIT_MS = 450;
   const GEMINI_GHOST_INGRESS_TIMEOUT_MS = 2200;
@@ -1173,7 +1179,16 @@
   }
 
   function getUnsupportedFileBlockedMessage(policy) {
+    if (isUnsupportedProtectedImageTransfer(policy)) {
+      return UNSUPPORTED_PROTECTED_IMAGE_BLOCKED_MESSAGE;
+    }
     return globalThis.PWM.FileTransferPolicy.getUnsupportedFileBlockedMessage(policy);
+  }
+
+  function getUnsupportedFileBlockedTitle(policy) {
+    return isUnsupportedProtectedImageTransfer(policy)
+      ? UNSUPPORTED_PROTECTED_IMAGE_BLOCKED_TITLE
+      : "Raw file upload blocked";
   }
 
   function clearDmzOverlayTimer() {
@@ -9262,13 +9277,50 @@
     return /\.(?:doc|docm|xls|xlsm)$/i.test(String(file?.name || "").toLowerCase());
   }
 
+  function getLocalFileExtension(file) {
+    if (typeof FileScanner.getFileExtension === "function") {
+      return String(FileScanner.getFileExtension(file?.name || "") || "").toLowerCase();
+    }
+    const name = String(file?.name || "").split(/[\\/]/).pop().toLowerCase();
+    const index = name.lastIndexOf(".");
+    if (index <= 0 || index === name.length - 1) return "";
+    return name.slice(index);
+  }
+
+  function getLocalFileMimeType(file) {
+    return String(file?.type || "").split(";")[0].trim().toLowerCase();
+  }
+
+  function isUnsupportedImageFileForProtectedUpload(file) {
+    const extension = getLocalFileExtension(file);
+    const mimeType = getLocalFileMimeType(file);
+    if (UNSUPPORTED_PROTECTED_IMAGE_EXTENSIONS.has(extension)) {
+      return true;
+    }
+    if (!mimeType.startsWith("image/")) {
+      return false;
+    }
+    return (
+      !SUPPORTED_IMAGE_REDACTION_EXTENSIONS.has(extension) ||
+      !SUPPORTED_IMAGE_REDACTION_MIME_TYPES.has(mimeType)
+    );
+  }
+
+  function isUnsupportedProtectedImageTransfer(policy) {
+    const files = Array.from(policy?.files || []);
+    return files.length === 1 && isUnsupportedImageFileForProtectedUpload(files[0]);
+  }
+
   function shouldFailClosedProtectedUnsupportedFileTransfer(policy) {
     if (policy?.action !== "allow" || !isProtectedFileDropDriver(getCurrentHandoffDriverId())) {
       return false;
     }
 
     const files = Array.from(policy.files || []);
-    return files.length === 1 && isUnsupportedLegacyOfficeFile(files[0]);
+    return (
+      files.length === 1 &&
+      (isUnsupportedLegacyOfficeFile(files[0]) || isUnsupportedImageFileForProtectedUpload(files[0]))
+    );
   }
 
   async function maybeHandleLocalFileInsert(event, input, dataTransfer, context) {
@@ -9299,20 +9351,21 @@
         const unsupportedBlockReason = shouldBlockUnsupportedFileTransfer(transferPolicy)
           ? "firefox_unsupported_file_blocked"
           : "unsupported_protected_file_blocked";
+        const unsupportedBlockTitle = getUnsupportedFileBlockedTitle(transferPolicy);
         if (!event.defaultPrevented) {
           consumeInterceptionEvent(event);
         }
         if (event?.target?.tagName === "INPUT" && String(event.target.type || "").toLowerCase() === "file") {
           clearLocalFileInputSelection(event.target);
         }
-        showFileProcessingError("Raw file upload blocked", {
+        showFileProcessingError(unsupportedBlockTitle, {
           site: getCurrentHandoffDriverId(),
           reason: unsupportedBlockReason
         });
         hideFileProcessingOverlay(unsupportedBlockReason);
-        setBadge("Raw file upload blocked");
+        setBadge(unsupportedBlockTitle);
         hideBadgeSoon(4200);
-        await showMessageModal("Raw file upload blocked", getUnsupportedFileBlockedMessage(transferPolicy));
+        await showMessageModal(unsupportedBlockTitle, getUnsupportedFileBlockedMessage(transferPolicy));
         refreshBadgeFromCurrentInput();
         return {
           handled: true,
@@ -9899,12 +9952,24 @@
         : null;
     const transferPolicy = resolveLocalFileTransferPolicy(snapshotDataTransfer);
     if (transferPolicy.action === "allow" && !contentExtractionFile) {
-      if (shouldBlockUnsupportedFileTransfer(transferPolicy)) {
+      const unsupportedFileMustBlock =
+        shouldBlockUnsupportedFileTransfer(transferPolicy) ||
+        shouldFailClosedProtectedUnsupportedFileTransfer(transferPolicy);
+      if (unsupportedFileMustBlock) {
+        const unsupportedBlockReason = shouldBlockUnsupportedFileTransfer(transferPolicy)
+          ? "firefox_unsupported_file_blocked"
+          : "unsupported_protected_file_blocked";
+        const unsupportedBlockTitle = getUnsupportedFileBlockedTitle(transferPolicy);
         rawFileDropInterceptions.add(event);
         consumeInterceptionEvent(event);
-        setBadge("Raw file upload blocked");
+        showFileProcessingError(unsupportedBlockTitle, {
+          site: getCurrentHandoffDriverId(),
+          reason: unsupportedBlockReason
+        });
+        hideFileProcessingOverlay(unsupportedBlockReason);
+        setBadge(unsupportedBlockTitle);
         hideBadgeSoon(4200);
-        await showMessageModal("Raw file upload blocked", getUnsupportedFileBlockedMessage(transferPolicy));
+        await showMessageModal(unsupportedBlockTitle, getUnsupportedFileBlockedMessage(transferPolicy));
         refreshBadgeFromCurrentInput();
         clearFileDragSession();
         return;
