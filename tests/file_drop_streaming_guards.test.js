@@ -51,6 +51,36 @@ function testFileAttachPipelineStreamingPlanGrokPending() {
   });
 }
 
+function testFileAttachPipelineStreamingPlanGenericAdapterPending() {
+  const cases = [
+    ["chatgpt", "ChatGPT"],
+    ["claude", "Claude"],
+    ["openai", "OpenAI Chat"],
+    ["x", "X"]
+  ];
+
+  for (const [adapterId, label] of cases) {
+    const plan = globalThis.PWM.FileAttachPipeline.classifyStreamingAttachPlan({
+      context: "drop",
+      pendingAdapterId: adapterId,
+      streamResultAction: "redacted",
+      hasSanitizedFile: true
+    });
+
+    assert.strictEqual(plan.shouldContinueStreamingAttach, true);
+    assert.deepStrictEqual(plan.pendingAttach, {
+      shouldAttempt: true,
+      provider: adapterId,
+      detailsStage: `${adapterId}:streaming-pending-user-upload-input`,
+      strategy: `${adapterId}-streaming-pending-sanitized-file-handoff`,
+      queueFailureReason: `${adapterId}_pending_queue_failed`,
+      queueFailureTitle: "Raw file upload blocked",
+      queueFailureMessage: `LeakGuard sanitized the large file but could not queue ${label} pending attach.`
+    });
+    assert.strictEqual(plan.genericAttach.shouldAttempt, true);
+  }
+}
+
 function testFileAttachPipelineStreamingPlanGenericAttachStrategies() {
   const plan = globalThis.PWM.FileAttachPipeline.classifyStreamingAttachPlan({
     context: "drop",
@@ -162,6 +192,7 @@ function testFileAttachPipelineStreamingPlanReturnsPlainDataOnly() {
 
 testFileAttachPipelineStreamingPlanGeminiPending();
 testFileAttachPipelineStreamingPlanGrokPending();
+testFileAttachPipelineStreamingPlanGenericAdapterPending();
 testFileAttachPipelineStreamingPlanGenericAttachStrategies();
 testFileAttachPipelineStreamingPlanBlockedAndFailedLabelsRemainStable();
 testFileAttachPipelineStreamingPlanReturnsPlainDataOnly();

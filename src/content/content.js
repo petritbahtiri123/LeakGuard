@@ -273,13 +273,15 @@
   let pendingGrokSanitizedFileObserver = null;
   let pendingGrokSanitizedFileTimer = 0;
   let pendingGrokSanitizedFileClickHandler = null;
+  let pendingGenericSanitizedFileHandoff = null;
+  let pendingGenericSanitizedFileTimer = 0;
   const FILE_HANDOFF_PENDING_ATTACH_ENABLED = Object.freeze({
     gemini: true,
     grok: true,
-    chatgpt: false,
-    claude: false,
-    openai: false,
-    x: false
+    chatgpt: true,
+    claude: true,
+    openai: true,
+    x: true
   });
   let dmzOverlayEl = null;
   let dmzOverlayStatusEl = null;
@@ -334,6 +336,7 @@
     attemptPendingGrokSanitizedFileHandoff,
     clearPendingGeminiSanitizedFileHandoff,
     clearPendingGrokSanitizedFileHandoff,
+    clearPendingGenericSanitizedFileHandoff,
     clearPendingSanitizedAttachPrompt,
     createSanitizedFileHandoffDetails,
     debugFileHandoffAdapterSelected,
@@ -348,6 +351,7 @@
     normalizeTarget,
     queuePendingGeminiSanitizedFileHandoff,
     queuePendingGrokSanitizedFileHandoff,
+    queuePendingGenericSanitizedFileHandoff,
     readSanitizedFileTextForFallback,
     refreshBadgeFromCurrentInput,
     setBadge,
@@ -460,6 +464,7 @@
     clearPendingGeminiGhostIngressClickInterceptor("extension-context-invalidated");
     clearPendingGeminiSanitizedFileHandoff("extension-context-invalidated");
     clearPendingGrokSanitizedFileHandoff("extension-context-invalidated");
+    clearPendingGenericSanitizedFileHandoff("extension-context-invalidated");
     setBadge("LeakGuard reloaded. Refresh this page.");
     hideBadgeSoon(5000);
   }
@@ -7643,6 +7648,90 @@
     };
   }
 
+  function clearPendingGenericSanitizedFileHandoff(reason = "") {
+    if (!pendingGenericSanitizedFileHandoff) {
+      clearPendingSanitizedAttachPrompt(reason || "generic-pending-cleared");
+      return;
+    }
+
+    const pending = pendingGenericSanitizedFileHandoff;
+    pendingGenericSanitizedFileHandoff = null;
+    clearPendingSanitizedAttachPrompt(reason || "generic-pending-cleared");
+
+    if (pendingGenericSanitizedFileTimer) {
+      clearTimeout(pendingGenericSanitizedFileTimer);
+      pendingGenericSanitizedFileTimer = 0;
+    }
+
+    debugReveal("file-handoff:generic-pending-cleared", {
+      site: pending.site || "",
+      reason,
+      ageMs: Math.max(0, Date.now() - Number(pending.createdAt || 0)),
+      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
+    });
+    debugReveal("file-handoff:pending-cleared", {
+      site: pending.site || "",
+      reason,
+      ageMs: Math.max(0, Date.now() - Number(pending.createdAt || 0)),
+      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
+    });
+  }
+
+  function queuePendingGenericSanitizedFileHandoff(adapter, event, input, sanitizedFile, details = null) {
+    const selectedAdapter = normalizeFileHandoffAdapter(adapter);
+    if (!selectedAdapter || !sanitizedFile) return false;
+    if (selectedAdapter.id === "gemini" || selectedAdapter.id === "grok" || selectedAdapter.id === "generic") {
+      return false;
+    }
+    if (!isFileHandoffAdapterPendingAttachEnabled(selectedAdapter)) return false;
+
+    const requestedHandoffStage = String(details?.handoffStage || "");
+    clearPendingGenericSanitizedFileHandoff("replaced");
+    pendingGenericSanitizedFileHandoff = {
+      site: selectedAdapter.id,
+      sanitizedFile,
+      input: input || null,
+      target: normalizeTarget(event?.target),
+      createdAt: Date.now(),
+      expiresAt: Date.now() + GROK_PENDING_SANITIZED_FILE_HANDOFF_MS
+    };
+
+    if (details) {
+      details.handoffStage = requestedHandoffStage || `${selectedAdapter.id}:pending-user-upload-input`;
+      details.failureReason = "pending_until_user_exposes_file_input";
+    }
+
+    pendingGenericSanitizedFileTimer = setTimeout(() => {
+      clearPendingGenericSanitizedFileHandoff("expired");
+    }, GROK_PENDING_SANITIZED_FILE_HANDOFF_MS);
+
+    debugReveal("file-handoff:generic-pending-queued", {
+      site: selectedAdapter.id,
+      ttlMs: GROK_PENDING_SANITIZED_FILE_HANDOFF_MS,
+      sanitizedFile: describeFileForDebug(sanitizedFile)
+    });
+    debugReveal("pending-attach-synthetic-loop-suppressed", {
+      site: selectedAdapter.id,
+      streaming: requestedHandoffStage.includes("streaming"),
+      sanitizedFile: describeFileForDebug(sanitizedFile)
+    });
+    hideDmzOverlay();
+    const pendingEvent = createPendingAttachEvent(
+      event,
+      `pending-${selectedAdapter.id}-sanitized-file-attach`
+    );
+    showPendingSanitizedAttachPrompt(selectedAdapter, {
+      site: selectedAdapter.id,
+      event: pendingEvent,
+      input,
+      sanitizedFile,
+      message: getPendingSanitizedAttachPromptMessage(selectedAdapter.id)
+    });
+    setBadge(getPendingSanitizedAttachPromptMessage(selectedAdapter.id));
+    hideBadgeSoon(6500);
+    return true;
+  }
+
   function clearFileDragSession(options = {}) {
     clearPendingGeminiGhostIngressClickInterceptor("drag-session-cleared");
     fileDragSessionId += 1;
@@ -9136,6 +9225,14 @@
     return canExtractForAdapterHandoff(file);
   }
 
+  function getContentExtractionBlockedMessage(reason) {
+    const code = String(reason || "content_file_extraction_failed");
+    if (code === "pdf_no_extractable_text") {
+      return "LeakGuard blocked the raw upload because this appears to be a scanned or image-only PDF. Local PDF OCR is not available yet, so LeakGuard could not create a safe redacted replacement.";
+    }
+    return `LeakGuard blocked raw file upload because local file extraction did not produce safe text. Reason: ${code}.`;
+  }
+
   function localFileFromContentExtractionResult(result) {
     const fallbackReason = result?.fallbackReason || result?.status || "content_file_extraction_failed";
     if (!result || result.status !== "ready" || !result.safeForUpload || !result.sanitizedFile) {
@@ -9143,7 +9240,7 @@
         handled: true,
         ok: false,
         code: fallbackReason,
-        message: `LeakGuard blocked raw file upload because local file extraction did not produce safe text. Reason: ${fallbackReason}.`
+        message: getContentExtractionBlockedMessage(fallbackReason)
       };
     }
 
@@ -9336,12 +9433,18 @@
           blocking: true
         });
         const streamResult = await streamRedactLocalTextFile(localFile.sourceFile, localFile.file);
-        const isGeminiDrop = context === "drop" && isGeminiHost();
-        const isGrokDrop = context === "drop" && isGrokHost();
+        const streamingPendingAdapter = context === "drop" ? getFileHandoffAdapterForLocation() : null;
+        const streamingPendingAdapterId =
+          streamingPendingAdapter && isFileHandoffAdapterPendingAttachEnabled(streamingPendingAdapter)
+            ? streamingPendingAdapter.id
+            : "";
+        const isGeminiDrop = !streamingPendingAdapterId && context === "drop" && isGeminiHost();
+        const isGrokDrop = !streamingPendingAdapterId && context === "drop" && isGrokHost();
         const streamingPlan = globalThis.PWM.FileAttachPipeline.classifyStreamingAttachPlan({
           context,
           isGeminiDrop,
           isGrokDrop,
+          pendingAdapterId: streamingPendingAdapterId,
           streamResultAction: streamResult.action,
           hasSanitizedFile: Boolean(streamResult.sanitizedFile)
         });
@@ -9789,8 +9892,13 @@
       return;
     }
 
+    const localTransferFiles = listLocalTransferFiles(snapshotDataTransfer);
+    const contentExtractionFile =
+      localTransferFiles.length === 1 && shouldUseContentFileExtractionPipeline(localTransferFiles[0])
+        ? localTransferFiles[0]
+        : null;
     const transferPolicy = resolveLocalFileTransferPolicy(snapshotDataTransfer);
-    if (transferPolicy.action === "allow") {
+    if (transferPolicy.action === "allow" && !contentExtractionFile) {
       if (shouldBlockUnsupportedFileTransfer(transferPolicy)) {
         rawFileDropInterceptions.add(event);
         consumeInterceptionEvent(event);
@@ -10769,6 +10877,7 @@
     clearPendingGeminiGhostIngressClickInterceptor("navigation");
     clearPendingGeminiSanitizedFileHandoff("navigation");
     clearPendingGrokSanitizedFileHandoff("navigation");
+    clearPendingGenericSanitizedFileHandoff("navigation");
     clearAllRiskSessionState();
     await initState();
     ResponseObserver.rehydrateTree(document.body, getResponseObserverOptions());

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "LeakGuard",
-  "version": "1.7.0",
+  "version": "2.0.0",
   "description": "Local-only prompt protection for secrets and sensitive network data before they reach AI chat sites.",
   "permissions": ["storage", "scripting", "activeTab", "downloads"],
   "optional_host_permissions": ["https://*/*", "http://*/*"],

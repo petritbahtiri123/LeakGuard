@@ -7,10 +7,10 @@ const expectedProviderIds = ["chatgpt", "openai", "gemini", "claude", "grok", "x
 const pendingAttachEnabled = Object.freeze({
   gemini: true,
   grok: true,
-  chatgpt: false,
-  claude: false,
-  openai: false,
-  x: false
+  chatgpt: true,
+  claude: true,
+  openai: true,
+  x: true
 });
 
 require(path.join(repoRoot, "src/content/adapters/hostMatching.js"));
@@ -126,12 +126,12 @@ function testUnsupportedHostnamesDoNotReceiveSpecialAdapterBehavior() {
 function testAdapterParityCapabilitiesStayStable() {
   const adapters = createAdapters();
   const expectedCapabilities = {
-    chatgpt: { directFileInput: true, directDropReplay: false, pendingAttach: false },
-    openai: { directFileInput: true, directDropReplay: false, pendingAttach: false },
+    chatgpt: { directFileInput: true, directDropReplay: false, pendingAttach: true },
+    openai: { directFileInput: true, directDropReplay: false, pendingAttach: true },
     gemini: { directFileInput: true, directDropReplay: false, pendingAttach: true },
     grok: { directFileInput: true, directDropReplay: true, pendingAttach: true },
-    claude: { directFileInput: true, directDropReplay: false, pendingAttach: false },
-    x: { directFileInput: true, directDropReplay: false, pendingAttach: false }
+    claude: { directFileInput: true, directDropReplay: false, pendingAttach: true },
+    x: { directFileInput: true, directDropReplay: false, pendingAttach: true }
   };
 
   for (const [id, expected] of Object.entries(expectedCapabilities)) {
@@ -159,24 +159,15 @@ function testAdapterParityCapabilitiesStayStable() {
   }
 }
 
-function testPendingAttachIsEnabledOnlyForGeminiAndGrok() {
+function testPendingAttachIsEnabledForBuiltInProviders() {
   const adapters = createAdapters();
 
-  ["gemini", "grok"].forEach((id) => {
+  expectedProviderIds.forEach((id) => {
     assert.strictEqual(adapters[id].pendingAttachEnabled, true, `${id} pending attach should stay enabled`);
     assert.strictEqual(
       hostMatching.isFileHandoffAdapterPendingAttachEnabled(adapters[id]),
       true,
       `${id} pending attach gate should stay enabled`
-    );
-  });
-
-  ["chatgpt", "openai", "claude", "x"].forEach((id) => {
-    assert.strictEqual(adapters[id].pendingAttachEnabled, false, `${id} pending attach should stay disabled`);
-    assert.strictEqual(
-      hostMatching.isFileHandoffAdapterPendingAttachEnabled(adapters[id]),
-      false,
-      `${id} pending attach gate should stay disabled`
     );
   });
 }
@@ -244,7 +235,7 @@ testAdapterRegistryExposesExpectedProviders();
 testHostMatchingRoutesExpectedUrlsToAdapters();
 testUnsupportedHostnamesDoNotReceiveSpecialAdapterBehavior();
 testAdapterParityCapabilitiesStayStable();
-testPendingAttachIsEnabledOnlyForGeminiAndGrok();
+testPendingAttachIsEnabledForBuiltInProviders();
 testUploadAndUnsafeClickPredicatesStayPresent();
 testGeminiFallbackWriterLoadsAfterAdaptersBeforeContentWiring();
 

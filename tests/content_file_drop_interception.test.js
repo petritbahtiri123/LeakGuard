@@ -304,10 +304,10 @@ function createAdapterRegistryForTest() {
     pendingAttachEnabled: {
       gemini: true,
       grok: true,
-      chatgpt: false,
-      claude: false,
-      openai: false,
-      x: false
+      chatgpt: true,
+      claude: true,
+      openai: true,
+      x: true
     },
     hooks: noopHooks
   });
@@ -371,6 +371,7 @@ function fileHandoffPendingHarnessSource() {
       attemptPendingGrokSanitizedFileHandoff,
       clearPendingGeminiSanitizedFileHandoff,
       clearPendingGrokSanitizedFileHandoff,
+      clearPendingGenericSanitizedFileHandoff,
       clearPendingSanitizedAttachPrompt,
       createSanitizedFileHandoffDetails,
       debugFileHandoffAdapterSelected,
@@ -391,6 +392,7 @@ function fileHandoffPendingHarnessSource() {
       normalizeTarget,
       queuePendingGeminiSanitizedFileHandoff,
       queuePendingGrokSanitizedFileHandoff,
+      queuePendingGenericSanitizedFileHandoff,
       readSanitizedFileTextForFallback:
         typeof readSanitizedFileTextForFallback === "function"
           ? readSanitizedFileTextForFallback
@@ -1164,6 +1166,8 @@ function createHarness(overrides = {}) {
       "let pendingGrokSanitizedFileObserver = null;",
       "let pendingGrokSanitizedFileTimer = 0;",
       "let pendingGrokSanitizedFileClickHandler = null;",
+      "let pendingGenericSanitizedFileHandoff = null;",
+      "let pendingGenericSanitizedFileTimer = 0;",
       "let fileProcessingOverlayEl = null;",
       "let fileProcessingTitleEl = null;",
       "let fileProcessingStatusEl = null;",
@@ -1222,6 +1226,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "showUnsupportedFilePassThroughNotice"),
       extractFunctionSource(contentSource, "shouldBlockUnsupportedFileTransfer"),
       extractFunctionSource(contentSource, "getUnsupportedFileBlockedMessage"),
+      extractFunctionSource(contentSource, "getContentExtractionBlockedMessage"),
       extractFunctionSource(contentSource, "getLocalTextPayloadByteLength"),
       extractFunctionSource(contentSource, "classifyLocalTextPayloadSize"),
       extractFunctionSource(contentSource, "showLocalPayloadOptimizationStatus"),
@@ -1326,6 +1331,8 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "schedulePendingGrokSanitizedFileAttempt"),
       extractFunctionSource(contentSource, "attemptPendingGrokSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "queuePendingGrokSanitizedFileHandoff"),
+      extractFunctionSource(contentSource, "clearPendingGenericSanitizedFileHandoff"),
+      extractFunctionSource(contentSource, "queuePendingGenericSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "hasPendingGrokSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "getPendingGrokSanitizedFileHandoffDebug"),
       extractFunctionSource(contentSource, "createSanitizedPayload"),
@@ -1413,6 +1420,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "isForbiddenGeminiUploadButton"),
       extractFunctionSource(contentSource, "isAllowedGeminiUploadMenuOpener"),
       extractFunctionSource(contentSource, "shouldUseContentFileExtractionPipeline"),
+      extractFunctionSource(contentSource, "getContentExtractionBlockedMessage"),
       extractFunctionSource(contentSource, "localFileFromContentExtractionResult"),
       extractFunctionSource(contentSource, "isUnsupportedLegacyOfficeFile"),
       extractFunctionSource(contentSource, "shouldFailClosedProtectedUnsupportedFileTransfer"),
@@ -2042,6 +2050,8 @@ function createHandoffHarness({
       "let pendingGrokSanitizedFileObserver = null;",
       "let pendingGrokSanitizedFileTimer = 0;",
       "let pendingGrokSanitizedFileClickHandler = null;",
+      "let pendingGenericSanitizedFileHandoff = null;",
+      "let pendingGenericSanitizedFileTimer = 0;",
       "let fileProcessingOverlayEl = null;",
       "let fileProcessingTitleEl = null;",
       "let fileProcessingStatusEl = null;",
@@ -2134,6 +2144,8 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "schedulePendingGrokSanitizedFileAttempt"),
       extractFunctionSource(contentSource, "attemptPendingGrokSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "queuePendingGrokSanitizedFileHandoff"),
+      extractFunctionSource(contentSource, "clearPendingGenericSanitizedFileHandoff"),
+      extractFunctionSource(contentSource, "queuePendingGenericSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "hasPendingGrokSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "getPendingGrokSanitizedFileHandoffDebug"),
       extractFunctionSource(contentSource, "describeUploadTriggerForDebug"),
@@ -2420,9 +2432,12 @@ async function testFileDropIsHandledWithoutComposerTarget() {
   assert.strictEqual(calls.redactions.length, 1);
   assert.strictEqual(calls.createdFiles.length, 1);
   assert.strictEqual(calls.handoffs.length, 0);
-  assert.strictEqual(calls.runtimeMessages.length, 1);
-  assert.strictEqual(calls.runtimeMessages[0].type, "PWM_DOWNLOAD_SANITIZED_FILE");
-  assert.strictEqual(calls.runtimeMessages[0].redactedText.includes("LeakGuardDropApiKey1234567890"), false);
+  assert.strictEqual(calls.runtimeMessages.length, 0);
+  assert.ok(
+    calls.debugEvents.some(
+      (entry) => entry.label === "file-handoff:generic-pending-queued" && entry.details.site === "chatgpt"
+    )
+  );
   assert.strictEqual(calls.createdFiles[0].text.includes("LeakGuardDropApiKey"), false);
   assert.strictEqual(event.defaultPrevented, true);
   assert.strictEqual(eventCalls.stopImmediatePropagation, 2);
@@ -2510,6 +2525,23 @@ function testProtectedRebuiltFileDropBlocksAtDragGuard() {
   assert.strictEqual(policy.reason, "content_extraction_candidate");
 }
 
+function testDropRoutesContentExtractionCandidatesBeforeUnsupportedPassThrough() {
+  const source = extractFunctionSource(contentSource, "maybeHandleDrop");
+  const candidateIndex = source.indexOf("const contentExtractionFile");
+  const allowPolicyIndex = source.indexOf('if (transferPolicy.action === "allow"');
+
+  assert.notStrictEqual(candidateIndex, -1, "drop handler should identify extractable document candidates");
+  assert.notStrictEqual(allowPolicyIndex, -1, "drop handler should keep unsupported pass-through branch");
+  assert.ok(
+    candidateIndex < allowPolicyIndex,
+    "drop handler should identify extractable document candidates before unsupported pass-through"
+  );
+  assert.ok(
+    source.includes('if (transferPolicy.action === "allow" && !contentExtractionFile)'),
+    "drop handler should not show unsupported pass-through for extractable document candidates"
+  );
+}
+
 async function testDuplicateDropListenerDoesNotDoubleHandleSameEvent() {
   const { maybeHandleDrop, calls } = createHarness({
     findComposer: () => null
@@ -2525,7 +2557,13 @@ async function testDuplicateDropListenerDoesNotDoubleHandleSameEvent() {
   assert.strictEqual(calls.reads.length, 1);
   assert.strictEqual(calls.redactions.length, 1);
   assert.strictEqual(calls.handoffs.length, 0);
-  assert.strictEqual(calls.runtimeMessages.length, 1);
+  assert.strictEqual(calls.runtimeMessages.length, 0);
+  assert.strictEqual(
+    calls.debugEvents.filter(
+      (entry) => entry.label === "file-handoff:generic-pending-queued" && entry.details.site === "chatgpt"
+    ).length,
+    1
+  );
   assert.strictEqual(eventCalls.stopImmediatePropagation, 2);
 }
 
@@ -2543,7 +2581,12 @@ async function testFileDropHandlesEarlierPreventDefaultWithoutComposerTarget() {
 
   assert.strictEqual(calls.reads.length, 1);
   assert.strictEqual(calls.handoffs.length, 0);
-  assert.strictEqual(calls.runtimeMessages.length, 1);
+  assert.strictEqual(calls.runtimeMessages.length, 0);
+  assert.ok(
+    calls.debugEvents.some(
+      (entry) => entry.label === "file-handoff:generic-pending-queued" && entry.details.site === "chatgpt"
+    )
+  );
   assert.strictEqual(event.defaultPrevented, true);
   assert.strictEqual(eventCalls.stopImmediatePropagation, 2);
 }
@@ -2601,9 +2644,12 @@ async function testComposerTargetDropStillPassesComposer() {
 
   assert.deepStrictEqual(findComposerCalls, [dropTarget]);
   assert.strictEqual(calls.handoffs.length, 0);
-  assert.strictEqual(calls.textFallbacks.length, 1);
-  assert.strictEqual(calls.textFallbacks[0].input, composer);
-  assert.strictEqual(calls.textFallbacks[0].context, "file-text-fallback");
+  assert.strictEqual(calls.textFallbacks.length, 0);
+  assert.ok(
+    calls.debugEvents.some(
+      (entry) => entry.label === "file-handoff:generic-pending-queued" && entry.details.site === "chatgpt"
+    )
+  );
 }
 
 function testProductionGeminiDropPathDoesNotUseLegacyEditorDropHandler() {
@@ -4242,10 +4288,10 @@ async function testPendingAttachGateBehaviorForAdapters() {
   for (const [hostname, adapterId, expectedEnabled] of [
     ["gemini.google.com", "gemini", true],
     ["grok.com", "grok", true],
-    ["chatgpt.com", "chatgpt", false],
-    ["claude.ai", "claude", false],
-    ["chat.openai.com", "openai", false],
-    ["x.com", "x", false]
+    ["chatgpt.com", "chatgpt", true],
+    ["claude.ai", "claude", true],
+    ["chat.openai.com", "openai", true],
+    ["x.com", "x", true]
   ]) {
     const harness = createHandoffHarness({ hostname });
     const adapter = harness.getFileHandoffAdapterForLocation({ hostname });
@@ -4268,21 +4314,19 @@ async function testPendingAttachGateBehaviorForAdapters() {
     } else {
       assert.ok(
         harness.debugEvents.some(
-          (entry) =>
-            entry.label === "file-handoff:pending-queue-skipped" &&
-            entry.payload.site === adapterId &&
-            entry.payload.reason === "pending_attach_disabled"
+          (entry) => entry.label === "file-handoff:generic-pending-queued" && entry.payload.site === adapterId
         ),
-        `expected disabled pending queue diagnostic for ${adapterId}`
+        `expected generic pending queue diagnostic for ${adapterId}`
       );
-      assert.strictEqual(harness.promptNodes.length, 0, `${adapterId} must not render pending prompt`);
-      assert.strictEqual(harness.timeoutCallbacks.some((entry) => entry.delay === 60000), false);
-      assert.strictEqual(harness.clickHandlers.length, 0, `${adapterId} must not install pending click handler`);
-      assert.strictEqual(
-        harness.debugEvents.some((entry) => entry.label === "file-handoff:pending-prompt-shown"),
-        false,
-        `${adapterId} must not show pending prompt diagnostics`
+      assert.strictEqual(harness.promptNodes.length, 1, `${adapterId} should render pending prompt`);
+      assert.strictEqual(harness.timeoutCallbacks.some((entry) => entry.delay === 60000), true);
+      assert.ok(
+        harness.debugEvents.some(
+          (entry) => entry.label === "file-handoff:pending-prompt-shown" && entry.payload.site === adapterId
+        ),
+        `${adapterId} should show pending prompt diagnostics`
       );
+      harness.clearPendingSanitizedFileHandoff(adapterId, "test-cleanup");
     }
   }
 
@@ -4419,10 +4463,10 @@ function testFileHandoffAdapterRegistryCoversSupportedSites() {
   }
   assert.strictEqual(adapters.gemini.pendingAttachEnabled, true);
   assert.strictEqual(adapters.grok.pendingAttachEnabled, true);
-  assert.strictEqual(adapters.chatgpt.pendingAttachEnabled, false);
-  assert.strictEqual(adapters.claude.pendingAttachEnabled, false);
-  assert.strictEqual(adapters.openai.pendingAttachEnabled, false);
-  assert.strictEqual(adapters.x.pendingAttachEnabled, false);
+  assert.strictEqual(adapters.chatgpt.pendingAttachEnabled, true);
+  assert.strictEqual(adapters.claude.pendingAttachEnabled, true);
+  assert.strictEqual(adapters.openai.pendingAttachEnabled, true);
+  assert.strictEqual(adapters.x.pendingAttachEnabled, true);
   for (const id of ["gemini", "grok", "chatgpt", "claude", "openai", "x"]) {
     assert.ok(
       adapterRegistrySource.includes(`pendingAttachEnabled: pendingAttachEnabled?.${id}`),
@@ -5655,11 +5699,11 @@ function testPendingAttachPromptCssIsNonBlocking() {
   assert.ok(cardRule.includes("pointer-events: auto"));
 }
 
-function testUnprovenAdaptersKeepPendingAttachFeatureGated() {
+function testBuiltInAdaptersEnablePendingAttachRecovery() {
   const adapters = createAdapterRegistryForTest();
   for (const id of ["chatgpt", "claude", "openai", "x"]) {
     assert.strictEqual(adapters[id].supportsPendingAttach, true, `${id} should keep its adapter capability shape`);
-    assert.strictEqual(adapters[id].pendingAttachEnabled, false, `${id} pending attach should stay disabled`);
+    assert.strictEqual(adapters[id].pendingAttachEnabled, true, `${id} pending attach should stay enabled`);
   }
   assert.ok(
     contentSource.includes("if (id === \"chatgpt\" || id === \"claude\" || id === \"openai\" || id === \"x\" || id === \"generic\")"),
@@ -5952,6 +5996,139 @@ async function testDocumentAndImageFileInputUseContentExtractionPipelineForSanit
     assert.strictEqual(calls.handoffs[0].sanitizedFile.name, item.outputName);
     assert.strictEqual(JSON.stringify(calls.debugEvents).includes(item.rawText), false);
   }
+}
+
+async function testSupportedDocumentDropUsesContentExtractionPipelineBeforeUnsupportedNotice() {
+  const rawFile = createTextFile({
+    name: "report.pdf",
+    type: "application/pdf",
+    text: "PDF bytes with raw secret"
+  });
+  const sanitizedFile = {
+    name: "report.redacted.pdf",
+    type: "application/pdf",
+    size: 18,
+    text: "API_KEY=[PWM_1]"
+  };
+  const fileInput = createFileInput({ multiple: true });
+  const composer = {
+    tagName: "TEXTAREA",
+    text: "",
+    selection: { start: 0, end: 0 },
+    closest: () => null
+  };
+  const pipelineCalls = [];
+  const originalClassifyFileForTextScan = globalThis.PWM.FileScanner.classifyFileForTextScan;
+
+  globalThis.PWM.FileScanner.classifyFileForTextScan = ({ fileName, mimeType }) => ({
+    kind: "planned_unsupported",
+    status: "planned_unsupported",
+    family: "document",
+    action: "allow",
+    supported: false,
+    extension: ".pdf",
+    message:
+      "LeakGuard did not scan or redact this file. Unsupported file types such as PDF, DOCX, images, archives, executables, and binary files are not protected in this release. Normal upload may continue through the site.",
+    fileName,
+    mimeType
+  });
+
+  try {
+    const { maybeHandleDrop, calls } = createHarness({
+      location: { hostname: "chatgpt.com" },
+      findComposer: () => composer,
+      canExtractForAdapterHandoff: (file) => file?.name === rawFile.name,
+      processFileForAdapterHandoff: async ({ file, context }) => {
+        pipelineCalls.push({ file, context });
+        return {
+          status: "ready",
+          originalName: rawFile.name,
+          outputName: sanitizedFile.name,
+          outputKind: "redacted_pdf_file",
+          extractedKind: "pdf",
+          sanitizedText: sanitizedFile.text,
+          sanitizedFile,
+          metadata: {
+            scan: {
+              findingsCount: 1
+            }
+          },
+          warnings: [],
+          safeForUpload: true,
+          fallbackReason: ""
+        };
+      },
+      resolveFileInputForHandoff: () => fileInput,
+      readLocalTextFileFromDataTransfer: async () => {
+        throw new Error("supported document drop should bypass legacy unsupported text-file reader");
+      }
+    });
+    const { event } = createEvent({
+      dataTransfer: {
+        types: ["Files"],
+        files: [rawFile],
+        items: [],
+        dropEffect: "none"
+      },
+      target: composer
+    });
+
+    await maybeHandleDrop(event);
+
+    assert.strictEqual(event.defaultPrevented, true, "supported document drop should be consumed before the page");
+    assert.strictEqual(pipelineCalls.length, 1, "PDF drop should use content extraction pipeline");
+    assert.strictEqual(pipelineCalls[0].file, rawFile);
+    assert.strictEqual(pipelineCalls[0].context, "drop");
+    assert.strictEqual(calls.redactions.length, 0, "sanitized extraction output should not be double-redacted");
+    assert.strictEqual(calls.createdFiles.length, 0, "sanitized extraction output should not be recreated as text");
+    assert.strictEqual(calls.originalFileInputHandoffs?.length || 0, 1, "sanitized PDF should be assigned to a safe file input");
+    assert.strictEqual(fileInput.files[0], sanitizedFile);
+    assert.strictEqual(calls.badges.some(([message]) => /Unsupported file/i.test(String(message || ""))), false);
+    assert.strictEqual(calls.modals.some(([, message]) => /Unsupported file/i.test(String(message || ""))), false);
+    assert.strictEqual(JSON.stringify(calls.debugEvents).includes(rawFile.text), false);
+  } finally {
+    globalThis.PWM.FileScanner.classifyFileForTextScan = originalClassifyFileForTextScan;
+  }
+}
+
+async function testScannedPdfFileInputExplainsFailClosedReason() {
+  const rawFile = createTextFile({
+    name: "scanned-secrets.pdf",
+    type: "application/pdf",
+    text: "image-only bytes with possible raw secret"
+  });
+  const fileInput = createFileInput();
+  fileInput.files = [rawFile];
+  const { maybeHandleFileInputChange, calls } = createHarness({
+    location: { hostname: "chatgpt.com" },
+    findComposer: () => null,
+    canExtractForAdapterHandoff: (file) => file?.name === rawFile.name,
+    processFileForAdapterHandoff: async () => ({
+      status: "blocked",
+      originalName: rawFile.name,
+      outputName: "",
+      outputKind: "",
+      extractedKind: "pdf",
+      sanitizedText: "",
+      sanitizedFile: null,
+      metadata: {},
+      warnings: [],
+      safeForUpload: false,
+      fallbackReason: "pdf_no_extractable_text"
+    }),
+    readLocalTextFileFromDataTransfer: async () => {
+      throw new Error("blocked scanned PDF should bypass legacy text-file reader");
+    }
+  });
+
+  await maybeHandleFileInputChange(createEvent({ type: "change", target: fileInput }).event);
+
+  const modal = calls.modals.find(([title]) => title === "Raw file blocked");
+  assert.ok(modal, "expected fail-closed modal for scanned PDF");
+  assert.match(modal[1], /scanned or image-only PDF/i);
+  assert.match(modal[1], /raw upload was blocked/i);
+  assert.strictEqual(modal[1].includes("pdf_no_extractable_text"), false);
+  assert.strictEqual(calls.handoffs.length, 0);
 }
 
 async function testProtectedLegacyOfficeFileInputBlocksRawUpload() {
@@ -8418,79 +8595,117 @@ async function testDropOverHardLimitUsesStreamingSanitizedFileHandoff() {
   assert.ok(calls.debugEvents.some((entry) => entry.label === "file-ui:processing-hidden"));
 }
 
-async function testChatGptStreamingDropWithoutFileInputFailsClosedWithoutReadingSanitizedText() {
-  const sourceFile = {
-    name: "large-stream-no-input.env",
-    type: "text/plain",
-    size: 5 * 1024 * 1024,
-    async text() {
-      throw new Error("streaming drop must not call file.text()");
-    }
-  };
-  const composer = {
-    tagName: "TEXTAREA",
-    text: "",
-    selection: { start: 0, end: 0 }
-  };
-  const sanitizedFile = {
-    name: "large-stream-no-input.env",
-    type: "text/plain",
-    size: 15,
-    async text() {
-      throw new Error("file-only streamed handoff must not read sanitized text fallback");
-    }
-  };
-  const { maybeHandleDrop, calls } = createHarness({
-    location: { hostname: "chatgpt.com" },
-    findComposer: () => composer,
-    readLocalTextFileFromDataTransfer: async (transfer) => {
-      calls.reads.push(transfer);
-      return {
-        handled: true,
-        ok: false,
-        code: "streaming_required",
-        sourceFile,
-        file: {
-          name: sourceFile.name,
-          type: sourceFile.type,
-          sizeBytes: sourceFile.size
-        }
-      };
-    },
-    StreamingFileRedactor: {
-      LARGE_TEXT_STREAMING_MAX_BYTES: 50 * 1024 * 1024,
-      STREAMING_BLOCK_TITLE: "File too large for local redaction",
-      STREAMING_BLOCK_MESSAGE:
-        "This file is over 50 MB. LeakGuard blocked the upload because it cannot safely sanitize it yet.",
-      redactTextFileStream: async (file, options) => {
-        assert.strictEqual(file, sourceFile);
-        await options.redactText("API_KEY=LeakGuardDropApiKey1234567890");
-        return {
-          action: "redacted",
-          sanitizedFile,
-          findingsCount: 1,
-          bytesProcessed: sourceFile.size
-        };
+async function testGenericStreamingDropWithoutFileInputQueuesPendingWithoutReadingSanitizedText() {
+  const adapterHosts = [
+    ["chatgpt", "chatgpt.com"],
+    ["claude", "claude.ai"],
+    ["openai", "chat.openai.com"],
+    ["x", "x.com"]
+  ];
+
+  for (const [adapterId, hostname] of adapterHosts) {
+    const rawSecret = "LeakGuardDropApiKey1234567890";
+    const sanitizedText = "API_KEY=[PWM_1]\ntoken_limit=4096";
+    const sourceFile = {
+      name: `${adapterId}-large-stream-no-input.env`,
+      type: "text/plain",
+      size: 5 * 1024 * 1024,
+      async text() {
+        throw new Error(`${adapterId} streaming drop must not call file.text()`);
       }
-    }
-  });
-  const { event } = createEvent({
-    dataTransfer: {
-      types: ["Files"],
-      files: [sourceFile],
-      items: [],
-      dropEffect: "none"
-    },
-    target: composer
-  });
+    };
+    const composer = {
+      tagName: "TEXTAREA",
+      text: "",
+      selection: { start: 0, end: 0 }
+    };
+    const sanitizedFile = {
+      name: `${adapterId}-large-stream-no-input.env`,
+      type: "text/plain",
+      size: sanitizedText.length,
+      async text() {
+        throw new Error(`${adapterId} streamed handoff must not read sanitized text fallback`);
+      }
+    };
+    const { maybeHandleDrop, calls } = createHarness({
+      location: { hostname },
+      findComposer: () => composer,
+      readLocalTextFileFromDataTransfer: async (transfer) => {
+        calls.reads.push(transfer);
+        return {
+          handled: true,
+          ok: false,
+          code: "streaming_required",
+          sourceFile,
+          file: {
+            name: sourceFile.name,
+            type: sourceFile.type,
+            sizeBytes: sourceFile.size
+          }
+        };
+      },
+      StreamingFileRedactor: {
+        LARGE_TEXT_STREAMING_MAX_BYTES: 50 * 1024 * 1024,
+        STREAMING_BLOCK_TITLE: "File too large for local redaction",
+        STREAMING_BLOCK_MESSAGE:
+          "This file is over 50 MB. LeakGuard blocked the upload because it cannot safely sanitize it yet.",
+        redactTextFileStream: async (file, options) => {
+          assert.strictEqual(file, sourceFile);
+          await options.redactText(`API_KEY=${rawSecret}\ntoken_limit=4096`);
+          return {
+            action: "redacted",
+            sanitizedFile,
+            findingsCount: 1,
+            bytesProcessed: sourceFile.size
+          };
+        }
+      }
+    });
+    const { event } = createEvent({
+      dataTransfer: {
+        types: ["Files"],
+        files: [sourceFile],
+        items: [],
+        dropEffect: "none"
+      },
+      target: composer
+    });
 
-  await maybeHandleDrop(event);
+    await maybeHandleDrop(event);
 
-  assert.strictEqual(event.defaultPrevented, true);
-  assert.strictEqual(calls.originalFileInputHandoffs?.length || 0, 0);
-  assert.strictEqual(calls.runtimeMessages.length, 0);
-  assert.ok(calls.modals.some(([title]) => title === "Raw file upload blocked"));
-  assert.ok(calls.debugEvents.some((entry) => entry.label === "file-handoff:file-only-fallback-skipped"));
+    assert.strictEqual(event.defaultPrevented, true, `${adapterId} raw drop should be blocked`);
+    assert.strictEqual(calls.reads.length, 1, `${adapterId} should read once`);
+    assert.strictEqual(calls.redactions.length, 1, `${adapterId} should stream-redact once`);
+    assert.strictEqual(calls.handoffs.length, 0, `${adapterId} should not use legacy direct handoff`);
+    assert.strictEqual(calls.originalFileInputHandoffs?.length || 0, 0, `${adapterId} should not assign a missing input`);
+    assert.strictEqual(calls.textFallbacks.length, 0, `${adapterId} should not read sanitized text fallback`);
+    assert.strictEqual(calls.runtimeMessages.length, 0, `${adapterId} should not download fallback`);
+    assert.strictEqual(composer.text, "", `${adapterId} should not auto-insert streaming text`);
+    assert.strictEqual(
+      calls.modals.some(([title]) => title === "Raw file upload blocked"),
+      false,
+      `${adapterId} should queue pending instead of block`
+    );
+    assert.ok(
+      calls.debugEvents.some(
+        (entry) => entry.label === "file-handoff:generic-pending-queued" && entry.details?.site === adapterId
+      ),
+      `expected ${adapterId} generic pending queue`
+    );
+    assert.ok(
+      calls.debugEvents.some(
+        (entry) => entry.label === "file-handoff:pending-queued" && entry.details?.site === adapterId
+      ),
+      `expected ${adapterId} pending queue`
+    );
+    assert.ok(
+      calls.debugEvents.some(
+        (entry) => entry.label === "pending-attach-prompt-shown" && entry.details?.site === adapterId
+      ),
+      `expected ${adapterId} pending prompt`
+    );
+    assert.strictEqual(JSON.stringify(calls.debugEvents).includes(rawSecret), false);
+  }
 }
 
 async function testGeminiStreamingDropQueuesPendingAfterStreamingWithoutTextFallback() {
@@ -9820,16 +10035,16 @@ async function testChatGptOutOfSyncFallbackRetriesAndVerifies() {
   assert.strictEqual(calls.modals.length, 0);
 }
 
-function testChatGptPendingAttachRemainsDisabled() {
+function testChatGptPendingAttachUsesGenericQueue() {
   const queueSource = extractFunctionSource(fileHandoffPendingSource, "queuePendingSanitizedFileHandoff");
   const adapters = createAdapterRegistryForTest();
   assert.ok(
-    contentSource.includes("chatgpt: false") && adapters.chatgpt.pendingAttachEnabled === false,
-    "ChatGPT pending attach should stay diagnostic-gated off"
+    contentSource.includes("chatgpt: true") && adapters.chatgpt.pendingAttachEnabled === true,
+    "ChatGPT pending attach should be enabled for sanitized provider handoff recovery"
   );
   assert.ok(
-    !queueSource.includes('selectedAdapter.id === "chatgpt"'),
-    "ChatGPT should not queue pending sanitized attach in v1.7.0"
+    queueSource.includes("queuePendingGenericSanitizedFileHandoff"),
+    "ChatGPT should queue through the shared generic pending attach path"
   );
 }
 
@@ -12869,6 +13084,7 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testFileDropIsBlockedWithoutHelperLoaded();
   await testFileDropIsConsumedBeforeComposerLookup();
   testProtectedRebuiltFileDropBlocksAtDragGuard();
+  testDropRoutesContentExtractionCandidatesBeforeUnsupportedPassThrough();
   await testDuplicateDropListenerDoesNotDoubleHandleSameEvent();
   await testFileDropHandlesEarlierPreventDefaultWithoutComposerTarget();
   await testNonFileDragoverIsIgnored();
@@ -12964,12 +13180,14 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   testGenericFileHandoffHelpersAndDiagnosticsExist();
   testFileProcessingOverlayCssExists();
   testPendingAttachPromptCssIsNonBlocking();
-  testUnprovenAdaptersKeepPendingAttachFeatureGated();
+  testBuiltInAdaptersEnablePendingAttachRecovery();
   await testSanitizedFileInputRedispatchDoesNotRescanSanitizedFile();
   await testSanitizedHandoffSignatureSuppressesDifferentInputRedispatch();
   await testSanitizedHandoffMixedRawFileDoesNotSuppressScan();
   await testSmallFileInputShowsProcessingUiThenDirectAttachSuccess();
   await testDocumentAndImageFileInputUseContentExtractionPipelineForSanitizedHandoff();
+  await testSupportedDocumentDropUsesContentExtractionPipelineBeforeUnsupportedNotice();
+  await testScannedPdfFileInputExplainsFailClosedReason();
   await testProtectedLegacyOfficeFileInputBlocksRawUpload();
   await testUnsupportedFileReadFailureHidesProcessingUi();
   await testFileProcessingUiClearsAfterException();
@@ -13016,7 +13234,7 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testChatGptLargePasteFallsBackToSanitizedTextOnlyWhenFileHandoffFails();
   await testChatGptContenteditableComposerRewriteSync();
   await testChatGptOutOfSyncFallbackRetriesAndVerifies();
-  testChatGptPendingAttachRemainsDisabled();
+  testChatGptPendingAttachUsesGenericQueue();
   await testNonChatGptLargePasteDoesNotUsePlainTextFileHandoff();
   await testSmallChatGptPasteDoesNotUsePlainTextFileHandoff();
   await testGeminiQlEditorDropTextFileIsSanitizedAndHandedOff();
@@ -13028,7 +13246,7 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testChatGptOverHardLimitPasteIsBlockedBeforeHandoff();
   await testGeminiOverHardLimitDropIsBlockedBeforeInsertion();
   await testDropOverHardLimitUsesStreamingSanitizedFileHandoff();
-  await testChatGptStreamingDropWithoutFileInputFailsClosedWithoutReadingSanitizedText();
+  await testGenericStreamingDropWithoutFileInputQueuesPendingWithoutReadingSanitizedText();
   await testGeminiStreamingDropQueuesPendingAfterStreamingWithoutTextFallback();
   await testGeminiStreamingDropAtFiftyMiBQueuesPendingHandoff();
   await testGrokStreamingDropQueuesPendingAfterStreamingWithoutTextFallback();

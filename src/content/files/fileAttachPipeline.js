@@ -256,12 +256,31 @@
     };
   }
 
+  function normalizeStreamingPendingProviderId(value) {
+    const id = String(value || "").trim().toLowerCase();
+    return /^(gemini|grok|chatgpt|claude|openai|x)$/.test(id) ? id : "";
+  }
+
+  function getStreamingPendingProviderLabel(provider) {
+    if (provider === "gemini") return "Gemini";
+    if (provider === "grok") return "Grok";
+    if (provider === "chatgpt") return "ChatGPT";
+    if (provider === "claude") return "Claude";
+    if (provider === "openai") return "OpenAI Chat";
+    if (provider === "x") return "X";
+    return provider || "site";
+  }
+
   function classifyStreamingAttachPlan(options = {}) {
     const isGeminiDrop = options.isGeminiDrop === true;
     const isGrokDrop = options.isGrokDrop === true;
     const streamResultAction = options.streamResultAction || "";
     const hasSanitizedFile = options.hasSanitizedFile === true;
-    const provider = isGeminiDrop ? "gemini" : isGrokDrop ? "grok" : "";
+    const provider =
+      normalizeStreamingPendingProviderId(options.pendingAdapterId) ||
+      (isGeminiDrop ? "gemini" : isGrokDrop ? "grok" : "");
+    const pendingOnlyProvider = provider === "gemini" || provider === "grok";
+    const providerLabel = getStreamingPendingProviderLabel(provider);
 
     return {
       shouldContinueStreamingAttach: streamResultAction === "redacted" && hasSanitizedFile,
@@ -287,15 +306,12 @@
         strategy: provider ? `${provider}-streaming-pending-sanitized-file-handoff` : "",
         queueFailureReason: provider ? `${provider}_pending_queue_failed` : "",
         queueFailureTitle: "Raw file upload blocked",
-        queueFailureMessage:
-          provider === "gemini"
-            ? "LeakGuard sanitized the large file but could not queue Gemini pending attach."
-            : provider === "grok"
-              ? "LeakGuard sanitized the large file but could not queue Grok pending attach."
-              : ""
+        queueFailureMessage: provider
+          ? `LeakGuard sanitized the large file but could not queue ${providerLabel} pending attach.`
+          : ""
       },
       genericAttach: {
-        shouldAttempt: provider === "",
+        shouldAttempt: !pendingOnlyProvider,
         fileStrategy: "streaming-sanitized-file-handoff",
         textStrategy: "streaming-sanitized-text-fallback",
         defaultSuccessStrategy: "streaming-sanitized-file-handoff",

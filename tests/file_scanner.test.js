@@ -441,6 +441,16 @@ function testPublicIpRedactedPrivateIpVisible() {
   assert.ok(result.redactedText.includes("192.168.1.1"));
 }
 
+function testSplitAwsSecretLabelRedactedInTextFile() {
+  const rawSecret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+  const result = scanSample(["AWS Secret Key", rawSecret].join("\n"), "aws.env");
+  const report = buildSanitizedReport(result);
+
+  assert.strictEqual(result.redactedText.includes(rawSecret), false);
+  assert.match(result.redactedText, /AWS Secret Key\s+\[PWM_\d+\]/);
+  assert.strictEqual(JSON.stringify(report).includes(rawSecret), false);
+}
+
 function testLineColumnMapping() {
   const text = "first line\r\nsecond line\nAPI_KEY=value";
   assert.deepStrictEqual(getLineColumnFromOffset(text, 0), { line: 1, column: 1 });
@@ -466,6 +476,7 @@ testJsonCredentialRedacted();
 testSanitizedScannerReportExcludesRawSecretBoundaries();
 testSupportedTextFormatFixturesRedactSecrets();
 testPublicIpRedactedPrivateIpVisible();
+testSplitAwsSecretLabelRedactedInTextFile();
 testLineColumnMapping();
 
 console.log("PASS local file scanner regressions");

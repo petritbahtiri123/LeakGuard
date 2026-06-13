@@ -63,15 +63,53 @@ function escapePdfText(text) {
     .replace(/\n/g, "\\n");
 }
 
+function ascii85Encode(buffer) {
+  const bytes = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
+  let output = "<~";
+
+  for (let index = 0; index < bytes.length; index += 4) {
+    const chunk = bytes.slice(index, index + 4);
+    const padded = Buffer.alloc(4);
+    chunk.copy(padded);
+    const value = padded.readUInt32BE(0);
+
+    if (chunk.length === 4 && value === 0) {
+      output += "z";
+      continue;
+    }
+
+    const encoded = new Array(5);
+    let current = value;
+    for (let digit = 4; digit >= 0; digit -= 1) {
+      encoded[digit] = String.fromCharCode((current % 85) + 33);
+      current = Math.floor(current / 85);
+    }
+    output += encoded.slice(0, chunk.length + 1).join("");
+  }
+
+  return `${output}~>`;
+}
+
 function makePdf(text, options = {}) {
   if (options.malformed) return bufferFromText("not a pdf");
 
   const streamText = options.imageOnly
     ? "q\n10 0 0 10 0 0 cm\n/Im1 Do\nQ\n"
+    : options.splitTextArray
+      ? `BT\n/F1 12 Tf\n72 720 Td\n[${String(text)
+          .match(options.splitTextArray)
+          .map((part) => `(${escapePdfText(part)})`)
+          .join(" 12 ")}] TJ\nET\n`
     : `BT\n/F1 12 Tf\n72 720 Td\n(${escapePdfText(text)}) Tj\nET\n`;
-  const stream = options.flate ? zlib.deflateSync(Buffer.from(streamText, "binary")) : streamText;
+  const stream = options.ascii85Flate
+    ? ascii85Encode(zlib.deflateSync(Buffer.from(streamText, "binary")))
+    : options.flate
+      ? zlib.deflateSync(Buffer.from(streamText, "binary"))
+      : streamText;
   const encryptMarker = options.encrypted ? "\n/Encrypt 6 0 R\n" : "";
-  const streamHeader = options.flate
+  const streamHeader = options.ascii85Flate
+    ? `<< /Length ${stream.length} /Filter [ /ASCII85Decode /FlateDecode ] >>`
+    : options.flate
     ? `<< /Length ${stream.length} /Filter /FlateDecode >>`
     : `<< /Length ${stream.length} >>`;
   const parts = [
@@ -247,6 +285,32 @@ function makeXlsx(options = {}) {
     entries.push({ name: "xl/media/image1.png", data: "not scanned" });
   }
   return makeZip(entries);
+}
+
+function makeNamespacedWorksheetXlsx(cells = []) {
+  const cellXml = cells
+    .map((cell, index) => {
+      const ref = cell.ref || `A${index + 1}`;
+      return `<x:c r="${ref}"><x:v>${escapeXml(cell.value)}</x:v></x:c>`;
+    })
+    .join("");
+
+  return makeZip([
+    {
+      name: "xl/workbook.xml",
+      data:
+        '<?xml version="1.0" encoding="UTF-8"?><x:workbook xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><x:sheets><x:sheet name="Secrets" sheetId="1" r:id="rId1"/></x:sheets></x:workbook>'
+    },
+    {
+      name: "xl/sharedStrings.xml",
+      data:
+        '<?xml version="1.0" encoding="UTF-8"?><x:sst xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main"></x:sst>'
+    },
+    {
+      name: "xl/worksheets/sheet1.xml",
+      data: `<?xml version="1.0" encoding="UTF-8"?><x:worksheet xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><x:sheetData><x:row r="1">${cellXml}</x:row></x:sheetData></x:worksheet>`
+    }
+  ]);
 }
 
 function testSupportedTextFilesAreSafeForScan() {
@@ -479,6 +543,36 @@ async function testXlsxSecretsFeedExistingScannerWithoutRawReportMetadata() {
   assert.ok(scan.summary.findingsCount > 0);
   assert.strictEqual(scan.redactedText.includes(rawSecret), false);
   assert.strictEqual(metadataOnly.includes(rawSecret), false);
+}
+
+async function testNamespacedXlsxSecretsExtractAndRedactLocally() {
+  const rawSecret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+  const result = await prepareFileExtractionAsync({
+    fileName: "namespaced-secrets.xlsx",
+    mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    buffer: makeNamespacedWorksheetXlsx([
+      { value: "AWS Secret Key" },
+      { value: rawSecret }
+    ])
+  });
+
+  assert.strictEqual(result.status, EXTRACTOR_STATUS.OK);
+  assert.strictEqual(result.safeForScan, true);
+  assert.ok(result.text.includes(rawSecret));
+
+  const scan = scanTextContent({
+    fileName: "namespaced-secrets.xlsx",
+    mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    sizeBytes: result.metadata.textLength,
+    text: result.text,
+    extractedText: true,
+    mode: "hide_public"
+  });
+  const report = buildSanitizedReport(scan);
+
+  assert.strictEqual(scan.redactedText.includes(rawSecret), false);
+  assert.match(scan.redactedText, /AWS Secret Key\s+\[PWM_\d+\]/);
+  assert.strictEqual(JSON.stringify(report).includes(rawSecret), false);
 }
 
 async function testXlsxEnvMultilineInlineAndFormulaTextExtract() {
@@ -791,6 +885,18 @@ async function testFlateTextPdfExtractsLocally() {
   assert.strictEqual(result.safeForScan, true);
 }
 
+async function testAscii85FlateTextPdfExtractsLocally() {
+  const result = await prepareFileExtractionAsync({
+    fileName: "reportlab-compressed.pdf",
+    mimeType: "application/pdf",
+    buffer: makePdf("ReportLab release notes", { ascii85Flate: true })
+  });
+
+  assert.strictEqual(result.status, EXTRACTOR_STATUS.OK);
+  assert.strictEqual(result.text, "ReportLab release notes");
+  assert.strictEqual(result.safeForScan, true);
+}
+
 async function testPdfSecretsFeedExistingScannerWithoutRawReportMetadata() {
   const rawSecret = "sk-proj-LeakGuardPdfApiKey1234567890abcdef";
   const result = await prepareFileExtractionAsync({
@@ -837,6 +943,74 @@ async function testPdfEnvAndMultilineSecretsExtract() {
   assert.ok(result.text.includes("OPENAI_API_KEY="));
   assert.ok(result.text.includes("PRIVATE_KEY="));
   assert.ok(result.text.includes("\nabc123secret\n"));
+}
+
+async function testPdfTextArraysExtractAllStringParts() {
+  const text = "OPENAI_API_KEY=sk-proj-LeakGuardPdfArrayKey1234567890abcdef";
+  const result = await prepareFileExtractionAsync({
+    fileName: "array-text.pdf",
+    mimeType: "application/pdf",
+    buffer: makePdf(text, { splitTextArray: /OPENAI_|API_|KEY=.*$/g })
+  });
+
+  assert.strictEqual(result.status, EXTRACTOR_STATUS.OK);
+  assert.strictEqual(result.safeForScan, true);
+  assert.strictEqual(result.text, text);
+}
+
+async function testSplitAwsSecretLabelsRedactAcrossExtractedDocuments() {
+  const rawSecret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+  const text = ["AWS Secret Key", rawSecret].join("\n");
+  const cases = [
+    {
+      fileName: "split-aws-secret.pdf",
+      mimeType: "application/pdf",
+      buffer: makePdf(text, { ascii85Flate: true })
+    },
+    {
+      fileName: "split-aws-secret.docx",
+      mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      buffer: makeDocx(text)
+    },
+    {
+      fileName: "split-aws-secret.xlsx",
+      mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      buffer: makeXlsx({
+        sharedStrings: ["AWS Secret Key", rawSecret],
+        cells: [
+          { type: "shared", value: 0 },
+          { type: "shared", value: 1 }
+        ]
+      })
+    }
+  ];
+
+  for (const testCase of cases) {
+    const result = await prepareFileExtractionAsync(testCase);
+    const scan = scanTextContent({
+      fileName: testCase.fileName,
+      mimeType: testCase.mimeType,
+      sizeBytes: result.metadata.textLength,
+      text: result.text,
+      extractedText: true,
+      mode: "hide_public"
+    });
+    const report = buildSanitizedReport(scan);
+    const safeState = JSON.stringify({
+      extractorMetadata: result.metadata,
+      file: scan.file,
+      summary: scan.summary,
+      findings: scan.findings,
+      report
+    });
+
+    assert.strictEqual(result.status, EXTRACTOR_STATUS.OK, `${testCase.fileName} should extract locally`);
+    assert.strictEqual(result.safeForScan, true, `${testCase.fileName} should be safe for scan`);
+    assert.ok(result.text.includes(rawSecret), `${testCase.fileName} should reproduce the split AWS secret fixture`);
+    assert.strictEqual(scan.redactedText.includes(rawSecret), false, `${testCase.fileName} should redact AWS secret`);
+    assert.strictEqual(safeState.includes(rawSecret), false, `${testCase.fileName} metadata/report should not leak raw AWS secret`);
+    assert.match(scan.redactedText, /AWS Secret Key\s+\[PWM_\d+\]/, `${testCase.fileName} should preserve label shape`);
+  }
 }
 
 async function assertPdfExtractionError(name, buffer, expectedReason) {
@@ -954,8 +1128,11 @@ function testNoNewDependenciesAdded() {
   testNoNewDependenciesAdded();
   await testSafeTextPdfExtractsLocally();
   await testFlateTextPdfExtractsLocally();
+  await testAscii85FlateTextPdfExtractsLocally();
   await testPdfSecretsFeedExistingScannerWithoutRawReportMetadata();
   await testPdfEnvAndMultilineSecretsExtract();
+  await testPdfTextArraysExtractAllStringParts();
+  await testSplitAwsSecretLabelsRedactAcrossExtractedDocuments();
   await testUnreadablePdfCasesFailClosed();
   await testLargePdfTextExtractionLimit();
   await testPdfMimeMismatchDoesNotBypassGates();
@@ -967,6 +1144,7 @@ function testNoNewDependenciesAdded() {
   await testDocxMimeMismatchDoesNotBypassGates();
   await testSafeXlsxTextExtractsLocally();
   await testXlsxSecretsFeedExistingScannerWithoutRawReportMetadata();
+  await testNamespacedXlsxSecretsExtractAndRedactLocally();
   await testXlsxEnvMultilineInlineAndFormulaTextExtract();
   await testUnreadableXlsxCasesFailClosed();
   await testLargeXlsxTextExtractionLimit();

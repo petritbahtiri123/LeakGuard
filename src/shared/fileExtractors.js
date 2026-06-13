@@ -356,6 +356,18 @@
     return null;
   }
 
+  function extractPdfTextTokens(source) {
+    const parts = [];
+    let index = 0;
+    while (index < source.length) {
+      const token = nextTextToken(source, index);
+      if (!token) break;
+      if (token.value) parts.push(token.value);
+      index = Math.max(token.end || index + 1, index + 1);
+    }
+    return parts.join("");
+  }
+
   function extractTextFromPdfContent(content) {
     const textParts = [];
     const textObjectPattern = /BT([\s\S]*?)ET/g;
@@ -365,8 +377,8 @@
       const textOperatorPattern = /(?:\((?:\\.|[^\\()])*(?:\((?:\\.|[^\\()])*\)(?:\\.|[^\\()])*)*\)|<[\da-fA-F\s]+>|\[[\s\S]*?\])\s*(?:Tj|TJ|'|")/g;
       let operatorMatch;
       while ((operatorMatch = textOperatorPattern.exec(objectSource))) {
-        const token = nextTextToken(operatorMatch[0], 0);
-        if (token?.value) textParts.push(token.value);
+        const value = extractPdfTextTokens(operatorMatch[0]);
+        if (value) textParts.push(value);
       }
     }
     return textParts.join("\n").replace(/\r\n?/g, "\n").trim();
@@ -394,15 +406,90 @@
     return inflateBytes(bytes, "deflate");
   }
 
-  async function decodePdfStreamEntry(entry) {
-    const filters = entry.dictionary.match(/\/Filter\s*(?:\/([A-Za-z0-9]+)|\[\s*\/([A-Za-z0-9]+)\s*\])/);
-    const filterName = filters?.[1] || filters?.[2] || "";
-    if (!filterName) return decodePdfByteString(entry.bytes);
-    if (filterName === "FlateDecode" || filterName === "Fl") {
-      const inflated = await inflatePdfStream(entry.bytes);
-      return inflated ? decodePdfByteString(inflated) : "";
+  function decodeAscii85Bytes(bytes) {
+    const output = [];
+    let group = [];
+
+    const flushGroup = (final = false) => {
+      if (!group.length) return true;
+      if (final && group.length === 1) return false;
+      const originalLength = group.length;
+      while (group.length < 5) group.push(84);
+      let value = 0;
+      for (const digit of group) value = value * 85 + digit;
+      const decoded = [
+        (value >>> 24) & 0xff,
+        (value >>> 16) & 0xff,
+        (value >>> 8) & 0xff,
+        value & 0xff
+      ];
+      output.push(...decoded.slice(0, final ? originalLength - 1 : 4));
+      group = [];
+      return true;
+    };
+
+    for (let index = 0; index < bytes.length; index += 1) {
+      const byte = bytes[index];
+      if (byte === 0x00 || byte === 0x09 || byte === 0x0a || byte === 0x0c || byte === 0x0d || byte === 0x20) {
+        continue;
+      }
+      if (byte === 0x3c && bytes[index + 1] === 0x7e) {
+        index += 1;
+        continue;
+      }
+      if (byte === 0x7e) break;
+      if (byte === 0x7a && group.length === 0) {
+        output.push(0, 0, 0, 0);
+        continue;
+      }
+      if (byte < 0x21 || byte > 0x75) return null;
+      group.push(byte - 0x21);
+      if (group.length === 5 && !flushGroup(false)) return null;
     }
-    return "";
+
+    if (!flushGroup(true)) return null;
+    return new Uint8Array(output);
+  }
+
+  function getPdfStreamFilters(dictionary) {
+    const filterMatch = String(dictionary || "").match(/\/Filter\s*(\[[\s\S]*?\]|\/[A-Za-z0-9]+)/);
+    if (!filterMatch) return [];
+    const source = filterMatch[1];
+    if (source.startsWith("[")) {
+      return Array.from(source.matchAll(/\/([A-Za-z0-9]+)/g), (match) => match[1]);
+    }
+    return [source.replace(/^\//, "")].filter(Boolean);
+  }
+
+  function normalizePdfFilterName(filterName) {
+    const name = String(filterName || "");
+    if (name === "FlateDecode" || name === "Fl") return "FlateDecode";
+    if (name === "ASCII85Decode" || name === "A85") return "ASCII85Decode";
+    return name;
+  }
+
+  async function decodePdfStreamEntry(entry) {
+    const filters = getPdfStreamFilters(entry.dictionary).map(normalizePdfFilterName);
+    let bytes = entry.bytes;
+    if (!filters.length) return decodePdfByteString(bytes);
+
+    for (const filterName of filters) {
+      if (filterName === "ASCII85Decode") {
+        const decoded = decodeAscii85Bytes(bytes);
+        if (!decoded) return "";
+        bytes = decoded;
+        continue;
+      }
+      if (filterName === "FlateDecode") {
+        const inflated = await inflatePdfStream(bytes);
+        if (!inflated) return "";
+        bytes = inflated;
+        continue;
+      }
+      return "";
+    }
+
+    return decodePdfByteString(bytes);
   }
 
   function safePdfError(routed, reason) {
@@ -638,7 +725,11 @@
 
   function extractXmlTextValues(xml, tagName) {
     const values = [];
-    const pattern = new RegExp(`<${tagName}\\b[^>]*>([\\s\\S]*?)<\\/${tagName}>`, "gi");
+    const qualifiedTagName = `(?:[A-Za-z_][\\w.-]*:)?${tagName}`;
+    const pattern = new RegExp(
+      `<${qualifiedTagName}\\b[^>]*>([\\s\\S]*?)<\\/${qualifiedTagName}>`,
+      "gi"
+    );
     let match;
     while ((match = pattern.exec(xml))) {
       const value = decodeXmlEntities(match[1].replace(/[<>]/g, ""));
@@ -649,7 +740,7 @@
 
   function extractSharedStrings(xml) {
     const strings = [];
-    const itemPattern = /<si\b[^>]*>([\s\S]*?)<\/si>/gi;
+    const itemPattern = /<(?:[A-Za-z_][\w.-]*:)?si\b[^>]*>([\s\S]*?)<\/(?:[A-Za-z_][\w.-]*:)?si>/gi;
     let itemMatch;
     while ((itemMatch = itemPattern.exec(xml))) {
       const text = extractXmlTextValues(itemMatch[1], "t").join("");
@@ -660,7 +751,7 @@
 
   function extractSheetNames(xml) {
     const names = [];
-    const sheetPattern = /<sheet\b[^>]*\bname=(["'])([\s\S]*?)\1/gi;
+    const sheetPattern = /<(?:[A-Za-z_][\w.-]*:)?sheet\b[^>]*\bname=(["'])([\s\S]*?)\1/gi;
     let match;
     while ((match = sheetPattern.exec(xml))) {
       const name = decodeXmlEntities(match[2]).trim();
@@ -676,7 +767,7 @@
 
   function extractTextFromXlsxWorksheetXml(xml, sharedStrings) {
     const parts = [];
-    const cellPattern = /<c\b[^>]*>[\s\S]*?<\/c>/gi;
+    const cellPattern = /<(?:[A-Za-z_][\w.-]*:)?c\b[^>]*>[\s\S]*?<\/(?:[A-Za-z_][\w.-]*:)?c>/gi;
     let cellMatch;
     while ((cellMatch = cellPattern.exec(xml))) {
       const cellXml = cellMatch[0];

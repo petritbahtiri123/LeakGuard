@@ -9,6 +9,7 @@
       attemptPendingGrokSanitizedFileHandoff = () => false,
       clearPendingGeminiSanitizedFileHandoff = noop,
       clearPendingGrokSanitizedFileHandoff = noop,
+      clearPendingGenericSanitizedFileHandoff = noop,
       clearPendingSanitizedAttachPrompt = noop,
       createSanitizedFileHandoffDetails = () => ({}),
       debugFileHandoffAdapterSelected = noop,
@@ -23,6 +24,7 @@
       normalizeTarget = (target) => target || null,
       queuePendingGeminiSanitizedFileHandoff = () => false,
       queuePendingGrokSanitizedFileHandoff = () => false,
+      queuePendingGenericSanitizedFileHandoff = () => false,
       readSanitizedFileTextForFallback = async () => "",
       refreshBadgeFromCurrentInput = noop,
       setBadge = noop,
@@ -55,6 +57,8 @@
         queued = queuePendingGeminiSanitizedFileHandoff(event, input, sanitizedFile, details);
       } else if (selectedAdapter.id === "grok") {
         queued = queuePendingGrokSanitizedFileHandoff(event, input, sanitizedFile, details);
+      } else {
+        queued = queuePendingGenericSanitizedFileHandoff(selectedAdapter, event, input, sanitizedFile, details);
       }
 
       if (queued) {
@@ -79,6 +83,7 @@
       if (adapter == null) {
         clearPendingGeminiSanitizedFileHandoff(reason);
         clearPendingGrokSanitizedFileHandoff(reason);
+        clearPendingGenericSanitizedFileHandoff(reason);
         return;
       }
       const selectedAdapter = normalizeFileHandoffAdapter(adapter);
@@ -87,6 +92,8 @@
         clearPendingGeminiSanitizedFileHandoff(reason);
       } else if (selectedAdapter.id === "grok") {
         clearPendingGrokSanitizedFileHandoff(reason);
+      } else {
+        clearPendingGenericSanitizedFileHandoff(reason);
       }
     }
 
