@@ -643,13 +643,16 @@
 
   async function isProtectedSiteOcrEnabled(options = {}) {
     const storageArea = getLocalSettingsStorage(options);
-    if (!storageArea || typeof storageArea.get !== "function") return false;
+    if (!storageArea || typeof storageArea.get !== "function") return true;
 
     try {
       const stored = await storageArea.get(PROTECTED_SITE_OCR_ENABLED_STORAGE_KEY);
+      if (!stored || !Object.prototype.hasOwnProperty.call(stored, PROTECTED_SITE_OCR_ENABLED_STORAGE_KEY)) {
+        return true;
+      }
       return stored?.[PROTECTED_SITE_OCR_ENABLED_STORAGE_KEY] === true;
     } catch {
-      return false;
+      return true;
     }
   }
 

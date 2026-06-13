@@ -28,8 +28,8 @@ Supported document and image paths:
 | Text PDF | Local text extraction; scanner can also export regenerated `.redacted.pdf` from sanitized text | Local text extraction | Scanner: `.redacted.txt` or regenerated `.redacted.pdf`; protected sites: regenerated `.redacted.pdf` when complete or `.redacted.txt` fallback |
 | DOCX | Local text extraction; scanner can also export regenerated `.redacted.docx` from sanitized text | Local text extraction | Scanner: `.redacted.txt` or regenerated `.redacted.docx`; protected sites: regenerated `.redacted.docx` when complete or `.redacted.txt` fallback |
 | XLSX | Local text extraction; scanner can also export simple regenerated `.redacted.xlsx` from sanitized text; formulas are scanned as text and not executed | Local text extraction | Scanner: `.redacted.txt` or regenerated `.redacted.xlsx`; protected sites: regenerated `.redacted.xlsx` when complete or `.redacted.txt` fallback |
-| PNG/JPG/JPEG/WEBP metadata | Local metadata scan | Local metadata scan when protected-site OCR is off | `.redacted.txt` |
-| PNG/JPG/JPEG/WEBP OCR | English-only scanner OCR after user action | English-only protected-site OCR only when explicitly enabled; default off | `.redacted.txt`, or `.redacted.png` only when visual redaction boxes are eligible |
+| PNG/JPG/JPEG/WEBP metadata | Local metadata scan | Local metadata scan when protected-site OCR is turned off | `.redacted.txt` |
+| PNG/JPG/JPEG/WEBP OCR | English-only scanner OCR after user action | English-only protected-site OCR is enabled by default for supported image uploads and can be turned off in settings | `.redacted.txt`, or `.redacted.png` only when visual redaction boxes are eligible |
 
 See [FILE_CAPABILITY_MATRIX.md](FILE_CAPABILITY_MATRIX.md) for the authoritative capability matrix.
 
@@ -94,7 +94,7 @@ The preferred flow is:
 4. create a sanitized in-memory `File` or `Blob`
 5. hand only the sanitized file to the site when a safe path exists
 
-If safe sanitized file handoff is not available, LeakGuard may insert sanitized text, offer a sanitized download, or block raw upload depending on the site and browser path. For text PDFs, DOCX files, and XLSX files, protected-site output can be regenerated from sanitized extracted text when complete; truncated or unsafe regeneration falls back to `.redacted.txt` or blocks raw upload. Image metadata and OCR text protected-site output remains `.redacted.txt`. Protected-site visual image upload produces `.redacted.png` only when OCR is enabled and eligible boxes are available; OCR failure or ineligible visual redaction blocks raw image upload.
+If safe sanitized file handoff is not available, LeakGuard may insert sanitized text, offer a sanitized download, or block raw upload depending on the site and browser path. For text PDFs, DOCX files, and XLSX files, protected-site output can be regenerated from sanitized extracted text when complete; truncated or unsafe regeneration falls back to `.redacted.txt` or blocks raw upload. Image metadata and OCR text protected-site output remains `.redacted.txt`. Protected-site visual image upload produces `.redacted.png` when protected-site OCR is on and eligible boxes are available; OCR failure or ineligible visual redaction blocks raw image upload.
 
 ## Site-Specific Notes
 

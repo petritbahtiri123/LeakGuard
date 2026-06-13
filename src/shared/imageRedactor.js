@@ -84,8 +84,11 @@
     };
   }
 
-  function normalizeBoxes(boxes, dimensions) {
+  function normalizeBoxes(boxes, dimensions, options = {}) {
     if (!Array.isArray(boxes) || !boxes.length) {
+      if (options.allowNoBoxes === true) {
+        return { ok: true, boxes: [] };
+      }
       return fail("redaction_boxes_missing", "Visual redaction requires usable OCR bounding boxes.");
     }
 
@@ -136,7 +139,7 @@
     throw new Error("canvas_export_unavailable");
   }
 
-  async function drawWithBrowserCanvas({ imageBytes, imageBlob, mimeType, boxes }) {
+  async function drawWithBrowserCanvas({ imageBytes, imageBlob, mimeType, boxes, allowNoBoxes }) {
     if (typeof root.createImageBitmap !== "function" || typeof root.Blob !== "function") {
       throw new Error("image_decode_api_unavailable");
     }
@@ -154,7 +157,7 @@
         throw new Error(dimensions.status);
       }
 
-      const normalized = normalizeBoxes(boxes, dimensions);
+      const normalized = normalizeBoxes(boxes, dimensions, { allowNoBoxes });
       if (!normalized.ok) {
         throw new Error(normalized.status);
       }
@@ -195,7 +198,8 @@
     const dimensions = validateDimensions(options.dimensions);
     if (!dimensions.ok) return dimensions;
 
-    const boxes = normalizeBoxes(options.boxes, dimensions.width ? dimensions : null);
+    const allowNoBoxes = options.allowNoBoxes === true;
+    const boxes = normalizeBoxes(options.boxes, dimensions.width ? dimensions : null, { allowNoBoxes });
     if (!boxes.ok) return boxes;
 
     let bytes;
@@ -215,7 +219,8 @@
           : await drawWithBrowserCanvas({
               imageBytes: bytes,
               mimeType,
-              boxes: boxes.boxes
+              boxes: boxes.boxes,
+              allowNoBoxes
             });
       const fileName = redactedPngFileName(options.fileName);
       const result = {

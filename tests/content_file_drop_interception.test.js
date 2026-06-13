@@ -5954,10 +5954,12 @@ async function testDocumentAndImageFileInputUseContentExtractionPipelineForSanit
       fileName: "diagram-sk-proj-rawfilename.png",
       type: "image/png",
       rawText: "PNG bytes with raw filename secret",
-      outputName: "diagram-[PWM_1].redacted.txt",
-      outputKind: "redacted_text_file",
-      outputType: "text/plain",
-      extractedKind: "image_metadata"
+      outputName: "diagram-sk-proj-rawfilename.redacted.png",
+      outputKind: "redacted_image_file",
+      outputType: "image/png",
+      extractedKind: "image_ocr",
+      fileOnlyUpload: true,
+      skipTextFallback: true
     }
   ];
 
@@ -5971,8 +5973,13 @@ async function testDocumentAndImageFileInputUseContentExtractionPipelineForSanit
       name: item.outputName,
       type: item.outputType,
       size: 18,
-      text: "API_KEY=[PWM_1]"
+      text: item.fileOnlyUpload
+        ? async () => {
+            throw new Error("image sanitized file must not be read as text");
+          }
+        : "API_KEY=[PWM_1]"
     };
+    const sanitizedText = "API_KEY=[PWM_1]";
     const fileInput = createFileInput();
     fileInput.files = [rawFile];
     const composer = {
@@ -5993,15 +6000,17 @@ async function testDocumentAndImageFileInputUseContentExtractionPipelineForSanit
           outputName: item.outputName,
           outputKind: item.outputKind,
           extractedKind: item.extractedKind,
-          sanitizedText: sanitizedFile.text,
+          sanitizedText,
           sanitizedFile,
           metadata: {
             scan: {
               findingsCount: 1
             }
           },
-          warnings: item.extractedKind === "image_metadata" ? ["image_ocr_not_supported"] : [],
+          warnings: [],
           safeForUpload: true,
+          fileOnlyUpload: item.fileOnlyUpload === true,
+          skipTextFallback: item.skipTextFallback === true,
           fallbackReason: ""
         };
       },
@@ -6020,7 +6029,88 @@ async function testDocumentAndImageFileInputUseContentExtractionPipelineForSanit
     assert.strictEqual(calls.handoffs.length, 1, `${item.extractedKind} should hand off sanitized file`);
     assert.strictEqual(calls.handoffs[0].sanitizedFile, sanitizedFile);
     assert.strictEqual(calls.handoffs[0].sanitizedFile.name, item.outputName);
+    assert.strictEqual(calls.textFallbacks.length, 0, `${item.extractedKind} should not insert OCR text`);
     assert.strictEqual(JSON.stringify(calls.debugEvents).includes(item.rawText), false);
+  }
+}
+
+async function testSupportedImageFileInputAttachesSanitizedImageAcrossAdapters() {
+  const hosts = [
+    "chatgpt.com",
+    "chat.openai.com",
+    "gemini.google.com",
+    "grok.com",
+    "claude.ai",
+    "x.com",
+    "local.example"
+  ];
+
+  for (const hostname of hosts) {
+    const rawFile = createTextFile({
+      name: `${hostname.replace(/\W+/g, "-")}.png`,
+      type: "image/png",
+      text: "raw image bytes with sk-proj-ShouldNotReachProvider1234567890"
+    });
+    const sanitizedImage = {
+      name: `${hostname.replace(/\W+/g, "-")}.redacted.png`,
+      type: "image/png",
+      size: 256,
+      async text() {
+        throw new Error(`${hostname} image handoff must not read sanitized image as text`);
+      }
+    };
+    const fileInput = createFileInput();
+    fileInput.files = [rawFile];
+    const composer = {
+      tagName: "TEXTAREA",
+      text: "",
+      selection: { start: 0, end: 0 }
+    };
+    const { maybeHandleFileInputChange, calls } = createHarness({
+      location: { hostname },
+      findComposer: () => composer,
+      canExtractForAdapterHandoff: (file) => file?.name === rawFile.name,
+      processFileForAdapterHandoff: async () => ({
+        status: "ready",
+        originalName: rawFile.name,
+        outputName: sanitizedImage.name,
+        outputKind: "redacted_image_file",
+        extractedKind: "image_ocr",
+        sanitizedText: "API_KEY=[PWM_1]",
+        sanitizedFile: sanitizedImage,
+        sanitizedImageFile: sanitizedImage,
+        metadata: {
+          scan: {
+            findingsCount: 1
+          },
+          visualRedaction: {
+            output: "png",
+            protectedSiteEligible: true
+          }
+        },
+        warnings: [],
+        safeForUpload: true,
+        fileOnlyUpload: true,
+        skipTextFallback: true,
+        fallbackReason: ""
+      })
+    });
+
+    const result = await maybeHandleFileInputChange(createEvent({ type: "change", target: fileInput }).event);
+
+    assert.strictEqual(result.stage, "file", `${hostname} should complete as file handoff`);
+    assert.strictEqual(calls.handoffs.length, 1, `${hostname} should hand off sanitized image`);
+    assert.strictEqual(calls.handoffs[0].sanitizedFile, sanitizedImage, `${hostname} should receive sanitized image`);
+    assert.strictEqual(calls.handoffs[0].sanitizedFile.name.includes(".redacted"), true, `${hostname} output name`);
+    assert.match(calls.handoffs[0].sanitizedFile.type, /^image\/(?:png|jpeg|webp)$/);
+    assert.notStrictEqual(calls.handoffs[0].sanitizedFile, rawFile, `${hostname} must not hand off raw image`);
+    assert.strictEqual(calls.textFallbacks.length, 0, `${hostname} must not insert OCR text`);
+    assert.ok(
+      calls.debugEvents.some(
+        (entry) => entry.label === "file-ui:success-shown" && entry.details.status === "Sanitized image attached."
+      ),
+      `${hostname} should show image attach success UI`
+    );
   }
 }
 
@@ -6126,6 +6216,9 @@ async function testProtectedSiteImageHandoffFailureDoesNotTextFallback() {
   await maybeHandleFileInputChange(event);
 
   assert.strictEqual(event.defaultPrevented, true);
+  assert.ok(calls.debugEvents.some(
+    (entry) => entry.label === "file-ui:error-shown" && entry.details.status === "Raw image upload blocked"
+  ));
   assert.strictEqual(calls.handoffs.length, 1);
   assert.strictEqual(calls.handoffs[0].sanitizedFile, sanitizedImage);
   assert.strictEqual(calls.textFallbacks.length, 0, "image upload must not fall back to composer OCR text");
@@ -13420,6 +13513,7 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testSanitizedHandoffMixedRawFileDoesNotSuppressScan();
   await testSmallFileInputShowsProcessingUiThenDirectAttachSuccess();
   await testDocumentAndImageFileInputUseContentExtractionPipelineForSanitizedHandoff();
+  await testSupportedImageFileInputAttachesSanitizedImageAcrossAdapters();
   await testProtectedSiteImageOcrFailureBlocksRawUpload();
   await testProtectedSiteImageHandoffFailureDoesNotTextFallback();
   await testSupportedDocumentDropUsesContentExtractionPipelineBeforeUnsupportedNotice();

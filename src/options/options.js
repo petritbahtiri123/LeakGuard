@@ -244,7 +244,7 @@
       }
 
       protectedSiteOcrToggleEl.checked = response.enabled === true;
-      setProtectedSiteOcrFeedback(response.enabled ? "Protected-site image OCR opt-in saved." : "Protected-site image OCR is off.");
+      setProtectedSiteOcrFeedback(response.enabled ? "Protected-site image OCR is on." : "Protected-site image OCR is off.");
     } finally {
       protectedSiteOcrToggleEl.disabled = false;
     }

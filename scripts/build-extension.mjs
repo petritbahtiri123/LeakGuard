@@ -321,7 +321,7 @@ function buildInfoSource({ browser, mode, builtAt }) {
     ocr: Object.freeze({
       enabled: true,
       status: "image_ocr_v1",
-      scope: "scanner_and_protected_site_image_english_only_default_off"
+      scope: "scanner_and_protected_site_image_english_only_default_on_with_setting"
     })
   }),
   target: ${JSON.stringify(target)},

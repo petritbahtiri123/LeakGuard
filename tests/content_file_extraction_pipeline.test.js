@@ -527,24 +527,47 @@ async function testUnsafeXlsxInputsDoNotUploadRawOrRedactedXlsx() {
   }
 }
 
-async function testImageMetadataProducesRedactedTxtOutput() {
-  const file = fileFromBuffer(
-    `diagram-${RAW_SECRET}.png`,
-    "image/png",
-    bufferFromText("pixel bytes are not OCR input")
+async function testImageMetadataAttemptsProtectedSiteOcrByDefault() {
+  const originalRuntime = globalThis.PWM.OcrRuntime;
+  const ocrCalls = [];
+  const redactorCalls = [];
+  globalThis.PWM.OcrRuntime = makeProtectedSiteOcrRuntime(
+    {
+      text: "diagram title only",
+      layout: {
+        source: "word",
+        boxes: []
+      }
+    },
+    ocrCalls
   );
-  const result = await processFileForAdapterHandoff({ file, context: "drop" });
+  const restoreRedactor = installProtectedSiteImageRedactor(redactorCalls);
 
-  assertNormalizedReadyResult(result, {
-    originalName: `diagram-${RAW_SECRET}.png`,
-    outputName: "diagram-[PWM_1].redacted.txt",
-    outputKind: "redacted_text_file",
-    extractedKind: "image_metadata"
-  });
-  assert.ok(result.warnings.includes("image_ocr_not_supported"));
+  try {
+    const file = fileFromBuffer(
+      "diagram.png",
+      "image/png",
+      bufferFromText("pixel bytes are not OCR input")
+    );
+    const result = await processFileForAdapterHandoff({ file, context: "drop" });
+
+    assert.strictEqual(ocrCalls.length, 1);
+    assert.strictEqual(redactorCalls.length, 1);
+    assert.strictEqual(result.status, "ready");
+    assert.strictEqual(result.safeForUpload, true);
+    assert.strictEqual(result.outputKind, "redacted_image_file");
+    assert.strictEqual(result.extractedKind, "image_ocr");
+    assert.strictEqual(result.fileOnlyUpload, true);
+    assert.strictEqual(result.skipTextFallback, true);
+    assert.strictEqual(result.fallbackReason, "");
+    assert.strictEqual(JSON.stringify(result).includes("pixel bytes are not OCR input"), false);
+  } finally {
+    globalThis.PWM.OcrRuntime = originalRuntime;
+    restoreRedactor();
+  }
 }
 
-async function testProtectedSiteOcrDisabledByDefaultAndLocalPersistence() {
+async function testProtectedSiteOcrEnabledByDefaultAndLocalOptOutPersistence() {
   const localStore = {};
   const syncStore = {};
   const storageArea = {
@@ -564,6 +587,8 @@ async function testProtectedSiteOcrDisabledByDefaultAndLocalPersistence() {
     }
   };
 
+  assert.strictEqual(await isProtectedSiteOcrEnabled({ storageArea, syncStorageArea }), true);
+  await setProtectedSiteOcrEnabled(false, { storageArea, syncStorageArea });
   assert.strictEqual(await isProtectedSiteOcrEnabled({ storageArea, syncStorageArea }), false);
   await setProtectedSiteOcrEnabled(true, { storageArea, syncStorageArea });
   assert.strictEqual(await isProtectedSiteOcrEnabled({ storageArea, syncStorageArea }), true);
@@ -571,7 +596,7 @@ async function testProtectedSiteOcrDisabledByDefaultAndLocalPersistence() {
   assert.deepStrictEqual(syncStore, {});
 }
 
-async function testProtectedSiteImageAttachStaysMetadataOnlyWhenOcrSettingEnabled() {
+async function testProtectedSiteImageOcrNoFindingsStillProducesImageFile() {
   const originalHelper = globalThis.PWM.isProtectedSiteOcrEnabled;
   let helperCalls = 0;
   globalThis.PWM.isProtectedSiteOcrEnabled = async () => {
@@ -586,13 +611,19 @@ async function testProtectedSiteImageAttachStaysMetadataOnlyWhenOcrSettingEnable
         ok: true,
         status: "ocr_recognition_ready",
         language: "eng",
-        text: "ignored while implementation is absent",
-        textLength: 38,
+        text: "diagram title only",
+        textLength: 18,
         confidenceBucket: "high",
-        warnings: []
+        warnings: [],
+        layout: {
+          source: "word",
+          boxes: []
+        }
       });
     }
   };
+  const redactorCalls = [];
+  const restoreRedactor = installProtectedSiteImageRedactor(redactorCalls);
 
   try {
     const file = fileFromBuffer("photo.png", "image/png", bufferFromText("pixel bytes"));
@@ -600,10 +631,16 @@ async function testProtectedSiteImageAttachStaysMetadataOnlyWhenOcrSettingEnable
 
     assert.strictEqual(helperCalls, 1);
     assert.strictEqual(ocrCalls, 1);
+    assert.strictEqual(redactorCalls.length, 1);
+    assert.deepStrictEqual(redactorCalls[0].boxes, []);
     assert.strictEqual(result.status, "ready");
     assert.strictEqual(result.extractedKind, "image_ocr");
-    assert.strictEqual(result.outputName, "photo.redacted.txt");
-    assert.strictEqual(result.outputKind, "redacted_text_file");
+    assert.strictEqual(result.outputName, "photo.redacted.png");
+    assert.strictEqual(result.outputKind, "redacted_image_file");
+    assert.strictEqual(result.fileOnlyUpload, true);
+    assert.strictEqual(result.skipTextFallback, true);
+    assert.strictEqual(result.sanitizedImageFile, result.sanitizedFile);
+    assert.strictEqual(result.sanitizedFile.type, "image/png");
     assert.strictEqual(result.metadata.extraction.visualContentScanned, true);
     assert.strictEqual(result.metadata.extraction.ocrSupported, true);
     assert.ok(result.sanitizedText.includes("visual_text_scanned=true"));
@@ -612,6 +649,7 @@ async function testProtectedSiteImageAttachStaysMetadataOnlyWhenOcrSettingEnable
   } finally {
     globalThis.PWM.isProtectedSiteOcrEnabled = originalHelper;
     delete globalThis.PWM.OcrRuntime;
+    restoreRedactor();
   }
 }
 
@@ -739,6 +777,9 @@ async function testProtectedSiteImageOcrEnabledWithSafeBoxesProducesRedactedPng(
     assert.strictEqual(result.extractedKind, "image_ocr");
     assert.strictEqual(result.outputName, "photo.redacted.png");
     assert.strictEqual(result.outputKind, "redacted_image_file");
+    assert.strictEqual(result.fileOnlyUpload, true);
+    assert.strictEqual(result.skipTextFallback, true);
+    assert.strictEqual(result.sanitizedImageFile, result.sanitizedFile);
     assert.strictEqual(result.sanitizedFile.name, "photo.redacted.png");
     assert.strictEqual(result.sanitizedFile.type, "image/png");
     assert.strictEqual(result.sanitizedText.includes(rawSecret), false);
@@ -786,7 +827,7 @@ async function testProtectedSiteImageOcrEnabledWithLineBoxesProducesPngWithWarni
   }
 }
 
-async function testProtectedSiteImageOcrFallbackBoxesStayTextOnly() {
+async function testProtectedSiteImageOcrFallbackBoxesFailClosedWithoutTextOutput() {
   const originalHelper = globalThis.PWM.isProtectedSiteOcrEnabled;
   const rawSecret = "sk-proj-ProtectedSiteFallbackBoxes1234567890abcdef";
   const ocrText = `API_KEY=${rawSecret}`;
@@ -830,12 +871,15 @@ async function testProtectedSiteImageOcrFallbackBoxesStayTextOnly() {
     });
 
     assert.strictEqual(redactorCalls.length, 0);
-    assert.strictEqual(result.status, "ready");
-    assert.strictEqual(result.outputName, "photo.redacted.txt");
-    assert.strictEqual(result.outputKind, "redacted_text_file");
-    assert.strictEqual(result.sanitizedFile.type, "text/plain");
+    assert.strictEqual(result.status, "blocked");
+    assert.strictEqual(result.safeForUpload, false);
+    assert.strictEqual(result.sanitizedFile, null);
+    assert.strictEqual(result.outputName, "");
+    assert.strictEqual(result.outputKind, "");
+    assert.strictEqual(result.fallbackReason, "protected_site_visual_redaction_not_eligible");
     assert.ok(result.warnings.includes("image-redaction:ocr_fallback_boxes_used_scanner_only"));
-    assert.strictEqual(result.sanitizedText.includes(rawSecret), false);
+    assert.strictEqual(result.sanitizedText, "");
+    assert.strictEqual(JSON.stringify(result).includes(rawSecret), false);
   } finally {
     globalThis.PWM.isProtectedSiteOcrEnabled = originalHelper;
     delete globalThis.PWM.OcrRuntime;
@@ -897,7 +941,7 @@ async function testProtectedSiteImageOcrUnsafeBoxesFailClosed() {
   }
 }
 
-async function testProtectedSiteImageAttachStaysMetadataOnlyWhenOcrDisabled() {
+async function testProtectedSiteImageAttachBlocksWhenOcrDisabled() {
   const originalHelper = globalThis.PWM.isProtectedSiteOcrEnabled;
   let ocrCalls = 0;
   globalThis.PWM.isProtectedSiteOcrEnabled = async () => false;
@@ -922,15 +966,15 @@ async function testProtectedSiteImageAttachStaysMetadataOnlyWhenOcrDisabled() {
 
     assert.strictEqual(ocrCalls, 0);
     assert.strictEqual(imageRedactorCalls, 0);
-    assert.strictEqual(result.status, "ready");
+    assert.strictEqual(result.status, "blocked");
+    assert.strictEqual(result.safeForUpload, false);
+    assert.strictEqual(result.sanitizedFile, null);
+    assert.strictEqual(result.sanitizedText, "");
     assert.strictEqual(result.extractedKind, "image_metadata");
-    assert.strictEqual(result.outputName, "photo.redacted.txt");
-    assert.strictEqual(result.outputKind, "redacted_text_file");
-    assert.strictEqual(result.metadata.extraction.visualContentScanned, false);
-    assert.strictEqual(result.metadata.extraction.ocrSupported, false);
-    assert.ok(result.sanitizedText.includes("visual_text_scanned=false"));
-    assert.ok(result.sanitizedText.includes("image_ocr_supported=false"));
-    assert.ok(result.warnings.includes("image_ocr_not_supported"));
+    assert.strictEqual(result.outputName, "");
+    assert.strictEqual(result.outputKind, "");
+    assert.strictEqual(result.fallbackReason, "protected_site_image_ocr_disabled");
+    assert.ok(result.warnings.includes("image-redaction:protected_site_image_ocr_disabled"));
   } finally {
     globalThis.PWM.isProtectedSiteOcrEnabled = originalHelper;
     delete globalThis.PWM.OcrRuntime;
@@ -980,6 +1024,9 @@ async function testProtectedSiteImageOcrRedactsSupportedFormatsWhenEnabled() {
       assert.strictEqual(result.extractedKind, "image_ocr", fileName);
       assert.strictEqual(result.outputName, "photo.redacted.png", fileName);
       assert.strictEqual(result.outputKind, "redacted_image_file", fileName);
+      assert.strictEqual(result.fileOnlyUpload, true, fileName);
+      assert.strictEqual(result.skipTextFallback, true, fileName);
+      assert.strictEqual(result.sanitizedImageFile, result.sanitizedFile, fileName);
       assert.strictEqual(result.sanitizedFile.type, "image/png", fileName);
       assert.ok(result.sanitizedText.includes("API_KEY=[PWM_"), fileName);
       assert.strictEqual(result.sanitizedText.includes(rawSecret), false, fileName);
@@ -1450,13 +1497,13 @@ async function run() {
   await testXlsxProducesRedactedXlsxOutputWhenCompleteAndSafe();
   await testLargeXlsxFallsBackToRedactedTxtWhenRegeneratedXlsxWouldTruncate();
   await testUnsafeXlsxInputsDoNotUploadRawOrRedactedXlsx();
-  await testImageMetadataProducesRedactedTxtOutput();
-  await testProtectedSiteOcrDisabledByDefaultAndLocalPersistence();
-  await testProtectedSiteImageAttachStaysMetadataOnlyWhenOcrSettingEnabled();
-  await testProtectedSiteImageAttachStaysMetadataOnlyWhenOcrDisabled();
+  await testImageMetadataAttemptsProtectedSiteOcrByDefault();
+  await testProtectedSiteOcrEnabledByDefaultAndLocalOptOutPersistence();
+  await testProtectedSiteImageOcrNoFindingsStillProducesImageFile();
+  await testProtectedSiteImageAttachBlocksWhenOcrDisabled();
   await testProtectedSiteImageOcrEnabledWithSafeBoxesProducesRedactedPng();
   await testProtectedSiteImageOcrEnabledWithLineBoxesProducesPngWithWarning();
-  await testProtectedSiteImageOcrFallbackBoxesStayTextOnly();
+  await testProtectedSiteImageOcrFallbackBoxesFailClosedWithoutTextOutput();
   await testProtectedSiteImageOcrUnsafeBoxesFailClosed();
   await testProtectedSiteImageOcrRedactsSupportedFormatsWhenEnabled();
   await testProtectedSiteImageOcrEnabledLeavesUnsupportedImagesMetadataOnly();

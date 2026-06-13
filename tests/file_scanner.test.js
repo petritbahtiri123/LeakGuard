@@ -545,6 +545,26 @@ async function testImageRedactorProducesRedactedPngWithoutRawSecretBytes() {
   assert.ok(outputText.includes("covered=true"));
 }
 
+async function testImageRedactorCanProduceRedactedImageWithoutFindings() {
+  const imageBytes = bufferFromText("safe visible image bytes");
+  const redacted = await createRedactedPng({
+    imageBytes,
+    mimeType: "image/webp",
+    fileName: "safe-diagram.webp",
+    boxes: [],
+    allowNoBoxes: true,
+    canvasAdapter: async ({ boxes, mimeType }) => {
+      assert.strictEqual(mimeType, "image/webp");
+      assert.deepStrictEqual(boxes, []);
+      return new Blob(["re-encoded image bytes"], { type: "image/png" });
+    }
+  });
+
+  assert.strictEqual(redacted.ok, true);
+  assert.strictEqual(redacted.fileName, "safe-diagram.redacted.png");
+  assert.match(redacted.blob.type, /^image\/(?:png|jpeg|webp)$/);
+}
+
 function testLineColumnMapping() {
   const text = "first line\r\nsecond line\nAPI_KEY=value";
   assert.deepStrictEqual(getLineColumnFromOffset(text, 0), { line: 1, column: 1 });
@@ -573,6 +593,7 @@ testSupportedTextFormatFixturesRedactSecrets();
 testPublicIpRedactedPrivateIpVisible();
 testSplitAwsSecretLabelRedactedInTextFile();
 testImageRedactorProducesRedactedPngWithoutRawSecretBytes()
+  .then(() => testImageRedactorCanProduceRedactedImageWithoutFindings())
   .then(() => {
     testLineColumnMapping();
 

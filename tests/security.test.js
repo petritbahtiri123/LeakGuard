@@ -1521,6 +1521,24 @@ function testProtectedSiteOcrOptInStaysLocalAndGateBound() {
       contentFileExtractionPipelineSource.includes("fallbackReason: ocrExtraction.status"),
     "failed protected-site OCR attempts should return a blocked result rather than raw upload fallback"
   );
+  assert.ok(
+    contentFileExtractionPipelineSource.includes('outputKind: "redacted_image_file"') &&
+      contentFileExtractionPipelineSource.includes("fileOnlyUpload: true") &&
+      contentFileExtractionPipelineSource.includes("skipTextFallback: true") &&
+      contentFileExtractionPipelineSource.includes("protected_site_image_ocr_disabled"),
+    "successful protected-site image redaction should produce a file-only redacted image and disabled OCR should block"
+  );
+  assert.ok(
+    contentSource.includes("payload.allowFileOnlyHandoff = true;") &&
+      contentSource.includes("payload.imageRedactionMode = true;") &&
+      fileAttachPipelineSource.includes("Sanitized image attached."),
+    "content handoff should disable image OCR text fallback and report image file attachment success"
+  );
+  assert.strictEqual(
+    contentFileExtractionPipelineSource.includes("fallbackTextOnly"),
+    false,
+    "protected-site image redaction must not keep a sanitized text-only success fallback"
+  );
   assert.strictEqual(
     /new\s+Worker|chrome\.storage|browser\.storage|localStorage|sessionStorage|console\.(?:log|warn|error)/.test(
       contentFileExtractionPipelineSource

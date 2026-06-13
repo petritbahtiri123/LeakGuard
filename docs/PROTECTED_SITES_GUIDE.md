@@ -53,7 +53,7 @@ On a protected site, LeakGuard can inspect supported composer text and supported
 
 Text PDF, DOCX, and XLSX outputs on protected sites can be regenerated as `.redacted.pdf`, `.redacted.docx`, or `.redacted.xlsx` from sanitized extracted text only when complete; truncated or unsafe regeneration falls back to `.redacted.txt` or blocks raw upload. Image metadata and OCR text outputs on protected sites are `.redacted.txt`. LeakGuard does not preserve original document layout, formulas, charts, styles, comments, hidden sheets, metadata, custom XML, calc chains, or media.
 
-Protected-site image OCR is opt-in and default off. When enabled, it runs locally, supports English-only PNG/JPG/JPEG/WEBP image OCR, and uploads a flattened `.redacted.png` only when OCR boxes are eligible for visual redaction. If OCR fails, times out, or produces ineligible boxes for a raw image upload path, LeakGuard blocks raw upload rather than sending the original image.
+Protected-site image OCR is settings-controlled and enabled by default for supported image uploads. It runs locally, supports English-only PNG/JPG/JPEG/WEBP image OCR, and uploads a flattened `.redacted.png` only when OCR boxes are eligible for visual redaction. Users can turn it off in settings. If OCR fails, times out, or produces ineligible boxes for a raw image upload path, LeakGuard blocks raw upload rather than sending the original image.
 
 LeakGuard does not provide scanned-PDF OCR, non-English OCR, remote OCR/backend processing, telemetry, cloud verification, remote model calls, or image format preservation.
 

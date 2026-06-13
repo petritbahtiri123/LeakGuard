@@ -9,7 +9,7 @@
 - Confirm Tier B release validation passes before publishing packages: `npm run test:release-gates`.
 - Confirm the built manifest includes `content_security_policy.extension_pages` with LeakGuard's restrictive extension-page CSP.
 - Confirm the built manifest does not add new host permissions for File Scanner.
-- Confirm protected-site image OCR remains opt-in and default off.
+- Confirm protected-site image OCR is settings-controlled, enabled by default for supported image uploads, and can be turned off.
 - Confirm image redaction support is documented for PNG, JPG, JPEG, and WEBP inputs, with fail-closed behavior if OCR, canvas decode/draw, redaction, sanitized export, or provider handoff fails.
 
 ## CI And Nightly Validation
@@ -164,5 +164,5 @@
 - Review the Chrome Web Store copy in `docs/CHROME_WEB_STORE_LISTING.md`.
 - Review the Firefox AMO submission notes in `docs/FIREFOX_AMO_CHECKLIST.md` if publishing a Firefox package.
 - Review release-facing wording for Firefox Add-ons suitability: local-only processing, no telemetry, no cloud processing, no remote model calls, and no perfect-protection claims.
-- Review [FILE_CAPABILITY_MATRIX.md](FILE_CAPABILITY_MATRIX.md) against release copy: scanner and protected-site text PDFs, DOCX, and XLSX can export regenerated files from sanitized text only, protected-site regenerated outputs fall back to `.redacted.txt` when regeneration would truncate, scanner visual image redaction exports PNG, protected-site OCR is opt-in/default off, no scanned-PDF OCR, no non-English OCR, no remote OCR/backend, and no image format preservation.
+- Review [FILE_CAPABILITY_MATRIX.md](FILE_CAPABILITY_MATRIX.md) against release copy: scanner and protected-site text PDFs, DOCX, and XLSX can export regenerated files from sanitized text only, protected-site regenerated outputs fall back to `.redacted.txt` when regeneration would truncate, scanner visual image redaction exports PNG, protected-site OCR is settings-controlled/default-on for supported image uploads with opt-out, no scanned-PDF OCR, no non-English OCR, no remote OCR/backend, and no image format preservation.
 - GO/NO-GO for image redaction: GO only after supported image fixtures produce sanitized outputs with no visible/searchable raw fake secret; NO-GO if image OCR, canvas processing, redaction, export, or provider handoff fails without blocking raw upload.

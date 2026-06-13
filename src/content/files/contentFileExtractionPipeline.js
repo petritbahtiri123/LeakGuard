@@ -150,6 +150,23 @@
     };
   }
 
+  function isImageExtractionKind(kind) {
+    return kind === "image_metadata" || kind === "image_ocr";
+  }
+
+  function createImageBlockedResult(reason, options = {}) {
+    const code = reason || "image_redaction_file_unavailable";
+    return createEmptyResult("blocked", {
+      originalName: options.originalName,
+      mimeType: options.mimeType,
+      sizeBytes: options.sizeBytes,
+      extractedKind: options.extractedKind || "image_ocr",
+      extractionMetadata: options.extractionMetadata,
+      warnings: listWarnings(options.warnings, [`image-redaction:${code}`]),
+      fallbackReason: code
+    });
+  }
+
   function createTextFile(text, outputName, mimeType) {
     const FilePasteHelpers = root.PWM.FilePasteHelpers || {};
     if (typeof FilePasteHelpers.createSanitizedTextFile === "function") {
@@ -306,10 +323,7 @@
   async function createProtectedSiteRedactedImage({ imageBytes, ocrExtraction, scan, originalName, mimeType } = {}) {
     const scannerOcr = getScannerOcr();
     const imageRedactor = getImageRedactor();
-    if (
-      typeof scannerOcr.redactionBoxesForOcrFindings !== "function" ||
-      typeof imageRedactor.createRedactedPng !== "function"
-    ) {
+    if (typeof imageRedactor.createRedactedPng !== "function") {
       return {
         ok: false,
         status: "image_redactor_unavailable",
@@ -317,12 +331,30 @@
       };
     }
 
-    const boxMapping = scannerOcr.redactionBoxesForOcrFindings({
-      ocr: ocrExtraction.ocr,
-      scanResult: scan,
-      scanText: ocrExtraction.text,
-      ocrText: ocrExtraction.ocr?.text
-    });
+    let boxMapping = {
+      ok: true,
+      boxKind: "none",
+      fallbackUsed: false,
+      protectedSiteEligible: true,
+      warnings: [],
+      boxes: []
+    };
+    const hasFindings = Number(scan?.summary?.findingsCount || 0) > 0;
+    if (hasFindings) {
+      if (typeof scannerOcr.redactionBoxesForOcrFindings !== "function") {
+        return {
+          ok: false,
+          status: "image_redactor_unavailable",
+          warnings: ["image_redactor_unavailable"]
+        };
+      }
+      boxMapping = scannerOcr.redactionBoxesForOcrFindings({
+        ocr: ocrExtraction.ocr,
+        scanResult: scan,
+        scanText: ocrExtraction.text,
+        ocrText: ocrExtraction.ocr?.text
+      });
+    }
     const warnings = listWarnings((boxMapping?.warnings || []).map((warning) => `image-redaction:${warning}`));
 
     if (!boxMapping?.ok) {
@@ -335,8 +367,7 @@
 
     if (boxMapping.fallbackUsed === true || boxMapping.protectedSiteEligible !== true) {
       return {
-        ok: true,
-        fallbackTextOnly: true,
+        ok: false,
         status: "protected_site_visual_redaction_not_eligible",
         warnings
       };
@@ -346,7 +377,8 @@
       imageBytes,
       mimeType,
       fileName: originalName,
-      boxes: boxMapping.boxes
+      boxes: boxMapping.boxes,
+      allowNoBoxes: !hasFindings
     });
     if (!redactedImage?.ok || !redactedImage.blob) {
       return {
@@ -372,6 +404,7 @@
       outputName,
       outputKind: "redacted_image_file",
       sanitizedFile,
+      sanitizedImageFile: sanitizedFile,
       warnings,
       boxKind: boxMapping.boxKind
     };
@@ -402,6 +435,8 @@
       sizeBytes
     });
     const skipSessionCache = routed?.kind === "image_metadata";
+    const protectedSiteImageCandidate = routed?.kind === "image_metadata";
+    const protectedSiteOcrEnabled = protectedSiteImageCandidate ? await getProtectedSiteOcrGate() : false;
 
     if (
       !file ||
@@ -413,6 +448,16 @@
         mimeType,
         sizeBytes,
         fallbackReason: "content_file_pipeline_unavailable"
+      });
+    }
+
+    if (protectedSiteImageCandidate && !protectedSiteOcrEnabled) {
+      return createImageBlockedResult("protected_site_image_ocr_disabled", {
+        originalName,
+        mimeType,
+        sizeBytes,
+        extractedKind: "image_metadata",
+        warnings: ["image-redaction:protected_site_image_ocr_disabled"]
       });
     }
 
@@ -474,8 +519,6 @@
     }
 
     let text = "";
-    const protectedSiteOcrEnabled =
-      routed?.kind === "image_metadata" ? await getProtectedSiteOcrGate() : false;
     if (routed?.kind === "text") {
       try {
         text = await readFileText(file, buffer);
@@ -740,8 +783,7 @@
     if (
       protectedSiteOcrEnabled &&
       protectedSiteImageOcrExtraction &&
-      extractedKind === "image_ocr" &&
-      Number(scan.summary?.findingsCount || 0) > 0
+      extractedKind === "image_ocr"
     ) {
       const redactedImage = await createProtectedSiteRedactedImage({
         imageBytes: buffer,
@@ -752,54 +794,63 @@
       });
 
       if (!redactedImage.ok) {
-        return createEmptyResult("blocked", {
+        return createImageBlockedResult(redactedImage.status || "image_redaction_failed", {
           originalName,
           mimeType,
           sizeBytes,
           extractedKind,
           extractionMetadata,
-          warnings: redactedImage.warnings,
-          fallbackReason: redactedImage.status || "image_redaction_failed"
+          warnings: redactedImage.warnings
         });
       }
 
-      if (!redactedImage.fallbackTextOnly) {
-        return {
-          status: "ready",
-          originalName,
-          outputName: redactedImage.outputName,
-          outputKind: redactedImage.outputKind,
-          extractedKind,
-          sanitizedText,
-          sanitizedFile: redactedImage.sanitizedFile,
-          metadata: {
-            original: {
-              name: normalizeFileName(scan.file?.name || originalName),
-              type: mimeType,
-              size: sizeBytes
-            },
-            extraction: sanitizeExtractionMetadata(extractionMetadata),
-            scan: {
-              findingsCount: Number(scan.summary?.findingsCount || 0),
-              changed: scan.summary?.changed === true,
-              redactedLength: sanitizedText.length
-            },
-            visualRedaction: {
-              output: "png",
-              boxKind: redactedImage.boxKind || "",
-              protectedSiteEligible: true
-            },
-            cache: {
-              status: "miss"
-            }
+      return {
+        status: "ready",
+        originalName,
+        outputName: redactedImage.outputName,
+        outputKind: redactedImage.outputKind,
+        extractedKind,
+        sanitizedText,
+        sanitizedFile: redactedImage.sanitizedFile,
+        sanitizedImageFile: redactedImage.sanitizedImageFile || redactedImage.sanitizedFile,
+        fileOnlyUpload: true,
+        skipTextFallback: true,
+        metadata: {
+          original: {
+            name: normalizeFileName(scan.file?.name || originalName),
+            type: mimeType,
+            size: sizeBytes
           },
-          warnings: listWarnings(extractionWarnings, scan.reportWarnings, redactedImage.warnings),
-          safeForUpload: true,
-          fallbackReason: ""
-        };
-      }
+          extraction: sanitizeExtractionMetadata(extractionMetadata),
+          scan: {
+            findingsCount: Number(scan.summary?.findingsCount || 0),
+            changed: scan.summary?.changed === true,
+            redactedLength: sanitizedText.length
+          },
+          visualRedaction: {
+            output: "png",
+            boxKind: redactedImage.boxKind || "",
+            protectedSiteEligible: true
+          },
+          cache: {
+            status: "miss"
+          }
+        },
+        warnings: listWarnings(extractionWarnings, scan.reportWarnings, redactedImage.warnings),
+        safeForUpload: true,
+        fallbackReason: ""
+      };
+    }
 
-      extractionWarnings = listWarnings(extractionWarnings, redactedImage.warnings);
+    if (isImageExtractionKind(extractedKind)) {
+      return createImageBlockedResult("image_redaction_file_unavailable", {
+        originalName,
+        mimeType,
+        sizeBytes,
+        extractedKind,
+        extractionMetadata,
+        warnings: extractionWarnings
+      });
     }
 
     const outputName = EXTRACTED_TEXT_OUTPUT_KINDS.has(extractedKind)

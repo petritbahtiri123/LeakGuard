@@ -7,7 +7,7 @@ store listing, or alternate user-facing build.
 ## Current State
 
 LeakGuard now has local English-only image OCR for the extension-owned scanner
-page and an opt-in/default-off protected-site image OCR path. Protected-site
+page and a settings-controlled protected-site image OCR path. Protected-site
 visual image redaction uploads a flattened `.redacted.png` only when OCR boxes
 are eligible. Scanner visual image redaction also exports PNG.
 
@@ -53,9 +53,9 @@ OCR must not use:
 
 ## Rollout Order
 
-Scanner page OCR shipped first. Protected-site OCR remains an explicit opt-in
-and must stay default off until QA and product review approve any broader
-default. Drag/drop OCR outside the protected-site opt-in path, composer OCR, or
+Scanner page OCR shipped first. Protected-site OCR is now settings-controlled
+and enabled by default for supported image uploads after QA and product review
+of the local-only fail-closed flow. Drag/drop OCR outside the protected-site settings path, composer OCR, or
 automatic page-side OCR must wait until scanner/protected-site OCR remains
 stable, locally contained, and covered by browser QA.
 
@@ -81,7 +81,7 @@ assets can ship.
 Tests must continue to prove:
 
 - CSP keeps `'wasm-unsafe-eval'` but never `'unsafe-eval'`
-- protected-site OCR is opt-in and default off
+- protected-site OCR is settings-controlled, enabled by default for supported image uploads, and can be turned off
 - no remote OCR, CDN, or model-download strings appear in runtime packages
 - OCR assets, when added later, are loaded only from extension package URLs
 - raw OCR result text, raw image bytes, and redaction boxes are not persisted,
