@@ -1220,9 +1220,9 @@ async function run() {
     {
       enabled: true,
       status: "image_ocr_v1",
-      scope: "scanner_and_protected_site_image_english_only_default_off"
+      scope: "scanner_and_protected_site_image_english_only_default_on_with_setting"
     },
-    "default consumer build should expose scanner OCR and default-off protected-site image OCR metadata"
+    "default consumer build should expose scanner OCR and default-on protected-site image OCR metadata"
   );
   assert.strictEqual(chromeEnterpriseBuildInfo.enterprise, true, "chrome enterprise build should mark enterprise");
   assert.strictEqual(
@@ -1237,7 +1237,7 @@ async function run() {
       {
         enabled: true,
         status: "image_ocr_v1",
-        scope: "scanner_and_protected_site_image_english_only_default_off"
+        scope: "scanner_and_protected_site_image_english_only_default_on_with_setting"
       },
       `${target} should report image OCR v1 metadata`
     );
@@ -1267,7 +1267,8 @@ async function run() {
       scannerHtml.includes("limited to image files on this scanner page") &&
       scannerHtml.includes("Scanner image visual redaction outputs a flattened PNG") &&
       scannerHtml.includes("JPG, JPEG, and WEBP inputs are not preserved as their original format") &&
-      scannerHtml.includes("Protected-site upload OCR is off by default") &&
+      scannerHtml.includes("Protected-site upload OCR is on by default for supported image uploads") &&
+      scannerHtml.includes("can be turned off in settings") &&
       scannerHtml.includes("flattened redacted PNG only when OCR box confidence is eligible") &&
       scannerHtml.includes("Text PDF scanner results can also export a .redacted.pdf regenerated from sanitized extracted text") &&
       scannerHtml.includes("DOCX scanner results can also export a .redacted.docx regenerated from sanitized extracted text") &&
@@ -1283,7 +1284,7 @@ async function run() {
       scannerHtml.includes("original XLSX XML parts are not copied") &&
       scannerHtml.includes("layout-preserving PDF/DOCX/XLSX redaction") &&
       scannerHtml.includes("image format preservation"),
-    "scanner UI should scope OCR to local English image scanning, scanner/protected-site PNG visual redaction, default-off protected-site OCR, and explicitly exclude scanned PDFs, rebuilds, and format preservation"
+    "scanner UI should scope OCR to local English image scanning, scanner/protected-site PNG visual redaction, settings-controlled protected-site OCR, and explicitly exclude scanned PDFs, rebuilds, and format preservation"
   );
   for (const [target, manifest] of [
     ["chrome", chromeManifest],

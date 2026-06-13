@@ -252,7 +252,7 @@ function assertStoreDocsConsistency() {
     /remote OCR/i,
     /cloud verification|remote verification|cloud processing/i,
     /English-only/i,
-    /opt-in|default off/i,
+    /settings-controlled|enabled by default|can be turned off|opt-in|default off/i,
     /\.redacted\.(?:png|pdf|docx|xlsx)/i,
     /not layout-preserving|layout-preserving|does not preserve .*layout|no .*layout preservation|layout preservation/i,
     /unsupported|not supported|limitations/i,

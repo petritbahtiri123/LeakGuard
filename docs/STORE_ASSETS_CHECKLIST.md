@@ -79,7 +79,7 @@ Current behavior boundaries that store assets must preserve:
 
 - LeakGuard is local-only and uses no backend secret processing, telemetry, cloud scanning, remote model calls, or remote verification.
 - LeakGuard is risk reduction, not full DLP, perfect protection, guaranteed detection, compliance certification, credential lifecycle management, or repository-history scanning.
-- File support is limited to supported UTF-8 text files. PDF, DOCX, images, archives, executables, OCR, screenshots, and binary files are not scanned or redacted in this release.
+- File support is scoped: supported UTF-8 text files, text PDFs, DOCX/XLSX text extraction, and PNG/JPG/JPEG/WEBP image metadata/OCR paths run locally. Archives, executables, legacy/macro Office files, screenshots outside selected files, unsupported images, and arbitrary binary files are not scanned or redacted in this release.
 - Supported text-file upload paths must be described as browser/site dependent. Do not claim support for every editor, upload flow, browser, or synthetic file handoff path.
 - Edge should be described as Chromium-compatible using the Chrome target unless a release-specific Edge QA record supports stronger wording.
 - Enterprise policy should be described as in-extension policy support, not browser-level force install, removal prevention, SIEM integration, or compliance certification.

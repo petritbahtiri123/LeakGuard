@@ -61,7 +61,7 @@ The automation verifies the release-facing docs consistently cover the current p
 - no remote OCR
 - no cloud verification
 - OCR is local English-only
-- protected-site OCR/image redaction is opt-in/default-off where applicable
+- protected-site OCR/image redaction is settings-controlled/default-on with opt-out where applicable
 - scanner/protected-site rebuilt outputs exist for image, PDF, DOCX, and XLSX
 - rebuilt document outputs are not layout-preserving
 - unsupported limitations are explicit

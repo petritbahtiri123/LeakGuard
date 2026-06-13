@@ -866,7 +866,8 @@ function testScannerUiCopyScopesOcrV1() {
   assert.ok(scannerHtml.includes("not layout-preserving"));
   assert.ok(scannerHtml.includes(".redacted.txt remains available as the fallback"));
   assert.ok(scannerHtml.includes("Protected-site text PDF output can hand off a regenerated .redacted.pdf when complete"));
-  assert.ok(scannerHtml.includes("Protected-site upload OCR is off by default"));
+  assert.ok(scannerHtml.includes("Protected-site upload OCR is on by default for supported image uploads"));
+  assert.ok(scannerHtml.includes("can be turned off in settings"));
   assert.ok(scannerHtml.includes("flattened redacted PNG only when OCR box confidence is eligible"));
   assert.ok(scannerHtml.includes("layout-preserving PDF/DOCX/XLSX redaction"));
   assert.ok(scannerHtml.includes("image format preservation"));

@@ -9,7 +9,8 @@
 - Confirm Tier B release validation passes before publishing packages: `npm run test:release-gates`.
 - Confirm the built manifest includes `content_security_policy.extension_pages` with LeakGuard's restrictive extension-page CSP.
 - Confirm the built manifest does not add new host permissions for File Scanner.
-- Confirm protected-site image OCR remains opt-in and default off.
+- Confirm protected-site image OCR is settings-controlled, enabled by default for supported image uploads, and can be turned off.
+- Confirm image redaction support is documented for PNG, JPG, JPEG, and WEBP inputs, with fail-closed behavior if OCR, canvas decode/draw, redaction, sanitized export, or provider handoff fails.
 
 ## CI And Nightly Validation
 
@@ -85,6 +86,7 @@
 - Select an XLSX with a synthetic secret and confirm the scanner exports `.redacted.txt` plus a simple regenerated `.redacted.xlsx`, does not execute formulas, and does not preserve original XLSX XML parts.
 - Select PNG/JPG/JPEG/WEBP images and confirm metadata scanning is local and pixel OCR runs only when scanner OCR is explicitly started.
 - Run scanner image OCR on an English PNG/JPG/JPEG/WEBP with a synthetic secret and confirm redacted text export plus eligible flattened `.redacted.png` visual export.
+- Open the redacted image in a local viewer, visually inspect that the secret region is covered, and search the JSON report/redacted text export for the raw fake secret.
 - Confirm scanner OCR copy says English-only, local-only, no remote OCR/backend, no scanned-PDF OCR, no non-English OCR, no image format preservation, no layout-preserving PDF/DOCX/XLSX redaction, and no original Office document reconstruction.
 - Select unsupported files such as `.zip`, `.exe`, legacy `.doc`, legacy `.xls`, `.xlsm`, `.gif`, `.svg`, and arbitrary binary files and confirm the text-only release message appears.
 
@@ -102,6 +104,7 @@
 - Confirm PDF, DOCX, XLSX, and image metadata uploads on protected sites produce sanitized outputs where supported: complete text PDFs may hand off regenerated `.redacted.pdf`, complete DOCX files may hand off regenerated `.redacted.docx`, complete XLSX files may hand off regenerated `.redacted.xlsx`, and unsafe/truncated cases fall back to `.redacted.txt` or block raw upload.
 - Confirm protected-site OCR is off by default and image uploads use metadata-only `.redacted.txt` unless OCR has been explicitly enabled.
 - Enable protected-site OCR, upload an eligible PNG/JPG/JPEG/WEBP image with a synthetic secret, and confirm the site receives `.redacted.png` only when OCR boxes are eligible.
+- Gemini image upload check: with protected-site OCR enabled, upload or drag/drop a PNG/JPG/JPEG/WEBP image with a visible synthetic secret and confirm Gemini receives only the sanitized image file or a safe fallback/download path.
 - Enable protected-site OCR, upload an image with fallback/ineligible boxes or forced OCR failure, and confirm LeakGuard blocks raw upload.
 - Confirm unsupported/binary/invalid UTF-8 files show clear warning or blocking behavior without claiming they were scanned, sanitized, or protected.
 - Confirm unsupported files are not falsely marked as protected or sanitized.
@@ -161,4 +164,5 @@
 - Review the Chrome Web Store copy in `docs/CHROME_WEB_STORE_LISTING.md`.
 - Review the Firefox AMO submission notes in `docs/FIREFOX_AMO_CHECKLIST.md` if publishing a Firefox package.
 - Review release-facing wording for Firefox Add-ons suitability: local-only processing, no telemetry, no cloud processing, no remote model calls, and no perfect-protection claims.
-- Review [FILE_CAPABILITY_MATRIX.md](FILE_CAPABILITY_MATRIX.md) against release copy: scanner and protected-site text PDFs, DOCX, and XLSX can export regenerated files from sanitized text only, protected-site regenerated outputs fall back to `.redacted.txt` when regeneration would truncate, scanner visual image redaction exports PNG, protected-site OCR is opt-in/default off, no scanned-PDF OCR, no non-English OCR, no remote OCR/backend, and no image format preservation.
+- Review [FILE_CAPABILITY_MATRIX.md](FILE_CAPABILITY_MATRIX.md) against release copy: scanner and protected-site text PDFs, DOCX, and XLSX can export regenerated files from sanitized text only, protected-site regenerated outputs fall back to `.redacted.txt` when regeneration would truncate, scanner visual image redaction exports PNG, protected-site OCR is settings-controlled/default-on for supported image uploads with opt-out, no scanned-PDF OCR, no non-English OCR, no remote OCR/backend, and no image format preservation.
+- GO/NO-GO for image redaction: GO only after supported image fixtures produce sanitized outputs with no visible/searchable raw fake secret; NO-GO if image OCR, canvas processing, redaction, export, or provider handoff fails without blocking raw upload.

@@ -34,6 +34,11 @@ const filePasteHelperSource = fs.readFileSync(
   path.join(repoRoot, "src/content/file_paste_helpers.js"),
   "utf8"
 );
+const fileLimitsSource = fs.readFileSync(path.join(repoRoot, "src/shared/fileLimits.js"), "utf8");
+const fileTransferPolicySource = fs.readFileSync(
+  path.join(repoRoot, "src/content/files/fileTransferPolicy.js"),
+  "utf8"
+);
 const fileExtractorsSource = fs.readFileSync(
   path.join(repoRoot, "src/shared/fileExtractors.js"),
   "utf8"
@@ -1215,6 +1220,8 @@ async function run() {
   testExtensionPagesUseRestrictiveCsp(manifest);
   testOcrSpikeDoesNotEnterProductionPackage(manifest);
   testProtectedSiteOcrOptInStaysLocalAndGateBound();
+  testImageRedactionCopyDoesNotPromiseRawUploadPassThrough();
+  testUnsupportedProtectedImagesCannotReachRawReplayBranch();
   await testProtectedSiteOcrBrokerRejectsMalformedMessages();
   testProtectedSiteOcrBrokerMessageSurfaceIsNarrow();
   testPageUiNoLongerLeaksClassificationsOrMaskedFragments();
@@ -1514,6 +1521,24 @@ function testProtectedSiteOcrOptInStaysLocalAndGateBound() {
       contentFileExtractionPipelineSource.includes("fallbackReason: ocrExtraction.status"),
     "failed protected-site OCR attempts should return a blocked result rather than raw upload fallback"
   );
+  assert.ok(
+    contentFileExtractionPipelineSource.includes('outputKind: "redacted_image_file"') &&
+      contentFileExtractionPipelineSource.includes("fileOnlyUpload: true") &&
+      contentFileExtractionPipelineSource.includes("skipTextFallback: true") &&
+      contentFileExtractionPipelineSource.includes("protected_site_image_ocr_disabled"),
+    "successful protected-site image redaction should produce a file-only redacted image and disabled OCR should block"
+  );
+  assert.ok(
+    contentSource.includes("payload.allowFileOnlyHandoff = true;") &&
+      contentSource.includes("payload.imageRedactionMode = true;") &&
+      fileAttachPipelineSource.includes("Sanitized image attached."),
+    "content handoff should disable image OCR text fallback and report image file attachment success"
+  );
+  assert.strictEqual(
+    contentFileExtractionPipelineSource.includes("fallbackTextOnly"),
+    false,
+    "protected-site image redaction must not keep a sanitized text-only success fallback"
+  );
   assert.strictEqual(
     /new\s+Worker|chrome\.storage|browser\.storage|localStorage|sessionStorage|console\.(?:log|warn|error)/.test(
       contentFileExtractionPipelineSource
@@ -1521,6 +1546,60 @@ function testProtectedSiteOcrOptInStaysLocalAndGateBound() {
     false,
     "protected-site OCR pipeline must not directly construct workers, persist OCR text, or log OCR text"
   );
+}
+
+function testImageRedactionCopyDoesNotPromiseRawUploadPassThrough() {
+  for (const [label, source] of [
+    ["file limits", fileLimitsSource],
+    ["file paste helper", filePasteHelperSource],
+    ["file transfer policy", fileTransferPolicySource],
+    ["content script", contentSource]
+  ]) {
+    assertNotIncludes(
+      source,
+      "PDF, DOCX, images, archives, executables, and binary files",
+      `${label} must not describe supported images as unsupported files`
+    );
+    assertNotIncludes(
+      source,
+      "Normal upload may continue through the site.",
+      `${label} must not promise raw upload continuation for protected-site file failures`
+    );
+  }
+}
+
+function testUnsupportedProtectedImagesCannotReachRawReplayBranch() {
+  assert.ok(
+    contentSource.includes("isUnsupportedImageFileForProtectedUpload"),
+    "content script should identify unsupported image uploads for protected fail-closed handling"
+  );
+  for (const extension of ['".gif"', '".bmp"', '".ico"', '".svg"']) {
+    assert.ok(contentSource.includes(extension), `protected unsupported image guard should cover ${extension}`);
+  }
+  assert.ok(
+    contentSource.includes("image/"),
+    "protected unsupported image guard should cover unsupported image/* MIME types"
+  );
+  assert.ok(
+    contentSource.includes("Raw image upload blocked. This image type is not supported for safe redaction."),
+    "protected unsupported image UX should explain fail-closed image blocking"
+  );
+
+  const failClosedSource = extractFunctionSource(contentSource, "shouldFailClosedProtectedUnsupportedFileTransfer");
+  assert.ok(
+    failClosedSource.includes("isUnsupportedImageFileForProtectedUpload"),
+    "protected unsupported fail-closed helper should include unsupported images"
+  );
+
+  const blockIndex = contentSource.indexOf("shouldFailClosedProtectedUnsupportedFileTransfer(transferPolicy)");
+  const replayIndex = contentSource.indexOf('handOffOriginalLocalFile(event, snapshotDataTransfer, "drop")');
+  assert.notStrictEqual(blockIndex, -1, "drop handler should check protected unsupported fail-closed policy");
+  if (replayIndex !== -1) {
+    assert.ok(
+      blockIndex < replayIndex,
+      "protected unsupported image block must run before any raw original Gemini replay"
+    );
+  }
 }
 
 function testProtectedSiteOcrBrokerMessageSurfaceIsNarrow() {

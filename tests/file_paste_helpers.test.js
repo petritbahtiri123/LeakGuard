@@ -24,9 +24,10 @@ function assertExplicitUnsupportedWarning(message) {
   const text = String(message || "").toLowerCase();
   assert.ok(text.includes("did not scan"), "warning should say the file was not scanned");
   assert.ok(text.includes("redact"), "warning should say the file was not redacted");
-  assert.ok(text.includes("unsupported file types"), "warning should identify unsupported file types");
-  assert.ok(text.includes("not protected in this release"), "warning should say unsupported files are not protected in this release");
-  assert.ok(text.includes("normal upload may continue"), "warning should say normal upload may continue");
+  assert.ok(text.includes("supported text"), "warning should identify supported file paths");
+  assert.ok(text.includes("png/jpg/jpeg/webp"), "warning should identify supported image paths");
+  assert.ok(text.includes("blocked on protected sites"), "warning should describe protected-site blocking");
+  assert.strictEqual(text.includes("normal upload may continue"), false, "warning must not promise raw upload continuation");
   assert.strictEqual(text.includes("sanitized"), false, "warning must not claim sanitization");
 }
 

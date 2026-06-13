@@ -41,6 +41,19 @@ require(path.join(repoRoot, "src/content/file_paste_helpers.js"));
 require(path.join(repoRoot, "src/content/composer_helpers.js"));
 require(path.join(repoRoot, "src/content/input/rewriteVerificationText.js"));
 require(path.join(repoRoot, "src/content/files/fileTransferPolicy.js"));
+require(path.join(repoRoot, "src/shared/entropy.js"));
+require(path.join(repoRoot, "src/shared/patterns.js"));
+require(path.join(repoRoot, "src/shared/detector.js"));
+require(path.join(repoRoot, "src/shared/placeholders.js"));
+require(path.join(repoRoot, "src/shared/sessionMapStore.js"));
+require(path.join(repoRoot, "src/shared/ipClassification.js"));
+require(path.join(repoRoot, "src/shared/ipDetection.js"));
+require(path.join(repoRoot, "src/shared/networkHierarchy.js"));
+require(path.join(repoRoot, "src/shared/placeholderAllocator.js"));
+require(path.join(repoRoot, "src/shared/knownSecretReuse.js"));
+require(path.join(repoRoot, "src/shared/transformOutboundPrompt.js"));
+require(path.join(repoRoot, "src/shared/fileTypeRegistry.js"));
+require(path.join(repoRoot, "src/shared/fileExtractors.js"));
 require(path.join(repoRoot, "src/content/adapters/hostMatching.js"));
 require(path.join(repoRoot, "src/content/adapters/chatgptAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/openaiAdapter.js"));
@@ -56,6 +69,9 @@ require(path.join(repoRoot, "src/content/diagnostics/debugLogger.js"));
 require(path.join(repoRoot, "src/content/files/fileAttachPipeline.js"));
 require(path.join(repoRoot, "src/content/file_handoff_flow.js"));
 require(path.join(repoRoot, "src/shared/fileScanner.js"));
+require(path.join(repoRoot, "src/shared/scannerOcr.js"));
+require(path.join(repoRoot, "src/shared/imageRedactor.js"));
+require(path.join(repoRoot, "src/content/files/contentFileExtractionPipeline.js"));
 require(path.join(repoRoot, "src/shared/streamingFileRedactor.js"));
 
 const { dataTransferHasFiles } = globalThis.PWM.FilePasteHelpers;
@@ -1153,7 +1169,12 @@ function createHarness(overrides = {}) {
       'const LOCAL_TEXT_HARD_BLOCK_MESSAGE = "This content is over 4 MB. LeakGuard did not process or send it automatically to avoid browser instability. Split the file into smaller parts, or sanitize it separately before upload.";',
       "const LARGE_TEXT_STREAMING_MAX_BYTES = 50 * 1024 * 1024;",
       'const LOCAL_FILE_STREAMING_REQUIRED_MESSAGE = "LeakGuard will stream-redact this large text file locally before upload.";',
-      'const LOCAL_FILE_UNSUPPORTED_WARNING = "LeakGuard did not scan or redact this file. Unsupported file types such as PDF, DOCX, images, archives, executables, and binary files are not protected in this release. Normal upload may continue through the site.";',
+      'const LOCAL_FILE_UNSUPPORTED_WARNING = "LeakGuard did not scan or redact this unsupported file. Supported text, text PDF, DOCX, XLSX, and PNG/JPG/JPEG/WEBP image paths are protected where available. Unsupported archives, executables, legacy Office files, unsupported images, and binary files are blocked on protected sites when LeakGuard cannot safely replace them.";',
+      'const UNSUPPORTED_PROTECTED_IMAGE_BLOCKED_TITLE = "Raw image upload blocked";',
+      'const UNSUPPORTED_PROTECTED_IMAGE_BLOCKED_MESSAGE = "Raw image upload blocked. This image type is not supported for safe redaction.";',
+      'const SUPPORTED_IMAGE_REDACTION_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);',
+      'const SUPPORTED_IMAGE_REDACTION_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);',
+      'const UNSUPPORTED_PROTECTED_IMAGE_EXTENSIONS = new Set([".gif", ".bmp", ".ico", ".svg"]);',
       "let suppressInputScanUntil = 0;",
       "let syntheticFileListCapabilityCache = null;",
       "let inputFileAssignmentCapabilityCache = null;",
@@ -1226,6 +1247,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "showUnsupportedFilePassThroughNotice"),
       extractFunctionSource(contentSource, "shouldBlockUnsupportedFileTransfer"),
       extractFunctionSource(contentSource, "getUnsupportedFileBlockedMessage"),
+      extractFunctionSource(contentSource, "getUnsupportedFileBlockedTitle"),
       extractFunctionSource(contentSource, "getContentExtractionBlockedMessage"),
       extractFunctionSource(contentSource, "getLocalTextPayloadByteLength"),
       extractFunctionSource(contentSource, "classifyLocalTextPayloadSize"),
@@ -1423,6 +1445,10 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "getContentExtractionBlockedMessage"),
       extractFunctionSource(contentSource, "localFileFromContentExtractionResult"),
       extractFunctionSource(contentSource, "isUnsupportedLegacyOfficeFile"),
+      extractFunctionSource(contentSource, "getLocalFileExtension"),
+      extractFunctionSource(contentSource, "getLocalFileMimeType"),
+      extractFunctionSource(contentSource, "isUnsupportedImageFileForProtectedUpload"),
+      extractFunctionSource(contentSource, "isUnsupportedProtectedImageTransfer"),
       extractFunctionSource(contentSource, "shouldFailClosedProtectedUnsupportedFileTransfer"),
       extractFunctionSource(contentSource, "maybeHandleLocalFileInsert"),
       extractFunctionSource(contentSource, "maybeHandlePaste"),
@@ -5928,10 +5954,12 @@ async function testDocumentAndImageFileInputUseContentExtractionPipelineForSanit
       fileName: "diagram-sk-proj-rawfilename.png",
       type: "image/png",
       rawText: "PNG bytes with raw filename secret",
-      outputName: "diagram-[PWM_1].redacted.txt",
-      outputKind: "redacted_text_file",
-      outputType: "text/plain",
-      extractedKind: "image_metadata"
+      outputName: "diagram-sk-proj-rawfilename.redacted.png",
+      outputKind: "redacted_image_file",
+      outputType: "image/png",
+      extractedKind: "image_ocr",
+      fileOnlyUpload: true,
+      skipTextFallback: true
     }
   ];
 
@@ -5945,8 +5973,13 @@ async function testDocumentAndImageFileInputUseContentExtractionPipelineForSanit
       name: item.outputName,
       type: item.outputType,
       size: 18,
-      text: "API_KEY=[PWM_1]"
+      text: item.fileOnlyUpload
+        ? async () => {
+            throw new Error("image sanitized file must not be read as text");
+          }
+        : "API_KEY=[PWM_1]"
     };
+    const sanitizedText = "API_KEY=[PWM_1]";
     const fileInput = createFileInput();
     fileInput.files = [rawFile];
     const composer = {
@@ -5967,15 +6000,17 @@ async function testDocumentAndImageFileInputUseContentExtractionPipelineForSanit
           outputName: item.outputName,
           outputKind: item.outputKind,
           extractedKind: item.extractedKind,
-          sanitizedText: sanitizedFile.text,
+          sanitizedText,
           sanitizedFile,
           metadata: {
             scan: {
               findingsCount: 1
             }
           },
-          warnings: item.extractedKind === "image_metadata" ? ["image_ocr_not_supported"] : [],
+          warnings: [],
           safeForUpload: true,
+          fileOnlyUpload: item.fileOnlyUpload === true,
+          skipTextFallback: item.skipTextFallback === true,
           fallbackReason: ""
         };
       },
@@ -5994,8 +6029,202 @@ async function testDocumentAndImageFileInputUseContentExtractionPipelineForSanit
     assert.strictEqual(calls.handoffs.length, 1, `${item.extractedKind} should hand off sanitized file`);
     assert.strictEqual(calls.handoffs[0].sanitizedFile, sanitizedFile);
     assert.strictEqual(calls.handoffs[0].sanitizedFile.name, item.outputName);
+    assert.strictEqual(calls.textFallbacks.length, 0, `${item.extractedKind} should not insert OCR text`);
     assert.strictEqual(JSON.stringify(calls.debugEvents).includes(item.rawText), false);
   }
+}
+
+async function testSupportedImageFileInputAttachesSanitizedImageAcrossAdapters() {
+  const hosts = [
+    "chatgpt.com",
+    "chat.openai.com",
+    "gemini.google.com",
+    "grok.com",
+    "claude.ai",
+    "x.com",
+    "local.example"
+  ];
+
+  for (const hostname of hosts) {
+    const rawFile = createTextFile({
+      name: `${hostname.replace(/\W+/g, "-")}.png`,
+      type: "image/png",
+      text: "raw image bytes with sk-proj-ShouldNotReachProvider1234567890"
+    });
+    const sanitizedImage = {
+      name: `${hostname.replace(/\W+/g, "-")}.redacted.png`,
+      type: "image/png",
+      size: 256,
+      async text() {
+        throw new Error(`${hostname} image handoff must not read sanitized image as text`);
+      }
+    };
+    const fileInput = createFileInput();
+    fileInput.files = [rawFile];
+    const composer = {
+      tagName: "TEXTAREA",
+      text: "",
+      selection: { start: 0, end: 0 }
+    };
+    const { maybeHandleFileInputChange, calls } = createHarness({
+      location: { hostname },
+      findComposer: () => composer,
+      canExtractForAdapterHandoff: (file) => file?.name === rawFile.name,
+      processFileForAdapterHandoff: async () => ({
+        status: "ready",
+        originalName: rawFile.name,
+        outputName: sanitizedImage.name,
+        outputKind: "redacted_image_file",
+        extractedKind: "image_ocr",
+        sanitizedText: "API_KEY=[PWM_1]",
+        sanitizedFile: sanitizedImage,
+        sanitizedImageFile: sanitizedImage,
+        metadata: {
+          scan: {
+            findingsCount: 1
+          },
+          visualRedaction: {
+            output: "png",
+            protectedSiteEligible: true
+          }
+        },
+        warnings: [],
+        safeForUpload: true,
+        fileOnlyUpload: true,
+        skipTextFallback: true,
+        fallbackReason: ""
+      })
+    });
+
+    const result = await maybeHandleFileInputChange(createEvent({ type: "change", target: fileInput }).event);
+
+    assert.strictEqual(result.stage, "file", `${hostname} should complete as file handoff`);
+    assert.strictEqual(calls.handoffs.length, 1, `${hostname} should hand off sanitized image`);
+    assert.strictEqual(calls.handoffs[0].sanitizedFile, sanitizedImage, `${hostname} should receive sanitized image`);
+    assert.strictEqual(calls.handoffs[0].sanitizedFile.name.includes(".redacted"), true, `${hostname} output name`);
+    assert.match(calls.handoffs[0].sanitizedFile.type, /^image\/(?:png|jpeg|webp)$/);
+    assert.notStrictEqual(calls.handoffs[0].sanitizedFile, rawFile, `${hostname} must not hand off raw image`);
+    assert.strictEqual(calls.textFallbacks.length, 0, `${hostname} must not insert OCR text`);
+    assert.ok(
+      calls.debugEvents.some(
+        (entry) => entry.label === "file-ui:success-shown" && entry.details.status === "Sanitized image attached."
+      ),
+      `${hostname} should show image attach success UI`
+    );
+  }
+}
+
+async function testProtectedSiteImageOcrFailureBlocksRawUpload() {
+  const originalGate = globalThis.PWM.isProtectedSiteOcrEnabled;
+  const originalRuntime = globalThis.PWM.OcrRuntime;
+  globalThis.PWM.isProtectedSiteOcrEnabled = async () => true;
+  globalThis.PWM.OcrRuntime = {
+    async prepare() {
+      return { ok: true };
+    },
+    async recognizeImageBytes() {
+      return {
+        ok: false,
+        status: "ocr_failed",
+        reason: "ocr_failed",
+        warnings: ["ocr_failed"]
+      };
+    }
+  };
+
+  try {
+    const file = createReadableTextFile({
+      name: "fake_secrets_image.png",
+      type: "image/png",
+      text: "not real image bytes"
+    });
+    const result = await globalThis.PWM.ContentFileExtractionPipeline.processFileForAdapterHandoff({
+      file,
+      context: "file-input"
+    });
+    const serialized = JSON.stringify(result);
+
+    assert.strictEqual(result.status, "blocked");
+    assert.strictEqual(result.safeForUpload, false);
+    assert.strictEqual(result.sanitizedFile, null);
+    assert.strictEqual(result.fallbackReason, "ocr_failed");
+    assert.strictEqual(serialized.includes("not real image bytes"), false);
+  } finally {
+    globalThis.PWM.isProtectedSiteOcrEnabled = originalGate;
+    globalThis.PWM.OcrRuntime = originalRuntime;
+  }
+}
+
+async function testProtectedSiteImageHandoffFailureDoesNotTextFallback() {
+  const rawSecret = "sk-proj-ImageUploadSecret1234567890";
+  const rawFile = createTextFile({
+    name: "fake_secrets_image.png",
+    type: "image/png",
+    text: `visible image bytes ${rawSecret}`
+  });
+  const sanitizedImage = {
+    name: "fake_secrets_image.redacted.png",
+    type: "image/png",
+    size: 256,
+    async text() {
+      throw new Error("sanitized image bytes must not be read as text fallback");
+    }
+  };
+  const fileInput = createFileInput();
+  fileInput.files = [rawFile];
+  const composer = {
+    tagName: "TEXTAREA",
+    text: "",
+    selection: { start: 0, end: 0 }
+  };
+  const { maybeHandleFileInputChange, calls } = createHarness({
+    location: { hostname: "chatgpt.com" },
+    findComposer: () => composer,
+    canExtractForAdapterHandoff: (file) => file?.name === rawFile.name,
+    processFileForAdapterHandoff: async () => ({
+      status: "ready",
+      originalName: rawFile.name,
+      outputName: sanitizedImage.name,
+      outputKind: "redacted_image_file",
+      extractedKind: "image_ocr",
+      sanitizedText: "API_KEY=[PWM_1]",
+      sanitizedFile: sanitizedImage,
+      metadata: {
+        scan: {
+          findingsCount: 1
+        },
+        visualRedaction: {
+          output: "png",
+          protectedSiteEligible: true
+        }
+      },
+      warnings: [],
+      safeForUpload: true,
+      fileOnlyUpload: true,
+      fallbackReason: ""
+    }),
+    handOffSanitizedLocalFile: (event, input, sanitizedFile, context) => {
+      calls.handoffs.push({ event, input, sanitizedFile, context });
+      return false;
+    }
+  });
+  const { event } = createEvent({
+    type: "change",
+    target: fileInput
+  });
+
+  await maybeHandleFileInputChange(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.ok(calls.debugEvents.some(
+    (entry) => entry.label === "file-ui:error-shown" && entry.details.status === "Raw image upload blocked"
+  ));
+  assert.strictEqual(calls.handoffs.length, 1);
+  assert.strictEqual(calls.handoffs[0].sanitizedFile, sanitizedImage);
+  assert.strictEqual(calls.textFallbacks.length, 0, "image upload must not fall back to composer OCR text");
+  assert.strictEqual(composer.text, "");
+  assert.ok(calls.modals.some(([title]) => title === "Raw file upload blocked"));
+  assert.strictEqual(JSON.stringify(calls.debugEvents).includes(rawSecret), false);
 }
 
 async function testSupportedDocumentDropUsesContentExtractionPipelineBeforeUnsupportedNotice() {
@@ -6028,7 +6257,7 @@ async function testSupportedDocumentDropUsesContentExtractionPipelineBeforeUnsup
     supported: false,
     extension: ".pdf",
     message:
-      "LeakGuard did not scan or redact this file. Unsupported file types such as PDF, DOCX, images, archives, executables, and binary files are not protected in this release. Normal upload may continue through the site.",
+      "LeakGuard did not scan or redact this unsupported file. Supported text, text PDF, DOCX, XLSX, and PNG/JPG/JPEG/WEBP image paths are protected where available. Unsupported archives, executables, legacy Office files, unsupported images, and binary files are blocked on protected sites when LeakGuard cannot safely replace them.",
     fileName,
     mimeType
   });
@@ -9128,6 +9357,35 @@ function testBackgroundSkipsDuplicateDetectorScanForStreamingChunks() {
   );
 }
 
+function testProtectedUnsupportedImageDropBranchBlocksBeforeOriginalReplay() {
+  const helperSource = extractFunctionSource(contentSource, "isUnsupportedImageFileForProtectedUpload");
+  for (const extension of ['".gif"', '".bmp"', '".ico"', '".svg"']) {
+    assert.ok(contentSource.includes(extension), `unsupported image helper should cover ${extension}`);
+  }
+  assert.ok(
+    helperSource.includes("UNSUPPORTED_PROTECTED_IMAGE_EXTENSIONS"),
+    "unsupported image helper should use the protected image denylist"
+  );
+  assert.ok(helperSource.includes("image/"), "unsupported image helper should cover unsupported image/* MIME types");
+
+  const failClosedSource = extractFunctionSource(contentSource, "shouldFailClosedProtectedUnsupportedFileTransfer");
+  assert.ok(
+    failClosedSource.includes("isUnsupportedImageFileForProtectedUpload"),
+    "protected unsupported fail-closed helper should include unsupported image files"
+  );
+
+  const dropSource = extractFunctionSource(contentSource, "maybeHandleDrop");
+  const protectedBlockIndex = dropSource.indexOf("shouldFailClosedProtectedUnsupportedFileTransfer(transferPolicy)");
+  const replayIndex = dropSource.indexOf('handOffOriginalLocalFile(event, snapshotDataTransfer, "drop")');
+  assert.notStrictEqual(protectedBlockIndex, -1, "drop handler should check protected unsupported fail-closed policy");
+  if (replayIndex !== -1) {
+    assert.ok(
+      protectedBlockIndex < replayIndex,
+      "protected unsupported image blocking must run before the Gemini raw original replay branch"
+    );
+  }
+}
+
 async function testGeminiTextLikeFileExtensionsAreSanitized() {
   for (const name of ["secrets.env", "notes.txt", "payload.json"]) {
     const rawSecret = "LeakGuardFileApiKey1234567890";
@@ -9414,14 +9672,81 @@ async function testDmzOverlayFailedStateWhenLocalRedactionFails() {
   assert.ok(calls.dmzCleanups.includes(3600));
 }
 
+async function testProtectedUnsupportedImageDropsFailClosedWithoutOriginalReplay() {
+  for (const [extension, mimeType] of [
+    [".gif", "image/gif"],
+    [".bmp", "image/bmp"],
+    [".ico", "image/x-icon"],
+    [".svg", "image/svg+xml"],
+    [".tiff", "image/tiff"]
+  ]) {
+    const rawSecret = `sk-proj-UnsupportedImageReplay${extension.replace(".", "")}1234567890abcdef`;
+    const rawFile = createTextFile({
+      name: `raw-image${extension}`,
+      type: mimeType,
+      text: `RAW_IMAGE_SECRET=${rawSecret}`
+    });
+    const target = {
+      nodeType: 1,
+      tagName: "DIV",
+      dispatchedEvents: [],
+      closest: () => null,
+      dispatchEvent(event) {
+        this.dispatchedEvents.push(event);
+        return true;
+      }
+    };
+    const { maybeHandleDrop, resolveFileDragGuardPolicy, calls } = createHarness({
+      location: { hostname: "gemini.google.com" },
+      document: {
+        activeElement: target
+      }
+    });
+    const transfer = {
+      types: ["Files"],
+      files: [rawFile],
+      items: [],
+      dropEffect: "none"
+    };
+    const dragPolicy = resolveFileDragGuardPolicy(transfer);
+    const { event, calls: eventCalls } = createEvent({
+      dataTransfer: transfer,
+      target
+    });
+
+    await maybeHandleDrop(event);
+
+    assert.strictEqual(dragPolicy.action, "block", `${extension} drag policy should fail closed`);
+    assert.strictEqual(dragPolicy.reason, "unsupported_protected_file_blocked", `${extension} block reason`);
+    assert.strictEqual(event.defaultPrevented, true, `${extension} drop should be consumed`);
+    assert.strictEqual(eventCalls.stopImmediatePropagation, 1, `${extension} drop should stop page handlers`);
+    assert.strictEqual(target.dispatchedEvents.length, 0, `${extension} must not replay the raw original drop`);
+    assert.strictEqual(calls.reads.length, 0, `${extension} should not read unsupported image bytes as text`);
+    assert.strictEqual(calls.redactions.length, 0, `${extension} should not run text redaction`);
+    assert.strictEqual(calls.createdFiles.length, 0, `${extension} should not create a sanitized output`);
+    assert.strictEqual(calls.handoffs.length, 0, `${extension} should not hand off a local file`);
+    assert.strictEqual(calls.textFallbacks.length, 0, `${extension} should not insert OCR/text fallback`);
+    assert.strictEqual(calls.runtimeMessages.length, 0, `${extension} should not start protected-site OCR`);
+    assert.ok(
+      calls.modals.some(
+        ([title, message]) =>
+          title === "Raw image upload blocked" &&
+          String(message || "").includes("This image type is not supported for safe redaction")
+      ),
+      `${extension} should explain unsupported image blocking`
+    );
+    assert.strictEqual(
+      calls.badges.some(([message]) => String(message || "").includes("normal upload may continue")),
+      false,
+      `${extension} should not show pass-through upload copy`
+    );
+    assert.strictEqual(JSON.stringify(calls).includes(rawSecret), false, `${extension} debug/UI state leaked raw marker`);
+  }
+}
+
 async function testUnsupportedDocumentAndImageFilesPassThroughByDefault() {
   for (const name of [
-    "brief.pdf",
-    "brief.docx",
     "archive.zip",
-    "sheet.xlsx",
-    "image.png",
-    "photo.jpg",
     "installer.exe",
     "archive.bin"
   ]) {
@@ -13085,6 +13410,8 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testFileDropIsConsumedBeforeComposerLookup();
   testProtectedRebuiltFileDropBlocksAtDragGuard();
   testDropRoutesContentExtractionCandidatesBeforeUnsupportedPassThrough();
+  testProtectedUnsupportedImageDropBranchBlocksBeforeOriginalReplay();
+  await testProtectedUnsupportedImageDropsFailClosedWithoutOriginalReplay();
   await testDuplicateDropListenerDoesNotDoubleHandleSameEvent();
   await testFileDropHandlesEarlierPreventDefaultWithoutComposerTarget();
   await testNonFileDragoverIsIgnored();
@@ -13186,6 +13513,9 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testSanitizedHandoffMixedRawFileDoesNotSuppressScan();
   await testSmallFileInputShowsProcessingUiThenDirectAttachSuccess();
   await testDocumentAndImageFileInputUseContentExtractionPipelineForSanitizedHandoff();
+  await testSupportedImageFileInputAttachesSanitizedImageAcrossAdapters();
+  await testProtectedSiteImageOcrFailureBlocksRawUpload();
+  await testProtectedSiteImageHandoffFailureDoesNotTextFallback();
   await testSupportedDocumentDropUsesContentExtractionPipelineBeforeUnsupportedNotice();
   await testScannedPdfFileInputExplainsFailClosedReason();
   await testProtectedLegacyOfficeFileInputBlocksRawUpload();

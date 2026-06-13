@@ -369,7 +369,8 @@ function testDocumentScannerCopyStaysV1Scoped() {
       scannerHtml.includes("Image OCR is English-only") &&
       scannerHtml.includes("runs only after you select an image and click Scan File") &&
       scannerHtml.includes("limited to image files on this scanner page") &&
-      scannerHtml.includes("Protected-site upload OCR is off by default") &&
+      scannerHtml.includes("Protected-site upload OCR is on by default for supported image uploads") &&
+      scannerHtml.includes("can be turned off in settings") &&
       scannerHtml.includes("flattened redacted PNG only when OCR box confidence is eligible") &&
       scannerHtml.includes("Text PDF scanner results can also export a .redacted.pdf regenerated from sanitized extracted text") &&
       scannerHtml.includes("DOCX scanner results can also export a .redacted.docx regenerated from sanitized extracted text") &&
@@ -393,7 +394,7 @@ function testDocumentScannerCopyStaysV1Scoped() {
       scannerHtml.includes("XLSM") &&
       scannerHtml.includes("embedded media") &&
       /visual redaction|redacted PNG/i.test(scannerHtml),
-    "scanner UI should explicitly scope English/local/images-only OCR, default-off confidence-gated protected-site OCR, and avoid scanned PDF, legacy XLS, XLSM, media, rebuild, and format-preservation claims"
+    "scanner UI should explicitly scope English/local/images-only OCR, settings-controlled confidence-gated protected-site OCR, and avoid scanned PDF, legacy XLS, XLSM, media, rebuild, and format-preservation claims"
   );
   assert.ok(
     !/image PDF support|full PDF|full DOCX|full XLSX|full image|layout-preserving DOCX|layout-preserving XLSX|rebuilt image|macro support/i.test(scannerHtml),
@@ -417,16 +418,23 @@ function testDocumentScannerCopyStaysV1Scoped() {
       scannerJs.includes('redacted.png'),
     "scanner redacted exports should keep text fallback, add scanner PDF/DOCX/XLSX regenerated outputs, and keep eligible image visual redaction PNG-only"
   );
+  assert.ok(
+    scannerHtml.includes("download-redacted-image-btn") &&
+      scannerJs.includes("currentRedactedImage") &&
+      scannerJs.includes("downloadExistingBlob(currentRedactedImage.blob"),
+    "scanner UI should expose the generated redacted image output for download"
+  );
 }
 
 function testProtectedSiteOcrSettingsCopyIsAccurateAndScoped() {
   assert.ok(
-    optionsHtml.includes("Enable image OCR for protected-site uploads"),
-    "options should expose the protected-site OCR opt-in label"
+    optionsHtml.includes("Use image OCR for protected-site uploads"),
+    "options should expose the protected-site OCR settings label"
   );
   for (const copy of [
     "English-only",
     "local-only",
+    "enabled by default",
     "may be slower",
     "images only",
     "flattened .redacted.png",
@@ -494,8 +502,8 @@ function testFileCapabilityMatrixDocumentsCurrentFileScope() {
     "XLSX",
     "image metadata",
     "Scanner image OCR",
-    "Protected-site image OCR opt-in",
-    "default off",
+    "Protected-site image OCR",
+    "enabled by default",
     ".redacted.txt",
     ".redacted.png",
     "no scanned-PDF OCR",
@@ -526,13 +534,38 @@ function testFileCapabilityMatrixDocumentsCurrentFileScope() {
     "matrix should state scanner and protected-site XLSX exports regenerated XLSX with protected-site completeness gating"
   );
   assert.ok(
-    /Protected-site image OCR opt-in[\s\S]*default off[\s\S]*\.redacted\.png/.test(fileCapabilityMatrix),
-    "matrix should state protected-site OCR is opt-in/default off and PNG-only for visual upload"
+    /Protected-site image OCR[\s\S]*enabled by default[\s\S]*\.redacted\.png/.test(fileCapabilityMatrix),
+    "matrix should state protected-site OCR is settings-controlled/default-on and PNG-only for visual upload"
   );
   assert.ok(
     fileCapabilityMatrix.includes("Truncated regenerated PDFs are not handed off"),
     "matrix should state truncated protected-site regenerated PDFs are not handed off"
   );
+}
+
+function testUnsupportedProtectedImageReleaseSafetyIsGuarded() {
+  assert.ok(
+    contentSource.includes("UNSUPPORTED_PROTECTED_IMAGE_EXTENSIONS"),
+    "content script should keep an explicit unsupported protected-image denylist"
+  );
+  assert.ok(
+    contentSource.includes('new Set([".gif", ".bmp", ".ico", ".svg"])'),
+    "unsupported protected-image denylist should cover GIF, BMP, ICO, and SVG"
+  );
+  assert.ok(
+    contentSource.includes('mimeType.startsWith("image/")'),
+    "unsupported protected-image guard should include unsupported image/* MIME types"
+  );
+  assert.ok(
+    contentSource.includes("Raw image upload blocked. This image type is not supported for safe redaction."),
+    "protected unsupported image UX should fail closed with clear release-safe copy"
+  );
+  const blockIndex = contentSource.indexOf("shouldFailClosedProtectedUnsupportedFileTransfer(transferPolicy)");
+  const replayIndex = contentSource.indexOf('handOffOriginalLocalFile(event, snapshotDataTransfer, "drop")');
+  assert.notStrictEqual(blockIndex, -1, "drop handler should check protected unsupported fail-closed policy");
+  if (replayIndex !== -1) {
+    assert.ok(blockIndex < replayIndex, "protected unsupported image blocking should run before Gemini raw replay");
+  }
 }
 
 function testPhase15cProtectedSiteDocxPlanIsSupersededByPhase15eCloseout() {
@@ -834,7 +867,7 @@ function testPhase17eReleaseArtifactStoreReadinessAutomationIsDocumented() {
     "no remote OCR",
     "no cloud verification",
     "English-only",
-    "opt-in/default-off",
+    "settings-controlled/default-on",
     ".redacted.txt",
     "raw marker",
     "secret",
@@ -1008,7 +1041,12 @@ function testPhase19ManualReleaseQaChecklistIsDocumented() {
     "Gemini",
     "Grok",
     "privacy policy",
-    "go/no-go"
+    "go/no-go",
+    "Supported image redaction formats: PNG, JPG, JPEG, and WEBP",
+    "Gemini image upload check",
+    "Open the redacted image",
+    "search for the raw fake secret",
+    "NO-GO if image OCR, visual redaction, sanitized export, or provider handoff fails"
   ]) {
     assert.ok(
       phase19ManualReleaseQaChecklist.includes(required),
@@ -1074,6 +1112,7 @@ async function run() {
   testImageMetadataScannerAvoidsOcrDependencies();
   testPublishReadinessDocsCoverStorePrivacyAndQa();
   testFileCapabilityMatrixDocumentsCurrentFileScope();
+  testUnsupportedProtectedImageReleaseSafetyIsGuarded();
   testPhase15cProtectedSiteDocxPlanIsSupersededByPhase15eCloseout();
   testPhase16cProtectedSiteXlsxPlanIsSupersededByPhase16eCloseout();
   testPhase14cProtectedSitePdfPlanIsPlanningOnly();
