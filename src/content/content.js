@@ -234,7 +234,7 @@
     FileScanner.UNSUPPORTED_COMPOSER_FILE_MESSAGE ||
     FilePasteHelpers?.LOCAL_FILE_UNSUPPORTED_WARNING ||
     FileLimits.UNSUPPORTED_COMPOSER_FILE_MESSAGE ||
-    "LeakGuard did not scan or redact this file. Unsupported file types such as PDF, DOCX, images, archives, executables, and binary files are not protected in this release. Normal upload may continue through the site.";
+    "LeakGuard did not scan or redact this unsupported file. Supported text, text PDF, DOCX, XLSX, and PNG/JPG/JPEG/WEBP image paths are protected where available. Unsupported archives, executables, legacy Office files, unsupported images, and binary files are blocked on protected sites when LeakGuard cannot safely replace them.";
   const FILE_DRAG_SESSION_RESET_MS = 5000;
   const GEMINI_UPLOAD_INPUT_WAIT_MS = 450;
   const GEMINI_GHOST_INGRESS_TIMEOUT_MS = 2200;

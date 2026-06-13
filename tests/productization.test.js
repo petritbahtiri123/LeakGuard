@@ -1008,7 +1008,12 @@ function testPhase19ManualReleaseQaChecklistIsDocumented() {
     "Gemini",
     "Grok",
     "privacy policy",
-    "go/no-go"
+    "go/no-go",
+    "Supported image redaction formats: PNG, JPG, JPEG, and WEBP",
+    "Gemini image upload check",
+    "Open the redacted image",
+    "search for the raw fake secret",
+    "NO-GO if image OCR, visual redaction, sanitized export, or provider handoff fails"
   ]) {
     assert.ok(
       phase19ManualReleaseQaChecklist.includes(required),

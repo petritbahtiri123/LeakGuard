@@ -34,6 +34,11 @@ const filePasteHelperSource = fs.readFileSync(
   path.join(repoRoot, "src/content/file_paste_helpers.js"),
   "utf8"
 );
+const fileLimitsSource = fs.readFileSync(path.join(repoRoot, "src/shared/fileLimits.js"), "utf8");
+const fileTransferPolicySource = fs.readFileSync(
+  path.join(repoRoot, "src/content/files/fileTransferPolicy.js"),
+  "utf8"
+);
 const fileExtractorsSource = fs.readFileSync(
   path.join(repoRoot, "src/shared/fileExtractors.js"),
   "utf8"
@@ -1215,6 +1220,7 @@ async function run() {
   testExtensionPagesUseRestrictiveCsp(manifest);
   testOcrSpikeDoesNotEnterProductionPackage(manifest);
   testProtectedSiteOcrOptInStaysLocalAndGateBound();
+  testImageRedactionCopyDoesNotPromiseRawUploadPassThrough();
   await testProtectedSiteOcrBrokerRejectsMalformedMessages();
   testProtectedSiteOcrBrokerMessageSurfaceIsNarrow();
   testPageUiNoLongerLeaksClassificationsOrMaskedFragments();
@@ -1521,6 +1527,26 @@ function testProtectedSiteOcrOptInStaysLocalAndGateBound() {
     false,
     "protected-site OCR pipeline must not directly construct workers, persist OCR text, or log OCR text"
   );
+}
+
+function testImageRedactionCopyDoesNotPromiseRawUploadPassThrough() {
+  for (const [label, source] of [
+    ["file limits", fileLimitsSource],
+    ["file paste helper", filePasteHelperSource],
+    ["file transfer policy", fileTransferPolicySource],
+    ["content script", contentSource]
+  ]) {
+    assertNotIncludes(
+      source,
+      "PDF, DOCX, images, archives, executables, and binary files",
+      `${label} must not describe supported images as unsupported files`
+    );
+    assertNotIncludes(
+      source,
+      "Normal upload may continue through the site.",
+      `${label} must not promise raw upload continuation for protected-site file failures`
+    );
+  }
 }
 
 function testProtectedSiteOcrBrokerMessageSurfaceIsNarrow() {

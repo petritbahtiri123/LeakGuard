@@ -17,9 +17,9 @@
     "LeakGuard will stream-redact this large text file locally before upload.";
   const REDACTED_PREVIEW_LIMIT = 4000;
   const UNSUPPORTED_TEXT_RELEASE_MESSAGE =
-    "This release scans text files only. Unsupported formats such as PDFs, DOCX files, images, archives, executables, and binary files are not scanned or redacted.";
+    "This release scans supported text files, text PDFs, DOCX/XLSX text, and PNG/JPG/JPEG/WEBP image metadata or OCR paths only. Unsupported archives, executables, legacy Office files, unsupported images, and binary files are not scanned or redacted.";
   const UNSUPPORTED_COMPOSER_FILE_MESSAGE =
-    "LeakGuard did not scan or redact this file. Unsupported file types such as PDF, DOCX, images, archives, executables, and binary files are not protected in this release. Normal upload may continue through the site.";
+    "LeakGuard did not scan or redact this unsupported file. Supported text, text PDF, DOCX, XLSX, and PNG/JPG/JPEG/WEBP image paths are protected where available. Unsupported archives, executables, legacy Office files, unsupported images, and binary files are blocked on protected sites when LeakGuard cannot safely replace them.";
   const STREAMING_CHUNK_SIZE_BYTES = 512 * 1024;
   const STREAMING_OVERLAP_CHARS = 16 * 1024;
   const STREAMING_MAX_BUFFER_CHARS = 2 * 1024 * 1024;

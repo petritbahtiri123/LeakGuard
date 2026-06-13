@@ -41,6 +41,19 @@ require(path.join(repoRoot, "src/content/file_paste_helpers.js"));
 require(path.join(repoRoot, "src/content/composer_helpers.js"));
 require(path.join(repoRoot, "src/content/input/rewriteVerificationText.js"));
 require(path.join(repoRoot, "src/content/files/fileTransferPolicy.js"));
+require(path.join(repoRoot, "src/shared/entropy.js"));
+require(path.join(repoRoot, "src/shared/patterns.js"));
+require(path.join(repoRoot, "src/shared/detector.js"));
+require(path.join(repoRoot, "src/shared/placeholders.js"));
+require(path.join(repoRoot, "src/shared/sessionMapStore.js"));
+require(path.join(repoRoot, "src/shared/ipClassification.js"));
+require(path.join(repoRoot, "src/shared/ipDetection.js"));
+require(path.join(repoRoot, "src/shared/networkHierarchy.js"));
+require(path.join(repoRoot, "src/shared/placeholderAllocator.js"));
+require(path.join(repoRoot, "src/shared/knownSecretReuse.js"));
+require(path.join(repoRoot, "src/shared/transformOutboundPrompt.js"));
+require(path.join(repoRoot, "src/shared/fileTypeRegistry.js"));
+require(path.join(repoRoot, "src/shared/fileExtractors.js"));
 require(path.join(repoRoot, "src/content/adapters/hostMatching.js"));
 require(path.join(repoRoot, "src/content/adapters/chatgptAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/openaiAdapter.js"));
@@ -56,6 +69,9 @@ require(path.join(repoRoot, "src/content/diagnostics/debugLogger.js"));
 require(path.join(repoRoot, "src/content/files/fileAttachPipeline.js"));
 require(path.join(repoRoot, "src/content/file_handoff_flow.js"));
 require(path.join(repoRoot, "src/shared/fileScanner.js"));
+require(path.join(repoRoot, "src/shared/scannerOcr.js"));
+require(path.join(repoRoot, "src/shared/imageRedactor.js"));
+require(path.join(repoRoot, "src/content/files/contentFileExtractionPipeline.js"));
 require(path.join(repoRoot, "src/shared/streamingFileRedactor.js"));
 
 const { dataTransferHasFiles } = globalThis.PWM.FilePasteHelpers;
@@ -1153,7 +1169,7 @@ function createHarness(overrides = {}) {
       'const LOCAL_TEXT_HARD_BLOCK_MESSAGE = "This content is over 4 MB. LeakGuard did not process or send it automatically to avoid browser instability. Split the file into smaller parts, or sanitize it separately before upload.";',
       "const LARGE_TEXT_STREAMING_MAX_BYTES = 50 * 1024 * 1024;",
       'const LOCAL_FILE_STREAMING_REQUIRED_MESSAGE = "LeakGuard will stream-redact this large text file locally before upload.";',
-      'const LOCAL_FILE_UNSUPPORTED_WARNING = "LeakGuard did not scan or redact this file. Unsupported file types such as PDF, DOCX, images, archives, executables, and binary files are not protected in this release. Normal upload may continue through the site.";',
+      'const LOCAL_FILE_UNSUPPORTED_WARNING = "LeakGuard did not scan or redact this unsupported file. Supported text, text PDF, DOCX, XLSX, and PNG/JPG/JPEG/WEBP image paths are protected where available. Unsupported archives, executables, legacy Office files, unsupported images, and binary files are blocked on protected sites when LeakGuard cannot safely replace them.";',
       "let suppressInputScanUntil = 0;",
       "let syntheticFileListCapabilityCache = null;",
       "let inputFileAssignmentCapabilityCache = null;",
@@ -5998,6 +6014,116 @@ async function testDocumentAndImageFileInputUseContentExtractionPipelineForSanit
   }
 }
 
+async function testProtectedSiteImageOcrFailureBlocksRawUpload() {
+  const originalGate = globalThis.PWM.isProtectedSiteOcrEnabled;
+  const originalRuntime = globalThis.PWM.OcrRuntime;
+  globalThis.PWM.isProtectedSiteOcrEnabled = async () => true;
+  globalThis.PWM.OcrRuntime = {
+    async prepare() {
+      return { ok: true };
+    },
+    async recognizeImageBytes() {
+      return {
+        ok: false,
+        status: "ocr_failed",
+        reason: "ocr_failed",
+        warnings: ["ocr_failed"]
+      };
+    }
+  };
+
+  try {
+    const file = createReadableTextFile({
+      name: "fake_secrets_image.png",
+      type: "image/png",
+      text: "not real image bytes"
+    });
+    const result = await globalThis.PWM.ContentFileExtractionPipeline.processFileForAdapterHandoff({
+      file,
+      context: "file-input"
+    });
+    const serialized = JSON.stringify(result);
+
+    assert.strictEqual(result.status, "blocked");
+    assert.strictEqual(result.safeForUpload, false);
+    assert.strictEqual(result.sanitizedFile, null);
+    assert.strictEqual(result.fallbackReason, "ocr_failed");
+    assert.strictEqual(serialized.includes("not real image bytes"), false);
+  } finally {
+    globalThis.PWM.isProtectedSiteOcrEnabled = originalGate;
+    globalThis.PWM.OcrRuntime = originalRuntime;
+  }
+}
+
+async function testProtectedSiteImageHandoffFailureDoesNotTextFallback() {
+  const rawSecret = "sk-proj-ImageUploadSecret1234567890";
+  const rawFile = createTextFile({
+    name: "fake_secrets_image.png",
+    type: "image/png",
+    text: `visible image bytes ${rawSecret}`
+  });
+  const sanitizedImage = {
+    name: "fake_secrets_image.redacted.png",
+    type: "image/png",
+    size: 256,
+    async text() {
+      throw new Error("sanitized image bytes must not be read as text fallback");
+    }
+  };
+  const fileInput = createFileInput();
+  fileInput.files = [rawFile];
+  const composer = {
+    tagName: "TEXTAREA",
+    text: "",
+    selection: { start: 0, end: 0 }
+  };
+  const { maybeHandleFileInputChange, calls } = createHarness({
+    location: { hostname: "chatgpt.com" },
+    findComposer: () => composer,
+    canExtractForAdapterHandoff: (file) => file?.name === rawFile.name,
+    processFileForAdapterHandoff: async () => ({
+      status: "ready",
+      originalName: rawFile.name,
+      outputName: sanitizedImage.name,
+      outputKind: "redacted_image_file",
+      extractedKind: "image_ocr",
+      sanitizedText: "API_KEY=[PWM_1]",
+      sanitizedFile: sanitizedImage,
+      metadata: {
+        scan: {
+          findingsCount: 1
+        },
+        visualRedaction: {
+          output: "png",
+          protectedSiteEligible: true
+        }
+      },
+      warnings: [],
+      safeForUpload: true,
+      fileOnlyUpload: true,
+      fallbackReason: ""
+    }),
+    handOffSanitizedLocalFile: (event, input, sanitizedFile, context) => {
+      calls.handoffs.push({ event, input, sanitizedFile, context });
+      return false;
+    }
+  });
+  const { event } = createEvent({
+    type: "change",
+    target: fileInput
+  });
+
+  await maybeHandleFileInputChange(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(calls.handoffs.length, 1);
+  assert.strictEqual(calls.handoffs[0].sanitizedFile, sanitizedImage);
+  assert.strictEqual(calls.textFallbacks.length, 0, "image upload must not fall back to composer OCR text");
+  assert.strictEqual(composer.text, "");
+  assert.ok(calls.modals.some(([title]) => title === "Raw file upload blocked"));
+  assert.strictEqual(JSON.stringify(calls.debugEvents).includes(rawSecret), false);
+}
+
 async function testSupportedDocumentDropUsesContentExtractionPipelineBeforeUnsupportedNotice() {
   const rawFile = createTextFile({
     name: "report.pdf",
@@ -6028,7 +6154,7 @@ async function testSupportedDocumentDropUsesContentExtractionPipelineBeforeUnsup
     supported: false,
     extension: ".pdf",
     message:
-      "LeakGuard did not scan or redact this file. Unsupported file types such as PDF, DOCX, images, archives, executables, and binary files are not protected in this release. Normal upload may continue through the site.",
+      "LeakGuard did not scan or redact this unsupported file. Supported text, text PDF, DOCX, XLSX, and PNG/JPG/JPEG/WEBP image paths are protected where available. Unsupported archives, executables, legacy Office files, unsupported images, and binary files are blocked on protected sites when LeakGuard cannot safely replace them.",
     fileName,
     mimeType
   });
@@ -9416,12 +9542,7 @@ async function testDmzOverlayFailedStateWhenLocalRedactionFails() {
 
 async function testUnsupportedDocumentAndImageFilesPassThroughByDefault() {
   for (const name of [
-    "brief.pdf",
-    "brief.docx",
     "archive.zip",
-    "sheet.xlsx",
-    "image.png",
-    "photo.jpg",
     "installer.exe",
     "archive.bin"
   ]) {
@@ -13186,6 +13307,8 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testSanitizedHandoffMixedRawFileDoesNotSuppressScan();
   await testSmallFileInputShowsProcessingUiThenDirectAttachSuccess();
   await testDocumentAndImageFileInputUseContentExtractionPipelineForSanitizedHandoff();
+  await testProtectedSiteImageOcrFailureBlocksRawUpload();
+  await testProtectedSiteImageHandoffFailureDoesNotTextFallback();
   await testSupportedDocumentDropUsesContentExtractionPipelineBeforeUnsupportedNotice();
   await testScannedPdfFileInputExplainsFailClosedReason();
   await testProtectedLegacyOfficeFileInputBlocksRawUpload();

@@ -30,8 +30,10 @@ LeakGuard Phase 19 is the final human confidence pass after automated release, b
 
 ## Scanner Manual QA
 
+- Supported image redaction formats: PNG, JPG, JPEG, and WEBP. Use one fixture from each format when time allows.
 - Scan a text/source file with a fake secret and download `.redacted.txt`.
 - Scan an image with a fake visible or metadata secret and download `.redacted.png` when visual redaction is eligible.
+- Open the redacted image in a local viewer, search for the raw fake secret in generated metadata/report files, and visually inspect the covered region before treating image redaction as successful.
 - Scan a text PDF with a fake secret and download `.redacted.pdf` and `.redacted.txt`.
 - Scan a DOCX with a fake secret and download `.redacted.docx` and `.redacted.txt`.
 - Scan an XLSX with a fake secret and download `.redacted.xlsx` and `.redacted.txt`.
@@ -44,6 +46,7 @@ LeakGuard Phase 19 is the final human confidence pass after automated release, b
 
 - On a protected site, use a file picker upload for image, PDF, DOCX, and XLSX test files.
 - On a protected site, use drag/drop upload for image, PDF, DOCX, and XLSX test files.
+- Gemini image upload check: with protected-site OCR explicitly enabled, upload or drag/drop a PNG/JPG/JPEG/WEBP fixture with a visible synthetic secret and confirm Gemini receives only the sanitized `.redacted.png` file or a safe fallback/download path.
 - Where the provider UI exposes file details, verify the redacted extension, name, and MIME type are visible or consistent with the sanitized handoff.
 - Verify no raw fake secret appears on the page, in the composer, or in visible attachment previews.
 - Confirm unsupported `.doc`, `.docm`, `.xls`, and `.xlsm` files fail closed and are not represented as safely scanned or redacted.
@@ -104,6 +107,7 @@ Use this as a literal go/no-go gate. Record the decision, date, tester, package 
 
 - Stop on any raw fake secret visible in generated output, protected-site page content, attachment previews, or JSON reports.
 - Stop if a raw file uploads after LeakGuard reports or shows a protection failure.
+- Stop if image OCR, visual redaction, sanitized export, or provider handoff fails and LeakGuard does not block the raw image upload.
 - Stop if the extension fails to load in the required target browser.
 - Stop if generated PDF, DOCX, or XLSX output cannot open locally.
 - Stop if store listing, AMO checklist, privacy policy, contact email, or screenshots are wrong for the package being published.
@@ -114,6 +118,7 @@ GO only if:
 
 - The tested package installs or loads in the required browser target.
 - Scanner basic outputs work for text/source, image, PDF, DOCX, XLSX, and JSON report checks.
+- Image redaction QA passes for supported PNG/JPG/JPEG/WEBP input, including redacted image open/visual inspection and raw-secret search.
 - At least one real provider paste path and at least one real provider upload path work.
 - No raw fake secret is visible in generated files or sanitized reports.
 - Privacy policy, contact email, Chrome store listing, Firefox AMO checklist, limitations, and screenshots are correct for the tested package.
@@ -124,6 +129,7 @@ NO-GO if:
 
 - A raw fake secret appears in any generated output, protected-site page content, attachment preview, or JSON report.
 - A raw file uploads after a LeakGuard protection failure.
+- NO-GO if image OCR, visual redaction, sanitized export, or provider handoff fails and raw image upload is not blocked.
 - The extension fails to load in the required target browser.
 - A generated PDF, DOCX, or XLSX cannot open locally.
 - Store privacy text, privacy policy contact email, Chrome listing text, Firefox AMO checklist, limitation wording, or screenshots are wrong for the release.
