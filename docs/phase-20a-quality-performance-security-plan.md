@@ -425,4 +425,3 @@ Rollback immediately if any patch causes:
 Ready for Phase 20B implementation of candidates 1 through 5, one candidate family at a time, after baseline metrics are captured.
 
 Not ready for detector rewrites, PDF extraction rewrites, PDF byte-string decoder rewrites, OCR worker pool changes, browser adapter changes, permission/CSP changes, remote calls, telemetry, dependencies, or layout-preserving redaction.
-
