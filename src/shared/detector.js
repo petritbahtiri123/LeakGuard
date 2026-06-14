@@ -143,6 +143,15 @@
     return markers.some((marker) => lowerText.includes(marker));
   }
 
+  function hasVisiblePlaceholderTokenShape(text) {
+    return new RegExp(VISIBLE_PLACEHOLDER_TOKEN_SOURCE).test(String(text || ""));
+  }
+
+  function hasUrlUserinfoShape(text) {
+    const input = String(text || "");
+    return input.includes("://") && input.includes("@");
+  }
+
   function buildLineBounds(text) {
     const input = String(text || "");
     const bounds = [];
@@ -800,6 +809,19 @@
 
   function isSensitiveHttpHeaderName(name) {
     return SENSITIVE_HTTP_HEADERS.has(normalizeHttpHeaderName(name));
+  }
+
+  function hasSensitiveHttpHeaderShape(text) {
+    const input = String(text || "");
+    if (!input.includes(":")) return false;
+
+    const regex = /(?:^|\n)\s*([A-Za-z][A-Za-z0-9-]{0,80})\s*:/g;
+    let match;
+    while ((match = regex.exec(input)) !== null) {
+      if (isSensitiveHttpHeaderName(match[1])) return true;
+    }
+
+    return false;
   }
 
   function inferHttpHeaderPlaceholderType(name) {
@@ -3458,14 +3480,43 @@
       });
 
       const chosen = [];
+      const chosenRanges = [];
+
+      const findInsertionIndex = (candidate) => {
+        let low = 0;
+        let high = chosenRanges.length;
+
+        while (low < high) {
+          const mid = (low + high) >> 1;
+          if (chosenRanges[mid].start < candidate.start) {
+            low = mid + 1;
+          } else {
+            high = mid;
+          }
+        }
+
+        return low;
+      };
+
+      const overlapsChosenRange = (candidate) => {
+        const index = findInsertionIndex(candidate);
+        const previous = index > 0 ? chosenRanges[index - 1] : null;
+        const next = index < chosenRanges.length ? chosenRanges[index] : null;
+
+        return (
+          (previous && candidate.start < previous.end && candidate.end > previous.start) ||
+          (next && candidate.start < next.end && candidate.end > next.start)
+        );
+      };
 
       for (const candidate of sorted) {
-        const overlaps = chosen.some(
-          (picked) => candidate.start < picked.end && candidate.end > picked.start
-        );
-
-        if (!overlaps) {
+        if (!overlapsChosenRange(candidate)) {
+          const insertionIndex = findInsertionIndex(candidate);
           chosen.push(candidate);
+          chosenRanges.splice(insertionIndex, 0, {
+            start: candidate.start,
+            end: candidate.end
+          });
         }
       }
 
@@ -3491,10 +3542,13 @@
         activeContextScoreText = input;
         activeLineBounds = buildLineBounds(input);
         this.scanContext.repeatedLineText = input;
+        const hasHttpHeaders = hasSensitiveHttpHeaderShape(input);
+        const hasUrlUserinfo = hasUrlUserinfoShape(input);
+        const hasVisiblePlaceholders = hasVisiblePlaceholderTokenShape(input);
         const findings = [
-          ...this.scanSensitiveHttpHeaders(input),
+          ...(hasHttpHeaders ? this.scanSensitiveHttpHeaders(input) : []),
           ...this.scanStructuredAssignments(input),
-          ...this.scanUrlCredentials(input),
+          ...(hasUrlUserinfo ? this.scanUrlCredentials(input) : []),
           ...this.scanSqlServerPasswordAttributes(input),
           ...this.scanPatterns(input),
           ...this.scanAssignments(input),
@@ -3507,10 +3561,12 @@
           ...this.scanEmailAddresses(input),
           ...this.scanIdentityAssignments(input),
           ...this.scanJsonIdentityFields(input),
-          ...this.scanUnknownPlaceholderTokens(input),
+          ...(hasVisiblePlaceholders ? this.scanUnknownPlaceholderTokens(input) : []),
           ...this.scanNaturalLanguageDisclosures(input),
-          ...this.scanExtraAtUriCredentialSecrets(input),
-          ...this.scanPlaceholderSuffixSecrets(input),
+          ...(hasUrlUserinfo && hasVisiblePlaceholders
+            ? this.scanExtraAtUriCredentialSecrets(input)
+            : []),
+          ...(hasVisiblePlaceholders ? this.scanPlaceholderSuffixSecrets(input) : []),
           ...this.scanBarePasswordCandidates(input),
           ...this.scanEntropyFallback(input)
         ];

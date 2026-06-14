@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
+import os from "node:os";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -53,6 +54,9 @@ const ITERATIONS = Math.max(
   3,
   Number.parseInt(process.env.LEAKGUARD_BENCH_ITERATIONS || `${DEFAULT_ITERATIONS}`, 10)
 );
+// Normal npm test uses this as a correctness and smoke benchmark. Treat timing
+// rows as advisory unless LEAKGUARD_BENCH_PROFILE=1 is set for an intentional
+// performance comparison on a stable local or CI performance runner.
 const PROFILE_ENABLED = process.env.LEAKGUARD_BENCH_PROFILE === "1";
 
 function buildLargeSyntheticPayload(targetBytes, label) {
@@ -116,7 +120,20 @@ function buildRepeatedEnvLikeSample() {
     name: "repeated_env_like_80kb",
     text: `${lineBlock}\n`.repeat(650),
     structuralOnly: true,
+    coverage: ["repeated-env-like-secrets", "known-secret-reuse"],
     assertEquivalentToBaseline: true,
+    placeholderReuseAssertions: [
+      {
+        label: "DB_PASSWORD",
+        regex: /^DB_PASSWORD=(\[PWM_\d+\])$/gm,
+        minOccurrences: 2
+      },
+      {
+        label: "OPENAI_API_KEY",
+        regex: /^OPENAI_API_KEY=(\[PWM_\d+\])$/gm,
+        minOccurrences: 2
+      }
+    ],
     iterations: Math.min(3, ITERATIONS),
     warmupIterations: 1,
     forbidden: [secret, apiKey],
@@ -132,6 +149,7 @@ function buildLongSafeLogSample() {
     name: "long_safe_logs_120kb",
     text: safeLine.repeat(1100),
     structuralOnly: true,
+    coverage: ["safe-text-no-false-positives"],
     iterations: Math.min(3, ITERATIONS),
     warmupIterations: 1,
     maxFindings: 0,
@@ -215,6 +233,7 @@ const samples = [
     ].join("\n").repeat(180),
     maxP95Ms: 150,
     maxMsPerKb: 18,
+    coverage: ["overlap-correctness"],
     assertEquivalentToBaseline: true,
     forbidden: [
       "LeakGuardBearerToken_1234567890_abcdefghijklmnopqrstuvwxyz",
@@ -254,6 +273,59 @@ function formatBytes(bytes) {
   if (absolute >= 1024 * 1024) return `${sign}${(absolute / 1024 / 1024).toFixed(2)} MiB`;
   if (absolute >= 1024) return `${sign}${(absolute / 1024).toFixed(2)} KiB`;
   return `${sign}${absolute.toFixed(0)} B`;
+}
+
+function formatSummaryRows(results) {
+  return results.map((result) => ({
+    test: result.test,
+    chars: result.chars,
+    iterations: result.iterations,
+    findings: result.findings,
+    avg_wall_ms: result.avg_wall_ms.toFixed(3),
+    avg_cpu_ms: result.avg_cpu_ms.toFixed(3),
+    p50_wall_ms: result.p50_wall_ms.toFixed(3),
+    p95_wall_ms: result.p95_wall_ms.toFixed(3),
+    p99_wall_ms: result.p99_wall_ms.toFixed(3),
+    p50_cpu_ms: result.p50_cpu_ms.toFixed(3),
+    p95_cpu_ms: result.p95_cpu_ms.toFixed(3),
+    p99_cpu_ms: result.p99_cpu_ms.toFixed(3),
+    max_ms: result.max_wall_ms.toFixed(3),
+    avg_heap_delta: formatBytes(result.avg_heap_delta_bytes),
+    avg_heap_growth: formatBytes(result.avg_heap_growth_bytes),
+    max_heap_delta: formatBytes(result.max_heap_delta_bytes),
+    avg_ms_per_kib: result.avg_ms_per_kib.toFixed(3),
+    retried: result.retriedTinyOutlier ? "tiny" : result.retriedHealthyP95Outlier ? "healthy-p95" : ""
+  }));
+}
+
+function getBenchmarkEnvironmentProfile(options = {}) {
+  const cpus = os.cpus() || [];
+  const iterations = Number.isFinite(options.iterations) ? options.iterations : ITERATIONS;
+  const profileEnabled =
+    typeof options.profileEnabled === "boolean" ? options.profileEnabled : PROFILE_ENABLED;
+
+  return {
+    node: process.version,
+    v8: process.versions?.v8 || "",
+    platform: process.platform,
+    arch: process.arch,
+    cpu_model: cpus[0]?.model || "unknown",
+    cpu_count: cpus.length,
+    total_memory_mb: Math.round((os.totalmem?.() || 0) / 1024 / 1024),
+    iterations,
+    profile_enabled: profileEnabled ? "yes" : "no"
+  };
+}
+
+function getBenchmarkSampleSummaries() {
+  return samples.map((sample) => ({
+    name: sample.name,
+    structuralOnly: Boolean(sample.structuralOnly),
+    coverage: [...(sample.coverage || [])],
+    maxFindings: Number.isFinite(sample.maxFindings) ? sample.maxFindings : null,
+    assertEquivalentToBaseline: Boolean(sample.assertEquivalentToBaseline),
+    placeholderReuseAssertionCount: (sample.placeholderReuseAssertions || []).length
+  }));
 }
 
 function emptyStageTotals() {
@@ -405,6 +477,26 @@ function assertCorrectness(sample, output) {
     assert.ok(
       output.findings.length <= sample.maxFindings,
       `${sample.name}: expected bounded finding count, got ${output.findings.length}`
+    );
+  }
+
+  for (const reuseAssertion of sample.placeholderReuseAssertions || []) {
+    const regex = new RegExp(reuseAssertion.regex.source, reuseAssertion.regex.flags);
+    const placeholders = [];
+    let match;
+
+    while ((match = regex.exec(redactedText)) !== null) {
+      placeholders.push(match[1]);
+    }
+
+    assert.ok(
+      placeholders.length >= Number(reuseAssertion.minOccurrences || 1),
+      `${sample.name}: expected repeated placeholders for ${reuseAssertion.label}`
+    );
+    assert.equal(
+      new Set(placeholders).size,
+      1,
+      `${sample.name}: expected ${reuseAssertion.label} to reuse one placeholder`
     );
   }
 }
@@ -576,30 +668,11 @@ function benchmark(sample) {
 }
 
 function printResults(results) {
-  console.table(
-    results.map((result) => ({
-      test: result.test,
-      chars: result.chars,
-      iterations: result.iterations,
-      findings: result.findings,
-      avg_wall_ms: result.avg_wall_ms.toFixed(3),
-      avg_cpu_ms: result.avg_cpu_ms.toFixed(3),
-      p50_wall_ms: result.p50_wall_ms.toFixed(3),
-      p95_wall_ms: result.p95_wall_ms.toFixed(3),
-      p99_wall_ms: result.p99_wall_ms.toFixed(3),
-      p50_cpu_ms: result.p50_cpu_ms.toFixed(3),
-      p95_cpu_ms: result.p95_cpu_ms.toFixed(3),
-      p99_cpu_ms: result.p99_cpu_ms.toFixed(3),
-      max_ms: result.max_wall_ms.toFixed(3),
-      avg_heap_delta: formatBytes(result.avg_heap_delta_bytes),
-      avg_heap_growth: formatBytes(result.avg_heap_growth_bytes),
-      max_heap_delta: formatBytes(result.max_heap_delta_bytes),
-      avg_ms_per_kib: result.avg_ms_per_kib.toFixed(3),
-      retried: result.retriedTinyOutlier ? "tiny" : result.retriedHealthyP95Outlier ? "healthy-p95" : ""
-    }))
-  );
+  console.table(formatSummaryRows(results));
 
   if (PROFILE_ENABLED) {
+    console.log("Benchmark environment profile");
+    console.table([getBenchmarkEnvironmentProfile()]);
     console.table(
       results.map((result) => ({
         test: result.test,
@@ -648,7 +721,10 @@ if (!process.env.LEAKGUARD_BENCH_SKIP_MAIN && import.meta.url === pathToFileURL(
 
 export {
   benchmark,
+  formatSummaryRows,
+  getBenchmarkEnvironmentProfile,
   getPerformanceFailure,
+  getBenchmarkSampleSummaries,
   measureBenchmark,
   runBenchmarkSuite,
   shouldRetryHealthyP95Outlier,
