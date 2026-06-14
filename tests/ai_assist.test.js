@@ -57,6 +57,39 @@ async function testAiAssistUpgradesOnlyUncertainSpans() {
   assert.ok(findings[0].method.includes("ai-assist"));
 }
 
+async function testAiAssistIsEnabledByDefaultWhenPolicyIsOmitted() {
+  const detector = new Detector();
+  const classifier = {
+    classify: async () => ({ risk: "SECRET", confidence: 0.91 })
+  };
+
+  const findings = await detector.scanWithAiAssist("auth=abcdefghijklmnop", { classifier });
+
+  assert.strictEqual(findings.length, 1);
+  assert.strictEqual(findings[0].severity, "high", "AI assist should run by default when no policy disables it");
+  assert.ok(findings[0].method.includes("ai-assist"));
+}
+
+async function testAiAssistExplicitPolicyFalseStillDisablesClassifier() {
+  const detector = new Detector();
+  let calls = 0;
+  const classifier = {
+    classify: async () => {
+      calls += 1;
+      return { risk: "SECRET", confidence: 0.91 };
+    }
+  };
+
+  const findings = await detector.scanWithAiAssist("auth=abcdefghijklmnop", {
+    policy: { aiAssistEnabled: false },
+    classifier
+  });
+
+  assert.strictEqual(calls, 0);
+  assert.strictEqual(findings.length, 1);
+  assert.strictEqual(findings[0].severity, "medium", "explicit policy disable should keep deterministic result");
+}
+
 async function testAiAssistDoesNotDowngradeHighConfidenceDeterministicMatches() {
   const detector = new Detector();
   const classifier = {
@@ -162,6 +195,8 @@ function testOnnxRuntimeSidecarUrlsUseExtensionOrigin() {
 async function run() {
   await testMissingFeatureSpecFallsBackQuietly();
   await testAiAssistUpgradesOnlyUncertainSpans();
+  await testAiAssistIsEnabledByDefaultWhenPolicyIsOmitted();
+  await testAiAssistExplicitPolicyFalseStillDisablesClassifier();
   await testAiAssistDoesNotDowngradeHighConfidenceDeterministicMatches();
   await testBrowserIntegrationIsOptionalAndPolicyControlled();
   testOnnxRuntimeSidecarUrlsUseExtensionOrigin();

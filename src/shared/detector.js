@@ -3594,8 +3594,9 @@
       const findings = this.scan(text, options);
       const classifier = options.classifier || root.PWM.LeakGuardAiClassifier;
       const policy = options.policy || {};
+      const aiAssistEnabled = policy.aiAssistEnabled !== false;
 
-      if (!policy.aiAssistEnabled || !classifier?.classify) {
+      if (!aiAssistEnabled || !classifier?.classify) {
         return findings;
       }
 
