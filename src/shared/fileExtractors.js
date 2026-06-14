@@ -205,8 +205,15 @@
     ) >>> 0;
   }
 
+  let utf8Decoder = null;
+
+  function getUtf8Decoder() {
+    if (!utf8Decoder) utf8Decoder = new TextDecoder("utf-8", { fatal: false });
+    return utf8Decoder;
+  }
+
   function decodeUtf8Bytes(bytes) {
-    return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+    return getUtf8Decoder().decode(bytes);
   }
 
   function classifySizeBucket(sizeBytes) {
@@ -570,14 +577,14 @@
         throw new Error("docx_malformed_zip");
       }
 
-      const name = decodeUtf8Bytes(bytes.slice(nameStart, nameEnd)).replace(/\\/g, "/");
+      const name = decodeUtf8Bytes(bytes.subarray(nameStart, nameEnd)).replace(/\\/g, "/");
       entries.push({
         name,
         flags,
         method,
         compressedSize,
         uncompressedSize,
-        compressedBytes: bytes.slice(dataStart, dataEnd)
+        compressedBytes: bytes.subarray(dataStart, dataEnd)
       });
       offset = dataEnd;
     }
