@@ -179,6 +179,16 @@ Follow-up observation:
 
 No screenshots were captured or stored, to avoid accidentally recording provider account, bot-check, or page data. Evidence is command output from the local gate runs and sanitized live-smoke observations.
 
+## Closeout Alignment
+
+- Chrome: GO for release readiness after human store listing review.
+- Edge: LIMITED GO for basic Chromium compatibility.
+- Edge live-provider claims require manual retest before making stronger Edge live-provider support claims.
+- No P0 raw leak found.
+- No proven P1 provider/fail-closed bug found.
+- Live provider file upload was not attempted without QA/test accounts.
+- Screenshots were intentionally skipped to avoid capturing account/bot-check data.
+
 ## Final Decision
 
 GO for Chrome release readiness based on passing release gates, browser gates, scanner QA, protected-site generic QA, and live ChatGPT guest composer paste/redact smoke.

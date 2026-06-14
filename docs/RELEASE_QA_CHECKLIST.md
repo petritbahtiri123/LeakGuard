@@ -21,6 +21,15 @@
 - A browser startup failure before extension load, such as Chrome/Edge GPU/CDP startup failure or Firefox geckodriver status timeout, is a local or CI environment failure until rerun evidence shows the extension loaded and failed product assertions.
 - Product failures are failures after the extension loads and a LeakGuard behavior assertion fails, such as missing popup controls, missing protected-site panel, raw marker leakage, failed redaction, or missing scanner export behavior.
 
+## Phase 19 Live Browser QA Status
+
+- Chrome live QA completed: GO for release readiness after human store listing review.
+- Edge basic Chromium compatibility completed: LIMITED GO.
+- Edge live-provider retest remains a follow-up before strong Edge claims.
+- Human store listing review remains required before Chrome publishing.
+- Live provider file upload was not attempted without QA/test accounts; keep provider upload claims scoped to automated local protected-site coverage until manual account-backed QA is available.
+- Screenshots were intentionally skipped to avoid capturing account or bot-check data.
+
 ## Built-in Site Coverage
 
 - Open ChatGPT and confirm LeakGuard shows the current site as protected.
