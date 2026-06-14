@@ -316,6 +316,40 @@ async function testPrivateKeySpanningChunksRedacts() {
   assert.ok(output.includes("after"));
 }
 
+async function testStreamingInjectedUnsortedReplacementsStayRawFree() {
+  const firstRaw = "AlphaSecret123456";
+  const secondRaw = "BetaSecret789012";
+  const text = `A=${firstRaw}\nB=${secondRaw}\n`;
+  const firstStart = text.indexOf(firstRaw);
+  const secondStart = text.indexOf(secondRaw);
+  const file = createStreamingFile({ text, chunkBytes: text.length });
+  const result = await redactTextFileStream(file, {
+    chunkSize: text.length,
+    overlapSize: 1024,
+    redactText: async () => ({
+      replacements: [
+        {
+          start: secondStart,
+          end: secondStart + secondRaw.length,
+          placeholder: "[PWM_2]"
+        },
+        {
+          start: firstStart,
+          end: firstStart + firstRaw.length,
+          placeholder: "[PWM_1]"
+        }
+      ]
+    }),
+    createFile: createOutputFile
+  });
+  const output = await result.sanitizedFile.text();
+
+  assert.strictEqual(result.action, "redacted");
+  assert.strictEqual(output, "A=[PWM_1]\nB=[PWM_2]\n");
+  assert.strictEqual(output.includes(firstRaw), false);
+  assert.strictEqual(output.includes(secondRaw), false);
+}
+
 async function testSafeControlsRemainUnredacted() {
   const text = [
     "token_limit=4096",
@@ -425,6 +459,7 @@ async function testInvalidUtf8FailsClosedWithFriendlyMessage() {
   await testSecretSplitAcrossChunkBoundaryRedacts();
   await testDatabaseUrlSplitAcrossChunkBoundaryRedacts();
   await testPrivateKeySpanningChunksRedacts();
+  await testStreamingInjectedUnsortedReplacementsStayRawFree();
   await testSafeControlsRemainUnredacted();
   await testFiveMiBUploadFixtureRedactsShortProjectKeyAssignment();
   await testLargeStreamingPerformanceAndClassifierSkip();

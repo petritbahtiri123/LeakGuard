@@ -262,6 +262,11 @@ function xlsxWorksheet(cells = []) {
   return `<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1">${cellXml}</row></sheetData></worksheet>`;
 }
 
+function xlsxComments(values = []) {
+  const commentXml = values.map((value) => `<comment><text><t>${escapeXml(value)}</t></text></comment>`).join("");
+  return `<?xml version="1.0" encoding="UTF-8"?><comments xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><commentList>${commentXml}</commentList></comments>`;
+}
+
 function makeXlsx(options = {}) {
   if (options.malformed) return bufferFromText("not a zip");
   const entries = [];
@@ -283,6 +288,9 @@ function makeXlsx(options = {}) {
   }
   if (options.imageOnly) {
     entries.push({ name: "xl/media/image1.png", data: "not scanned" });
+  }
+  if (options.comments) {
+    entries.push({ name: "xl/comments1.xml", data: xlsxComments(options.comments) });
   }
   return makeZip(entries);
 }
@@ -599,6 +607,51 @@ async function testXlsxEnvMultilineInlineAndFormulaTextExtract() {
   assert.ok(result.text.includes("X-API-Key:"));
   assert.ok(result.text.includes("sk-proj-FormulaTextOnly1234567890abcdef"));
   assert.ok(result.text.includes("0"));
+}
+
+async function testRepeatedXlsxExtractionKeepsXmlOrderingAndMetadataStable() {
+  const buffer = makeXlsx({
+    sheetNames: ["Accounts & Billing"],
+    sharedStrings: ["shared alpha", "shared beta"],
+    cells: [
+      { type: "shared", value: 0 },
+      { type: "shared", value: 1 },
+      { type: "inline", value: "inline <note> & value" },
+      { type: "formula", value: '"formula & value"', cachedValue: "42" }
+    ],
+    comments: ["comment one", "comment two"]
+  });
+  const runs = [];
+
+  for (let index = 0; index < 3; index += 1) {
+    runs.push(
+      await prepareFileExtractionAsync({
+        fileName: "stable.xlsx",
+        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        buffer
+      })
+    );
+  }
+
+  for (const result of runs) {
+    assert.strictEqual(result.status, EXTRACTOR_STATUS.OK);
+    assert.strictEqual(result.safeForScan, true);
+    assert.strictEqual(result.metadata.textLength, result.text.length);
+    assert.deepStrictEqual(result.warnings, []);
+    assert.strictEqual(result.reason, "");
+  }
+
+  assert.strictEqual(runs[1].text, runs[0].text);
+  assert.strictEqual(runs[2].text, runs[0].text);
+  assert.strictEqual(runs[1].metadata.textLength, runs[0].metadata.textLength);
+  assert.strictEqual(runs[2].metadata.textLength, runs[0].metadata.textLength);
+  assert.ok(runs[0].text.indexOf("Accounts & Billing") < runs[0].text.indexOf("shared alpha"));
+  assert.ok(runs[0].text.indexOf("shared alpha") < runs[0].text.indexOf("shared beta"));
+  assert.ok(runs[0].text.indexOf("shared beta") < runs[0].text.indexOf("inline <note> & value"));
+  assert.ok(runs[0].text.indexOf("inline <note> & value") < runs[0].text.indexOf("formula & value"));
+  assert.ok(runs[0].text.indexOf("formula & value") < runs[0].text.indexOf("42"));
+  assert.ok(runs[0].text.indexOf("42") < runs[0].text.indexOf("comment one"));
+  assert.ok(runs[0].text.indexOf("comment one") < runs[0].text.indexOf("comment two"));
 }
 
 async function assertXlsxExtractionError(name, buffer, expectedReason) {
@@ -1146,6 +1199,7 @@ function testNoNewDependenciesAdded() {
   await testXlsxSecretsFeedExistingScannerWithoutRawReportMetadata();
   await testNamespacedXlsxSecretsExtractAndRedactLocally();
   await testXlsxEnvMultilineInlineAndFormulaTextExtract();
+  await testRepeatedXlsxExtractionKeepsXmlOrderingAndMetadataStable();
   await testUnreadableXlsxCasesFailClosed();
   await testLargeXlsxTextExtractionLimit();
   await testXlsxMimeMismatchAndLegacyFormatsDoNotBypassGates();

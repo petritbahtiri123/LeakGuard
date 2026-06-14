@@ -222,11 +222,12 @@
     const words = Array.isArray(result?.words) ? result.words : [];
     const lines = Array.isArray(result?.lines) ? result.lines : [];
     const boxes = [];
+    const normalizedText = String(text || "");
     let cursor = 0;
 
     for (const word of words) {
       const wordText = String(word?.text || "");
-      const fallbackStart = wordText ? String(text || "").indexOf(wordText, cursor) : -1;
+      const fallbackStart = wordText ? normalizedText.indexOf(wordText, cursor) : -1;
       const layoutBox = layoutBoxFromEntry(word, "word", fallbackStart);
       if (layoutBox) {
         boxes.push(layoutBox);
@@ -238,7 +239,7 @@
       cursor = 0;
       for (const line of lines) {
         const lineText = String(line?.text || "");
-        const fallbackStart = lineText ? String(text || "").indexOf(lineText, cursor) : -1;
+        const fallbackStart = lineText ? normalizedText.indexOf(lineText, cursor) : -1;
         const layoutBox = layoutBoxFromEntry(line, "line", fallbackStart);
         if (layoutBox) {
           boxes.push(layoutBox);
@@ -275,12 +276,14 @@
     };
   }
 
-  async function readImageDimensions(file) {
-    if (typeof root.createImageBitmap !== "function" || typeof root.Blob !== "function") return null;
-    const buffer = await file.arrayBuffer();
+  async function readImageDimensions(file, imageBuffer) {
+    if (typeof root.createImageBitmap !== "function" || typeof root.Blob !== "function") {
+      return { dimensions: null, imageBuffer };
+    }
+    const buffer = imageBuffer || (await file.arrayBuffer());
     const bitmap = await root.createImageBitmap(new root.Blob([buffer], { type: file.type || "" }));
     try {
-      return { width: bitmap.width, height: bitmap.height };
+      return { dimensions: { width: bitmap.width, height: bitmap.height }, imageBuffer: buffer };
     } finally {
       if (typeof bitmap.close === "function") bitmap.close();
     }
@@ -290,9 +293,12 @@
     const runtime = options.runtime || root.PWM.OcrRuntime || {};
     const timeoutMs = Math.max(1, Number(options.timeoutMs || DEFAULT_SCANNER_OCR_TIMEOUT_MS));
     let dimensions = null;
+    let imageBuffer = null;
     if (options.readDimensions === true) {
       try {
-        dimensions = await readImageDimensions(file);
+        const imageProbe = await readImageDimensions(file, imageBuffer);
+        dimensions = imageProbe?.dimensions || null;
+        imageBuffer = imageProbe?.imageBuffer || null;
       } catch {
         return sanitizeOcrFailure("ocr_image_decode_failed", "ocr_image_decode_failed");
       }
@@ -319,7 +325,7 @@
 
     let bytes;
     try {
-      bytes = toUint8Array(await file.arrayBuffer());
+      bytes = toUint8Array(imageBuffer || (await file.arrayBuffer()));
     } catch {
       return sanitizeOcrFailure("ocr_file_read_failed", "ocr_file_read_failed");
     }

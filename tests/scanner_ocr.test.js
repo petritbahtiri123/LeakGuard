@@ -365,6 +365,135 @@ async function testRuntimeRecognitionUsesExplicitMessageAndTimeout() {
   assert.deepStrictEqual(Array.from(messages[0].imageBytes.slice(0, 8)), [137, 80, 78, 71, 13, 10, 26, 10]);
 }
 
+async function testReadDimensionsReusesImageBytesForRuntimePayload() {
+  const ocrText = "HELLO FROM LOCAL RECEIPT";
+  const imageBuffer = await makeSyntheticTextImage(ocrText, "png");
+  const expectedMagic = [137, 80, 78, 71, 13, 10, 26, 10];
+  const hadCreateImageBitmap = Object.prototype.hasOwnProperty.call(globalThis, "createImageBitmap");
+  const originalCreateImageBitmap = globalThis.createImageBitmap;
+  let arrayBufferCalls = 0;
+  let bitmapClosed = false;
+  let probedMagic = [];
+
+  globalThis.createImageBitmap = async (blob) => {
+    probedMagic = Array.from(new Uint8Array(await blob.arrayBuffer()).slice(0, expectedMagic.length));
+    return {
+      width: 900,
+      height: 140,
+      close() {
+        bitmapClosed = true;
+      }
+    };
+  };
+
+  try {
+    const file = {
+      name: "dimension-probe.png",
+      type: "image/png",
+      size: imageBuffer.byteLength,
+      async arrayBuffer() {
+        arrayBufferCalls += 1;
+        return imageBuffer;
+      }
+    };
+    const runtime = {
+      recognizeImageBytes(payload) {
+        assert.ok(payload.imageBytes instanceof Uint8Array);
+        assert.strictEqual(payload.imageBytes.buffer, imageBuffer);
+        assert.deepStrictEqual(Array.from(payload.imageBytes.slice(0, expectedMagic.length)), expectedMagic);
+        return Promise.resolve({
+          ok: true,
+          status: "ocr_recognition_ready",
+          language: "eng",
+          text: ocrText,
+          textLength: ocrText.length,
+          confidenceBucket: "high",
+          warnings: []
+        });
+      }
+    };
+    const ocr = await ScannerOcr.recognizeScannerImageFile(file, { runtime, timeoutMs: 1000, readDimensions: true });
+
+    assert.strictEqual(ocr.ok, true);
+    assert.strictEqual(arrayBufferCalls, 1);
+    assert.strictEqual(bitmapClosed, true);
+    assert.deepStrictEqual(probedMagic, expectedMagic);
+  } finally {
+    if (hadCreateImageBitmap) {
+      globalThis.createImageBitmap = originalCreateImageBitmap;
+    } else {
+      delete globalThis.createImageBitmap;
+    }
+  }
+}
+
+async function testOcrLayoutFallbackIndexesRemainStableForWordAndLineResults() {
+  const imageBuffer = bufferFromText("image bytes");
+  const wordText = "alpha beta alpha";
+  const wordRuntime = {
+    recognizeImageBytes() {
+      return Promise.resolve({
+        ok: true,
+        status: "ocr_recognition_ready",
+        language: "eng",
+        text: wordText,
+        textLength: wordText.length,
+        confidenceBucket: "high",
+        warnings: [],
+        words: [
+          { text: "alpha", confidence: 94, box: { x: 1, y: 2, width: 10, height: 5 } },
+          { text: "alpha", confidence: 94, box: { x: 30, y: 2, width: 11, height: 5 } }
+        ]
+      });
+    }
+  };
+  const wordOcr = await ScannerOcr.recognizeScannerImageFile(
+    makeFile("word-fallback.png", "image/png", imageBuffer.byteLength, imageBuffer),
+    { runtime: wordRuntime, timeoutMs: 1000, dimensions: { width: 100, height: 20 } }
+  );
+
+  assert.strictEqual(wordOcr.layout.source, "word");
+  assert.deepStrictEqual(
+    wordOcr.layout.boxes.map((box) => ({ start: box.start, end: box.end, boxKind: box.boxKind })),
+    [
+      { start: 0, end: 5, boxKind: "word" },
+      { start: 11, end: 16, boxKind: "word" }
+    ]
+  );
+  assert.strictEqual(wordOcr.layout.fallbackUsed, false);
+  assert.strictEqual(wordOcr.layout.visualRedactionSafe, true);
+  assert.strictEqual(wordOcr.layout.protectedSiteEligible, true);
+
+  const lineText = "first line\nsecond line\nthird line";
+  const lineRuntime = {
+    recognizeImageBytes() {
+      return Promise.resolve({
+        ok: true,
+        status: "ocr_recognition_ready",
+        language: "eng",
+        text: lineText,
+        textLength: lineText.length,
+        confidenceBucket: "high",
+        warnings: [],
+        lines: [{ text: "second line", confidence: 80, box: { x: 4, y: 12, width: 64, height: 11 } }]
+      });
+    }
+  };
+  const lineOcr = await ScannerOcr.recognizeScannerImageFile(
+    makeFile("line-fallback.png", "image/png", imageBuffer.byteLength, imageBuffer),
+    { runtime: lineRuntime, timeoutMs: 1000, dimensions: { width: 100, height: 40 } }
+  );
+
+  assert.strictEqual(lineOcr.layout.source, "line");
+  assert.deepStrictEqual(
+    lineOcr.layout.boxes.map((box) => ({ start: box.start, end: box.end, boxKind: box.boxKind })),
+    [{ start: 11, end: 22, boxKind: "line" }]
+  );
+  assert.strictEqual(lineOcr.layout.fallbackUsed, false);
+  assert.strictEqual(lineOcr.layout.visualRedactionSafe, true);
+  assert.strictEqual(lineOcr.layout.protectedSiteEligible, true);
+}
+
 async function testOcrWordBoxesMapDetectedSecretToRedactionBoxes() {
   const rawSecret = "sk-proj-LeakGuardVisualApiKey1234567890abcdef";
   const ocrText = `API_KEY=${rawSecret}`;
@@ -945,6 +1074,8 @@ function testDownloadedImageOutputNameIsRedactedTxtCompatible() {
   await testSafeImageProducesSanitizedNoFindingReport();
   await testLowConfidenceRotatedImageWarnsAndStillRedacts();
   await testRuntimeRecognitionUsesExplicitMessageAndTimeout();
+  await testReadDimensionsReusesImageBytesForRuntimePayload();
+  await testOcrLayoutFallbackIndexesRemainStableForWordAndLineResults();
   await testOcrWordBoxesMapDetectedSecretToRedactionBoxes();
   await testOcrWordBoxesArePreferredOverLineBoxes();
   await testOcrLineBoxesAcceptedWithWarning();

@@ -14,6 +14,15 @@
   const XLSX_TEXT_EXTRACTION_MAX_BYTES = 4 * 1024 * 1024;
   const XLSX_XML_PART_MAX_BYTES = 8 * 1024 * 1024;
   const XLSX_ZIP_ENTRY_MAX_COUNT = 1000;
+  const XLSX_SHARED_STRING_ITEM_PATTERN = /<(?:[A-Za-z_][\w.-]*:)?si\b[^>]*>([\s\S]*?)<\/(?:[A-Za-z_][\w.-]*:)?si>/gi;
+  const XLSX_SHEET_NAME_PATTERN = /<(?:[A-Za-z_][\w.-]*:)?sheet\b[^>]*\bname=(["'])([\s\S]*?)\1/gi;
+  const XLSX_WORKSHEET_CELL_PATTERN = /<(?:[A-Za-z_][\w.-]*:)?c\b[^>]*>[\s\S]*?<\/(?:[A-Za-z_][\w.-]*:)?c>/gi;
+  const XLSX_TEXT_TAG_PATTERN = /<(?:[A-Za-z_][\w.-]*:)?t\b[^>]*>([\s\S]*?)<\/(?:[A-Za-z_][\w.-]*:)?t>/gi;
+  const XLSX_VALUE_TAG_PATTERN = /<(?:[A-Za-z_][\w.-]*:)?v\b[^>]*>([\s\S]*?)<\/(?:[A-Za-z_][\w.-]*:)?v>/gi;
+  const XLSX_FORMULA_TAG_PATTERN = /<(?:[A-Za-z_][\w.-]*:)?f\b[^>]*>([\s\S]*?)<\/(?:[A-Za-z_][\w.-]*:)?f>/gi;
+  const XLSX_CELL_TYPE_ATTRIBUTE_PATTERN = /\bt=(["'])(.*?)\1/i;
+  const xlsxXmlTextPatternCache = new Map();
+  const xlsxCellAttributePatternCache = new Map();
   const IMAGE_METADATA_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
 
   function normalizeText(text) {
@@ -205,8 +214,15 @@
     ) >>> 0;
   }
 
+  let utf8Decoder = null;
+
+  function getUtf8Decoder() {
+    if (!utf8Decoder) utf8Decoder = new TextDecoder("utf-8", { fatal: false });
+    return utf8Decoder;
+  }
+
   function decodeUtf8Bytes(bytes) {
-    return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+    return getUtf8Decoder().decode(bytes);
   }
 
   function classifySizeBucket(sizeBytes) {
@@ -570,14 +586,14 @@
         throw new Error("docx_malformed_zip");
       }
 
-      const name = decodeUtf8Bytes(bytes.slice(nameStart, nameEnd)).replace(/\\/g, "/");
+      const name = decodeUtf8Bytes(bytes.subarray(nameStart, nameEnd)).replace(/\\/g, "/");
       entries.push({
         name,
         flags,
         method,
         compressedSize,
         uncompressedSize,
-        compressedBytes: bytes.slice(dataStart, dataEnd)
+        compressedBytes: bytes.subarray(dataStart, dataEnd)
       });
       offset = dataEnd;
     }
@@ -725,11 +741,7 @@
 
   function extractXmlTextValues(xml, tagName) {
     const values = [];
-    const qualifiedTagName = `(?:[A-Za-z_][\\w.-]*:)?${tagName}`;
-    const pattern = new RegExp(
-      `<${qualifiedTagName}\\b[^>]*>([\\s\\S]*?)<\\/${qualifiedTagName}>`,
-      "gi"
-    );
+    const pattern = getXlsxXmlTextPattern(tagName);
     let match;
     while ((match = pattern.exec(xml))) {
       const value = decodeXmlEntities(match[1].replace(/[<>]/g, ""));
@@ -738,11 +750,38 @@
     return values;
   }
 
+  function getXlsxXmlTextPattern(tagName) {
+    if (tagName === "t") {
+      XLSX_TEXT_TAG_PATTERN.lastIndex = 0;
+      return XLSX_TEXT_TAG_PATTERN;
+    }
+    if (tagName === "v") {
+      XLSX_VALUE_TAG_PATTERN.lastIndex = 0;
+      return XLSX_VALUE_TAG_PATTERN;
+    }
+    if (tagName === "f") {
+      XLSX_FORMULA_TAG_PATTERN.lastIndex = 0;
+      return XLSX_FORMULA_TAG_PATTERN;
+    }
+    let pattern = xlsxXmlTextPatternCache.get(tagName);
+    if (!pattern) {
+      const qualifiedTagName = `(?:[A-Za-z_][\\w.-]*:)?${tagName}`;
+      pattern = new RegExp(
+        `<${qualifiedTagName}\\b[^>]*>([\\s\\S]*?)<\\/${qualifiedTagName}>`,
+        "gi"
+      );
+      xlsxXmlTextPatternCache.set(tagName, pattern);
+    }
+    pattern.lastIndex = 0;
+    return pattern;
+  }
+
   function extractSharedStrings(xml) {
     const strings = [];
-    const itemPattern = /<(?:[A-Za-z_][\w.-]*:)?si\b[^>]*>([\s\S]*?)<\/(?:[A-Za-z_][\w.-]*:)?si>/gi;
+    // Cached global XLSX regexes must reset before each scan to avoid skipped matches.
+    XLSX_SHARED_STRING_ITEM_PATTERN.lastIndex = 0;
     let itemMatch;
-    while ((itemMatch = itemPattern.exec(xml))) {
+    while ((itemMatch = XLSX_SHARED_STRING_ITEM_PATTERN.exec(xml))) {
       const text = extractXmlTextValues(itemMatch[1], "t").join("");
       if (text) strings.push(text);
     }
@@ -751,9 +790,9 @@
 
   function extractSheetNames(xml) {
     const names = [];
-    const sheetPattern = /<(?:[A-Za-z_][\w.-]*:)?sheet\b[^>]*\bname=(["'])([\s\S]*?)\1/gi;
+    XLSX_SHEET_NAME_PATTERN.lastIndex = 0;
     let match;
-    while ((match = sheetPattern.exec(xml))) {
+    while ((match = XLSX_SHEET_NAME_PATTERN.exec(xml))) {
       const name = decodeXmlEntities(match[2]).trim();
       if (name && !/^Sheet\d*$/i.test(name)) names.push(name);
     }
@@ -761,15 +800,22 @@
   }
 
   function getCellAttribute(cellXml, attributeName) {
-    const pattern = new RegExp(`\\b${attributeName}=(["'])(.*?)\\1`, "i");
+    if (attributeName === "t") {
+      return cellXml.match(XLSX_CELL_TYPE_ATTRIBUTE_PATTERN)?.[2] || "";
+    }
+    let pattern = xlsxCellAttributePatternCache.get(attributeName);
+    if (!pattern) {
+      pattern = new RegExp(`\\b${attributeName}=(["'])(.*?)\\1`, "i");
+      xlsxCellAttributePatternCache.set(attributeName, pattern);
+    }
     return cellXml.match(pattern)?.[2] || "";
   }
 
   function extractTextFromXlsxWorksheetXml(xml, sharedStrings) {
     const parts = [];
-    const cellPattern = /<(?:[A-Za-z_][\w.-]*:)?c\b[^>]*>[\s\S]*?<\/(?:[A-Za-z_][\w.-]*:)?c>/gi;
+    XLSX_WORKSHEET_CELL_PATTERN.lastIndex = 0;
     let cellMatch;
-    while ((cellMatch = cellPattern.exec(xml))) {
+    while ((cellMatch = XLSX_WORKSHEET_CELL_PATTERN.exec(xml))) {
       const cellXml = cellMatch[0];
       const type = getCellAttribute(cellXml, "t");
 

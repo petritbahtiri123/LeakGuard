@@ -16,7 +16,7 @@ require(path.join(repoRoot, "src/shared/placeholderAllocator.js"));
 require(path.join(repoRoot, "src/shared/sessionMapStore.js"));
 require(path.join(repoRoot, "src/shared/transformOutboundPrompt.js"));
 
-const { Detector, PlaceholderManager, Redactor, transformOutboundPrompt } = globalThis.PWM;
+const { Detector, PlaceholderManager, Redactor, transformOutboundPrompt, KnownSecretReuse } = globalThis.PWM;
 
 function placeholders(text) {
   return text.match(/\[PWM_\d+\]/g) || [];
@@ -225,6 +225,86 @@ function testMixedPlaceholderUriBlockRedactsOnlyUntrustedOrRawSecretParts() {
   assert.ok(trusted.result.redactedText.includes("ftp://[PWM_1]:[PWM_7]@files.example.com"));
 }
 
+function testKnownSecretReuseNoKnownSecretsDoesNotMutateOccupiedRanges() {
+  const manager = new PlaceholderManager();
+  const occupiedRanges = [{ start: 0, end: 4 }];
+  const replacements = KnownSecretReuse.collectKnownSecretReplacements(
+    "safe text without prior secrets",
+    manager,
+    occupiedRanges
+  );
+
+  assert.deepStrictEqual(replacements, []);
+  assert.deepStrictEqual(occupiedRanges, [{ start: 0, end: 4 }]);
+}
+
+function testKnownSecretReuseRepeatedRawSecretUsesSamePlaceholderAndAddsRanges() {
+  const manager = new PlaceholderManager();
+  const placeholder = manager.getPlaceholder("RepeatSecret123");
+  const text = "primary=RepeatSecret123 backup=RepeatSecret123";
+  const occupiedRanges = [];
+  const replacements = KnownSecretReuse.collectKnownSecretReplacements(text, manager, occupiedRanges, {
+    includeIds: true
+  });
+
+  assert.strictEqual(replacements.length, 2);
+  assert.deepStrictEqual(
+    replacements.map((replacement) => replacement.placeholder),
+    [placeholder, placeholder]
+  );
+  assert.deepStrictEqual(
+    occupiedRanges,
+    replacements.map((replacement) => ({ start: replacement.start, end: replacement.end }))
+  );
+  assert.ok(replacements.every((replacement) => /^reuse_\d+_\d+$/.test(replacement.id)));
+}
+
+function testKnownSecretReuseSkipsTrustedPlaceholderTokenSpan() {
+  const manager = new PlaceholderManager();
+  manager.trackKnownPlaceholder("[PWM_9]");
+  manager.getPlaceholder("[PWM_9]");
+  const replacements = KnownSecretReuse.collectKnownSecretReplacements(
+    "masked=[PWM_9]",
+    manager,
+    []
+  );
+
+  assert.deepStrictEqual(replacements, []);
+}
+
+function testKnownSecretReuseOccupiedRangePreventsDuplicateReplacement() {
+  const manager = new PlaceholderManager();
+  manager.getPlaceholder("OccupiedSecret123");
+  const text = "token=OccupiedSecret123";
+  const start = text.indexOf("OccupiedSecret123");
+  const occupiedRanges = [{ start, end: start + "OccupiedSecret123".length }];
+  const replacements = KnownSecretReuse.collectKnownSecretReplacements(text, manager, occupiedRanges);
+
+  assert.deepStrictEqual(replacements, []);
+  assert.deepStrictEqual(occupiedRanges, [{ start, end: start + "OccupiedSecret123".length }]);
+}
+
+function testKnownSecretReuseShortIdentifierHeuristicStaysScopedToHintContext() {
+  const manager = new PlaceholderManager();
+  const placeholder = manager.getPlaceholder("admin");
+  const text = "user=admin\npassword_hint=ask-admin";
+  const replacements = KnownSecretReuse.collectKnownSecretReplacements(text, manager, []);
+
+  assert.strictEqual(replacements.length, 1);
+  assert.strictEqual(replacements[0].start, text.lastIndexOf("admin"));
+  assert.strictEqual(replacements[0].placeholder, placeholder);
+}
+
+function testKnownSecretReuseEmptyTextDoesNotMutateOccupiedRanges() {
+  const manager = new PlaceholderManager();
+  manager.getPlaceholder("EmptyTextSecret123");
+  const occupiedRanges = [];
+  const replacements = KnownSecretReuse.collectKnownSecretReplacements("", manager, occupiedRanges);
+
+  assert.deepStrictEqual(replacements, []);
+  assert.deepStrictEqual(occupiedRanges, []);
+}
+
 testTrustedPlaceholderPreserved();
 testRepeatedTrustedPlaceholderPreserved();
 testUnknownCleanPlaceholderRedactsInPasswordContext();
@@ -239,5 +319,11 @@ testTransformOutboundPromptFiltersTrustedPlaceholderFindingsSynchronously();
 testTrustedPlaceholderUriCredentialsStayStableAndExtraAtSecretRedacts();
 testUntrustedPlaceholderUriExtraAtSecretAlsoRedacts();
 testMixedPlaceholderUriBlockRedactsOnlyUntrustedOrRawSecretParts();
+testKnownSecretReuseNoKnownSecretsDoesNotMutateOccupiedRanges();
+testKnownSecretReuseRepeatedRawSecretUsesSamePlaceholderAndAddsRanges();
+testKnownSecretReuseSkipsTrustedPlaceholderTokenSpan();
+testKnownSecretReuseOccupiedRangePreventsDuplicateReplacement();
+testKnownSecretReuseShortIdentifierHeuristicStaysScopedToHintContext();
+testKnownSecretReuseEmptyTextDoesNotMutateOccupiedRanges();
 
 console.log("PASS placeholder trust regressions");

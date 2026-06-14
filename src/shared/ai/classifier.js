@@ -6,6 +6,7 @@
   const FEATURE_SPEC_PATH = "ai/models/leakguard_secret_classifier.features.json";
   const ONNX_RUNTIME_MJS_PATH = "vendor/onnxruntime/ort-wasm-simd-threaded.mjs";
   const ONNX_RUNTIME_WASM_PATH = "vendor/onnxruntime/ort-wasm-simd-threaded.wasm";
+  const DEBUG_STORAGE_KEY = "pwm:debug";
   const LABELS = ["NOT_SECRET", "SECRET", "UNSURE"];
   const SECRET_KEYWORDS = [
     "api_key",
@@ -58,9 +59,32 @@
     runtime.env.wasm.numThreads = 1;
   }
 
+  function getStorageValue(storage, key) {
+    try {
+      return storage?.getItem?.(key);
+    } catch {
+      return null;
+    }
+  }
+
+  function aiAssistDebugEnabled() {
+    if (root.PWM?.DebugLogger?.isDebugEnabled?.({ root })) return true;
+    return getStorageValue(root.localStorage, DEBUG_STORAGE_KEY) === "1" ||
+      getStorageValue(root.sessionStorage, DEBUG_STORAGE_KEY) === "1";
+  }
+
+  function summarizeAiError(error) {
+    if (!error) return "";
+    return {
+      name: typeof error.name === "string" ? error.name : "Error",
+      messageLength: typeof error.message === "string" ? error.message.length : 0
+    };
+  }
+
   function logAiWarning(message, error) {
-    if (root.console?.warn) {
-      root.console.warn(`LeakGuard AI assist: ${message}`, error || "");
+    if (!aiAssistDebugEnabled()) return;
+    if (root.console?.debug) {
+      root.console.debug(`LeakGuard AI assist: ${message}`, summarizeAiError(error));
     }
   }
 

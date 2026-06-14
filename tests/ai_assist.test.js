@@ -9,6 +9,38 @@ require(path.join(repoRoot, "src/shared/patterns.js"));
 require(path.join(repoRoot, "src/shared/ai/classifier.js"));
 const Detector = require(path.join(repoRoot, "src/shared/detector.js"));
 
+async function testMissingFeatureSpecFallsBackQuietly() {
+  const classifier = globalThis.PWM.LeakGuardAiClassifier;
+  const previousExt = globalThis.PWM.ext;
+  const previousFetch = globalThis.fetch;
+  const previousWarn = console.warn;
+  const warnings = [];
+
+  globalThis.PWM.ext = {
+    runtime: {
+      getURL: (relativePath) => `chrome-extension://leakguard-test/${relativePath}`
+    }
+  };
+  globalThis.fetch = async () => ({
+    ok: false,
+    status: 404,
+    json: async () => {
+      throw new Error("feature spec JSON should not be parsed after a 404");
+    }
+  });
+  console.warn = (...args) => warnings.push(args);
+
+  try {
+    const result = await classifier.loadFeatureSpec();
+    assert.strictEqual(result, null);
+    assert.deepStrictEqual(warnings, [], "missing optional feature spec should fall back without page warnings");
+  } finally {
+    globalThis.PWM.ext = previousExt;
+    globalThis.fetch = previousFetch;
+    console.warn = previousWarn;
+  }
+}
+
 async function testAiAssistUpgradesOnlyUncertainSpans() {
   const detector = new Detector();
   const classifier = {
@@ -23,6 +55,39 @@ async function testAiAssistUpgradesOnlyUncertainSpans() {
   assert.strictEqual(findings.length, 1);
   assert.strictEqual(findings[0].severity, "high", "AI assist should upgrade high-confidence uncertain spans");
   assert.ok(findings[0].method.includes("ai-assist"));
+}
+
+async function testAiAssistIsEnabledByDefaultWhenPolicyIsOmitted() {
+  const detector = new Detector();
+  const classifier = {
+    classify: async () => ({ risk: "SECRET", confidence: 0.91 })
+  };
+
+  const findings = await detector.scanWithAiAssist("auth=abcdefghijklmnop", { classifier });
+
+  assert.strictEqual(findings.length, 1);
+  assert.strictEqual(findings[0].severity, "high", "AI assist should run by default when no policy disables it");
+  assert.ok(findings[0].method.includes("ai-assist"));
+}
+
+async function testAiAssistExplicitPolicyFalseStillDisablesClassifier() {
+  const detector = new Detector();
+  let calls = 0;
+  const classifier = {
+    classify: async () => {
+      calls += 1;
+      return { risk: "SECRET", confidence: 0.91 };
+    }
+  };
+
+  const findings = await detector.scanWithAiAssist("auth=abcdefghijklmnop", {
+    policy: { aiAssistEnabled: false },
+    classifier
+  });
+
+  assert.strictEqual(calls, 0);
+  assert.strictEqual(findings.length, 1);
+  assert.strictEqual(findings[0].severity, "medium", "explicit policy disable should keep deterministic result");
 }
 
 async function testAiAssistDoesNotDowngradeHighConfidenceDeterministicMatches() {
@@ -128,7 +193,10 @@ function testOnnxRuntimeSidecarUrlsUseExtensionOrigin() {
 }
 
 async function run() {
+  await testMissingFeatureSpecFallsBackQuietly();
   await testAiAssistUpgradesOnlyUncertainSpans();
+  await testAiAssistIsEnabledByDefaultWhenPolicyIsOmitted();
+  await testAiAssistExplicitPolicyFalseStillDisablesClassifier();
   await testAiAssistDoesNotDowngradeHighConfidenceDeterministicMatches();
   await testBrowserIntegrationIsOptionalAndPolicyControlled();
   testOnnxRuntimeSidecarUrlsUseExtensionOrigin();

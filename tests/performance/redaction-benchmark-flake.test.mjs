@@ -1,9 +1,35 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
 import { pathToFileURL } from "node:url";
 import path from "node:path";
 
 process.env.LEAKGUARD_BENCH_SKIP_MAIN = "1";
 const benchmark = await import(pathToFileURL(path.resolve("tests/performance/redaction-benchmark.mjs")).href);
+
+function testProfileNpmWrapperUsesDirectBenchmarkInvocation() {
+  const packageJson = JSON.parse(fs.readFileSync(path.resolve("package.json"), "utf8"));
+  const profileScript = packageJson.scripts?.["bench:redaction:profile"] || "";
+
+  assert.doesNotMatch(profileScript, /\bnode\s+-e\b/, "profile benchmark wrapper should not use node -e");
+  assert.match(
+    profileScript,
+    /^node\s+tests\/performance\/redaction-benchmark\.mjs\s+--profile(?:\s|$)/,
+    "profile benchmark wrapper should invoke the benchmark file directly with --profile"
+  );
+}
+
+function testBenchmarkImportDoesNotRequireCliScriptArgv() {
+  const env = { ...process.env };
+  delete env.LEAKGUARD_BENCH_SKIP_MAIN;
+  const result = spawnSync(process.execPath, ["-e", "import('./tests/performance/redaction-benchmark.mjs')"], {
+    cwd: path.resolve("."),
+    encoding: "utf8",
+    env
+  });
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+}
 
 function testSummaryRowsKeepRequiredReportingFields() {
   const rows = benchmark.formatSummaryRows([
@@ -56,6 +82,23 @@ function testProfileModeReportsEnvironmentContext() {
   assert.ok(profile.platform);
   assert.ok(profile.arch);
   assert.ok(Object.prototype.hasOwnProperty.call(profile, "cpu_count"));
+}
+
+function testProfileCliOptionSetsProfileDefaults() {
+  const env = {};
+  const result = benchmark.applyBenchmarkCliOptions(["--profile"], env);
+
+  assert.equal(result.profileRequested, true);
+  assert.equal(env.LEAKGUARD_BENCH_PROFILE, "1");
+  assert.equal(env.LEAKGUARD_BENCH_ITERATIONS, "12");
+}
+
+function testProfileCliOptionPreservesConfiguredIterations() {
+  const env = { LEAKGUARD_BENCH_ITERATIONS: "20" };
+  benchmark.applyBenchmarkCliOptions(["--profile"], env);
+
+  assert.equal(env.LEAKGUARD_BENCH_PROFILE, "1");
+  assert.equal(env.LEAKGUARD_BENCH_ITERATIONS, "20");
 }
 
 function testBenchmarkSamplesKeepDetectorOptimizationCoverage() {
@@ -202,8 +245,12 @@ function testThroughputRegressionIsNotRetryEligible() {
   );
 }
 
+testProfileNpmWrapperUsesDirectBenchmarkInvocation();
+testBenchmarkImportDoesNotRequireCliScriptArgv();
 testSummaryRowsKeepRequiredReportingFields();
 testProfileModeReportsEnvironmentContext();
+testProfileCliOptionSetsProfileDefaults();
+testProfileCliOptionPreservesConfiguredIterations();
 testBenchmarkSamplesKeepDetectorOptimizationCoverage();
 testTinyOutlierRetryEligibility();
 testSustainedTinyRegressionIsNotRetryEligible();

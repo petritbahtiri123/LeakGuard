@@ -125,6 +125,27 @@ const phase19ManualReleaseQaChecklistPath = path.join(
 const phase19ManualReleaseQaChecklist = fs.existsSync(phase19ManualReleaseQaChecklistPath)
   ? fs.readFileSync(phase19ManualReleaseQaChecklistPath, "utf8")
   : "";
+const phase19LiveBrowserQaResultsPath = path.join(
+  repoRoot,
+  "docs/phase-19-live-browser-mcp-qa-results.md"
+);
+const phase19LiveBrowserQaResults = fs.existsSync(phase19LiveBrowserQaResultsPath)
+  ? fs.readFileSync(phase19LiveBrowserQaResultsPath, "utf8")
+  : "";
+const phase20aQualityPerformanceSecurityPlanPath = path.join(
+  repoRoot,
+  "docs/phase-20a-quality-performance-security-plan.md"
+);
+const phase20aQualityPerformanceSecurityPlan = fs.existsSync(phase20aQualityPerformanceSecurityPlanPath)
+  ? fs.readFileSync(phase20aQualityPerformanceSecurityPlanPath, "utf8")
+  : "";
+const phase20cQualityPerformanceSecurityCloseoutPath = path.join(
+  repoRoot,
+  "docs/phase-20c-quality-performance-security-closeout.md"
+);
+const phase20cQualityPerformanceSecurityCloseout = fs.existsSync(phase20cQualityPerformanceSecurityCloseoutPath)
+  ? fs.readFileSync(phase20cQualityPerformanceSecurityCloseoutPath, "utf8")
+  : "";
 const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
 const testWorkflow = fs.readFileSync(path.join(repoRoot, ".github/workflows/test.yml"), "utf8");
 const releaseArtifactsWorkflow = fs.readFileSync(
@@ -1055,6 +1076,91 @@ function testPhase19ManualReleaseQaChecklistIsDocumented() {
   }
 }
 
+function testPhase19LiveBrowserQaCloseoutAlignsProductization() {
+  assert.ok(
+    fileExists("docs/phase-19-live-browser-mcp-qa-results.md"),
+    "Phase 19 live-browser MCP QA results should exist"
+  );
+
+  for (const required of [
+    "## Closeout Alignment",
+    "Chrome: GO for release readiness after human store listing review",
+    "Edge: LIMITED GO for basic Chromium compatibility",
+    "Edge live-provider claims require manual retest",
+    "No P0 raw leak found",
+    "No proven P1 provider/fail-closed bug found",
+    "Live provider file upload was not attempted without QA/test accounts",
+    "Screenshots were intentionally skipped to avoid capturing account/bot-check data"
+  ]) {
+    assert.ok(
+      phase19LiveBrowserQaResults.includes(required),
+      `Phase 19 live-browser QA closeout should include: ${required}`
+    );
+  }
+
+  for (const required of [
+    "Chrome live QA completed",
+    "Edge basic Chromium compatibility completed",
+    "Edge live-provider retest remains a follow-up before strong Edge claims",
+    "Human store listing review remains required before Chrome publishing"
+  ]) {
+    assert.ok(
+      releaseChecklist.includes(required),
+      `release QA checklist should include Phase 19 live QA status: ${required}`
+    );
+  }
+}
+
+function testPhase20aQualityPerformanceSecurityPlanIsDocumented() {
+  assert.ok(
+    fileExists("docs/phase-20a-quality-performance-security-plan.md"),
+    "Phase 20A quality/performance/security plan should exist"
+  );
+
+  for (const required of [
+    "Quality",
+    "Performance",
+    "Security",
+    "rollback",
+    "behavior is proven unchanged",
+    "Detector rule changes",
+    "No permissions",
+    "no backend calls",
+    "remote calls",
+    "telemetry"
+  ]) {
+    assert.ok(
+      phase20aQualityPerformanceSecurityPlan.includes(required),
+      `Phase 20A quality/performance/security plan should include: ${required}`
+    );
+  }
+}
+
+function testPhase20cQualityPerformanceSecurityCloseoutIsDocumented() {
+  assert.ok(
+    fileExists("docs/phase-20c-quality-performance-security-closeout.md"),
+    "Phase 20C quality/performance/security closeout should exist"
+  );
+
+  for (const required of [
+    "Performance",
+    "Quality",
+    "Security",
+    "detector",
+    "file extraction",
+    "XLSX",
+    "OCR",
+    "deferred",
+    "rollback",
+    "no behavior change"
+  ]) {
+    assert.ok(
+      phase20cQualityPerformanceSecurityCloseout.includes(required),
+      `Phase 20C quality/performance/security closeout should include: ${required}`
+    );
+  }
+}
+
 function testPhase17fBrowserDiagnosticsAreActionable() {
   assert.ok(fileExists("scripts/check-browser-environment.mjs"), "browser preflight script should exist");
   const preflightSource = fs.readFileSync(path.join(repoRoot, "scripts/check-browser-environment.mjs"), "utf8");
@@ -1128,6 +1234,9 @@ async function run() {
   testPublicationContactsAreFinalized();
   testPhase18FinalPrStabilizationCloseoutIsDocumented();
   testPhase19ManualReleaseQaChecklistIsDocumented();
+  testPhase19LiveBrowserQaCloseoutAlignsProductization();
+  testPhase20aQualityPerformanceSecurityPlanIsDocumented();
+  testPhase20cQualityPerformanceSecurityCloseoutIsDocumented();
   testPhase17fBrowserDiagnosticsAreActionable();
   console.log("PASS productization static regressions");
 }
