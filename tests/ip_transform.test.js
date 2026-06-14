@@ -297,6 +297,31 @@ function testKnownSecretReusePrefersLongerKnownRange() {
   assert.strictEqual(output, "mirror=[PWM_1]");
 }
 
+function testReplacementMetadataStaysInTextOrderAcrossSecretReuseAndNetwork() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const knownSecret = "KnownSortSecret123456";
+  const apiKey = "sk-proj-SortReviewKey1234567890abcdef";
+  manager.getPlaceholder(knownSecret);
+  const text = [
+    "resolver=8.8.8.8",
+    `mirror=${knownSecret}`,
+    `OPENAI_API_KEY=${apiKey}`
+  ].join("\n");
+  const findings = detector.scan(text);
+  const { result } = transform(text, { manager, findings });
+  const lines = result.redactedText.split("\n");
+
+  assert.deepStrictEqual(
+    result.replacements.map((replacement) => replacement.raw),
+    ["8.8.8.8", knownSecret, apiKey],
+    "replacement metadata should stay sorted by source text range across replacement sources"
+  );
+  assert.ok(/^resolver=\[PUB_HOST_\d+(?:_DNS)?\]$/.test(lines[0]));
+  assert.strictEqual(lines[1], "mirror=[PWM_1]");
+  assert.strictEqual(lines[2], "OPENAI_API_KEY=[PWM_2]");
+}
+
 function testSyntheticMixedNetworkAndSecretBlock() {
   const detector = new Detector();
   const manager = new PlaceholderManager();
@@ -359,6 +384,7 @@ function run() {
   testKnownPlaceholderSecretReusesSameMappingAcrossMixedPrompt();
   testDetectedSecretAlsoRedactsLaterDuplicateOccurrences();
   testKnownSecretReusePrefersLongerKnownRange();
+  testReplacementMetadataStaysInTextOrderAcrossSecretReuseAndNetwork();
   testSyntheticMixedNetworkAndSecretBlock();
   testNoFalseCorruption();
   testSessionResetBehavior();
