@@ -1222,6 +1222,7 @@ async function run() {
   testProtectedSiteOcrOptInStaysLocalAndGateBound();
   testImageRedactionCopyDoesNotPromiseRawUploadPassThrough();
   testUnsupportedProtectedImagesCannotReachRawReplayBranch();
+  await testProtectedSiteOcrBrokerLoadTimeoutIsHandledAsBlockedResult();
   await testProtectedSiteOcrBrokerRejectsMalformedMessages();
   testProtectedSiteOcrBrokerMessageSurfaceIsNarrow();
   testPageUiNoLongerLeaksClassificationsOrMaskedFragments();
@@ -1640,6 +1641,92 @@ function testProtectedSiteOcrBrokerMessageSurfaceIsNarrow() {
     false,
     "sandbox broker page must not log or persist OCR text"
   );
+}
+
+async function testProtectedSiteOcrBrokerLoadTimeoutIsHandledAsBlockedResult() {
+  assert.ok(
+    protectedSiteOcrBrokerSource.includes("iframeReady.catch"),
+    "broker frame readiness timeout should be explicitly handled to avoid Chrome extension error noise"
+  );
+
+  const timers = [];
+  const sandbox = {
+    ArrayBuffer,
+    Date,
+    Error,
+    Math,
+    Number,
+    Object,
+    Promise,
+    clearTimeout(id) {
+      const timer = timers.find((entry) => entry.id === id);
+      if (timer) timer.cleared = true;
+    },
+    setTimeout(callback, delay) {
+      const id = timers.length + 1;
+      timers.push({ id, callback, delay, cleared: false });
+      return id;
+    },
+    crypto: {
+      randomUUID() {
+        return "test-channel";
+      }
+    },
+    chrome: {
+      runtime: {
+        getURL(pathname) {
+          return `chrome-extension://test/${pathname}`;
+        }
+      }
+    },
+    document: {
+      documentElement: {
+        appendChild(node) {
+          node.parentNode = this;
+        },
+        removeChild(node) {
+          node.parentNode = null;
+        }
+      },
+      createElement(tagName) {
+        assert.strictEqual(tagName, "iframe");
+        return {
+          hidden: false,
+          style: {},
+          contentWindow: {
+            postMessage() {
+              throw new Error("load timeout should block before posting to the iframe");
+            }
+          },
+          addEventListener() {},
+          setAttribute() {}
+        };
+      }
+    },
+    MessageChannel: function MessageChannel() {
+      this.port1 = {
+        onmessage: null,
+        close() {}
+      };
+      this.port2 = {};
+    },
+    PWM: {}
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(protectedSiteOcrBrokerSource, sandbox, {
+    filename: "protectedSiteOcrBroker.js"
+  });
+
+  const resultPromise = sandbox.PWM.ProtectedSiteOcrBroker.prepare({ timeoutMs: 10000 });
+  const loadTimeout = timers.find((entry) => entry.delay === 5000);
+  assert.ok(loadTimeout, "broker should install a frame load timeout");
+  loadTimeout.callback();
+
+  const result = await resultPromise;
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.status, "ocr_recognition_blocked");
+  assert.deepStrictEqual(Array.from(result.warnings), ["protected_site_ocr_broker_load_timeout"]);
+  assert.strictEqual(result.reason, "protected_site_ocr_broker_load_timeout");
 }
 
 async function testProtectedSiteOcrBrokerRejectsMalformedMessages() {
