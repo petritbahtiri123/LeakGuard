@@ -46,10 +46,29 @@ const DETECTOR_PROFILE_METHODS = [
   "resolveOverlaps"
 ];
 
+const PROFILE_DEFAULT_ITERATIONS = 12;
 const DEFAULT_ITERATIONS = 8;
 const WARMUP_ITERATIONS = 2;
 const TINY_SAMPLE_MAX_CHARS = 256;
 const HEALTHY_P95_P50_MAX_RATIO = 1;
+
+function applyBenchmarkCliOptions(argv = process.argv.slice(2), env = process.env) {
+  const profileRequested = argv.includes("--profile");
+  if (profileRequested) {
+    env.LEAKGUARD_BENCH_PROFILE = "1";
+    env.LEAKGUARD_BENCH_ITERATIONS =
+      env.LEAKGUARD_BENCH_ITERATIONS || `${PROFILE_DEFAULT_ITERATIONS}`;
+  }
+
+  return {
+    profileRequested,
+    profileEnabled: env.LEAKGUARD_BENCH_PROFILE === "1",
+    iterations: env.LEAKGUARD_BENCH_ITERATIONS || ""
+  };
+}
+
+applyBenchmarkCliOptions();
+
 const ITERATIONS = Math.max(
   3,
   Number.parseInt(process.env.LEAKGUARD_BENCH_ITERATIONS || `${DEFAULT_ITERATIONS}`, 10)
@@ -715,11 +734,16 @@ function runBenchmarkSuite() {
   console.log("PASS redaction performance benchmark");
 }
 
-if (!process.env.LEAKGUARD_BENCH_SKIP_MAIN && import.meta.url === pathToFileURL(process.argv[1]).href) {
+function isDirectBenchmarkInvocation() {
+  return Boolean(process.argv[1]) && import.meta.url === pathToFileURL(process.argv[1]).href;
+}
+
+if (!process.env.LEAKGUARD_BENCH_SKIP_MAIN && isDirectBenchmarkInvocation()) {
   runBenchmarkSuite();
 }
 
 export {
+  applyBenchmarkCliOptions,
   benchmark,
   formatSummaryRows,
   getBenchmarkEnvironmentProfile,

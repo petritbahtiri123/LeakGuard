@@ -132,6 +132,13 @@ const phase20aQualityPerformanceSecurityPlanPath = path.join(
 const phase20aQualityPerformanceSecurityPlan = fs.existsSync(phase20aQualityPerformanceSecurityPlanPath)
   ? fs.readFileSync(phase20aQualityPerformanceSecurityPlanPath, "utf8")
   : "";
+const phase20cQualityPerformanceSecurityCloseoutPath = path.join(
+  repoRoot,
+  "docs/phase-20c-quality-performance-security-closeout.md"
+);
+const phase20cQualityPerformanceSecurityCloseout = fs.existsSync(phase20cQualityPerformanceSecurityCloseoutPath)
+  ? fs.readFileSync(phase20cQualityPerformanceSecurityCloseoutPath, "utf8")
+  : "";
 const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
 const testWorkflow = fs.readFileSync(path.join(repoRoot, ".github/workflows/test.yml"), "utf8");
 const releaseArtifactsWorkflow = fs.readFileSync(
@@ -1087,6 +1094,31 @@ function testPhase20aQualityPerformanceSecurityPlanIsDocumented() {
   }
 }
 
+function testPhase20cQualityPerformanceSecurityCloseoutIsDocumented() {
+  assert.ok(
+    fileExists("docs/phase-20c-quality-performance-security-closeout.md"),
+    "Phase 20C quality/performance/security closeout should exist"
+  );
+
+  for (const required of [
+    "Performance",
+    "Quality",
+    "Security",
+    "detector",
+    "file extraction",
+    "XLSX",
+    "OCR",
+    "deferred",
+    "rollback",
+    "no behavior change"
+  ]) {
+    assert.ok(
+      phase20cQualityPerformanceSecurityCloseout.includes(required),
+      `Phase 20C quality/performance/security closeout should include: ${required}`
+    );
+  }
+}
+
 function testPhase17fBrowserDiagnosticsAreActionable() {
   assert.ok(fileExists("scripts/check-browser-environment.mjs"), "browser preflight script should exist");
   const preflightSource = fs.readFileSync(path.join(repoRoot, "scripts/check-browser-environment.mjs"), "utf8");
@@ -1161,6 +1193,7 @@ async function run() {
   testPhase18FinalPrStabilizationCloseoutIsDocumented();
   testPhase19ManualReleaseQaChecklistIsDocumented();
   testPhase20aQualityPerformanceSecurityPlanIsDocumented();
+  testPhase20cQualityPerformanceSecurityCloseoutIsDocumented();
   testPhase17fBrowserDiagnosticsAreActionable();
   console.log("PASS productization static regressions");
 }

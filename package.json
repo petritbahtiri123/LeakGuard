@@ -33,7 +33,7 @@
     "test:release-artifacts": "node tests/release_artifacts.test.js",
     "test:release-gates": "npm run build:all && npm run package:release && npm run test:release-artifacts && npm run bench:file-extraction",
     "bench:file-extraction": "node tests/performance/file-extraction-pipeline-benchmark.mjs",
-    "bench:redaction:profile": "node -e \"process.env.LEAKGUARD_BENCH_PROFILE='1'; process.env.LEAKGUARD_BENCH_ITERATIONS=process.env.LEAKGUARD_BENCH_ITERATIONS||'12'; import('./tests/performance/redaction-benchmark.mjs')\"",
+    "bench:redaction:profile": "node tests/performance/redaction-benchmark.mjs --profile",
     "build": "npm run build:all",
     "prebuild:chrome": "npm run prepare:build",
     "build:chrome": "node scripts/build-extension.mjs --browser chrome --mode consumer",
