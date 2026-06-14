@@ -9,6 +9,38 @@ require(path.join(repoRoot, "src/shared/patterns.js"));
 require(path.join(repoRoot, "src/shared/ai/classifier.js"));
 const Detector = require(path.join(repoRoot, "src/shared/detector.js"));
 
+async function testMissingFeatureSpecFallsBackQuietly() {
+  const classifier = globalThis.PWM.LeakGuardAiClassifier;
+  const previousExt = globalThis.PWM.ext;
+  const previousFetch = globalThis.fetch;
+  const previousWarn = console.warn;
+  const warnings = [];
+
+  globalThis.PWM.ext = {
+    runtime: {
+      getURL: (relativePath) => `chrome-extension://leakguard-test/${relativePath}`
+    }
+  };
+  globalThis.fetch = async () => ({
+    ok: false,
+    status: 404,
+    json: async () => {
+      throw new Error("feature spec JSON should not be parsed after a 404");
+    }
+  });
+  console.warn = (...args) => warnings.push(args);
+
+  try {
+    const result = await classifier.loadFeatureSpec();
+    assert.strictEqual(result, null);
+    assert.deepStrictEqual(warnings, [], "missing optional feature spec should fall back without page warnings");
+  } finally {
+    globalThis.PWM.ext = previousExt;
+    globalThis.fetch = previousFetch;
+    console.warn = previousWarn;
+  }
+}
+
 async function testAiAssistUpgradesOnlyUncertainSpans() {
   const detector = new Detector();
   const classifier = {
@@ -128,6 +160,7 @@ function testOnnxRuntimeSidecarUrlsUseExtensionOrigin() {
 }
 
 async function run() {
+  await testMissingFeatureSpecFallsBackQuietly();
   await testAiAssistUpgradesOnlyUncertainSpans();
   await testAiAssistDoesNotDowngradeHighConfidenceDeterministicMatches();
   await testBrowserIntegrationIsOptionalAndPolicyControlled();
