@@ -3027,6 +3027,48 @@ function testGeminiDiagnosticsRunnerIsDebugGated() {
   assert.strictEqual(debugEvents[0].label, "gemini-diagnostics:ui-map");
 }
 
+function testGeminiDiagnosticsRunnerDoesNotThrowWhenDebugHelperIsUnavailable() {
+  const debugEvents = [];
+  const fakeGlobal = {
+    PWM: {
+      DebugLogger: {},
+      HostMatching: globalThis.PWM.HostMatching,
+      SiteAdapters: {
+        GeminiDiagnosticsAdapter: {
+          scanGeminiUi: () => {
+            throw new Error("diagnostics should stay disabled without debug gate");
+          }
+        }
+      }
+    }
+  };
+  const factory = new Function(
+    "globalThis",
+    "window",
+    "document",
+    "location",
+    "debugReveal",
+    [
+      extractFunctionSource(contentSource, "isGeminiHost"),
+      extractFunctionSource(contentSource, "getGeminiDiagnosticsAdapter"),
+      extractFunctionSource(contentSource, "runGeminiUiDiagnostics"),
+      "return { runGeminiUiDiagnostics };"
+    ].join("\n\n")
+  );
+  const { runGeminiUiDiagnostics } = factory(
+    fakeGlobal,
+    {},
+    {},
+    { hostname: "gemini.google.com" },
+    (label, payload) => debugEvents.push({ label, payload })
+  );
+
+  assert.doesNotThrow(() => {
+    assert.strictEqual(runGeminiUiDiagnostics("boot"), false);
+  });
+  assert.strictEqual(debugEvents.length, 0);
+}
+
 async function testGeminiStreamingHandoffUsesDiscoveredFileInput() {
   const sanitizedFile = {
     name: "large-stream.env",
@@ -13425,6 +13467,7 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   testGeminiDiagnosticsDetectsHiddenFileInput();
   testGeminiDiagnosticsDetectsBlobDownloadWithoutRawMetadata();
   testGeminiDiagnosticsRunnerIsDebugGated();
+  testGeminiDiagnosticsRunnerDoesNotThrowWhenDebugHelperIsUnavailable();
   await testGeminiStreamingHandoffUsesDiscoveredFileInput();
   await testGeminiDropNeverClicksUploadFlowWhenInputAppearsAfterClick();
   await testGeminiDropNeverClicksExistingOverlayMenuItem();

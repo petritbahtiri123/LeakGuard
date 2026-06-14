@@ -539,7 +539,11 @@
   }
 
   function runGeminiUiDiagnostics(reason = "") {
-    if (!isGeminiHost() || !isDebugEnabled()) return false;
+    const debugEnabled =
+      typeof isDebugEnabled === "function"
+        ? isDebugEnabled()
+        : Boolean(globalThis.PWM?.DebugLogger?.isDebugEnabled?.({ root: window }));
+    if (!isGeminiHost() || !debugEnabled) return false;
     const diagnostics = getGeminiDiagnosticsAdapter();
     if (!diagnostics?.scanGeminiUi) return false;
     try {

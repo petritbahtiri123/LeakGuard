@@ -38,6 +38,9 @@
         { once: true }
       );
     });
+    // Request handlers still observe readiness failures through broker.ready.catch().
+    // This keeps expected fail-closed load timeouts out of Chrome's extension error list.
+    iframeReady.catch(() => {});
     iframe.src = getRuntimeUrl(BROKER_PATH);
     iframe.hidden = true;
     iframe.tabIndex = -1;
