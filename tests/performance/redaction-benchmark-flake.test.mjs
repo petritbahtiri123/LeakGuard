@@ -5,6 +5,76 @@ import path from "node:path";
 process.env.LEAKGUARD_BENCH_SKIP_MAIN = "1";
 const benchmark = await import(pathToFileURL(path.resolve("tests/performance/redaction-benchmark.mjs")).href);
 
+function testSummaryRowsKeepRequiredReportingFields() {
+  const rows = benchmark.formatSummaryRows([
+    {
+      test: "sample",
+      chars: 1024,
+      iterations: 5,
+      findings: 1,
+      avg_wall_ms: 12.3456,
+      avg_cpu_ms: 10,
+      p50_wall_ms: 11,
+      p95_wall_ms: 14,
+      p99_wall_ms: 15,
+      p50_cpu_ms: 9,
+      p95_cpu_ms: 12,
+      p99_cpu_ms: 13,
+      max_wall_ms: 16,
+      avg_heap_delta_bytes: 1024,
+      avg_heap_growth_bytes: 2048,
+      max_heap_delta_bytes: 4096,
+      avg_ms_per_kib: 12.3456
+    }
+  ]);
+
+  assert.deepStrictEqual(
+    {
+      test: rows[0].test,
+      iterations: rows[0].iterations,
+      avg_wall_ms: rows[0].avg_wall_ms,
+      p95_wall_ms: rows[0].p95_wall_ms
+    },
+    {
+      test: "sample",
+      iterations: 5,
+      avg_wall_ms: "12.346",
+      p95_wall_ms: "14.000"
+    }
+  );
+}
+
+function testProfileModeReportsEnvironmentContext() {
+  const profile = benchmark.getBenchmarkEnvironmentProfile({
+    profileEnabled: true,
+    iterations: 5
+  });
+
+  assert.equal(profile.profile_enabled, "yes");
+  assert.equal(profile.iterations, 5);
+  assert.ok(profile.node);
+  assert.ok(profile.platform);
+  assert.ok(profile.arch);
+  assert.ok(Object.prototype.hasOwnProperty.call(profile, "cpu_count"));
+}
+
+function testBenchmarkSamplesKeepDetectorOptimizationCoverage() {
+  const summaries = benchmark.getBenchmarkSampleSummaries();
+  const coverage = new Set(summaries.flatMap((sample) => sample.coverage));
+
+  for (const required of [
+    "overlap-correctness",
+    "repeated-env-like-secrets",
+    "safe-text-no-false-positives",
+    "known-secret-reuse"
+  ]) {
+    assert.ok(coverage.has(required), `benchmark samples should keep coverage marker: ${required}`);
+  }
+
+  const safeText = summaries.find((sample) => sample.name === "long_safe_logs_120kb");
+  assert.equal(safeText?.maxFindings, 0, "large safe text sample should remain a no-finding guard");
+}
+
 function testTinyOutlierRetryEligibility() {
   const sample = {
     name: "small_safe_text",
@@ -132,6 +202,9 @@ function testThroughputRegressionIsNotRetryEligible() {
   );
 }
 
+testSummaryRowsKeepRequiredReportingFields();
+testProfileModeReportsEnvironmentContext();
+testBenchmarkSamplesKeepDetectorOptimizationCoverage();
 testTinyOutlierRetryEligibility();
 testSustainedTinyRegressionIsNotRetryEligible();
 testLargeSampleIsNotRetryEligible();

@@ -2115,6 +2115,77 @@ function testPlaceholderSuffixSecretRedactsOnlyAppendedMaterial() {
   );
 }
 
+function testShapeImpossibleScansAreSkippedForLargeSafeText() {
+  const detector = new Detector();
+  const skippedMethods = [
+    "scanSensitiveHttpHeaders",
+    "scanUrlCredentials",
+    "scanExtraAtUriCredentialSecrets",
+    "scanUnknownPlaceholderTokens",
+    "scanPlaceholderSuffixSecrets"
+  ];
+  const calls = Object.fromEntries(skippedMethods.map((method) => [method, 0]));
+
+  for (const method of skippedMethods) {
+    const original = detector[method];
+    detector[method] = function wrappedShapeImpossibleScanner(...args) {
+      calls[method] += 1;
+      return original.apply(this, args);
+    };
+  }
+
+  const safeLine =
+    "2026-05-08 INFO request_id=req-01HV7M7A2B3C4D5E6F7G8H9J0K region=eu-central-1 token_limit=4096 version=1.2.3\n";
+  const findings = detector.scan(safeLine.repeat(1100));
+
+  assert.deepStrictEqual(findings, [], "large safe log text should stay finding-free");
+  assert.deepStrictEqual(
+    calls,
+    {
+      scanSensitiveHttpHeaders: 0,
+      scanUrlCredentials: 0,
+      scanExtraAtUriCredentialSecrets: 0,
+      scanUnknownPlaceholderTokens: 0,
+      scanPlaceholderSuffixSecrets: 0
+    },
+    "shape-impossible scanner passes should not run"
+  );
+}
+
+function testShapeGatesStillDetectPositiveCredentialShapes() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  manager.trackKnownPlaceholder("[PWM_7]");
+  const redactor = new Redactor(manager);
+  const text = [
+    "Authorization: Bearer HeaderToken1234567890",
+    "X-API-Key: ApiKeyToken1234567890",
+    "Cookie: sessionid=CookieSessionToken1234567890; theme=dark",
+    "DATABASE_URL=postgres://app:UrlPassword123456!@db.internal:5432/app",
+    "TOKEN=[PWM_7]RawTailSecret1234567890"
+  ].join("\n");
+
+  const findings = detector.scan(text, { manager });
+  const redactedText = redactor.redact(text, findings).redactedText;
+
+  assert.ok(/^Authorization: Bearer \[PWM_\d+\]$/m.test(redactedText));
+  assert.ok(/^X-API-Key: \[PWM_\d+\]$/m.test(redactedText));
+  assert.ok(/^Cookie: sessionid=\[PWM_\d+\]; theme=dark$/m.test(redactedText));
+  assert.ok(
+    /^DATABASE_URL=postgres:\/\/app:\[PWM_\d+\]@db\.internal:5432\/app$/m.test(redactedText),
+    `URL credential shape should stay intact: ${redactedText}`
+  );
+  assert.ok(
+    /^TOKEN=\[PWM_7\]\[PWM_\d+\]$/m.test(redactedText),
+    `trusted placeholder suffix should redact only raw tail: ${redactedText}`
+  );
+  assert.strictEqual(redactedText.includes("HeaderToken1234567890"), false);
+  assert.strictEqual(redactedText.includes("ApiKeyToken1234567890"), false);
+  assert.strictEqual(redactedText.includes("CookieSessionToken1234567890"), false);
+  assert.strictEqual(redactedText.includes("UrlPassword123456!"), false);
+  assert.strictEqual(redactedText.includes("RawTailSecret1234567890"), false);
+}
+
 function testStandaloneBenignBuildLabelStaysVisible() {
   const detector = new Detector();
   const text = "release-2026-04-24";
@@ -2311,6 +2382,8 @@ function run() {
   testStandaloneSecretKeywordPasswordRedactsHighConfidenceValue();
   testNaturalLanguageSecretRedactsCredentialLikeValue();
   testPlaceholderSuffixSecretRedactsOnlyAppendedMaterial();
+  testShapeImpossibleScansAreSkippedForLargeSafeText();
+  testShapeGatesStillDetectPositiveCredentialShapes();
   testStandaloneBenignBuildLabelStaysVisible();
   testUsernameAndEmailAssignmentsStayMediumConfidence();
   testEmailRedactionSuppressionAndReuse();
