@@ -43,7 +43,9 @@
     "build:firefox": "node scripts/build-extension.mjs --browser firefox --mode consumer",
     "prebuild:firefox-enterprise": "npm run prepare:build",
     "build:firefox-enterprise": "node scripts/build-extension.mjs --browser firefox --mode enterprise",
-    "build:all": "npm run prepare:build && node scripts/build-all.mjs"
+    "build:all": "npm run prepare:build && node scripts/build-all.mjs",
+    "setup:codex-release-env": "node scripts/setup-codex-cloud-release-env.mjs",
+    "validate:codex-release-env": "node scripts/validate-codex-cloud-release-env.mjs"
   },
   "devDependencies": {
     "eslint": "^10.4.1",
