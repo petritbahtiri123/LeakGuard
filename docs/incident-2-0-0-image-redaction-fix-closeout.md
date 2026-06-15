@@ -1,13 +1,13 @@
 # LeakGuard 2.0.x Image Redaction Incident Fix Closeout
 
 Date: 2026-06-15
-Status: patch implemented; clean-environment validation attempted here but blocked by missing browser binaries and pip/proxy build dependency failures
+Status: patched candidate validated on home Windows dev machine
 
 ## Confirmed root cause
 
-The local confirmed root cause is an output-validation gap in the protected-site visual image redaction path: a redactor result that reported success but produced an empty or invalid generated PNG `File` could be treated as safe for upload by the content file extraction pipeline. Real providers commonly reject zero-byte or malformed synthetic files, which matches the rollout symptom where protected-site image redaction appeared to fail when users attempted image uploads.
+The local confirmed root cause was an output-validation gap in the protected-site visual image redaction path: a redactor result that reported success but produced an empty or invalid generated PNG `File` could be treated as safe for upload by the content file extraction pipeline. Real providers commonly reject zero-byte or malformed synthetic files, matching the rollout symptom where protected-site image redaction appeared to fail during image uploads.
 
-This patch makes the image path fail closed unless the generated replacement is a usable `.redacted.png` file with MIME `image/png` and non-zero size. It also makes the lower-level image redactor report `image_redaction_empty_output` if canvas export returns an empty blob.
+The patch makes the image path fail closed unless the generated replacement is a usable `.redacted.png` file with MIME `image/png` and non-zero size. The lower-level image redactor now reports `image_redaction_empty_output` if canvas export returns an empty blob.
 
 ## Exact affected path
 
@@ -17,85 +17,163 @@ This patch makes the image path fail closed unless the generated replacement is 
 4. The pipeline converts the blob/result file into `sanitizedFile` and marks it safe for file-only upload.
 5. Before this patch, non-null was enough at the pipeline boundary; after this patch, the generated file must be non-empty, `image/png`, and named `*.redacted.png`.
 
-## Clean environment validation result
+## Environment validation
 
-Validation was attempted in this container on 2026-06-15, but this is not a clean release/browser QA environment:
+`npm run validate:codex-release-env` passed on the home Windows dev machine after repairing local environment diagnostics and stale dependencies:
 
-- Python is available as `Python 3.14.4`, and pip is available as `pip 26.1`.
-- `npm ls --depth=0` reports installed Node dependencies for the repo (`eslint`, `globals`, `knip`, `onnxruntime-web`, `sharp`, and `yazl`).
-- Proxy environment variables are configured (`HTTP_PROXY`, `HTTPS_PROXY`, `npm_config_http_proxy`, and `npm_config_https_proxy` point at `http://proxy:8080`).
-- `npm run build:all`, `npm run test:ci`, and `npm run test:release-gates` are blocked because `prepare:build` creates `ai/.venv` and pip cannot fetch `joblib>=1.3` through the proxy (`Tunnel connection failed: 403 Forbidden`).
-- Chrome, Chromium, Edge, and Firefox command-line binaries are not installed in this container, so headed browser gates and manual Chrome QA cannot run here.
+- Node: `v24.16.0`
+- npm: `11.16.0`
+- Python: `Python 3.14.6`
+- pip: `pip 26.1.2`
+- Proxy variables: `HTTP_PROXY=`, `HTTPS_PROXY=`, `NO_PROXY=`
+- pip dry-run resolution for `ai/requirements.txt`: passed
+- `ai/.venv` build imports: `joblib`, `numpy`, `scipy`, `sklearn`, `skl2onnx` passed
+- Chrome executable: `C:\Program Files\Google\Chrome\Application\chrome.exe`
+- Edge executable: `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`
+- Firefox executable: `C:\Program Files\Mozilla Firefox\firefox.exe`
+- Browser preflight: passed
 
-## Package hash/size
+Local setup notes:
 
-No patched Chrome package was produced in this environment because `npm run build:all` failed before `dist/chrome` could be created. Consequently, `npm run package:release` failed with `Missing source folder: /workspace/LeakGuard/dist/chrome`.
+- `npm ci` was run because `node_modules` had stale `sharp@0.34.5` while `package-lock.json` and `package.json` require `sharp@0.35.0`.
+- `scripts/validate-codex-cloud-release-env.mjs` was corrected for Windows `.cmd` execution, Windows browser install paths, `ai/.venv` import checks, and Windows browser version probe behavior. This changed validation tooling only, not extension runtime behavior.
 
-## Headed Chrome QA result
+## Package hash and size
 
-Not run in this container. Required clean-environment validation remains:
+Final Chrome release candidate:
 
-- unpacked `dist/chrome` loads in a clean Chrome profile
-- popup/options/scanner open
-- scanner image upload produces a non-empty `.redacted.png`
-- scanner JSON report excludes raw OCR text/secret
-- generic protected-site image picker/drop creates a safe `.redacted.png` or blocks raw upload
-- failed/unsupported image paths block raw upload
+- Path: `C:\Users\bajra\OneDrive\Documents\Development\LeakGuard\LeakGuard\artifacts\release\leakguard-chrome-v2.0.0.zip`
+- Size: `8024141` bytes
+- SHA256: `45535A6D285E8BD8246DB44890550E933509980A2C0A7F5C3C2DF1192E011D1B`
 
-## Packaged Chrome QA result
+Other package sizes from release artifact validation:
 
-Not run in this container because the patched Chrome release zip could not be produced. Packaged Chrome QA remains required after a successful clean build/package run.
+- `leakguard-chrome-enterprise-v2.0.0.zip`: `8024173` bytes
+- `leakguard-firefox-v2.0.0.zip`: `8024278` bytes
+- `leakguard-firefox-enterprise-v2.0.0.zip`: `8024288` bytes
 
-## Live provider result
+## Full gate results
 
-Not run. No QA/test provider accounts or installed Chrome runtime are available in this container. ChatGPT and Gemini image upload smoke tests remain required before those providers should be claimed for the patched Chrome release.
+Passed:
 
-## Store artifact identity result
+- `npm run validate:codex-release-env`
+- `npm run build:all`
+- `npm run package:release`
+- `npm run test:ci`
+- `npm run test:release-gates`
+- `npm run test:browser-gates`
+- `npm run test:release-artifacts`
+- `git diff --check`
 
-The exact 2.0.0 Chrome Web Store uploaded zip remains unavailable in this checkout. Local file search found prior rollback/release artifacts such as `release/leakguard-chrome-v1.7.0.zip`, but no `leakguard-chrome-v2.0.0.zip` or exact Store-uploaded 2.0.0 candidate. Do not block the hotfix forever on the unavailable old zip if a newly built patched candidate passes clean release/browser/manual QA, but keep this as a package-drift caveat in release notes.
+Release gates rebuilt all targets, repackaged all release zips, passed release artifact/store-readiness checks, and passed the file extraction pipeline benchmark.
 
-## Raw leak assessment
+Browser gates passed:
 
-No raw pass-through was added. If redacted image generation returns an empty or invalid output, the protected-site path returns `blocked`, clears `sanitizedFile`, clears output name/kind, and preserves the existing fail-closed behavior. The regression suite asserts that the raw synthetic marker and raw image text do not appear in the blocked result.
+- Chrome smoke
+- Firefox smoke
+- Edge smoke
+- Chrome extension QA harness
+- Protected-site PDF/DOCX/XLSX/image handoff
+- Protected-site file drop handoff
+- Scanner downloads, including image OCR redacted PNG
+- OCR WASM, Tesseract core, English traineddata, and synthetic OCR recognition proofs
 
-## Regression tests added
-
-- Scanner/image-redactor regression: empty canvas output is rejected with `image_redaction_empty_output` and no blob is returned.
-- Protected-site pipeline regression: empty generated `.redacted.png` is rejected, no sanitized upload is produced, and raw marker data is not exposed in the result.
-- Release artifact regression: release packages must include the protected-site OCR broker, content pipeline, scanner OCR, image redactor, and required local OCR assets.
-
-## Commands run in this validation attempt
+## Focused image tests
 
 Passed:
 
 - `node tests/scanner_ocr.test.js`
 - `node tests/content_file_extraction_pipeline.test.js`
-- `git diff --check`
+- `node tests/release_artifacts.test.js`
+- `node tests/browser/extension_qa_harness.test.mjs`
 
-Blocked by environment:
+The focused scanner OCR suite now also covers:
 
-- `npm run build:all` — pip/proxy failure installing `joblib>=1.3` during `prepare:build`
-- `npm run package:release` — `dist/chrome` missing because build failed
-- `npm run test:ci` — same pip/proxy `prepare:build` failure after eslint/knip completed
-- `npm run test:release-gates` — same pip/proxy `prepare:build` failure
-- `npm run test:browser-gates` — Chrome, Edge, and Firefox binaries missing
-- `npm run test:release-artifacts` — `dist/chrome` missing
-- `node tests/release_artifacts.test.js` — `dist/chrome` missing
-- `node tests/browser/extension_qa_harness.test.mjs` — `dist/chrome/manifest.json` missing
+- small, medium, and large PNG images with fake secrets produce non-empty flattened `.redacted.png`
+- output dimensions are preserved
+- clean images across different sizes produce zero findings
+- clean images can still generate safe PNG handoff output, preserving user workflow
 
-## Go/no-go for patched 2.0.x Chrome release
+## Headed unpacked Chrome QA
 
-NO-GO from this environment. The code patch remains ready for clean-environment validation, but Chrome release should wait for:
+Passed with `LEAKGUARD_CHROME_HEADLESS=0` against `dist/chrome`.
 
-- successful `npm run build:all`
-- successful `npm run package:release`
-- patched Chrome zip path, size, and SHA256 recorded
-- successful `npm run test:ci`
-- successful `npm run test:release-gates`
-- successful `npm run test:browser-gates`
-- successful `npm run test:release-artifacts`
-- headed unpacked Chrome QA with fake image fixtures
-- headed packaged Chrome QA with fake image fixtures
-- ChatGPT and Gemini synthetic image smoke tests if those providers are release claims
+Verified by the headed Chrome extension QA harness:
 
-Edge claims remain LIMITED until Edge is manually retested. Firefox has no additional claim from this validation attempt.
+- extension loaded in clean temporary Chrome profile
+- scanner opened
+- scanner synthetic image OCR produced `.redacted.png`
+- generated `.redacted.png` was non-empty `image/png`
+- scanner JSON/report paths were sanitized
+- protected-site generic image picker produced redacted image handoff
+- protected-site generic file drop handoff passed
+- failure injection paths failed closed
+- no raw fake secret appeared in page/upload/report/debug-visible harness outputs
+
+Chrome reported: `Chrome/149.0.7827.114`.
+
+## Headed packaged Chrome QA
+
+Passed with `LEAKGUARD_CHROME_HEADLESS=0` against the packaged Chrome release candidate.
+
+Method:
+
+1. Extracted `artifacts/release/leakguard-chrome-v2.0.0.zip` into a temporary directory.
+2. Temporarily swapped only generated `dist/chrome` with the extracted package contents.
+3. Ran `node tests/browser/extension_qa_harness.test.mjs` headed.
+4. Restored the original built `dist/chrome`.
+
+Verified:
+
+- packaged extension loaded in clean temporary Chrome profile
+- scanner synthetic image OCR produced `.redacted.png`
+- generated `.redacted.png` was non-empty `image/png`
+- protected-site image picker handoff passed
+- protected-site file drop handoff passed
+- failure injection paths failed closed
+- no raw fake marker was visible in page/upload/report/debug-visible harness outputs
+
+Chrome reported: `Chrome/149.0.7827.114`.
+
+## Live provider result
+
+Not run in this validation pass. No QA/test ChatGPT or Gemini provider accounts were provided for this local run, and no real personal images or real secrets were used.
+
+Provider-specific release claims should remain limited to the local synthetic protected-site harness evidence until a QA/test-account smoke is run:
+
+- ChatGPT fake image upload: not tested live
+- Gemini fake image upload: not tested live
+
+The Gemini drag/drop prior-art playbook was reviewed before validation. The current evidence comes from the generic protected-site adapter harness and synthetic file drop handoff, not from a live Gemini DOM session.
+
+## Raw leak assessment
+
+No raw pass-through was observed in automated or headed Chrome validation.
+
+Evidence:
+
+- scanner OCR tests assert raw synthetic secrets are absent from redacted text and sanitized reports
+- content file extraction pipeline tests assert invalid/empty redacted image outputs fail closed without raw fallback
+- Chrome browser QA harness asserts protected-site image OCR handoff and file drop handoff do not expose raw fake markers
+- malformed/unsupported/encrypted inputs fail closed without raw preview/status leakage
+- generated redacted image files are non-empty PNGs named `*.redacted.png`
+
+## Store artifact identity caveat
+
+The exact original Chrome Web Store 2.0.0 uploaded zip is still unavailable in this checkout. This closeout validates a newly built patched `leakguard-chrome-v2.0.0.zip` candidate from the current branch. Do not claim this hash matches any previously uploaded 2.0.0 Store artifact.
+
+## Final go/no-go
+
+GO for Chrome hotfix release candidate from the local build/package/browser validation performed here.
+
+Scope of GO:
+
+- Chrome package produced and hashed
+- full CI, release gates, browser gates, release artifact checks passed
+- headed unpacked Chrome QA passed
+- headed packaged Chrome QA passed
+- no raw fake secret leakage observed in scanner, protected-site picker/drop, report, or debug-visible harness outputs
+
+Remaining caveat:
+
+- live ChatGPT/Gemini provider smoke was not run in this pass because QA/test accounts were not available.

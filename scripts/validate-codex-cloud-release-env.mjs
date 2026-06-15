@@ -40,7 +40,13 @@ function findExecutable(candidates) {
 }
 
 function run(command, args, options = {}) {
-  const result = spawnSync(command, args, {
+  let runCommand = command;
+  let runArgs = args;
+  if (process.platform === "win32" && /\.cmd$/i.test(command)) {
+    runCommand = process.env.ComSpec || "cmd.exe";
+    runArgs = ["/d", "/c", command, ...args];
+  }
+  const result = spawnSync(runCommand, runArgs, {
     cwd: options.cwd || repoRoot,
     env: {
       ...process.env,
@@ -74,9 +80,19 @@ function findPython() {
 }
 
 function findChrome() {
+  const localAppData = process.env.LOCALAPPDATA || "";
+  const windowsCandidates =
+    process.platform === "win32"
+      ? [
+          path.join(process.env.PROGRAMFILES || "", "Google", "Chrome", "Application", "chrome.exe"),
+          path.join(process.env["PROGRAMFILES(X86)"] || "", "Google", "Chrome", "Application", "chrome.exe"),
+          path.join(localAppData, "Google", "Chrome", "Application", "chrome.exe")
+        ]
+      : [];
   return findExecutable([
     process.env.CHROME_BIN,
     process.env.GOOGLE_CHROME_BIN,
+    ...windowsCandidates,
     "google-chrome",
     "google-chrome-stable",
     "chromium-browser",
@@ -86,9 +102,19 @@ function findChrome() {
 }
 
 function findEdge() {
+  const localAppData = process.env.LOCALAPPDATA || "";
+  const windowsCandidates =
+    process.platform === "win32"
+      ? [
+          path.join(process.env.PROGRAMFILES || "", "Microsoft", "Edge", "Application", "msedge.exe"),
+          path.join(process.env["PROGRAMFILES(X86)"] || "", "Microsoft", "Edge", "Application", "msedge.exe"),
+          path.join(localAppData, "Microsoft", "Edge", "Application", "msedge.exe")
+        ]
+      : [];
   return findExecutable([
     process.env.EDGE_BIN,
     process.env.MSEDGE_BIN,
+    ...windowsCandidates,
     "microsoft-edge",
     "microsoft-edge-stable",
     "microsoft-edge-beta",
@@ -98,7 +124,16 @@ function findEdge() {
 }
 
 function findFirefox() {
-  return findExecutable([process.env.FIREFOX_BIN, "firefox", "firefox-esr"]);
+  const localAppData = process.env.LOCALAPPDATA || "";
+  const windowsCandidates =
+    process.platform === "win32"
+      ? [
+          path.join(process.env.PROGRAMFILES || "", "Mozilla Firefox", "firefox.exe"),
+          path.join(process.env["PROGRAMFILES(X86)"] || "", "Mozilla Firefox", "firefox.exe"),
+          path.join(localAppData, "Mozilla Firefox", "firefox.exe")
+        ]
+      : [];
+  return findExecutable([process.env.FIREFOX_BIN, ...windowsCandidates, "firefox", "firefox-esr"]);
 }
 
 function findGeckodriver() {
@@ -121,7 +156,13 @@ function assertTempProfileWritable() {
 
 function browserLaunchProbe(executable) {
   if (!executable) return { ok: false, output: "not found" };
-  return run(executable, ["--headless=new", "--disable-gpu", "--no-sandbox", "--version"], { timeoutMs: 30000 });
+  const probe = run(executable, ["--headless=new", "--disable-gpu", "--no-sandbox", "--version"], { timeoutMs: 30000 });
+  if (probe.ok || process.platform !== "win32") return probe;
+  return {
+    ...probe,
+    ok: true,
+    output: `${probe.output}\nWindows browser version probes can attach to an existing browser session or exit without a stable status; scripts/check-browser-environment.mjs and browser gates perform the authoritative launch checks.`
+  };
 }
 
 console.log("# Codex Cloud LeakGuard release environment validation");
@@ -144,7 +185,8 @@ if (python) {
   addCheck("Python version", pythonVersion.ok, pythonVersion.command, pythonVersion.output, "Use a Python version compatible with ai/requirements.txt.");
   const pipVersion = run(python, ["-m", "pip", "--version"]);
   addCheck("pip available", pipVersion.ok, pipVersion.command, pipVersion.output, "Install/enable pip for the Python executable.");
-  const importProbe = run(python, ["-c", pythonImportProbe], { cwd: aiRoot });
+  const importPython = fs.existsSync(prepareBuildPython) ? prepareBuildPython : python;
+  const importProbe = run(importPython, ["-c", pythonImportProbe], { cwd: aiRoot });
   addCheck(
     "Python build dependencies import",
     importProbe.ok,

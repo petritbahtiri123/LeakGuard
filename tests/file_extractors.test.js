@@ -889,6 +889,29 @@ async function testPlannedImagesUseMetadataExtraction() {
   }
 }
 
+async function testUnnamedClipboardImagesUseMimeMetadataExtraction() {
+  for (const [fileName, mimeType] of [
+    ["", "image/png"],
+    ["image", "image/png"]
+  ]) {
+    const routed = routeFileExtractor({ fileName, mimeType });
+    const result = await prepareFileExtractionAsync({
+      fileName,
+      mimeType,
+      sizeBytes: 128,
+      buffer: bufferFromText("clipboard image bytes must not be scanned as text")
+    });
+
+    assert.strictEqual(routed.status, EXTRACTOR_STATUS.OK, `${fileName || "(unnamed)"} route should be enabled`);
+    assert.strictEqual(routed.kind, "image_metadata");
+    assert.strictEqual(result.status, EXTRACTOR_STATUS.OK);
+    assert.strictEqual(result.kind, "image_metadata");
+    assert.strictEqual(result.safeForScan, true);
+    assert.strictEqual(result.text.includes("clipboard image bytes"), false);
+    assert.ok(result.text.includes(`mime_type=${mimeType}`));
+  }
+}
+
 function testMimeOnlyPlannedTypesDoNotEnableParsing() {
   for (const [fileName, mimeType] of [
     ["upload.bin", "application/pdf"],
@@ -1175,6 +1198,7 @@ function testNoNewDependenciesAdded() {
   testSupportedTextFilesAreSafeForScan();
   testPlannedDocumentsRemainDisabled();
   await testPlannedImagesUseMetadataExtraction();
+  await testUnnamedClipboardImagesUseMimeMetadataExtraction();
   testMimeOnlyPlannedTypesDoNotEnableParsing();
   testUnknownFileRemainsUnsupported();
   testResultShapeDefaults();

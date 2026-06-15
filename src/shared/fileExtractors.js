@@ -24,6 +24,7 @@
   const xlsxXmlTextPatternCache = new Map();
   const xlsxCellAttributePatternCache = new Map();
   const IMAGE_METADATA_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
+  const IMAGE_METADATA_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 
   function normalizeText(text) {
     return typeof text === "string" ? text : "";
@@ -111,7 +112,10 @@
       });
     }
 
-    if (IMAGE_METADATA_EXTENSIONS.has(metadata.extension)) {
+    if (
+      IMAGE_METADATA_EXTENSIONS.has(metadata.extension) ||
+      (!metadata.extension && IMAGE_METADATA_MIME_TYPES.has(metadata.mimeType))
+    ) {
       return createExtractorResult({
         status: EXTRACTOR_STATUS.OK,
         kind: "image_metadata",
