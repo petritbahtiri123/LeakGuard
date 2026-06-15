@@ -121,6 +121,10 @@
     return new root.Blob(parts, { type });
   }
 
+  function isNonEmptyBlob(blob) {
+    return blob && Number(blob.size || 0) > 0;
+  }
+
   function canvasToBlob(canvas) {
     if (typeof canvas.convertToBlob === "function") {
       return canvas.convertToBlob({ type: "image/png" });
@@ -222,6 +226,9 @@
               boxes: boxes.boxes,
               allowNoBoxes
             });
+      if (!isNonEmptyBlob(blob)) {
+        return fail("image_redaction_empty_output", "LeakGuard could not generate a non-empty redacted PNG.");
+      }
       const fileName = redactedPngFileName(options.fileName);
       const result = {
         ok: true,

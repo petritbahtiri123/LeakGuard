@@ -1199,6 +1199,65 @@ function testPhase17fBrowserDiagnosticsAreActionable() {
   }
 }
 
+function testCodexCloudReleaseValidationEnvironmentIsDocumented() {
+  const docPath = "docs/codex-cloud-release-validation-environment.md";
+  const setupPath = "scripts/setup-codex-cloud-release-env.mjs";
+  const validatePath = "scripts/validate-codex-cloud-release-env.mjs";
+  assert.ok(fileExists(docPath), "Codex Cloud release validation environment doc should exist");
+  assert.ok(fileExists(setupPath), "Codex Cloud release environment setup script should exist");
+  assert.ok(fileExists(validatePath), "Codex Cloud release environment validation script should exist");
+  assert.strictEqual(
+    packageJson.scripts["setup:codex-release-env"],
+    "node scripts/setup-codex-cloud-release-env.mjs",
+    "package.json should expose the Codex Cloud release environment setup script"
+  );
+  assert.strictEqual(
+    packageJson.scripts["validate:codex-release-env"],
+    "node scripts/validate-codex-cloud-release-env.mjs",
+    "package.json should expose the Codex Cloud release environment validation script"
+  );
+
+  const doc = fs.readFileSync(path.join(repoRoot, docPath), "utf8");
+  for (const required of [
+    "proxy",
+    "pip",
+    "browser binaries",
+    "Chromium fallback",
+    "Chrome Web Store release validation",
+    "Do not claim full Chrome or Edge release GO from Chromium-only validation",
+    "npm run validate:codex-release-env",
+    "npm run build:all",
+    "npm run test:browser-gates"
+  ]) {
+    assert.ok(doc.includes(required), `Codex Cloud environment doc should include: ${required}`);
+  }
+
+  const setupSource = fs.readFileSync(path.join(repoRoot, setupPath), "utf8");
+  for (const required of [
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "joblib",
+    "playwright install --with-deps",
+    "Chromium fallback",
+    "SETUP FAILURE"
+  ]) {
+    assert.ok(setupSource.includes(required), `Codex Cloud setup script should include: ${required}`);
+  }
+
+  const validateSource = fs.readFileSync(path.join(repoRoot, validatePath), "utf8");
+  for (const required of [
+    "PASS",
+    "FAIL",
+    "remediation",
+    "scripts/check-browser-environment.mjs",
+    "Build prerequisites before prepare:build",
+    "Chrome/Chromium launch sanity"
+  ]) {
+    assert.ok(validateSource.includes(required), `Codex Cloud validation script should include: ${required}`);
+  }
+}
+
 async function run() {
   const { buildManifest } = await import(
     pathToFileURL(path.join(repoRoot, "scripts/build-extension.mjs")).href
@@ -1238,6 +1297,7 @@ async function run() {
   testPhase20aQualityPerformanceSecurityPlanIsDocumented();
   testPhase20cQualityPerformanceSecurityCloseoutIsDocumented();
   testPhase17fBrowserDiagnosticsAreActionable();
+  testCodexCloudReleaseValidationEnvironmentIsDocumented();
   console.log("PASS productization static regressions");
 }
 

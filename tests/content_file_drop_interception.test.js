@@ -649,6 +649,7 @@ function triggerGhostIngressTimeout(harness) {
 
 function createClipboardEvent({
   text = "API_KEY=LeakGuardPasteApiKey1234567890",
+  clipboardData = null,
   target = { tagName: "SPAN" },
   defaultPrevented: initialDefaultPrevented = false
 } = {}) {
@@ -659,7 +660,7 @@ function createClipboardEvent({
     stopImmediatePropagation: 0
   };
   const event = {
-    clipboardData: {
+    clipboardData: clipboardData || {
       getData(type) {
         return type === "text/plain" || type === "text" ? text : "";
       }
@@ -6154,6 +6155,99 @@ async function testSupportedImageFileInputAttachesSanitizedImageAcrossAdapters()
       `${hostname} should show image attach success UI`
     );
   }
+}
+
+async function testUnnamedClipboardImagePasteUsesContentExtractionPipeline() {
+  const rawFile = createReadableTextFile({
+    name: "",
+    type: "image/png",
+    text: "raw clipboard image bytes with sk-proj-ShouldNotReachProvider1234567890"
+  });
+  const sanitizedImage = {
+    name: "clipboard-image.redacted.png",
+    type: "image/png",
+    size: 256,
+    async text() {
+      throw new Error("pasted image handoff must not read sanitized image as text");
+    }
+  };
+  const editor = {
+    tagName: "DIV",
+    text: "",
+    selection: { start: 0, end: 0 },
+    isContentEditable: true
+  };
+  const pipelineCalls = [];
+  const { maybeHandlePaste, calls } = createHarness({
+    location: { hostname: "chatgpt.com" },
+    findComposer: () => editor,
+    canExtractForAdapterHandoff: globalThis.PWM.ContentFileExtractionPipeline.canExtractForAdapterHandoff,
+    processFileForAdapterHandoff: async ({ file, context }) => {
+      pipelineCalls.push({ file, context });
+      return {
+        status: "ready",
+        originalName: "",
+        outputName: sanitizedImage.name,
+        outputKind: "redacted_image_file",
+        extractedKind: "image_ocr",
+        sanitizedText: "API_KEY=[PWM_1]",
+        sanitizedFile: sanitizedImage,
+        sanitizedImageFile: sanitizedImage,
+        metadata: {
+          original: {
+            name: "",
+            type: "image/png",
+            size: rawFile.size
+          },
+          scan: {
+            findingsCount: 1
+          },
+          visualRedaction: {
+            output: "png",
+            protectedSiteEligible: true
+          }
+        },
+        warnings: [],
+        safeForUpload: true,
+        fileOnlyUpload: true,
+        skipTextFallback: true,
+        fallbackReason: ""
+      };
+    },
+    readLocalTextFileFromDataTransfer: async () => {
+      throw new Error("clipboard image paste should bypass legacy text-file reader");
+    }
+  });
+  const clipboardData = {
+    types: ["Files"],
+    files: [rawFile],
+    items: [
+      {
+        kind: "file",
+        type: "image/png",
+        getAsFile: () => rawFile
+      }
+    ],
+    getData: () => ""
+  };
+  const { event } = createClipboardEvent({
+    clipboardData,
+    target: editor
+  });
+
+  await maybeHandlePaste(event);
+
+  assert.strictEqual(event.defaultPrevented, true, "raw clipboard image paste should be consumed");
+  assert.strictEqual(pipelineCalls.length, 1, "clipboard image paste should use content extraction pipeline");
+  assert.strictEqual(pipelineCalls[0].file, rawFile);
+  assert.strictEqual(pipelineCalls[0].context, "paste");
+  assert.strictEqual(calls.handoffs.length, 1, "pasted image should hand off sanitized image");
+  assert.strictEqual(calls.handoffs[0].sanitizedFile, sanitizedImage);
+  assert.strictEqual(calls.handoffs[0].sanitizedFile.name, "clipboard-image.redacted.png");
+  assert.strictEqual(calls.handoffs[0].sanitizedFile.type, "image/png");
+  assert.notStrictEqual(calls.handoffs[0].sanitizedFile, rawFile);
+  assert.strictEqual(calls.textFallbacks.length, 0, "pasted image must not insert OCR text");
+  assert.strictEqual(JSON.stringify(calls).includes("sk-proj-ShouldNotReachProvider"), false);
 }
 
 async function testProtectedSiteImageOcrFailureBlocksRawUpload() {
@@ -13557,6 +13651,7 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testSmallFileInputShowsProcessingUiThenDirectAttachSuccess();
   await testDocumentAndImageFileInputUseContentExtractionPipelineForSanitizedHandoff();
   await testSupportedImageFileInputAttachesSanitizedImageAcrossAdapters();
+  await testUnnamedClipboardImagePasteUsesContentExtractionPipeline();
   await testProtectedSiteImageOcrFailureBlocksRawUpload();
   await testProtectedSiteImageHandoffFailureDoesNotTextFallback();
   await testSupportedDocumentDropUsesContentExtractionPipelineBeforeUnsupportedNotice();

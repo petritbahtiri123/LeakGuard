@@ -742,6 +742,113 @@ async function testRedactedPngProofGeneratesFlattenedOutputAndRescanIsClean() {
   assert.strictEqual(rescan.summary.findingsCount, 0);
 }
 
+async function testVisualRedactionHandlesDifferentSafeImageSizes() {
+  for (const fixture of [
+    { name: "small.png", width: 320, height: 120, box: { x: 54, y: 28, width: 230, height: 52 } },
+    { name: "medium.png", width: 1024, height: 320, box: { x: 190, y: 92, width: 760, height: 120 } },
+    { name: "large.png", width: 2048, height: 720, box: { x: 380, y: 210, width: 1450, height: 220 } }
+  ]) {
+    const rawSecret = `sk-proj-SizeProof${fixture.width}x${fixture.height}1234567890abcdef`;
+    const imageBuffer = await makeSyntheticTextImage(`API_KEY=${rawSecret}`, "png", {
+      width: fixture.width,
+      height: fixture.height
+    });
+    const originalBytes = new Uint8Array(imageBuffer);
+    const redaction = await ImageRedactor.createRedactedPng({
+      imageBytes: imageBuffer,
+      mimeType: "image/png",
+      fileName: fixture.name,
+      dimensions: { width: fixture.width, height: fixture.height },
+      boxes: [{ ...fixture.box, confidenceBucket: "high" }],
+      canvasAdapter: sharpCanvasAdapter
+    });
+    const redactedBytes = new Uint8Array(await redaction.blob.arrayBuffer());
+    const metadata = await sharp(Buffer.from(redactedBytes)).metadata();
+
+    assert.strictEqual(redaction.ok, true, fixture.name);
+    assert.strictEqual(redaction.fileName, fixture.name.replace(/\.png$/i, ".redacted.png"), fixture.name);
+    assert.strictEqual(redaction.blob.type, "image/png", fixture.name);
+    assert.notDeepStrictEqual(Buffer.from(redactedBytes), Buffer.from(originalBytes), fixture.name);
+    assert.strictEqual(metadata.width, fixture.width, fixture.name);
+    assert.strictEqual(metadata.height, fixture.height, fixture.name);
+  }
+}
+
+async function testCleanImagesWithDifferentSizesCanPassThroughAsSafePngs() {
+  for (const fixture of [
+    { name: "receipt-small.png", text: "SAFE RECEIPT TOTAL 12.40", width: 240, height: 96 },
+    { name: "diagram-medium.png", text: "DEPLOYMENT DIAGRAM PUBLIC", width: 960, height: 360 },
+    { name: "whiteboard-large.png", text: "ROADMAP NOTES WITHOUT SECRETS", width: 1800, height: 640 }
+  ]) {
+    const imageBuffer = await makeSyntheticTextImage(fixture.text, "png", {
+      width: fixture.width,
+      height: fixture.height
+    });
+    const ocr = await ScannerOcr.recognizeScannerImageFile(
+      makeFile(fixture.name, "image/png", imageBuffer.byteLength, imageBuffer),
+      {
+        runtime: {
+          recognizeImageBytes() {
+            return Promise.resolve({
+              ok: true,
+              status: "ocr_recognition_ready",
+              language: "eng",
+              text: fixture.text,
+              textLength: fixture.text.length,
+              confidenceBucket: "high",
+              warnings: []
+            });
+          }
+        },
+        timeoutMs: 1000,
+        dimensions: { width: fixture.width, height: fixture.height }
+      }
+    );
+    const result = scanOcrText(
+      ScannerOcr.buildScannerOcrScanText({
+        metadataText: `file_name=${fixture.name}`,
+        ocrText: ocr.text,
+        ocrMetadata: ocr
+      }),
+      fixture.name
+    );
+    const png = await ImageRedactor.createRedactedPng({
+      imageBytes: imageBuffer,
+      mimeType: "image/png",
+      fileName: fixture.name,
+      dimensions: { width: fixture.width, height: fixture.height },
+      boxes: [],
+      allowNoBoxes: true,
+      canvasAdapter: sharpCanvasAdapter
+    });
+    const metadata = await sharp(Buffer.from(await png.blob.arrayBuffer())).metadata();
+
+    assert.strictEqual(ocr.ok, true, fixture.name);
+    assert.strictEqual(result.summary.findingsCount, 0, fixture.name);
+    assert.strictEqual(result.redactedText.includes("[PWM_"), false, fixture.name);
+    assert.strictEqual(png.ok, true, fixture.name);
+    assert.strictEqual(png.fileName, fixture.name.replace(/\.png$/i, ".redacted.png"), fixture.name);
+    assert.strictEqual(png.blob.type, "image/png", fixture.name);
+    assert.strictEqual(metadata.width, fixture.width, fixture.name);
+    assert.strictEqual(metadata.height, fixture.height, fixture.name);
+  }
+}
+
+async function testImageRedactorRejectsEmptyPngOutput() {
+  const imageBuffer = await makeSyntheticApiKeyPng("API_KEY=sk-proj-EmptyPngOutput1234567890abcdef");
+  const redaction = await ImageRedactor.createRedactedPng({
+    imageBytes: imageBuffer,
+    mimeType: "image/png",
+    fileName: "visual.png",
+    boxes: [{ x: 160, y: 38, width: 720, height: 58, confidenceBucket: "high" }],
+    canvasAdapter: async () => new Blob([], { type: "image/png" })
+  });
+
+  assert.strictEqual(redaction.ok, false);
+  assert.strictEqual(redaction.status, "image_redaction_empty_output");
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(redaction, "blob"), false);
+}
+
 async function testJpgAndJpegVisualRedactionOutputsPng() {
   for (const [fileName, format] of [
     ["photo.jpg", "jpeg"],
@@ -1082,6 +1189,9 @@ function testDownloadedImageOutputNameIsRedactedTxtCompatible() {
   await testFallbackBoxesAreMarkedScannerOnlyAndNotProtectedSiteEligible();
   await testMissingBoxesFailClosedForVisualRedaction();
   await testRedactedPngProofGeneratesFlattenedOutputAndRescanIsClean();
+  await testVisualRedactionHandlesDifferentSafeImageSizes();
+  await testCleanImagesWithDifferentSizesCanPassThroughAsSafePngs();
+  await testImageRedactorRejectsEmptyPngOutput();
   await testJpgAndJpegVisualRedactionOutputsPng();
   await testWebpVisualRedactionOutputsPngWhenSharpSupportsWebp();
   await testVisualRedactionFailsClosedForMissingLowConfidenceAndOversizedBoxes();
