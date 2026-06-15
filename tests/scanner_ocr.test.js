@@ -742,6 +742,21 @@ async function testRedactedPngProofGeneratesFlattenedOutputAndRescanIsClean() {
   assert.strictEqual(rescan.summary.findingsCount, 0);
 }
 
+async function testImageRedactorRejectsEmptyPngOutput() {
+  const imageBuffer = await makeSyntheticApiKeyPng("API_KEY=sk-proj-EmptyPngOutput1234567890abcdef");
+  const redaction = await ImageRedactor.createRedactedPng({
+    imageBytes: imageBuffer,
+    mimeType: "image/png",
+    fileName: "visual.png",
+    boxes: [{ x: 160, y: 38, width: 720, height: 58, confidenceBucket: "high" }],
+    canvasAdapter: async () => new Blob([], { type: "image/png" })
+  });
+
+  assert.strictEqual(redaction.ok, false);
+  assert.strictEqual(redaction.status, "image_redaction_empty_output");
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(redaction, "blob"), false);
+}
+
 async function testJpgAndJpegVisualRedactionOutputsPng() {
   for (const [fileName, format] of [
     ["photo.jpg", "jpeg"],
@@ -1082,6 +1097,7 @@ function testDownloadedImageOutputNameIsRedactedTxtCompatible() {
   await testFallbackBoxesAreMarkedScannerOnlyAndNotProtectedSiteEligible();
   await testMissingBoxesFailClosedForVisualRedaction();
   await testRedactedPngProofGeneratesFlattenedOutputAndRescanIsClean();
+  await testImageRedactorRejectsEmptyPngOutput();
   await testJpgAndJpegVisualRedactionOutputsPng();
   await testWebpVisualRedactionOutputsPngWhenSharpSupportsWebp();
   await testVisualRedactionFailsClosedForMissingLowConfidenceAndOversizedBoxes();

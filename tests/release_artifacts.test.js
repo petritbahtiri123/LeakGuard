@@ -33,6 +33,12 @@ const expectedRuntimeFiles = [
   "shared/ocr/tesseract-core/tesseract-core.js",
   "shared/ocr/tesseract-core/tesseract-core.wasm",
   "shared/ocr/tessdata/eng.traineddata.gz",
+  "shared/scannerOcr.js",
+  "shared/imageRedactor.js",
+  "content/files/protectedSiteOcrBroker.js",
+  "content/files/contentFileExtractionPipeline.js",
+  "content/protected_site_ocr_broker.html",
+  "content/protected_site_ocr_broker_page.js",
   "vendor/onnxruntime/ort.wasm.min.js",
   "vendor/onnxruntime/ort-wasm-simd-threaded.wasm",
   "ai/models/leakguard_secret_classifier.onnx"

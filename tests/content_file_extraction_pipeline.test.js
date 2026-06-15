@@ -794,6 +794,54 @@ async function testProtectedSiteImageOcrEnabledWithSafeBoxesProducesRedactedPng(
   }
 }
 
+async function testProtectedSiteImageOcrRejectsEmptyGeneratedPngWithoutRawFallback() {
+  const originalHelper = globalThis.PWM.isProtectedSiteOcrEnabled;
+  const originalImageRedactor = globalThis.PWM.ImageRedactor;
+  const rawSecret = "sk-proj-ProtectedSiteEmptyPng1234567890abcdef";
+  const imageBytes = bufferFromText(`raw image bytes ${rawSecret}`);
+  const ocrText = `API_KEY=${rawSecret}`;
+  globalThis.PWM.isProtectedSiteOcrEnabled = async () => true;
+  globalThis.PWM.OcrRuntime = makeProtectedSiteOcrRuntime(
+    { text: ocrText, layout: protectedSiteWordLayout(rawSecret) },
+    []
+  );
+  globalThis.PWM.ImageRedactor = {
+    createRedactedPng() {
+      const emptyFile = new TestFile([""], "photo.redacted.png", { type: "image/png" });
+      return Promise.resolve({
+        ok: true,
+        status: "image_redacted_png_ready",
+        fileName: "photo.redacted.png",
+        blob: emptyFile,
+        file: emptyFile
+      });
+    }
+  };
+
+  try {
+    const result = await processFileForAdapterHandoff({
+      file: fileFromBuffer("photo.png", "image/png", imageBytes),
+      context: "drop",
+      ocrDimensions: { width: 640, height: 320 }
+    });
+    const serialized = JSON.stringify(result);
+
+    assert.strictEqual(result.status, "blocked");
+    assert.strictEqual(result.safeForUpload, false);
+    assert.strictEqual(result.sanitizedFile, null);
+    assert.strictEqual(result.outputName, "");
+    assert.strictEqual(result.outputKind, "");
+    assert.strictEqual(result.fallbackReason, "redacted_image_file_invalid");
+    assert.ok(result.warnings.includes("image-redaction:redacted_image_file_invalid"));
+    assert.strictEqual(serialized.includes(rawSecret), false);
+    assert.strictEqual(serialized.includes("raw image bytes"), false);
+  } finally {
+    globalThis.PWM.isProtectedSiteOcrEnabled = originalHelper;
+    delete globalThis.PWM.OcrRuntime;
+    globalThis.PWM.ImageRedactor = originalImageRedactor;
+  }
+}
+
 async function testProtectedSiteImageOcrEnabledWithLineBoxesProducesPngWithWarning() {
   const originalHelper = globalThis.PWM.isProtectedSiteOcrEnabled;
   const rawSecret = "sk-proj-ProtectedSiteVisualLine1234567890abcdef";
@@ -1529,6 +1577,7 @@ async function run() {
   await testProtectedSiteImageOcrNoFindingsStillProducesImageFile();
   await testProtectedSiteImageAttachBlocksWhenOcrDisabled();
   await testProtectedSiteImageOcrEnabledWithSafeBoxesProducesRedactedPng();
+  await testProtectedSiteImageOcrRejectsEmptyGeneratedPngWithoutRawFallback();
   await testProtectedSiteImageOcrEnabledWithLineBoxesProducesPngWithWarning();
   await testProtectedSiteImageOcrFallbackBoxesFailClosedWithoutTextOutput();
   await testProtectedSiteImageOcrUnsafeBoxesFailClosed();

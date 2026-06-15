@@ -204,7 +204,7 @@
   }
 
   function createImageFileFromBlob(blob, outputName) {
-    if (!blob) return null;
+    if (!blob || Number(blob.size || 0) <= 0) return null;
     if (typeof root.File === "function") {
       return new root.File([blob], outputName, {
         type: "image/png",
@@ -218,6 +218,13 @@
       // Blob metadata is best-effort; the bytes are still sanitized.
     }
     return blob;
+  }
+
+  function isUsableRedactedImageFile(file) {
+    if (!file) return false;
+    if (Number(file.size || 0) <= 0) return false;
+    if (normalizeMimeType(file.type) !== "image/png") return false;
+    return /\.redacted\.png$/i.test(normalizeFileName(file.name));
   }
 
   function createBinaryFile(bytes, outputName, mimeType) {
@@ -394,11 +401,11 @@
 
     const outputName = redactedImage.fileName || buildRedactedPngName(originalName);
     const sanitizedFile = redactedImage.file || createImageFileFromBlob(redactedImage.blob, outputName);
-    if (!sanitizedFile) {
+    if (!isUsableRedactedImageFile(sanitizedFile)) {
       return {
         ok: false,
-        status: "redacted_image_file_create_failed",
-        warnings: listWarnings(warnings, ["image-redaction:redacted_image_file_create_failed"])
+        status: "redacted_image_file_invalid",
+        warnings: listWarnings(warnings, ["image-redaction:redacted_image_file_invalid"])
       };
     }
 
