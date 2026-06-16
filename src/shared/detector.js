@@ -1363,15 +1363,18 @@
     return /^(?!\d+$)[A-Za-z0-9._@-]{3,64}$/.test(String(value || ""));
   }
 
-  const ENTERPRISE_ENV_TOKENS = new Set(["prod", "prd", "dev", "test", "tst", "stage", "stg", "uat", "qa", "int", "sandbox"]);
+  const ENTERPRISE_ENV_TOKENS = new Set(["prod", "prd", "production", "dev", "development", "test", "tst", "qa", "uat", "stage", "staging", "stg", "int", "integration", "sandbox", "sbx", "preprod", "ppd", "nonprod"]);
   const ENTERPRISE_LOCATION_TOKENS = new Set([
-    "weu", "neu", "westeurope", "northeurope", "eastus", "westus", "centralus", "uksouth",
-    "germanywestcentral", "switzerlandnorth", "de", "us", "uk", "ch", "in", "eu", "ber", "fra", "chi", "kos", "lon"
+    "eu", "weu", "neu", "de", "uk", "us", "ch", "in", "kos", "ber", "fra", "mun", "lon", "zur", "pri",
+    "westeurope", "northeurope", "eastus", "westus", "centralus", "uksouth",
+    "germanywestcentral", "switzerlandnorth", "eu-central-1", "eu-west-1", "us-east-1", "us-west-2", "eu-de", "eu-nl"
   ]);
   const ENTERPRISE_SERVICE_TOKENS = new Set([
-    "vnet", "network", "identity", "sec", "security", "files", "file", "storage", "backup", "aks", "sql",
+    "vpc", "vnet", "subnet", "snet", "sg", "nsg", "firewall", "fw", "route", "rt", "peer", "peering", "endpoint", "private-endpoint", "network", "identity", "sec", "security", "files", "file", "storage", "backup", "aks", "sql",
     "app", "core", "shared", "hub", "spoke", "dns", "pe", "pep", "kv", "keyvault", "snet", "pl", "rt", "peer",
-    "sss", "share", "nic", "nsg", "logic", "aa", "vm", "appgw", "law", "db", "bastion", "jump"
+    "sss", "share", "nic", "nsg", "logic", "aa", "vm", "appgw", "law", "db", "bastion", "jump", "ecs", "ec2", "compute", "server", "instance",
+    "volume", "disk", "evs", "ebs", "bucket", "obs", "s3", "blob", "rds", "database", "eks", "gke", "cce", "cluster", "k8s", "elb", "alb", "nlb", "lb", "gateway",
+    "zone", "kms", "iam", "role", "policy", "secret", "vault", "eip", "keypair", "image", "flavor", "nat", "vpn"
   ]);
   const CLOUD_RESOURCE_PREFIXES = new Set([
     "rg", "st", "vnet", "snet", "pep", "pl", "rt", "peer", "sss", "share", "kv", "nic", "nsg", "logic", "aa", "vm",
@@ -1379,6 +1382,7 @@
   ]);
   const HOST_ROLE_TOKENS = new Set(["dc", "srv", "sql", "fs", "file", "print", "jump", "bastion", "vpn", "rdp", "ssh", "aks", "vm", "web", "app", "db"]);
   const INFRA_CONTEXT_REGEX = /\b(?:resource\s*group|azure|cloud|tenant|subscription|vnet|subnet|private\s*endpoint|storage\s*account|azure\s*files|file\s*share|smb|kerberos|hostname|computername|device\s*name|server|fqdn|rdp|ssh|winrm|intune|entra|ad|ldap)\b/i;
+  const PROVIDER_CONTEXT_REGEX = /\b(?:azure|aws|amazon\s+web\s+services|gcp|google\s+cloud|otc|open\s+telekom\s+cloud|t\s*cloud\s+public|t-systems\s+cloud|openstack|kubernetes|k8s|kubeconfig|project|tenant|domain|arn|iam|account|obs|ecs|evs|vpc|cce|rds|elb|s3|gcs|bucket)\b/i;
   const IDENTITY_CONTEXT_REGEX = /\b(?:user|username|login|owner|created\s+by|assigned\s+to|upn|samaccountname|email|entra|ad|ldap|identity|account)\b/i;
 
   function enterpriseTokens(raw) {
@@ -1401,6 +1405,10 @@
 
   function hasEnterpriseContext(text, start, end) {
     return INFRA_CONTEXT_REGEX.test(getContextWindow(text, start, end, 96));
+  }
+
+  function hasProviderContext(text, start, end) {
+    return PROVIDER_CONTEXT_REGEX.test(getContextWindow(text, start, end, 128));
   }
 
   function hasIdentityContext(text, start, end) {
@@ -3075,6 +3083,156 @@
       return findings;
     }
 
+    scanCloudProviderMetadata(text) {
+      const findings = [];
+      const input = String(text || "");
+      const push = (raw, start, end, placeholderType, score, methods) => {
+        if (!raw || this.isAllowlisted(raw) || isCleanPlaceholder(raw) || containsPlaceholder(raw)) return;
+        findings.push(this.buildFinding({
+          category: /(?:SERVICE_ACCOUNT|USER|EMAIL)/.test(placeholderType) ? "identity" : "internal_metadata",
+          placeholderType,
+          raw,
+          start,
+          end,
+          score,
+          methods
+        }));
+      };
+      const cloudScore = (raw, start, end, base = 48) => {
+        let score = base + enterpriseTokenScore(raw);
+        if (hasProviderContext(input, start, end)) score += 14;
+        if (hasEnterpriseContext(input, start, end)) score += 8;
+        return score;
+      };
+
+      const awsArn = /\barn:aws[a-z-]*:[A-Za-z0-9-]*:[A-Za-z0-9-]*:(?:\d{12})?:[^\s"'`<>]+/g;
+      for (let match; (match = awsArn.exec(input)) !== null;) {
+        push(match[0], match.index, match.index + match[0].length, "AWS_ARN", 94, ["cloud-provider", "aws", "arn"]);
+      }
+
+      const awsResource = /\b(?:i|vpc|subnet|sg|eni|vol|snap|ami|rtb|nat|igw|eipalloc)-[0-9a-f]{8,17}\b/g;
+      for (let match; (match = awsResource.exec(input)) !== null;) {
+        push(match[0], match.index, match.index + match[0].length, "AWS_RESOURCE_ID", hasProviderContext(input, match.index, match.index + match[0].length) ? 88 : 76, ["cloud-provider", "aws", "resource-id"]);
+      }
+
+      const awsAccount = /\b\d{12}\b/g;
+      for (let match; (match = awsAccount.exec(input)) !== null;) {
+        if (/\b(?:aws|account|account\s*id|iam|arn)\b/i.test(getContextWindow(input, match.index, match.index + match[0].length, 80))) {
+          push(match[0], match.index, match.index + match[0].length, "AWS_ACCOUNT_ID", 82, ["cloud-provider", "aws", "account-id", "context-key"]);
+        }
+      }
+
+      const s3Uri = /\bs3:\/\/([a-z0-9][a-z0-9.-]{1,61}[a-z0-9])(?:\/[^\s"'`<>]*)?/g;
+      for (let match; (match = s3Uri.exec(input)) !== null;) {
+        const raw = match[1];
+        const start = match.index + match[0].indexOf(raw);
+        push(raw, start, start + raw.length, "S3_BUCKET", 88, ["cloud-provider", "aws", "s3-bucket"]);
+      }
+
+      const awsEndpoint = /\b[a-z0-9][a-z0-9.-]{1,100}\.(?:s3[.-][a-z0-9-]+|s3|rds|ec2)[.-][a-z0-9-]+\.amazonaws\.com\b/gi;
+      for (let match; (match = awsEndpoint.exec(input)) !== null;) {
+        push(match[0], match.index, match.index + match[0].length, match[0].includes(".s3") ? "AWS_ENDPOINT" : "CLOUD_ENDPOINT", 86, ["cloud-provider", "aws", "endpoint"]);
+      }
+
+      const gcpProject = /\b(?:projects\/|project_id\s*[:=]\s*)([a-z][a-z0-9-]{4,28}[a-z0-9])\b/gi;
+      for (let match; (match = gcpProject.exec(input)) !== null;) {
+        const raw = match[1];
+        const start = match.index + match[0].lastIndexOf(raw);
+        push(raw, start, start + raw.length, "GCP_PROJECT", 86, ["cloud-provider", "gcp", "project"]);
+      }
+
+      const gcpProjectNumber = /\bproject_number\s*[:=]\s*(\d{6,12})\b/gi;
+      for (let match; (match = gcpProjectNumber.exec(input)) !== null;) {
+        const raw = match[1];
+        const start = match.index + match[0].lastIndexOf(raw);
+        push(raw, start, start + raw.length, "GCP_PROJECT_NUMBER", 84, ["cloud-provider", "gcp", "project-number", "context-key"]);
+      }
+
+      const gcpServiceAccount = /\b[A-Za-z0-9._-]+@(?:[a-z][a-z0-9-]{4,28}\.)?(?:iam\.)?gserviceaccount\.com\b/gi;
+      for (let match; (match = gcpServiceAccount.exec(input)) !== null;) {
+        push(match[0], match.index, match.index + match[0].length, "GCP_SERVICE_ACCOUNT", 90, ["cloud-provider", "gcp", "service-account"]);
+      }
+
+      const gcpResource = /\b(?:(?:\/\/)?compute\.googleapis\.com\/projects\/[a-z][a-z0-9-]{4,28}\/[^\s"'`<>]+|(?:gke|gcs)-[a-z0-9][a-z0-9-]{4,62})\b/gi;
+      for (let match; (match = gcpResource.exec(input)) !== null;) {
+        push(match[0], match.index, match.index + match[0].length, /^gcs-/i.test(match[0]) ? "GCS_BUCKET" : "GCP_RESOURCE", 84, ["cloud-provider", "gcp", "resource"]);
+      }
+
+      const gcsUri = /\bgs:\/\/([a-z0-9][a-z0-9._-]{1,61}[a-z0-9])\b/gi;
+      for (let match; (match = gcsUri.exec(input)) !== null;) {
+        const raw = match[1];
+        const start = match.index + match[0].indexOf(raw);
+        push(raw, start, start + raw.length, "GCS_BUCKET", 88, ["cloud-provider", "gcp", "gcs-bucket"]);
+      }
+
+      const gcsEndpoint = /\bstorage\.googleapis\.com\/([a-z0-9][a-z0-9._-]{1,61}[a-z0-9])\b/gi;
+      for (let match; (match = gcsEndpoint.exec(input)) !== null;) {
+        const raw = match[1];
+        const start = match.index + match[0].lastIndexOf(raw);
+        push(raw, start, start + raw.length, "GCS_BUCKET", 86, ["cloud-provider", "gcp", "gcs-endpoint"]);
+      }
+
+      const otcResource = /\b(?:(?:otc-)?(?:ecs|evs|vpc|subnet|sg|security-group|obs|cce|rds|elb|eip|keypair|image|flavor|as|nat|vpn)|otc)-[a-z0-9][a-z0-9-]{4,62}\b/gi;
+      for (let match; (match = otcResource.exec(input)) !== null;) {
+        const raw = match[0];
+        const type = /^obs-/i.test(raw) ? "OBS_BUCKET" : hasProviderContext(input, match.index, match.index + raw.length) ? "OTC_RESOURCE" : "OPENSTACK_RESOURCE";
+        const score = cloudScore(raw, match.index, match.index + raw.length, 46);
+        if (score >= 70) push(raw, match.index, match.index + raw.length, type, score, ["cloud-provider", "otc-openstack", "resource"]);
+      }
+
+      const openStackId = /\b(project_id|projectId|tenant_id|tenantId|domain_id|domainId|user_id|userId|server_id|serverId|instance_id|instanceId|volume_id|volumeId|image_id|imageId|flavor_id|flavorId|vpc_id|vpcId|subnet_id|subnetId|security_group_id|securityGroupId|router_id|routerId|network_id|networkId|port_id|portId)\b\s*[:=]\s*["']?([0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})["']?/gi;
+      for (let match; (match = openStackId.exec(input)) !== null;) {
+        const key = match[1].toLowerCase();
+        const raw = match[2];
+        const start = match.index + match[0].lastIndexOf(raw);
+        let placeholderType = "OPENSTACK_RESOURCE_ID";
+        if (key.includes("project")) placeholderType = "OPENSTACK_PROJECT_ID";
+        else if (key.includes("tenant")) placeholderType = "OPENSTACK_TENANT_ID";
+        else if (key.includes("domain")) placeholderType = "OPENSTACK_DOMAIN_ID";
+        else if (key.includes("user")) placeholderType = "OPENSTACK_USER_ID";
+        push(raw, start, start + raw.length, placeholderType, 88, ["cloud-provider", "openstack", "id", "context-key"]);
+      }
+
+      const otcEndpoint = /\b[a-z0-9][a-z0-9.-]{1,100}\.(?:obs\.(?:eu-de|eu-nl)\.otc\.t-systems\.com|otc\.t-systems\.com)\b/gi;
+      for (let match; (match = otcEndpoint.exec(input)) !== null;) {
+        push(match[0], match.index, match.index + match[0].length, match[0].includes(".obs.") ? "OTC_ENDPOINT" : "CLOUD_ENDPOINT", 88, ["cloud-provider", "otc", "endpoint"]);
+      }
+
+      const k8sResource = /\b(?:pod|deployment|service|secret|configmap|ingress)\/[a-z0-9][a-z0-9.-]{1,62}\b/gi;
+      for (let match; (match = k8sResource.exec(input)) !== null;) {
+        push(match[0], match.index, match.index + match[0].length, /^secret\//i.test(match[0]) ? "K8S_SECRET" : "K8S_RESOURCE", 84, ["cloud-provider", "kubernetes", "resource"]);
+      }
+
+      const k8sKv = /\b(namespace|context|cluster)\s*[:=]\s*["']?([a-z0-9][a-z0-9.-]{2,62})["']?/gi;
+      for (let match; (match = k8sKv.exec(input)) !== null;) {
+        const raw = match[2];
+        const start = match.index + match[0].lastIndexOf(raw);
+        const key = match[1].toLowerCase();
+        const placeholderType = key === "namespace" ? "K8S_NAMESPACE" : "K8S_CLUSTER";
+        const score = cloudScore(raw, start, start + raw.length, 54);
+        if (score >= 68) push(raw, start, start + raw.length, placeholderType, score, ["cloud-provider", "kubernetes", "context-key"]);
+      }
+
+      const kubeconfigSecret = /\b(certificate-authority-data|client-certificate-data|client-key-data|token)\s*:\s*([A-Za-z0-9+/._=-]{20,})/g;
+      for (let match; (match = kubeconfigSecret.exec(input)) !== null;) {
+        const raw = match[2];
+        const start = match.index + match[0].lastIndexOf(raw);
+        if (match[1] === "token" && !/^eyJ/.test(raw) && !/\b(?:kubeconfig|kubernetes|k8s)\b/i.test(getContextWindow(input, start, start + raw.length, 120))) continue;
+        push(raw, start, start + raw.length, "KUBECONFIG_SECRET", 96, ["cloud-provider", "kubernetes", "kubeconfig-secret"]);
+      }
+
+      const endpoint = /\b[a-z0-9][a-z0-9.-]{1,100}\.(?:privatelink\.[a-z0-9.-]+|private\.[a-z0-9.-]+|internal|corp|local|lan|cloudapp\.azure\.com|file\.core\.windows\.net|blob\.core\.windows\.net|database\.windows\.net|vault\.azure\.net|openstack\.[a-z0-9.-]+)\b/gi;
+      for (let match; (match = endpoint.exec(input)) !== null;) {
+        const raw = match[0];
+        const before = input.slice(Math.max(0, match.index - 4), match.index);
+        if (/(?:@|:\/\/)$/.test(before)) continue;
+        if (!hasProviderContext(input, match.index, match.index + raw.length) && !/\.(?:internal|corp|local|lan)$/.test(raw)) continue;
+        push(raw, match.index, match.index + raw.length, /\.(?:internal|corp|local|lan)$/i.test(raw) ? "INTERNAL_ENDPOINT" : "CLOUD_ENDPOINT", 84, ["cloud-provider", "endpoint"]);
+      }
+
+      return findings;
+    }
+
     scanIdentityAssignments(text, options = {}) {
       if (!options.lineCache) {
         const lineCached = this.scanRepeatedLines(text, (line) =>
@@ -3693,6 +3851,7 @@
           ...this.scanMultilineAwsCredentialLabels(input),
           ...this.scanAdversarialAssignments(input),
           ...this.scanEnterpriseCloudIdentity(input),
+          ...this.scanCloudProviderMetadata(input),
           ...this.scanEmailAddresses(input),
           ...this.scanIdentityAssignments(input),
           ...this.scanJsonIdentityFields(input),

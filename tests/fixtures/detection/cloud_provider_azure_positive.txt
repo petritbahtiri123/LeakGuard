@@ -1,0 +1,2 @@
+Azure resource group rg-prod-weu-files-001 has vnet-de-ber-file-prd snet-de-ber-file-prd pep-de-ber-file-prd kv-prod-shared-001.
+Storage account stdeberfileprd1234567 has endpoint files.file.core.windows.net and vault prod-weu-kv.vault.azure.net.
