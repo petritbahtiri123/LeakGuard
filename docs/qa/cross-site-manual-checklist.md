@@ -4,6 +4,18 @@ Use this checklist for manual LeakGuard verification on protected AI composer si
 
 For the focused post-PR 4I file attach checkpoint, use `docs/qa/file-attach-manual-checkpoint-after-pr4i.md`.
 
+For the enterprise/cloud/internal metadata release candidate, review [Enterprise Metadata Release-Candidate Evidence](../ENTERPRISE_METADATA_RELEASE_CANDIDATE_EVIDENCE.md) and record live logged-in provider results in [Enterprise Metadata Live Manual QA Results](ENTERPRISE_METADATA_LIVE_MANUAL_QA_RESULTS.md).
+
+Local evidence refresh commands:
+
+```powershell
+npm run docs:check-links
+node tests/security.test.js
+node tests/productization.test.js
+node tests/build_targets.test.js
+git diff --check
+```
+
 Sites:
 - ChatGPT
 - Gemini

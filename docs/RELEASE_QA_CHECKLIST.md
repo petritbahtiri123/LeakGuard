@@ -21,6 +21,20 @@
 - A browser startup failure before extension load, such as Chrome/Edge GPU/CDP startup failure or Firefox geckodriver status timeout, is a local or CI environment failure until rerun evidence shows the extension loaded and failed product assertions.
 - Product failures are failures after the extension loads and a LeakGuard behavior assertion fails, such as missing popup controls, missing protected-site panel, raw marker leakage, failed redaction, or missing scanner export behavior.
 
+## Enterprise Metadata Release-Candidate Helper
+
+- Review [Enterprise Metadata Release-Candidate Evidence](ENTERPRISE_METADATA_RELEASE_CANDIDATE_EVIDENCE.md) before making release claims for enterprise/cloud/internal metadata coverage.
+- Record live logged-in provider results in [Enterprise Metadata Live Manual QA Results](qa/ENTERPRISE_METADATA_LIVE_MANUAL_QA_RESULTS.md).
+- Local evidence refresh commands:
+
+```powershell
+npm run docs:check-links
+node tests/security.test.js
+node tests/productization.test.js
+node tests/build_targets.test.js
+git diff --check
+```
+
 ## Phase 19 Live Browser QA Status
 
 - Chrome live QA completed: GO for release readiness after human store listing review.
