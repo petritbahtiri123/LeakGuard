@@ -2,6 +2,8 @@
 
 Use this template for live logged-in provider QA of the enterprise, cloud, and internal metadata detector release candidate.
 
+Follow [Enterprise Metadata Live Site QA Runbook](ENTERPRISE_METADATA_LIVE_SITE_QA_RUNBOOK.md) for setup, generated fixtures, browser loading, provider checks, and failure handling.
+
 Rules:
 
 - Use synthetic values only.

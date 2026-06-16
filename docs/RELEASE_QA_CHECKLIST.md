@@ -25,6 +25,7 @@
 
 - Review [Enterprise Metadata Release-Candidate Evidence](ENTERPRISE_METADATA_RELEASE_CANDIDATE_EVIDENCE.md) before making release claims for enterprise/cloud/internal metadata coverage.
 - Record live logged-in provider results in [Enterprise Metadata Live Manual QA Results](qa/ENTERPRISE_METADATA_LIVE_MANUAL_QA_RESULTS.md).
+- Follow [Enterprise Metadata Live Site QA Runbook](qa/ENTERPRISE_METADATA_LIVE_SITE_QA_RUNBOOK.md) for Chrome, Firefox, ChatGPT, Gemini, and failure-handling steps.
 - Local evidence refresh commands:
 
 ```powershell

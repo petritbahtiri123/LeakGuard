@@ -118,6 +118,8 @@ Automated local harnesses exercise protected-site behavior, scanner behavior, br
 
 Use synthetic data only. For detailed recording, use [Enterprise Metadata Live Manual QA Results](qa/ENTERPRISE_METADATA_LIVE_MANUAL_QA_RESULTS.md).
 
+Use [Enterprise Metadata Live Site QA Runbook](qa/ENTERPRISE_METADATA_LIVE_SITE_QA_RUNBOOK.md) for the local build, browser loading, ChatGPT, Gemini, and failure-handling steps.
+
 Manual QA should cover:
 
 - Typed text.
