@@ -1510,6 +1510,9 @@
   const K8S_NAME_VALUE_REGEX = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/;
   const K8S_SECRET_RESOURCE_VALUE_REGEX = /^secret\/[a-z0-9][a-z0-9.-]{1,62}$/i;
   const FILE_SHARE_VALUE_REGEX = /^(?:FSA\d{7}|FSB\d{7}|FS\d{7})$/;
+  const STORAGE_ACCOUNT_VALUE_REGEX = /^st[a-z0-9]{6,22}$/i;
+  const OTC_RESOURCE_VALUE_REGEX =
+    /^(?:(?:otc-)?(?:ecs|evs|vpc|subnet|sg|security-group|obs|cce|rds|elb|eip|keypair|image|flavor|as|nat|vpn)|otc)-[a-z0-9][a-z0-9-]{4,62}$/i;
   const DOMAIN_USERNAME_VALUE_REGEX = /^[A-Z][A-Z0-9]{1,30}\\{1,4}[A-Za-z][A-Za-z0-9._-]{2,63}$/i;
   const LDAP_DN_VALUE_REGEX = /^(?:CN|OU|DC)=[^,"'`\r\n]{1,80}(?:,(?:CN|OU|DC)=[^,"'`\r\n]{1,80})+$/i;
 
@@ -1559,6 +1562,14 @@
 
     if (/\b(?:ldap|distinguished name|dn)\b/i.test(normalized) && LDAP_DN_VALUE_REGEX.test(raw)) {
       return "LDAP_DN";
+    }
+
+    if (/\bstorage\s+account\b/i.test(normalized) && STORAGE_ACCOUNT_VALUE_REGEX.test(raw)) {
+      return "STORAGE_ACCOUNT";
+    }
+
+    if (/\botc\b/i.test(normalized) && /\bresource\b/i.test(normalized) && OTC_RESOURCE_VALUE_REGEX.test(raw)) {
+      return "OTC_RESOURCE";
     }
 
     if ((compact.includes("subscriptionid") || /\bsubscription\s+id\b/i.test(normalized)) && GUID_VALUE_REGEX.test(raw)) {

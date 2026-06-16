@@ -11,6 +11,28 @@ const originalPayloadPath = path.join(fixtureDir, "chatgpt_paste_live_qa_origina
 const capturedFailurePath = path.join(fixtureDir, "chatgpt_paste_live_qa_failure_redacted_regression.txt");
 
 const expectedFamilies = [
+  "AZURE_RG",
+  "STORAGE_ACCOUNT",
+  "AZURE_TENANT_ID",
+  "AZURE_SUBSCRIPTION_ID",
+  "AWS_ARN",
+  "AWS_ACCOUNT_ID",
+  "GCP_PROJECT",
+  "GCP_PROJECT_NUMBER",
+  "OTC_RESOURCE",
+  "OPENSTACK_PROJECT_ID",
+  "OPENSTACK_TENANT_ID",
+  "OPENSTACK_DOMAIN_ID",
+  "OPENSTACK_RESOURCE_ID",
+  "K8S_NAMESPACE",
+  "K8S_SECRET",
+  "FILE_SHARE",
+  "USERNAME",
+  "EMAIL",
+  "LDAP_DN"
+];
+
+const csvExpectedFamilies = [
   "AZURE_TENANT_ID",
   "AZURE_SUBSCRIPTION_ID",
   "AWS_ACCOUNT_ID",
@@ -24,8 +46,7 @@ const expectedFamilies = [
   "K8S_SECRET",
   "FILE_SHARE",
   "USERNAME",
-  "EMAIL",
-  "LDAP_DN"
+  "EMAIL"
 ];
 
 const rawSensitiveValues = [
@@ -155,6 +176,23 @@ function testOriginalStructuredPayloadRedactsThroughChatGptPastePath() {
   const ldapRow = parsed.sensitiveSyntheticValues.find((row) => row.Name === "LDAP_DN");
   assert.ok(ldapRow, "LDAP row should remain present");
   assert.match(ldapRow.Value, /^\[LDAP_DN_\d+\]$/, "LDAP value should be only the placeholder");
+
+  const storageAccountRow = parsed.sensitiveSyntheticValues.find((row) => row.Name === "Azure storage account");
+  assert.ok(storageAccountRow, "storage account row should remain present");
+  assert.match(
+    storageAccountRow.Value,
+    /^\[STORAGE_ACCOUNT_\d+\]$/,
+    "Azure storage account should keep the STORAGE_ACCOUNT placeholder family"
+  );
+
+  const otcResourceRow = parsed.sensitiveSyntheticValues.find((row) => row.Name === "OTC resource");
+  assert.ok(otcResourceRow, "OTC resource row should remain present");
+  assert.match(
+    otcResourceRow.Value,
+    /^\[OTC_RESOURCE_\d+\]$/,
+    "OTC resource should keep the OTC_RESOURCE placeholder family"
+  );
+
   assertNoLdapQuoteCorruption(redactedText);
 }
 
@@ -181,7 +219,7 @@ function testCsvAndTableStructuredRows() {
   ].join("\n");
 
   const csvRedacted = transformLikeChatGptPaste(csv).redactedText;
-  for (const family of expectedFamilies.filter((family) => family !== "LDAP_DN")) {
+  for (const family of csvExpectedFamilies) {
     assertPlaceholderFamily(csvRedacted, family, "csv");
   }
   assert.strictEqual(csvRedacted.includes("210987654321"), false, "CSV AWS account leaked");
