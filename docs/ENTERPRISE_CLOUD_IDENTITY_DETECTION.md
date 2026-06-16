@@ -25,3 +25,7 @@ Entropy thresholds are not lowered for this feature. Unknown token-like secrets 
 ## Protected-site behavior
 
 When LeakGuard rewrites text for protected AI destinations, these internal metadata findings receive typed placeholders such as `[AZURE_RG_1]`, `[CLOUD_RESOURCE_1]`, `[STORAGE_ACCOUNT_1]`, `[AD_GROUP_1]`, `[HOSTNAME_1]`, `[USERNAME_1]`, and `[EMAIL_1]`. Existing credential/API-key/password placeholders continue to use the neutral `[PWM_N]` family.
+
+## Internal network and directory metadata
+
+Enterprise metadata detection also covers private IPv4/CIDR values, UNC paths, Kerberos SPNs, LDAP distinguished names, contextual file-share IDs, and Azure tenant/subscription IDs. These detections remain local-only and use strict structure or context gates so documentation IP ranges, public IPs, random GUIDs, normal slash paths, and ordinary comma-separated prose stay visible.

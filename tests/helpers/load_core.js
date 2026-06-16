@@ -10,6 +10,10 @@ function loadCore() {
   require(path.join(root, "src/shared/detection/contextWindow.js"));
   require(path.join(root, "src/shared/detection/cloudScoring.js"));
   require(path.join(root, "src/shared/detection/enterprise/shared.js"));
+  require(path.join(root, "src/shared/detection/enterprise/uncPaths.js"));
+  require(path.join(root, "src/shared/detection/enterprise/directoryMetadata.js"));
+  require(path.join(root, "src/shared/detection/enterprise/internalNetwork.js"));
+  require(path.join(root, "src/shared/detection/enterprise/fileShares.js"));
   require(path.join(root, "src/shared/detection/enterprise/adGroups.js"));
   require(path.join(root, "src/shared/detection/enterprise/hostnames.js"));
   require(path.join(root, "src/shared/detection/enterprise/identity.js"));
@@ -18,6 +22,7 @@ function loadCore() {
   require(path.join(root, "src/shared/detection/enterprise/cloudResourceNames.js"));
   require(path.join(root, "src/shared/detection/enterprise/index.js"));
   require(path.join(root, "src/shared/detection/providers/azure.js"));
+  require(path.join(root, "src/shared/detection/providers/azureIds.js"));
   require(path.join(root, "src/shared/detection/providers/aws.js"));
   require(path.join(root, "src/shared/detection/providers/gcp.js"));
   require(path.join(root, "src/shared/detection/providers/otcOpenStack.js"));

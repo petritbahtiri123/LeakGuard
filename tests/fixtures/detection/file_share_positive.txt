@@ -1,0 +1,5 @@
+share FSA1234567
+migrate FSB1234567
+Azure Files share FS1234567
+managed folder FSA7654321
+ACL for FSB0000001

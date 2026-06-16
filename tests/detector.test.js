@@ -1154,7 +1154,7 @@ function testAwsSecretAssignmentWithExamplePrefixStillFailsClosedButDocsPlacehol
   assert.ok(/^AWS_ACCESS_KEY_ID=\[PWM_\d+\]$/.test(lines[0]));
   assert.ok(/^AWS_SECRET_ACCESS_KEY=\[PWM_\d+\]$/.test(lines[1]));
   assert.strictEqual(lines[2], `mirror_secret=${lines[1].split("=")[1]}`);
-  assert.strictEqual(lines[3], "private_ip=10.0.0.5");
+  assert.ok(/^private_ip=\[PRIVATE_IP_\d+\]$/.test(lines[3]));
   assert.strictEqual(lines[4], "url=https://example.com");
 
   const docsFindings = detector.scan("AWS_SECRET_ACCESS_KEY=example-secret-placeholder-value");
@@ -1297,7 +1297,7 @@ function testUserStressEdgeCasesRedactSecretsButKeepSafeLiterals() {
     "literal placeholder-looking text should stay unchanged"
   );
   assert.ok(result.redactedText.includes("The region is eu-central-1."), "region text should stay visible");
-  assert.ok(result.redactedText.includes("CIDR=192.168.1.0/24"), "private CIDRs should stay visible");
+  assert.ok(/^CIDR=\[PRIVATE_CIDR_\d+\]$/m.test(result.redactedText), "private CIDRs should redact as typed internal metadata");
   assert.ok(result.redactedText.includes("PUBLIC_URL=https://example.com"), "public URLs should stay visible");
   assert.ok(/\bPASSWORD\b/.test(result.redactedText), "bare PASSWORD labels should stay visible");
   assert.ok(/\bKey\b/.test(result.redactedText), "bare key labels should stay visible");

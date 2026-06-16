@@ -21,3 +21,7 @@ All detection is deterministic and local-only. LeakGuard does not send samples, 
 - Detection is provider-aware rather than entropy-driven; global entropy thresholds are not lowered.
 - Cloud IDs that look like common GUIDs, 32-character hex strings, or 12-digit numbers are redacted only with provider-specific key/value or context evidence.
 - Harmless prose, product names, filenames, package names, ordinary public URLs, and cloud-looking examples without enough provider context should remain visible.
+
+## Internal metadata extension
+
+The modular enterprise detectors also cover private network addresses/CIDRs, UNC paths, Kerberos SPNs, LDAP distinguished names, contextual file-share IDs, and Azure tenant/subscription key-value GUIDs. These are internal metadata rather than general credentials, but redaction helps avoid exposing network topology, directory hierarchy, Kerberos paths, tenant/subscription boundaries, and migration naming standards.
