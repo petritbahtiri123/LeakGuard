@@ -27,7 +27,8 @@ const syntheticSecrets = {
   github: `ghp_${"C".repeat(36)}`,
   stripe: `sk_live_${"D".repeat(32)}`,
   databasePassword: "SuperFakePassword123",
-  publicIp: "8.8.8.8"
+  publicIp: "8.8.8.8",
+  privateIp: "192.168.1.10"
 };
 
 const promptLines = [
@@ -38,7 +39,7 @@ const promptLines = [
   `STRIPE_SECRET_KEY=${syntheticSecrets.stripe}`,
   `DATABASE_URL=postgres://admin:${syntheticSecrets.databasePassword}@db.example.com:5432/customerdb`,
   `PUBLIC_IP=${syntheticSecrets.publicIp}`,
-  "PRIVATE_IP=192.168.1.10",
+  `PRIVATE_IP=${syntheticSecrets.privateIp}`,
   "PLACEHOLDER_ALREADY=[PWM_1]"
 ];
 const promptPayload = promptLines.join("\n");
@@ -48,7 +49,8 @@ const rawValues = [
   syntheticSecrets.github,
   syntheticSecrets.stripe,
   syntheticSecrets.databasePassword,
-  syntheticSecrets.publicIp
+  syntheticSecrets.publicIp,
+  syntheticSecrets.privateIp
 ];
 
 function assertBuiltExtensionExists() {
@@ -817,7 +819,9 @@ async function runFirefoxPromptRedactionQa(webdriver) {
       const value = textarea.value || '';
       const first = /^OPENAI_API_KEY=(\\[PWM_\\d+\\])$/m.exec(value)?.[1] || '';
       const repeat = /^OPENAI_API_KEY_REPEAT=(\\[PWM_\\d+\\])$/m.exec(value)?.[1] || '';
-      const ready = /\\[PWM_\\d+\\]/.test(value) && /PUBLIC_IP=\\[(PUB_HOST|NET)_\\d+\\]/.test(value);
+      const ready = /\\[PWM_\\d+\\]/.test(value) &&
+        /PUBLIC_IP=\\[(PUB_HOST|NET)_\\d+\\]/.test(value) &&
+        /PRIVATE_IP=\\[PRIVATE_IP_\\d+\\]/.test(value);
       if (ready) {
         clearInterval(timer);
         done({
@@ -837,7 +841,7 @@ async function runFirefoxPromptRedactionQa(webdriver) {
           repeatedPlaceholderReused: Boolean(first && repeat && first === repeat),
           existingPlaceholderPreserved: /^PLACEHOLDER_ALREADY=\\[PWM_1\\]$/m.test(value),
           publicIpRedacted: /PUBLIC_IP=\\[(PUB_HOST|NET)_\\d+\\]/.test(value),
-          privateIpVisible: value.includes('PRIVATE_IP=192.168.1.10')
+          privateIpRedacted: /^PRIVATE_IP=\\[PRIVATE_IP_\\d+\\]$/m.test(value)
         });
       } else if (Date.now() - started > 15000) {
         clearInterval(timer);
@@ -857,7 +861,7 @@ async function runFirefoxPromptRedactionQa(webdriver) {
   assert.equal(result.repeatedPlaceholderReused, true);
   assert.equal(result.existingPlaceholderPreserved, true);
   assert.equal(result.publicIpRedacted, true);
-  assert.equal(result.privateIpVisible, true);
+  assert.equal(result.privateIpRedacted, true, result.value || "Firefox prompt did not redact private IP");
   return result;
 }
 
@@ -952,7 +956,12 @@ async function runFirefoxScannerQa(webdriver, extensionOrigin, tempDir, download
         clicked = true;
         scanButton.click();
       }
-      if (/Scan complete/i.test(status) && /\\[PWM_\\d+\\]/.test(preview)) {
+      if (
+        /Scan complete/i.test(status) &&
+        /\\[PWM_\\d+\\]/.test(preview) &&
+        /PUBLIC_IP=\\[(PUB_HOST|NET)_\\d+\\]/.test(preview) &&
+        /PRIVATE_IP=\\[PRIVATE_IP_\\d+\\]/.test(preview)
+      ) {
         clearInterval(timer);
         done({
           status,
@@ -965,7 +974,7 @@ async function runFirefoxScannerQa(webdriver, extensionOrigin, tempDir, download
             /^DATABASE_URL=postgres:\\/\\/admin:\\[PWM_\\d+\\]@db\\.example\\.com:5432\\/customerdb$/m
               .test(preview),
           publicIpRedacted: /PUBLIC_IP=\\[(PUB_HOST|NET)_\\d+\\]/.test(preview),
-          privateIpVisible: preview.includes('PRIVATE_IP=192.168.1.10')
+          privateIpRedacted: /^PRIVATE_IP=\\[PRIVATE_IP_\\d+\\]$/m.test(preview)
         });
       } else if (Date.now() - started > 15000) {
         clearInterval(timer);
@@ -980,7 +989,7 @@ async function runFirefoxScannerQa(webdriver, extensionOrigin, tempDir, download
   assert.equal(supported.stripeRedacted, true);
   assert.equal(supported.databasePasswordRedacted, true);
   assert.equal(supported.publicIpRedacted, true);
-  assert.equal(supported.privateIpVisible, true);
+  assert.equal(supported.privateIpRedacted, true);
 
   const redactedText = await clickDownloadAndReadText(
     webdriver,
@@ -991,7 +1000,7 @@ async function runFirefoxScannerQa(webdriver, extensionOrigin, tempDir, download
   assertNoRawSyntheticValues(redactedText, "Firefox scanner redacted download");
   assert.match(redactedText, /^OPENAI_API_KEY=\[PWM_\d+\]$/m);
   assert.match(redactedText, /^PUBLIC_IP=\[(PUB_HOST|NET)_\d+\]$/m);
-  assert.ok(redactedText.includes("PRIVATE_IP=192.168.1.10"));
+  assert.match(redactedText, /^PRIVATE_IP=\[PRIVATE_IP_\d+\]$/m);
 
   const reportText = await clickDownloadAndReadText(
     webdriver,

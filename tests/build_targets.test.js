@@ -73,6 +73,15 @@ function dirSizeBytes(rootDir) {
   return walkFiles(rootDir).reduce((total, file) => total + fs.statSync(file).size, 0);
 }
 
+function getServiceWorkerImportScripts() {
+  const source = fs.readFileSync(path.join(repoRoot, "src/background/service_worker.js"), "utf8");
+  const match = source.match(/importScripts\(([\s\S]*?)\);/);
+  assert.ok(match, "background service worker should declare importScripts()");
+  return [...match[1].matchAll(/"([^"]+)"/g)].map(([, script]) =>
+    path.posix.normalize(path.posix.join("background", script))
+  );
+}
+
 function assertReleaseArtifactsAreSanitized(results) {
   const sourceContent = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
   const debugLoggerSource = fs.readFileSync(
@@ -1149,9 +1158,10 @@ function assertManifestStructure(result, expectedHostPermissions) {
       false,
       `${result.target} should not use a Chrome service worker entry`
     );
-    assert.ok(
-      (manifest.background?.scripts || []).includes("background/core.js"),
-      `${result.target} should include Firefox background scripts`
+    assert.deepStrictEqual(
+      manifest.background?.scripts || [],
+      getServiceWorkerImportScripts(),
+      `${result.target} Firefox background scripts should mirror the service worker runtime imports`
     );
     assert.deepStrictEqual(
       manifest.browser_specific_settings?.gecko?.data_collection_permissions,

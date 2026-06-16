@@ -62,7 +62,8 @@
 - Confirm public IPv4 hosts are replaced with network placeholders.
 - Confirm public IPv4 CIDR ranges are replaced with network placeholders.
 - Confirm related public hosts inside the same subnet keep readable hierarchical placeholders.
-- Confirm private IPs, private CIDRs, loopback, link-local, default route, wildcard mask, and invalid IP-like text stay visible.
+- Confirm private IPs and private CIDRs are replaced with internal metadata placeholders.
+- Confirm loopback, link-local, default route, wildcard mask, documentation ranges, and invalid IP-like text stay visible.
 
 ## Submission Safety
 
@@ -109,7 +110,7 @@
 - Confirm the sanitized attached/uploaded file redacts `API_KEY` and `DB_PASSWORD` with `[PWM_N]` placeholders.
 - Confirm the sanitized attached/uploaded file keeps `token_limit=4096` visible.
 - Confirm the sanitized attached/uploaded file pseudonymizes the public IP with a `[PUB_HOST_N]` placeholder.
-- Confirm the sanitized attached/uploaded file keeps the private IP visible.
+- Confirm the sanitized attached/uploaded file redacts the private IP with a `[PRIVATE_IP_N]` placeholder.
 - Confirm PDF, DOCX, XLSX, and image metadata uploads on protected sites produce sanitized outputs where supported: complete text PDFs may hand off regenerated `.redacted.pdf`, complete DOCX files may hand off regenerated `.redacted.docx`, complete XLSX files may hand off regenerated `.redacted.xlsx`, and unsafe/truncated cases fall back to `.redacted.txt` or block raw upload.
 - Confirm protected-site OCR is off by default and image uploads use metadata-only `.redacted.txt` unless OCR has been explicitly enabled.
 - Enable protected-site OCR, upload an eligible PNG/JPG/JPEG/WEBP image with a synthetic secret, and confirm the site receives `.redacted.png` only when OCR boxes are eligible.

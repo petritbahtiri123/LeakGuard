@@ -202,7 +202,7 @@ Expected result:
 - File is read and redacted locally before the site receives it.
 - Raw values `LeakGuardFileApiKey1234567890abcdef`, `LeakGuardFileDbPassword123!`, and `LeakGuardFileBearerToken1234567890` are not visible in composer text, file preview, or generated attachment content.
 - Public IP `8.8.8.8` is replaced with `[PUB_HOST_N]`.
-- Private IP `192.168.1.10`, `token_limit=4096`, and safe context remain visible.
+- Private IP `192.168.1.10` is replaced with `[PRIVATE_IP_N]`; `token_limit=4096` and safe context remain visible.
 - Unsupported binary/document files follow current policy: pass through by default, or block in strict mode.
 
 Gemini-specific expected result:

@@ -1020,10 +1020,51 @@ function testBackgroundDeterministicRescanBackstopExists() {
     path.join(repoRoot, "src/background/service_worker.js"),
     "utf8"
   );
+  const placeholderFamiliesIndex = serviceWorkerSource.indexOf("../shared/placeholders/families.js");
+  const placeholdersIndex = serviceWorkerSource.indexOf("../shared/placeholders.js");
+  const detectorIndex = serviceWorkerSource.indexOf("../shared/detector.js");
+  const detectionModuleScripts = [
+    "../shared/detection/constants/enterpriseTokens.js",
+    "../shared/detection/constants/providerTokens.js",
+    "../shared/detection/constants/contextRegexes.js",
+    "../shared/detection/contextWindow.js",
+    "../shared/detection/cloudScoring.js",
+    "../shared/detection/enterprise/shared.js",
+    "../shared/detection/enterprise/uncPaths.js",
+    "../shared/detection/enterprise/directoryMetadata.js",
+    "../shared/detection/enterprise/internalNetwork.js",
+    "../shared/detection/enterprise/fileShares.js",
+    "../shared/detection/enterprise/adGroups.js",
+    "../shared/detection/enterprise/hostnames.js",
+    "../shared/detection/enterprise/identity.js",
+    "../shared/detection/enterprise/storageAccounts.js",
+    "../shared/detection/enterprise/azureResourceGroups.js",
+    "../shared/detection/enterprise/cloudResourceNames.js",
+    "../shared/detection/enterprise/index.js",
+    "../shared/detection/providers/azure.js",
+    "../shared/detection/providers/azureIds.js",
+    "../shared/detection/providers/aws.js",
+    "../shared/detection/providers/gcp.js",
+    "../shared/detection/providers/otcOpenStack.js",
+    "../shared/detection/providers/kubernetes.js",
+    "../shared/detection/providers/genericEndpoints.js",
+    "../shared/detection/providers/index.js"
+  ];
+  const detectionModuleIndexes = detectionModuleScripts.map((script) => serviceWorkerSource.indexOf(script));
 
   assert.ok(
     serviceWorkerSource.indexOf("../shared/detector.js") > serviceWorkerSource.indexOf("../shared/patterns.js"),
     "background service worker should load deterministic detector dependencies"
+  );
+  assert.ok(placeholderFamiliesIndex > -1, "background service worker should load placeholder family registry");
+  assert.ok(
+    detectionModuleIndexes.every((index) => index > -1),
+    "background service worker should load modular enterprise/cloud detection helpers"
+  );
+  assert.ok(
+    placeholderFamiliesIndex < placeholdersIndex &&
+      detectionModuleIndexes.every((index) => index < detectorIndex),
+    "background service worker should load typed placeholder families before placeholders.js and detection modules before detector.js"
   );
   assert.ok(
     backgroundSource.includes(".scan(text, { manager })") &&
