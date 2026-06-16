@@ -9,6 +9,9 @@ const { Detector, PlaceholderManager, transformOutboundPrompt } = globalThis.PWM
 const fixtureDir = path.join(root, "tests/fixtures/detection");
 const originalPayloadPath = path.join(fixtureDir, "chatgpt_paste_live_qa_original_payload.txt");
 const capturedFailurePath = path.join(fixtureDir, "chatgpt_paste_live_qa_failure_redacted_regression.txt");
+const csvTablePayloadPath = path.join(fixtureDir, "enterprise_metadata_live_qa_csv_table_payload.csv");
+const htmlRenderedCopyPayloadPath = path.join(fixtureDir, "enterprise_metadata_live_qa_html_rendered_copy.txt");
+const htmlSourcePayloadPath = path.join(fixtureDir, "enterprise_metadata_live_qa.html");
 
 const expectedFamilies = [
   "AZURE_RG",
@@ -45,6 +48,30 @@ const csvExpectedFamilies = [
   "K8S_NAMESPACE",
   "K8S_SECRET",
   "FILE_SHARE",
+  "USERNAME",
+  "EMAIL"
+];
+
+const liveQaCsvTableExpectedFamilies = [
+  "AZURE_RG",
+  "STORAGE_ACCOUNT",
+  "AZURE_TENANT_ID",
+  "AZURE_SUBSCRIPTION_ID",
+  "AWS_ARN",
+  "AWS_ACCOUNT_ID",
+  "GCP_PROJECT",
+  "OTC_RESOURCE",
+  "OPENSTACK_PROJECT_ID",
+  "K8S_NAMESPACE",
+  "K8S_SECRET",
+  "PRIVATE_IP",
+  "PRIVATE_CIDR",
+  "UNC_PATH",
+  "SPN",
+  "LDAP_DN",
+  "FILE_SHARE",
+  "AD_GROUP",
+  "HOSTNAME",
   "USERNAME",
   "EMAIL"
 ];
@@ -252,10 +279,82 @@ function testCsvAndTableStructuredRows() {
   assertNoLdapQuoteCorruption(tableRedacted);
 }
 
+function testLiveQaCsvTableResultShapeRedactsThroughChatGptPastePath() {
+  const csv = fs.readFileSync(csvTablePayloadPath, "utf8");
+  const { redactedText } = transformLikeChatGptPaste(csv);
+  assertLiveQaTablePayloadRedacted(redactedText, "live QA CSV table");
+}
+
+function assertLiveQaTablePayloadRedacted(redactedText, label) {
+  for (const family of liveQaCsvTableExpectedFamilies) {
+    assertPlaceholderFamily(redactedText, family, label);
+  }
+
+  for (const raw of [
+    "rg-prod-weu-files-001",
+    "stdeberfileprd1234567",
+    "99999999-8888-7777-6666-555555555555",
+    "11111111-2222-3333-4444-555555555555",
+    "arn:aws:iam::123456789012:role/LeakGuardQaRole",
+    "210987654321",
+    "lg-prod-project-123",
+    "otc-prod-de-ecs-001",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "prod-payments",
+    "secret/db-password",
+    "10.10.20.30",
+    "10.10.20.0/24",
+    "\\\\fs-prod-weu-01\\FSA1234567",
+    "cifs/stdeberfileprd1234567.file.core.windows.net",
+    "CN=svc-backup-prod,OU=Service Accounts,OU=SH070,DC=corp,DC=local",
+    "FSA1234567",
+    "AD123-SH070-FILE-L-STFSA1234567R",
+    "fs-prod-weu-01.corp.local",
+    "CORP\\adm-test.user",
+    "test.user@example.com"
+  ]) {
+    assert.strictEqual(redactedText.includes(raw), false, `${label} leaked ${raw}`);
+  }
+
+  for (const harmless of [
+    "rg-blue",
+    "rg-test",
+    "product-roadmap-item",
+    "invoice 123456789012",
+    "docs/page",
+    "service/name",
+    "random GUID 123e4567-e89b-12d3-a456-426614174000",
+    "report.final.docx",
+    "package.name"
+  ]) {
+    assert.ok(redactedText.includes(harmless), `${label} should preserve ${harmless}`);
+  }
+}
+
+function testLiveQaHtmlRenderedTableRedactsThroughChatGptPastePath() {
+  const renderedCopy = fs.readFileSync(htmlRenderedCopyPayloadPath, "utf8");
+  const { redactedText } = transformLikeChatGptPaste(renderedCopy);
+
+  assertLiveQaTablePayloadRedacted(redactedText, "live QA HTML rendered table");
+}
+
+function testLiveQaHtmlSourceTableRedactsThroughChatGptPastePath() {
+  const html = fs.readFileSync(htmlSourcePayloadPath, "utf8");
+  const { redactedText } = transformLikeChatGptPaste(html);
+
+  assertLiveQaTablePayloadRedacted(redactedText, "live QA HTML source table");
+  assert.ok(redactedText.includes("<td>[OPENSTACK_PROJECT_ID_"), "HTML value cell punctuation should be preserved");
+  assert.ok(redactedText.includes("<li>docs/page</li>"), "HTML harmless list item should remain structurally intact");
+  assert.doesNotMatch(redactedText, /\[PWM_\d+\]\/li>/, "HTML tags must not be partially consumed by password fallback");
+}
+
 function run() {
   testCapturedEvidenceFixture();
   testOriginalStructuredPayloadRedactsThroughChatGptPastePath();
   testCsvAndTableStructuredRows();
+  testLiveQaCsvTableResultShapeRedactsThroughChatGptPastePath();
+  testLiveQaHtmlRenderedTableRedactsThroughChatGptPastePath();
+  testLiveQaHtmlSourceTableRedactsThroughChatGptPastePath();
   console.log("PASS ChatGPT paste live QA failure regression");
 }
 

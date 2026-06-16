@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>LeakGuard Synthetic Enterprise Metadata Live QA</title>
+</head>
+<body>
+  <h1>LeakGuard Synthetic Enterprise Metadata Live QA</h1>
+  <p>Generated locally. All values are fake examples for manual QA only.</p>
+  <table>
+    <thead><tr><th>Group</th><th>Name</th><th>Value</th><th>Expected</th></tr></thead>
+    <tbody>
+      <tr><td>Azure</td><td>Azure resource group</td><td>rg-prod-weu-files-001</td><td>[AZURE_RG_N]</td></tr>
+      <tr><td>Azure</td><td>Azure storage account</td><td>stdeberfileprd1234567</td><td>[STORAGE_ACCOUNT_N]</td></tr>
+      <tr><td>Azure</td><td>tenantId</td><td>99999999-8888-7777-6666-555555555555</td><td>[AZURE_TENANT_ID_N]</td></tr>
+      <tr><td>Azure</td><td>subscriptionId</td><td>11111111-2222-3333-4444-555555555555</td><td>[AZURE_SUBSCRIPTION_ID_N]</td></tr>
+      <tr><td>AWS</td><td>AWS ARN</td><td>arn:aws:iam::123456789012:role/LeakGuardQaRole</td><td>[AWS_ARN_N]</td></tr>
+      <tr><td>AWS</td><td>AWS account id</td><td>210987654321</td><td>[AWS_ACCOUNT_ID_N]</td></tr>
+      <tr><td>GCP</td><td>project_id</td><td>lg-prod-project-123</td><td>[GCP_PROJECT_N]</td></tr>
+      <tr><td>OTC/OpenStack</td><td>OTC resource</td><td>otc-prod-de-ecs-001</td><td>[OTC_RESOURCE_N]</td></tr>
+      <tr><td>OTC/OpenStack</td><td>OpenStack project_id</td><td>aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</td><td>[OPENSTACK_PROJECT_ID_N]</td></tr>
+      <tr><td>Kubernetes</td><td>Kubernetes namespace</td><td>prod-payments</td><td>[K8S_NAMESPACE_N]</td></tr>
+      <tr><td>Kubernetes</td><td>Kubernetes resource</td><td>secret/db-password</td><td>[K8S_SECRET_N]</td></tr>
+      <tr><td>Internal</td><td>PRIVATE_IP</td><td>10.10.20.30</td><td>[PRIVATE_IP_N]</td></tr>
+      <tr><td>Internal</td><td>PRIVATE_CIDR</td><td>10.10.20.0/24</td><td>[PRIVATE_CIDR_N]</td></tr>
+      <tr><td>Internal</td><td>UNC_PATH</td><td>\\fs-prod-weu-01\FSA1234567</td><td>[UNC_PATH_N]</td></tr>
+      <tr><td>Internal</td><td>SPN</td><td>cifs/stdeberfileprd1234567.file.core.windows.net</td><td>[SPN_N]</td></tr>
+      <tr><td>Internal</td><td>LDAP_DN</td><td>CN=svc-backup-prod,OU=Service Accounts,OU=SH070,DC=corp,DC=local</td><td>[LDAP_DN_N]</td></tr>
+      <tr><td>Internal</td><td>FILE_SHARE</td><td>FSA1234567</td><td>[FILE_SHARE_N]</td></tr>
+      <tr><td>Internal</td><td>AD_GROUP</td><td>AD123-SH070-FILE-L-STFSA1234567R</td><td>[AD_GROUP_N]</td></tr>
+      <tr><td>Internal</td><td>HOSTNAME</td><td>fs-prod-weu-01.corp.local</td><td>[HOSTNAME_N]</td></tr>
+      <tr><td>Internal</td><td>USERNAME</td><td>CORP\adm-test.user</td><td>[USERNAME_N]</td></tr>
+      <tr><td>Internal</td><td>EMAIL</td><td>test.user@example.com</td><td>[EMAIL_N]</td></tr>
+    </tbody>
+  </table>
+  <h2>Harmless Controls</h2>
+  <ul>
+    <li>rg-blue</li>
+    <li>rg-test</li>
+    <li>product-roadmap-item</li>
+    <li>invoice 123456789012</li>
+    <li>8.8.8.8</li>
+    <li>192.0.2.44</li>
+    <li>192.0.2.0/24</li>
+    <li>docs/page</li>
+    <li>service/name</li>
+    <li>random GUID 123e4567-e89b-12d3-a456-426614174000</li>
+    <li>report.final.docx</li>
+    <li>package.name</li>
+  </ul>
+</body>
+</html>

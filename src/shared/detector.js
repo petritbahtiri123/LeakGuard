@@ -1665,13 +1665,14 @@
     );
   }
 
-  function parseStructuredCsvLine(line) {
+  function parseStructuredCsvLine(line, delimiter = ",") {
     const input = String(line || "");
     const cells = [];
     let index = 0;
+    const isPaddingChar = (char) => char === " " || (delimiter !== "\t" && char === "\t");
 
     while (index <= input.length) {
-      while (input[index] === " " || input[index] === "\t") index += 1;
+      while (isPaddingChar(input[index])) index += 1;
       if (index >= input.length) break;
 
       if (input[index] === '"') {
@@ -1696,22 +1697,74 @@
           valueEnd = index;
         }
 
-        while (input[index] === " " || input[index] === "\t") index += 1;
-        if (input[index] === ",") index += 1;
+        while (isPaddingChar(input[index])) index += 1;
+        if (input[index] === delimiter) index += 1;
         cells.push({ value, start: valueStart, end: valueEnd });
         continue;
       }
 
       const rawStart = index;
-      while (index < input.length && input[index] !== ",") index += 1;
+      while (index < input.length && input[index] !== delimiter) index += 1;
       const rawEnd = index;
-      if (input[index] === ",") index += 1;
+      if (input[index] === delimiter) index += 1;
 
       let start = rawStart;
       let end = rawEnd;
       while (start < end && /\s/.test(input[start])) start += 1;
       while (end > start && /\s/.test(input[end - 1])) end -= 1;
       cells.push({ value: input.slice(start, end), start, end });
+    }
+
+    return cells;
+  }
+
+  function decodeStructuredHtmlEntities(value) {
+    const decodeCodePoint = (codePoint, fallback) =>
+      Number.isInteger(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff
+        ? String.fromCodePoint(codePoint)
+        : fallback;
+
+    return String(value || "").replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi, (match, entity) => {
+      const normalized = entity.toLowerCase();
+      if (normalized === "amp") return "&";
+      if (normalized === "lt") return "<";
+      if (normalized === "gt") return ">";
+      if (normalized === "quot") return '"';
+      if (normalized === "apos") return "'";
+      if (normalized.startsWith("#x")) {
+        const codePoint = Number.parseInt(normalized.slice(2), 16);
+        return decodeCodePoint(codePoint, match);
+      }
+      if (normalized.startsWith("#")) {
+        const codePoint = Number.parseInt(normalized.slice(1), 10);
+        return decodeCodePoint(codePoint, match);
+      }
+      return match;
+    });
+  }
+
+  function parseStructuredHtmlCells(rowHtml, rowOffset) {
+    const cells = [];
+    const cellRegex = /<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi;
+    let cellMatch;
+
+    while ((cellMatch = cellRegex.exec(rowHtml)) !== null) {
+      const inner = cellMatch[1];
+      const innerOffset = cellMatch[0].indexOf(inner);
+      if (innerOffset < 0) continue;
+
+      let start = 0;
+      let end = inner.length;
+      while (start < end && /\s/.test(inner[start])) start += 1;
+      while (end > start && /\s/.test(inner[end - 1])) end -= 1;
+
+      const rawInner = inner.slice(start, end);
+      const value = decodeStructuredHtmlEntities(rawInner.replace(/<[^>]*>/g, "")).trim();
+      cells.push({
+        value,
+        start: rowOffset + cellMatch.index + innerOffset + start,
+        end: rowOffset + cellMatch.index + innerOffset + end
+      });
     }
 
     return cells;
@@ -2560,12 +2613,68 @@
         );
       }
 
+      const htmlTableRowRegex = /<tr\b[^>]*>[\s\S]*?<\/tr>/gi;
+      let htmlTableHeader = null;
+      let htmlRowMatch;
+
+      while ((htmlRowMatch = htmlTableRowRegex.exec(input)) !== null) {
+        const cells = parseStructuredHtmlCells(htmlRowMatch[0], htmlRowMatch.index);
+        const headerNames = cells.map((cell) => normalizeStructuredMetadataLabel(cell.value));
+        const valueColumn = headerNames.indexOf("value");
+        const labelColumn = headerNames.findIndex((name) => name === "name" || name === "type" || name === "key");
+
+        if (valueColumn >= 0 && labelColumn >= 0) {
+          htmlTableHeader = {
+            group: headerNames.indexOf("group"),
+            label: labelColumn,
+            value: valueColumn
+          };
+          continue;
+        }
+
+        if (htmlTableHeader && cells.length > htmlTableHeader.value) {
+          const labelCell = cells[htmlTableHeader.label];
+          const valueCell = cells[htmlTableHeader.value];
+          const groupCell = htmlTableHeader.group >= 0 ? cells[htmlTableHeader.group] : null;
+          if (labelCell && valueCell) {
+            const combinedLabel = [groupCell?.value, labelCell.value].filter(Boolean).join(" ");
+            pushStructuredMetadataFinding(
+              findings,
+              this,
+              combinedLabel,
+              valueCell.value,
+              valueCell.start,
+              valueCell.end,
+              "html-table-row"
+            );
+          }
+        }
+      }
+
       const lines = input.split(/\n/);
       let offset = 0;
       let previousLabel = null;
+      let csvTableHeader = null;
 
       for (const line of lines) {
         const lineWithoutCr = line.endsWith("\r") ? line.slice(0, -1) : line;
+        const delimiter = lineWithoutCr.includes("\t") ? "\t" : lineWithoutCr.includes(",") ? "," : "";
+        const cells = delimiter ? parseStructuredCsvLine(lineWithoutCr, delimiter) : [];
+        const headerNames = cells.map((cell) => normalizeStructuredMetadataLabel(cell.value));
+        const valueColumn = headerNames.indexOf("value");
+        const labelColumn = headerNames.findIndex((name) => name === "name" || name === "type" || name === "key");
+
+        if (valueColumn >= 0 && labelColumn >= 0) {
+          csvTableHeader = {
+            group: headerNames.indexOf("group"),
+            label: labelColumn,
+            value: valueColumn
+          };
+          previousLabel = null;
+          offset += line.length + 1;
+          continue;
+        }
+
         const labelledRow = /^\s*(?:Type|Key|Name)\s*:\s*(.+?)\s*$/.exec(lineWithoutCr);
         if (labelledRow) {
           previousLabel = {
@@ -2594,13 +2703,34 @@
           continue;
         }
 
-        if (lineWithoutCr.trim() === "") {
+        if (csvTableHeader && cells.length > csvTableHeader.value) {
+          const labelCell = cells[csvTableHeader.label];
+          const valueCell = cells[csvTableHeader.value];
+          const groupCell = csvTableHeader.group >= 0 ? cells[csvTableHeader.group] : null;
+          if (labelCell && valueCell) {
+            const combinedLabel = [groupCell?.value, labelCell.value].filter(Boolean).join(" ");
+            pushStructuredMetadataFinding(
+              findings,
+              this,
+              combinedLabel,
+              valueCell.value,
+              offset + valueCell.start,
+              offset + valueCell.end,
+              "csv-table-row"
+            );
+          }
           previousLabel = null;
           offset += line.length + 1;
           continue;
         }
 
-        const cells = lineWithoutCr.includes(",") ? parseStructuredCsvLine(lineWithoutCr) : [];
+        if (lineWithoutCr.trim() === "") {
+          previousLabel = null;
+          csvTableHeader = null;
+          offset += line.length + 1;
+          continue;
+        }
+
         if (cells.length >= 2 && !/^type$/i.test(cells[0].value) && !/^name$/i.test(cells[0].value)) {
           pushStructuredMetadataFinding(
             findings,
@@ -3374,7 +3504,8 @@
         offset += line.length + 1;
 
         if (!trimmed) continue;
-        if (/[=:,]/.test(trimmed) || /\s{2,}/.test(trimmed)) continue;
+        const isHtmlTagLine = /^<\/?[a-z][^>]*>/i.test(trimmed) || /<\/[a-z][^>]*>\s*$/i.test(trimmed);
+        if (/[=:,\t]/.test(trimmed) || isHtmlTagLine || /\s{2,}/.test(trimmed)) continue;
 
         const raw = unwrapQuotedStandaloneValue(trimmed);
         const rawOffset = line.indexOf(raw);
