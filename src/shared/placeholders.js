@@ -10,6 +10,8 @@
   const PWM_PLACEHOLDER_EXACT_REGEX = /^\[PWM_(\d+)\]$/;
   const NETWORK_PLACEHOLDER_EXACT_REGEX =
     /^\[(NET_\d+(?:_SUB_\d+)*(?:_(?:HOST_\d+|GW|VIP|DNS))?|PUB_HOST_\d+(?:_(?:GW|VIP|DNS))?)\]$/;
+  const ENTERPRISE_PLACEHOLDER_EXACT_REGEX =
+    /^\[(?:AZURE_RG|CLOUD_RESOURCE|STORAGE_ACCOUNT|AD_GROUP|HOSTNAME|USERNAME|EMAIL)_\d+\]$/;
   const LEGACY_TYPED_PLACEHOLDER_REGEX = /\[(?!PWM_)[A-Z][A-Z0-9_]*_\d+\]/g;
   const LEGACY_TYPED_PLACEHOLDER_EXACT_REGEX = /^\[(?!PWM_)[A-Z][A-Z0-9_]*_\d+\]$/;
   const ANY_PLACEHOLDER_TOKEN_REGEX =
@@ -97,7 +99,7 @@
   function canonicalizePlaceholderToken(token) {
     const normalized = String(token || "");
 
-    if (isPwmPlaceholder(normalized) || isSemanticPlaceholder(normalized)) {
+    if (isPwmPlaceholder(normalized) || isSemanticPlaceholder(normalized) || ENTERPRISE_PLACEHOLDER_EXACT_REGEX.test(normalized)) {
       return normalized;
     }
 
@@ -408,7 +410,7 @@
       this.reserveVisiblePlaceholdersFromText(text);
     }
 
-    getPlaceholder(rawValue) {
+    getPlaceholder(rawValue, placeholderType = "SECRET") {
       const raw = String(rawValue);
       const fingerprint = sessionFingerprint(this.ensureSessionId(), raw);
 
@@ -416,9 +418,21 @@
         return this.placeholderByFingerprint.get(fingerprint);
       }
 
-      let placeholder = `[PWM_${this.incrementCounter("PWM")}]`;
+      const typedFamilies = new Set([
+        "AZURE_RG",
+        "CLOUD_RESOURCE",
+        "STORAGE_ACCOUNT",
+        "AD_GROUP",
+        "HOSTNAME",
+        "USERNAME",
+        "EMAIL"
+      ]);
+      const family = typedFamilies.has(String(placeholderType || "").toUpperCase())
+        ? String(placeholderType).toUpperCase()
+        : "PWM";
+      let placeholder = `[${family}_${this.incrementCounter(family)}]`;
       while (this.knownPlaceholders.has(placeholder) || this.fingerprintByPlaceholder.has(placeholder)) {
-        placeholder = `[PWM_${this.incrementCounter("PWM")}]`;
+        placeholder = `[${family}_${this.incrementCounter(family)}]`;
       }
 
       this.placeholderByFingerprint.set(fingerprint, placeholder);

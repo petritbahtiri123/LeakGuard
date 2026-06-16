@@ -1363,6 +1363,50 @@
     return /^(?!\d+$)[A-Za-z0-9._@-]{3,64}$/.test(String(value || ""));
   }
 
+  const ENTERPRISE_ENV_TOKENS = new Set(["prod", "prd", "dev", "test", "tst", "stage", "stg", "uat", "qa", "int", "sandbox"]);
+  const ENTERPRISE_LOCATION_TOKENS = new Set([
+    "weu", "neu", "westeurope", "northeurope", "eastus", "westus", "centralus", "uksouth",
+    "germanywestcentral", "switzerlandnorth", "de", "us", "uk", "ch", "in", "eu", "ber", "fra", "chi", "kos", "lon"
+  ]);
+  const ENTERPRISE_SERVICE_TOKENS = new Set([
+    "vnet", "network", "identity", "sec", "security", "files", "file", "storage", "backup", "aks", "sql",
+    "app", "core", "shared", "hub", "spoke", "dns", "pe", "pep", "kv", "keyvault", "snet", "pl", "rt", "peer",
+    "sss", "share", "nic", "nsg", "logic", "aa", "vm", "appgw", "law", "db", "bastion", "jump"
+  ]);
+  const CLOUD_RESOURCE_PREFIXES = new Set([
+    "rg", "st", "vnet", "snet", "pep", "pl", "rt", "peer", "sss", "share", "kv", "nic", "nsg", "logic", "aa", "vm",
+    "aks", "appgw", "law", "sql", "db", "dns", "bastion"
+  ]);
+  const HOST_ROLE_TOKENS = new Set(["dc", "srv", "sql", "fs", "file", "print", "jump", "bastion", "vpn", "rdp", "ssh", "aks", "vm", "web", "app", "db"]);
+  const INFRA_CONTEXT_REGEX = /\b(?:resource\s*group|azure|cloud|tenant|subscription|vnet|subnet|private\s*endpoint|storage\s*account|azure\s*files|file\s*share|smb|kerberos|hostname|computername|device\s*name|server|fqdn|rdp|ssh|winrm|intune|entra|ad|ldap)\b/i;
+  const IDENTITY_CONTEXT_REGEX = /\b(?:user|username|login|owner|created\s+by|assigned\s+to|upn|samaccountname|email|entra|ad|ldap|identity|account)\b/i;
+
+  function enterpriseTokens(raw) {
+    return String(raw || "").toLowerCase().split(/[-_.]+/).filter(Boolean);
+  }
+
+  function enterpriseTokenScore(raw, { requirePrefix } = {}) {
+    const tokens = enterpriseTokens(raw);
+    if (!tokens.length) return 0;
+    let score = 0;
+    if (ENTERPRISE_ENV_TOKENS.has(tokens[0]) && requirePrefix) score -= 6;
+    for (const token of tokens) {
+      if (ENTERPRISE_ENV_TOKENS.has(token)) score += 14;
+      if (ENTERPRISE_LOCATION_TOKENS.has(token)) score += 12;
+      if (ENTERPRISE_SERVICE_TOKENS.has(token)) score += 10;
+      if (/^\d{2,7}$/.test(token)) score += 4;
+    }
+    return score;
+  }
+
+  function hasEnterpriseContext(text, start, end) {
+    return INFRA_CONTEXT_REGEX.test(getContextWindow(text, start, end, 96));
+  }
+
+  function hasIdentityContext(text, start, end) {
+    return IDENTITY_CONTEXT_REGEX.test(getContextWindow(text, start, end, 96));
+  }
+
   function isBuildLabelLike(value) {
     return /^(?:[A-Za-z]+-){1,4}\d{4}(?:-\d{2}){1,2}$/i.test(String(value || "").trim());
   }
@@ -2941,6 +2985,96 @@
       return findings;
     }
 
+    scanEnterpriseCloudIdentity(text) {
+      const findings = [];
+      const input = String(text || "");
+      const push = (raw, start, end, placeholderType, score, methods) => {
+        if (!raw || this.isAllowlisted(raw) || isCleanPlaceholder(raw) || containsPlaceholder(raw)) return;
+        findings.push(this.buildFinding({
+          category: placeholderType === "USERNAME" || placeholderType === "EMAIL" ? "identity" : "internal_metadata",
+          placeholderType,
+          raw,
+          start,
+          end,
+          score,
+          methods
+        }));
+      };
+
+      const adRegex = /\bAD\d{3}-SH\d{3}-FILE-[LG]-(?:ST|RBAC|BLOB|MF)(?:FSA\d{7}|FSB\d{7}|FS\d{7})[RC]\b/g;
+      for (let match; (match = adRegex.exec(input)) !== null;) {
+        push(match[0], match.index, match.index + match[0].length, "AD_GROUP", 94, ["enterprise", "ad-group", "strict-pattern"]);
+      }
+
+      const rgRegex = /\b(?:rg[-_][a-z0-9][a-z0-9_-]{4,62}|rgrp-[a-z0-9][a-z0-9-]{4,62}|resource-group-[a-z0-9][a-z0-9-]{4,62})\b/gi;
+      for (let match; (match = rgRegex.exec(input)) !== null;) {
+        const raw = match[0];
+        let score = 42 + enterpriseTokenScore(raw, { requirePrefix: true });
+        if (/^(?:rg[-_]|rgrp-|resource-group-)/i.test(raw)) score += 18;
+        if (hasEnterpriseContext(input, match.index, match.index + raw.length)) score += 10;
+        if (score >= 72) push(raw, match.index, match.index + raw.length, "AZURE_RG", score, ["enterprise", "azure-rg", "scored"]);
+      }
+
+      const cloudRegex = /\b(?:vnet|snet|pep|pl|rt|peer|sss|share|kv|nic|nsg|logic|aa|vm|aks|appgw|law|sql|db|dns|bastion|st)-[a-z0-9][a-z0-9-]{4,62}\b/gi;
+      for (let match; (match = cloudRegex.exec(input)) !== null;) {
+        const raw = match[0];
+        const tokens = enterpriseTokens(raw);
+        if (!CLOUD_RESOURCE_PREFIXES.has(tokens[0])) continue;
+        let score = 44 + enterpriseTokenScore(raw);
+        if (hasEnterpriseContext(input, match.index, match.index + raw.length)) score += 8;
+        if (score >= 70) push(raw, match.index, match.index + raw.length, "CLOUD_RESOURCE", score, ["enterprise", "cloud-resource", "scored"]);
+      }
+
+      const storageRegex = /\bst[a-z0-9]{6,22}\b/g;
+      for (let match; (match = storageRegex.exec(input)) !== null;) {
+        const raw = match[0];
+        if (/^(?:state|status|static|station|street|string|strong|student|studio|story|store)$/i.test(raw)) continue;
+        const lower = raw.toLowerCase();
+        let score = 38;
+        if (/^st(?:de|us|uk|ch|in|eu|weu|neu|ber|fra|chi|lon)/.test(lower)) score += 18;
+        if (/(?:prod|prd|dev|test|tst|stage|stg|uat|qa|int|sandbox)/.test(lower)) score += 16;
+        if (/(?:file|files|storage|core|backup|share)/.test(lower)) score += 12;
+        if (/\d{3,7}$/.test(lower)) score += 8;
+        if (/\b(?:storage\s*account|azure\s*files|file\s*share|smb|private\s*endpoint|kerberos|account\s*name)\b/i.test(getContextWindow(input, match.index, match.index + raw.length, 96))) score += 16;
+        if (score >= 70) push(raw, match.index, match.index + raw.length, "STORAGE_ACCOUNT", score, ["enterprise", "storage-account", "scored"]);
+      }
+
+      const hostRegex = /\b(?:(?:[a-z0-9][a-z0-9-]{1,40}\.)+(?:local|lan|corp|internal|ad|domain)|[a-z0-9]+(?:-[a-z0-9]+){1,5}-\d{1,4}|(?:dc|srv|sql|fs|vm|web|app|db)\d{2,4})\b/gi;
+      for (let match; (match = hostRegex.exec(input)) !== null;) {
+        const raw = match[0];
+        if (isLikelyEmailAddress(raw) || /\.(?:com|org|net|io|dev|co|edu|gov)$/i.test(raw)) continue;
+        const before = input.slice(Math.max(0, match.index - 4), match.index);
+        if (/(?:@|:\/\/)$/.test(before)) continue;
+        const tokens = enterpriseTokens(raw);
+        let score = 36;
+        if (/\.(?:local|lan|corp|internal|ad|domain)$/i.test(raw)) score += 24;
+        if (tokens.some((token) => HOST_ROLE_TOKENS.has(token) || /^(?:dc|fs|vm|sql|srv)\d+$/i.test(token))) score += 18;
+        score += enterpriseTokenScore(raw) / 2;
+        if (hasEnterpriseContext(input, match.index, match.index + raw.length)) score += 12;
+        if (score >= 68) push(raw, match.index, match.index + raw.length, "HOSTNAME", score, ["enterprise", "hostname", "scored"]);
+      }
+
+      const userRegex = /\b(?:[A-Z][A-Z0-9]{1,30}\\[A-Za-z][A-Za-z0-9._-]{2,63}|(?:svc|sa|adm|admin|robot|automation)[-_][A-Za-z0-9][A-Za-z0-9._-]{2,63}|[a-z]{2,32}\.[a-z]{2,32})\b/g;
+      for (let match; (match = userRegex.exec(input)) !== null;) {
+        const raw = match[0];
+        if (isLikelyEmailAddress(raw) || /\.(?:local|lan|corp|internal|com|org|net|io|dev)$/i.test(raw)) continue;
+        if (/\.(?:js|ts|jsx|tsx|json|md|txt|pdf|docx|xlsx|png|jpg|jpeg|gif|css|html)$/i.test(raw)) continue;
+        if (looksLikeFilesystemPath(input, match.index, match.index + raw.length, raw)) continue;
+        let score = 54;
+        if (/\\/.test(raw)) score += 24;
+        if (/^(?:svc|sa|adm|admin|robot|automation)[-_]/i.test(raw)) score += 22;
+        if (/^[a-z]{2,32}\.[a-z]{2,32}$/.test(raw)) {
+          if (input[match.index + raw.length] === "@" || input[match.index - 1] === "@") continue;
+          if (!hasIdentityContext(input, match.index, match.index + raw.length)) continue;
+          score += 14;
+        }
+        if (hasIdentityContext(input, match.index, match.index + raw.length)) score += 10;
+        if (score >= 68) push(raw, match.index, match.index + raw.length, "USERNAME", score, ["enterprise", "username", "scored"]);
+      }
+
+      return findings;
+    }
+
     scanIdentityAssignments(text, options = {}) {
       if (!options.lineCache) {
         const lineCached = this.scanRepeatedLines(text, (line) =>
@@ -3558,6 +3692,7 @@
           ...this.scanLabelledProviderKeyValues(input),
           ...this.scanMultilineAwsCredentialLabels(input),
           ...this.scanAdversarialAssignments(input),
+          ...this.scanEnterpriseCloudIdentity(input),
           ...this.scanEmailAddresses(input),
           ...this.scanIdentityAssignments(input),
           ...this.scanJsonIdentityFields(input),

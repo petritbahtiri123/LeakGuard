@@ -2229,9 +2229,7 @@ function testEmailRedactionSuppressionAndReuse() {
   const findings = detector.scan(text);
   const result = redactor.redact(text, findings);
   const redactedText = result.redactedText;
-  const emailPlaceholders = (redactedText.match(/\[PWM_\d+\]/g) || []).filter(
-    (placeholder) => placeholder !== "[PWM_7]"
-  );
+  const emailPlaceholders = redactedText.match(/\[EMAIL_\d+\]/g) || [];
 
   assert.ok(
     findings.some((finding) => finding.type === "EMAIL" && finding.raw === workEmail),
@@ -2240,7 +2238,7 @@ function testEmailRedactionSuppressionAndReuse() {
   assert.strictEqual(new Set(emailPlaceholders).size, 1, "duplicate email values should reuse one placeholder");
   assert.strictEqual(redactedText.includes(workEmail), false, "work email should not remain visible");
   assert.ok(
-    /^Please contact \[PWM_\d+\] for account access\.$/m.test(redactedText),
+    /^Please contact \[EMAIL_\d+\] for account access\.$/m.test(redactedText),
     "prose email should redact without changing surrounding words"
   );
   assert.ok(redactedText.includes("docs_email=user@example.com"), "example.com email should stay visible");
@@ -2275,7 +2273,7 @@ function testReleaseQaIdentityAndDatabaseUrlRegressions() {
     findings.some((finding) => finding.type === "EMAIL" && finding.raw === "qa.person@example.com"),
     "EMAIL assignment should produce an email identity finding even for example.com values"
   );
-  assert.ok(/^EMAIL=\[PWM_\d+\]$/m.test(redactedText), "EMAIL assignment value should redact");
+  assert.ok(/^EMAIL=\[EMAIL_\d+\]$/m.test(redactedText), "EMAIL assignment value should redact");
   assert.ok(
     /^MYSQL_URL=mysql:\/\/root:\[PWM_\d+\]@192\.0\.2\.44:3306\/mysql$/m.test(redactedText),
     `MYSQL_URL should preserve URI shape and redact only the password: ${redactedText}`
@@ -2319,6 +2317,47 @@ function testDeveloperDocumentationFalsePositiveControls() {
   for (const text of cases) {
     assert.deepStrictEqual(detector.scan(text), [], `safe developer/docs text should not redact: ${text}`);
   }
+}
+
+function testEnterpriseCloudIdentityDetectors() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const text = [
+    "Azure resource group rg-prod-weu-files-001 hosts storage.",
+    "resource group rgrp-shared-identity-prod and resource-group-prod-core are internal.",
+    "Resources: vnet-de-ber-file-prd snet-de-ber-file-prd pep-de-ber-file-prd kv-prod-shared-001 aks-prod-weu-001 vm-jump-prd-weu-01 appgw-prod-weu law-prod-secops.",
+    "storage account name stdeberfileprd1234567 with Azure Files SMB private endpoint.",
+    "AD group AD001-SH070-FILE-G-RBACFSA1234567R grants read access.",
+    "hostname fs-prod-weu-01, fqdn dc01.corp.local, server sql-prod-001.internal and jump-prd-weu-01.",
+    "login CORP\\petrit.bahtiri owns account adm-petrit.bahtiri and svc-backup-prod.",
+    "created by petrit.bahtiri",
+    "email=petrit.bahtiri@company.com",
+    "service email svc-backup@example.com"
+  ].join("\n");
+
+  const findings = detector.scan(text);
+  const redactedText = redactor.redact(text, findings).redactedText;
+  for (const type of ["AZURE_RG", "CLOUD_RESOURCE", "STORAGE_ACCOUNT", "AD_GROUP", "HOSTNAME", "USERNAME", "EMAIL"]) {
+    assert.ok(findings.some((finding) => finding.type === type), `expected ${type} finding`);
+    assert.ok(new RegExp(`\\[${type}_\\d+\\]`).test(redactedText), `expected ${type} placeholder`);
+  }
+  assert.strictEqual(redactedText.includes("rg-prod-weu-files-001"), false);
+  assert.strictEqual(redactedText.includes("AD001-SH070-FILE-G-RBACFSA1234567R"), false);
+}
+
+function testEnterpriseCloudIdentityFalsePositiveControls() {
+  const detector = new Detector();
+  const safeText = [
+    "normal prose about rg values should keep rg-blue and rg-test visible.",
+    "ordinary hyphenated words like blue-green and product-roadmap-item are harmless.",
+    "normal dotted words include package.name and docs.example value.",
+    "filename report.final.docx and harmless GUID 123e4567-e89b-12d3-a456-426614174000.",
+    "hash abcdef1234567890abcdef1234567890 without secret context stays visible.",
+    "public domain example.com and package @scope/name should not become usernames."
+  ].join("\n");
+
+  assert.deepStrictEqual(detector.scan(safeText), [], "enterprise detectors should stay context/scoring gated");
 }
 
 function run() {
@@ -2389,6 +2428,8 @@ function run() {
   testEmailRedactionSuppressionAndReuse();
   testReleaseQaIdentityAndDatabaseUrlRegressions();
   testDeveloperDocumentationFalsePositiveControls();
+  testEnterpriseCloudIdentityDetectors();
+  testEnterpriseCloudIdentityFalsePositiveControls();
 
   console.log(
     `PASS ${fixtures.length} positive fixtures + metadata, suppression, multiline, and reveal regressions`
