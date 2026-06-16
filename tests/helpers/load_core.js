@@ -31,7 +31,13 @@ function loadCore() {
   require(path.join(root, "src/shared/detection/providers/index.js"));
   require(path.join(root, "src/shared/detector.js"));
   require(path.join(root, "src/shared/placeholders.js"));
+  require(path.join(root, "src/shared/ipClassification.js"));
+  require(path.join(root, "src/shared/ipDetection.js"));
+  require(path.join(root, "src/shared/networkHierarchy.js"));
+  require(path.join(root, "src/shared/placeholderAllocator.js"));
+  require(path.join(root, "src/shared/sessionMapStore.js"));
   require(path.join(root, "src/shared/knownSecretReuse.js"));
+  require(path.join(root, "src/shared/transformOutboundPrompt.js"));
   require(path.join(root, "src/shared/redactor.js"));
 }
 module.exports = { loadCore, root };

@@ -9,6 +9,7 @@ const testFiles = [
   "tests/detection/internal_network_metadata.test.js",
   "tests/detection/enterprise_directory_metadata.test.js",
   "tests/detection/file_share_metadata.test.js",
+  "tests/detection/internal_metadata_pipeline_contract.test.js",
   "tests/detection/cloud_provider_azure.test.js",
   "tests/detection/cloud_provider_aws.test.js",
   "tests/detection/cloud_provider_gcp.test.js",
