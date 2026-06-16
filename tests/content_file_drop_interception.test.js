@@ -343,6 +343,8 @@ function fileHandoffStateHarnessSource() {
       getFileListMetadataSignature,
       markSanitizedFileHandoff,
       deleteSanitizedFileHandoffMark,
+      getSanitizedFileInputHandoffSuppression,
+      suppressSanitizedFileInputHandoffEvent,
       shouldSuppressSanitizedFileReprocessing,
       isFileUnavailableLocalFileResult,
       getFileUnavailableAfterHandoffSuppression,
@@ -1202,6 +1204,7 @@ function createHarness(overrides = {}) {
       "let fileProcessingHideTimer = 0;",
       "let pendingAttachPromptEl = null;",
       "let pendingAttachPromptSite = \"\";",
+      "let fileInputProcessingSignatures = new WeakMap();",
       ...contentDebugEventsHarnessSource(),
       ...fileHandoffAdapterHarnessSource(),
       "function setDmzOverlayState(message, state = \"\") { calls.dmzStates.push({ message, state }); }",
@@ -12975,6 +12978,73 @@ async function testFirefoxChatGptFileInputReplacesBasicSecretsFixture() {
   assert.deepStrictEqual(fileInput.events, ["input", "change"]);
 }
 
+async function testChromeFileInputDuplicateEventsShareOneProcessingRun() {
+  const rawSecret = "LeakGuardFileApiKey1234567890";
+  const rawFile = createTextFile({
+    name: "duplicate-chrome.env",
+    type: "text/plain",
+    text: `API_KEY=${rawSecret}`
+  });
+  const fileInput = createFileInput();
+  fileInput.files = [rawFile];
+  const composer = {
+    tagName: "TEXTAREA",
+    text: "",
+    selection: { start: 0, end: 0 }
+  };
+  let releaseRead;
+  const readStarted = [];
+  const readGate = new Promise((resolve) => {
+    releaseRead = resolve;
+  });
+  const { maybeHandleFileInputChange, calls } = createHarness({
+    location: { hostname: "chatgpt.com" },
+    findComposer: () => composer,
+    readLocalTextFileFromDataTransfer: async (transfer) => {
+      calls.reads.push(transfer);
+      readStarted.push(true);
+      await readGate;
+      return {
+        handled: true,
+        ok: true,
+        text: `API_KEY=${rawSecret}`,
+        file: {
+          name: rawFile.name,
+          type: rawFile.type,
+          sizeBytes: rawFile.size,
+          lastModified: rawFile.lastModified
+        }
+      };
+    },
+    handOffSanitizedLocalFile: (event, input, sanitizedFile, context) => {
+      calls.handoffs.push({ event, input, sanitizedFile, context });
+      fileInput.files = [sanitizedFile];
+      fileInput.dispatchEvent({ type: "input", bubbles: true, composed: true });
+      fileInput.dispatchEvent({ type: "change", bubbles: true, composed: true });
+      return true;
+    }
+  });
+  const first = createEvent({ type: "input", target: fileInput });
+  const second = createEvent({ type: "change", target: fileInput });
+
+  const firstPromise = maybeHandleFileInputChange(first.event);
+  await Promise.resolve();
+  assert.strictEqual(readStarted.length, 1);
+  const secondResult = await maybeHandleFileInputChange(second.event);
+  releaseRead();
+  await firstPromise;
+
+  assert.strictEqual(first.event.defaultPrevented, true);
+  assert.strictEqual(second.event.defaultPrevented, true);
+  assert.strictEqual(secondResult?.strategy, "duplicate-file-input-event-suppressed");
+  assert.strictEqual(calls.reads.length, 1);
+  assert.strictEqual(calls.redactions.length, 1);
+  assert.strictEqual(calls.handoffs.length, 1);
+  assert.strictEqual(calls.handoffs[0].sanitizedFile.text.includes(rawSecret), false);
+  assert.deepStrictEqual(fileInput.events, ["input", "change"]);
+  assert.ok(calls.debugEvents.some((entry) => entry.label === "file-input:duplicate-raw-event-suppressed"));
+}
+
 async function testFirefoxFileInputDuplicateEventsShareOneTransaction() {
   const rawSecret = "LeakGuardFileApiKey1234567890";
   const rawFile = createTextFile({
@@ -13755,6 +13825,7 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testUserManagedProtectedSiteDropFallsBackToSanitizedTextWhenHandoffRejected();
   await testFirefoxChatGptFileInputReplacesSelectedFile();
   await testFirefoxChatGptFileInputReplacesBasicSecretsFixture();
+  await testChromeFileInputDuplicateEventsShareOneProcessingRun();
   await testFirefoxFileInputDuplicateEventsShareOneTransaction();
   await testFirefoxGeminiUploadInputReplacesSelectedFile();
   await testFirefoxGeminiUploadReplacementFailureDoesNotTextFallback();

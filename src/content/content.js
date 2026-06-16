@@ -308,6 +308,7 @@
   let pendingAttachPromptSite = "";
   let syntheticFileListCapabilityCache = null;
   let inputFileAssignmentCapabilityCache = null;
+  const fileInputProcessingSignatures = new WeakMap();
   const fileHandoffState = createFileHandoffState({
     emitDebug: debugReveal,
     describeFileForDebug,
@@ -9989,11 +9990,27 @@
       return;
     }
 
+    const selectedSignature = getFileListMetadataSignature(selectedFiles);
+    const processingSignature = fileInputProcessingSignatures.get(event.target) || "";
+    if (selectedSignature && processingSignature === selectedSignature) {
+      consumeInterceptionEvent(event);
+      debugReveal("file-input:duplicate-raw-event-suppressed", {
+        eventType: event.type || "",
+        input: describeFileInputForDebug(event.target, "processing"),
+        fileCount: selectedFiles.length
+      });
+      return {
+        handled: true,
+        ok: true,
+        strategy: "duplicate-file-input-event-suppressed"
+      };
+    }
+
     let transaction = null;
     if (isFirefoxProtectedInput) {
       transaction = setFirefoxFileInputTransaction(event.target, {
         state: "processing",
-        rawSignature: getFileListMetadataSignature(selectedFiles),
+        rawSignature: selectedSignature,
         startedAt: Date.now(),
         suppressUntil: Date.now() + PROGRAMMATIC_INPUT_SUPPRESS_MS,
         replacementDispatched: false
@@ -10017,12 +10034,20 @@
       if (!(isFirefoxRuntime() && isProtectedFileDropDriver(getCurrentHandoffDriverId()))) return;
     }
 
-    const result = await maybeHandleLocalFileInsert(
-      event,
-      input,
-      selectedTransfer,
-      "file-input"
-    );
+    fileInputProcessingSignatures.set(event.target, selectedSignature);
+    let result;
+    try {
+      result = await maybeHandleLocalFileInsert(
+        event,
+        input,
+        selectedTransfer,
+        "file-input"
+      );
+    } finally {
+      if (fileInputProcessingSignatures.get(event.target) === selectedSignature) {
+        fileInputProcessingSignatures.delete(event.target);
+      }
+    }
     if (isFirefoxProtectedInput && transaction) {
       const latest = getFirefoxFileInputTransaction(event.target);
       if (result?.ok) {

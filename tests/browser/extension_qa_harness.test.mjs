@@ -1306,6 +1306,7 @@ async function runProtectedSiteImageOcrQa(connection, page, extensionSessionId, 
   const fixtureSecret = "sk-proj-LeakGuardScannerOcrApiKey1234567890abcdef";
   const imagePath = path.join(tempDir, "protected-site-ocr.png");
   fs.writeFileSync(imagePath, await makeSyntheticTextImage(`API_KEY=${fixtureSecret}`, "png"));
+  await resetProviderCapture(connection, page.sessionId);
   await setFileInputFiles(connection, page.sessionId, "#qa-file-input", [imagePath], { verifyAssignment: false });
 
   let result;
@@ -1356,7 +1357,7 @@ async function runProtectedSiteImageOcrQa(connection, page, extensionSessionId, 
           { awaitPromise: true }
         ),
       "protected-site image OCR sanitized handoff",
-      30000
+      qaTimeoutMs
     );
   } catch (error) {
     const diagnostic = await evaluate(
