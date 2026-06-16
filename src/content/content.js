@@ -10,6 +10,7 @@
   const {
     Detector,
     PLACEHOLDER_TOKEN_REGEX,
+    ANY_PLACEHOLDER_TOKEN_REGEX,
     normalizeVisiblePlaceholders,
     buildNetworkUiFindings,
     evaluateDestinationPolicy,
@@ -10970,18 +10971,25 @@
   }
 
   function getResponseObserverOptions() {
+    const placeholderTokenRegex = ANY_PLACEHOLDER_TOKEN_REGEX || PLACEHOLDER_TOKEN_REGEX;
     return {
       document,
       MutationObserver,
       Node,
       NodeFilter,
       normalizeVisiblePlaceholders,
-      placeholderTokenRegex: PLACEHOLDER_TOKEN_REGEX,
+      placeholderTokenRegex,
       placeholderCount: currentPublicState.placeholderCount,
+      trustedPlaceholders: currentPublicState.trustedPlaceholders,
+      knownPlaceholders: currentPublicState.trustedPlaceholders,
+      canonicalizePlaceholderToken: globalThis.PWM?.canonicalizePlaceholderToken,
       tokenizePlaceholderText: (text, options) =>
         tokenizeRehydrationPlaceholderText(text, {
           ...options,
-          placeholderCount: currentPublicState.placeholderCount
+          placeholderCount: currentPublicState.placeholderCount,
+          trustedPlaceholders: currentPublicState.trustedPlaceholders,
+          knownPlaceholders: currentPublicState.trustedPlaceholders,
+          canonicalizePlaceholderToken: globalThis.PWM?.canonicalizePlaceholderToken
         }),
       createSecretSpan: (placeholder) => RevealController.createSecretSpan(placeholder, getRevealControllerOptions()),
       debug: debugResponseRehydration,

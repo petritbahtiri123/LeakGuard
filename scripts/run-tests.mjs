@@ -10,6 +10,7 @@ const testFiles = [
   "tests/detection/enterprise_directory_metadata.test.js",
   "tests/detection/file_share_metadata.test.js",
   "tests/detection/internal_metadata_pipeline_contract.test.js",
+  "tests/detection/typed_placeholder_rehydration_contract.test.js",
   "tests/detection/live_site_qa_payloads.test.js",
   "tests/detection/cloud_provider_azure.test.js",
   "tests/detection/cloud_provider_aws.test.js",

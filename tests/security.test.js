@@ -1118,6 +1118,14 @@ function testContentPublicStateIsMinimized() {
     contentSource.includes("currentPublicState.trustedPlaceholders"),
     "content script should use the sanitized trusted placeholder list for detection"
   );
+  assert.ok(
+    contentSource.includes("ANY_PLACEHOLDER_TOKEN_REGEX") &&
+      contentSource.includes("placeholderTokenRegex") &&
+      contentSource.includes("trustedPlaceholders: currentPublicState.trustedPlaceholders") &&
+      contentSource.includes("knownPlaceholders: currentPublicState.trustedPlaceholders") &&
+      contentSource.includes("canonicalizePlaceholderToken: globalThis.PWM?.canonicalizePlaceholderToken"),
+    "content response hydration should use the broad placeholder regex and latest trusted placeholder list"
+  );
 }
 
 function testRevealNeverInjectsHostDomContainers() {

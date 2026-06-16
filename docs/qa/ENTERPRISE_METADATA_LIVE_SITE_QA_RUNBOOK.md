@@ -19,6 +19,12 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/create-enterprise-live-qa-
 
 Generated files are written under `artifacts/manual-qa/enterprise-metadata/`.
 
+For CSV scanner/upload coverage, select this generated file directly:
+
+```text
+artifacts/manual-qa/enterprise-metadata/enterprise_metadata_live_qa.csv
+```
+
 ## Chrome
 
 1. Run `npm run build:chrome`.
@@ -30,7 +36,7 @@ Generated files are written under `artifacts/manual-qa/enterprise-metadata/`.
 7. Confirm the LeakGuard badge/status shows the site is protected.
 8. Test typed payload from `tests/fixtures/manual/live-site-qa/chatgpt_gemini_typed_paste_payload.txt`.
 9. Test paste payload from `tests/fixtures/manual/live-site-qa/chatgpt_gemini_typed_paste_payload.txt`.
-10. Test upload/drop generated files from `artifacts/manual-qa/enterprise-metadata/`.
+10. Test upload/drop generated files from `artifacts/manual-qa/enterprise-metadata/`, including `artifacts/manual-qa/enterprise-metadata/enterprise_metadata_live_qa.csv`.
 11. Test image OCR if available using `tests/fixtures/manual/live-site-qa/image_ocr_payload.txt` rendered or screenshotted into a local image.
 12. Verify raw metadata does not reach the composer or sent message.
 13. Verify harmless values remain visible where the active transform mode allows them.

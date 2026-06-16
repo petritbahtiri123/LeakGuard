@@ -15,7 +15,7 @@ const NodeConstants = {
 const NodeFilterConstants = {
   SHOW_TEXT: 4
 };
-const placeholderTokenRegex = /\[(?:PWM|NET|PUB_HOST)_\d+(?:_SUB_\d+)*(?:_(?:HOST_\d+|GW|VIP|DNS))?\]/g;
+const placeholderTokenRegex = /\[(?:PWM|NET|PUB_HOST|PRIVATE_IP)_\d+(?:_SUB_\d+)*(?:_(?:HOST_\d+|GW|VIP|DNS))?\]/g;
 
 class FakeTextNode {
   constructor(value) {
@@ -162,7 +162,7 @@ function element(tagName, attrs, children) {
   return new FakeElement(tagName, attrs, children);
 }
 
-function createOptions({ document, placeholderCount = 1, createdSpans = [] } = {}) {
+function createOptions({ document, placeholderCount = 1, trustedPlaceholders = [], createdSpans = [] } = {}) {
   return {
     document,
     Node: NodeConstants,
@@ -171,6 +171,8 @@ function createOptions({ document, placeholderCount = 1, createdSpans = [] } = {
     normalizeVisiblePlaceholders: (value) => String(value || ""),
     placeholderTokenRegex,
     placeholderCount,
+    trustedPlaceholders,
+    canonicalizePlaceholderToken: (value) => String(value || ""),
     tokenizePlaceholderText: PlaceholderRehydrator.tokenizePlaceholderText,
     createSecretSpan: (placeholder) => {
       const span = element("span", { class: "pwm-secret" }, [text(placeholder)]);
@@ -240,6 +242,40 @@ function testHydrateTextNodeLeavesUnknownPlaceholdersPlain() {
 
   assert.strictEqual(createdSpans.length, 0);
   assert.strictEqual(parent.textContent, "before [PWM_3] after");
+}
+
+function testHydrateTextNodeCreatesInjectedSpansForTrustedTypedPlaceholders() {
+  const node = text("IP [PRIVATE_IP_1]");
+  const parent = element("p", {}, [node]);
+  const doc = new FakeDocument(parent);
+  const createdSpans = [];
+
+  ResponseObserver.hydrateTextNode(
+    node,
+    createOptions({ document: doc, placeholderCount: 0, trustedPlaceholders: ["[PRIVATE_IP_1]"], createdSpans })
+  );
+
+  assert.strictEqual(createdSpans.length, 1);
+  assert.strictEqual(createdSpans[0].textContent, "[PRIVATE_IP_1]");
+  assert.deepStrictEqual(
+    parent.childNodes.map((child) => child.textContent),
+    ["IP ", "[PRIVATE_IP_1]"]
+  );
+}
+
+function testHydrateTextNodeLeavesUntrustedTypedPlaceholdersPlain() {
+  const node = text("fake [PRIVATE_IP_999]");
+  const parent = element("p", {}, [node]);
+  const doc = new FakeDocument(parent);
+  const createdSpans = [];
+
+  ResponseObserver.hydrateTextNode(
+    node,
+    createOptions({ document: doc, placeholderCount: 0, trustedPlaceholders: [], createdSpans })
+  );
+
+  assert.strictEqual(createdSpans.length, 0);
+  assert.strictEqual(parent.textContent, "fake [PRIVATE_IP_999]");
 }
 
 function testRehydrateTreeDoesNothingWithoutPlaceholders() {
@@ -340,6 +376,8 @@ function testRehydrationDebugPayloadsStayMetadataOnly() {
 testShouldSkipHydration();
 testHydrateTextNodeCreatesInjectedSpansForTrustedPlaceholders();
 testHydrateTextNodeLeavesUnknownPlaceholdersPlain();
+testHydrateTextNodeCreatesInjectedSpansForTrustedTypedPlaceholders();
+testHydrateTextNodeLeavesUntrustedTypedPlaceholdersPlain();
 testRehydrateTreeDoesNothingWithoutPlaceholders();
 testRehydrateTreeHydratesOnlyEligibleTextNodes();
 testStartRehydrationObserverKeepsBoundedAddedElementScan();

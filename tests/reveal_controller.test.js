@@ -77,6 +77,19 @@ function createSpan(options = {}) {
   return { span, calls, errors };
 }
 
+function createTypedSpan(placeholder = "[PRIVATE_IP_4]", overrides = {}) {
+  const calls = [];
+  const span = RevealController.createSecretSpan(placeholder, {
+    document: new FakeDocument(),
+    openReveal: (clickedPlaceholder) => {
+      calls.push(clickedPlaceholder);
+      return Promise.resolve();
+    },
+    ...overrides
+  });
+  return { span, calls };
+}
+
 async function flushPromises() {
   await Promise.resolve();
   await Promise.resolve();
@@ -106,6 +119,20 @@ function testStableAttributesAndClasses() {
     span.getAttribute("aria-label"),
     "LeakGuard redacted sensitive content. Open secure reveal in LeakGuard."
   );
+}
+
+function testTypedPlaceholderUsesTrailingIndexForTone() {
+  const { span } = createTypedSpan("[PRIVATE_IP_4]");
+
+  assert.strictEqual(span.textContent, "[PRIVATE_IP_4]");
+  assert.strictEqual(span.dataset.pwmTone, "rose");
+}
+
+function testTypedPlaceholderWithoutIndexUsesFallbackTone() {
+  const { span } = createTypedSpan("[PRIVATE_IP_X]");
+
+  assert.strictEqual(span.textContent, "[PRIVATE_IP_X]");
+  assert.strictEqual(span.dataset.pwmTone, "aqua");
 }
 
 function testClickActivationCallsInjectedRevealAndStopsEvent() {
@@ -157,6 +184,8 @@ async function testRevealErrorsDelegateToInjectedHandler() {
 async function run() {
   testRendersPlaceholderTextOnly();
   testStableAttributesAndClasses();
+  testTypedPlaceholderUsesTrailingIndexForTone();
+  testTypedPlaceholderWithoutIndexUsesFallbackTone();
   testClickActivationCallsInjectedRevealAndStopsEvent();
   testKeyboardActivationCallsInjectedRevealForEnterAndSpace();
   testNonActivationKeysDoNotCallReveal();

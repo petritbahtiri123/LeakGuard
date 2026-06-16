@@ -222,7 +222,11 @@
 
     trackKnownPlaceholder(placeholder) {
       const canonical = canonicalizePlaceholderToken(placeholder);
-      if (!isPwmPlaceholder(canonical) && !isSemanticPlaceholder(canonical)) {
+      if (
+        !isPwmPlaceholder(canonical) &&
+        !isSemanticPlaceholder(canonical) &&
+        !ENTERPRISE_PLACEHOLDER_EXACT_REGEX.test(canonical)
+      ) {
         return canonical;
       }
 

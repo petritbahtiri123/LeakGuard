@@ -1,19 +1,10 @@
 const assert = require("assert");
+const fs = require("fs");
 const path = require("path");
 
 const repoRoot = path.join(__dirname, "..");
 
-require(path.join(repoRoot, "src/shared/entropy.js"));
-require(path.join(repoRoot, "src/shared/patterns.js"));
-require(path.join(repoRoot, "src/shared/detector.js"));
-require(path.join(repoRoot, "src/shared/placeholders.js"));
-require(path.join(repoRoot, "src/shared/sessionMapStore.js"));
-require(path.join(repoRoot, "src/shared/ipClassification.js"));
-require(path.join(repoRoot, "src/shared/ipDetection.js"));
-require(path.join(repoRoot, "src/shared/networkHierarchy.js"));
-require(path.join(repoRoot, "src/shared/placeholderAllocator.js"));
-require(path.join(repoRoot, "src/shared/knownSecretReuse.js"));
-require(path.join(repoRoot, "src/shared/transformOutboundPrompt.js"));
+require(path.join(repoRoot, "tests/helpers/load_core.js")).loadCore();
 require(path.join(repoRoot, "src/shared/fileLimits.js"));
 require(path.join(repoRoot, "src/shared/fileTypeRegistry.js"));
 require(path.join(repoRoot, "src/shared/fileExtractors.js"));
@@ -413,7 +404,7 @@ function testSupportedTextFormatFixturesRedactSecrets() {
         "INFO private_client=192.168.1.1"
       ].join("\n"),
       secrets: ["LeakGuardLogBearerToken1234567890"],
-      safeValues: ["https://example.com/health", "192.168.1.1"]
+      safeValues: ["https://example.com/health"]
     },
     {
       fileName: "deploy.sh",
@@ -460,12 +451,13 @@ function testSupportedTextFormatFixturesRedactSecrets() {
   }
 }
 
-function testPublicIpRedactedPrivateIpVisible() {
+function testPublicIpAndPrivateIpRedactedWithTypedPlaceholders() {
   const result = scanSample("public=8.8.8.8 private=192.168.1.1", "network.log");
 
   assert.strictEqual(result.redactedText.includes("8.8.8.8"), false);
+  assert.strictEqual(result.redactedText.includes("192.168.1.1"), false);
   assert.ok(/\[PUB_HOST_\d+\]/.test(result.redactedText));
-  assert.ok(result.redactedText.includes("192.168.1.1"));
+  assert.ok(/\[PRIVATE_IP_\d+\]/.test(result.redactedText));
 }
 
 function testSplitAwsSecretLabelRedactedInTextFile() {
@@ -476,6 +468,49 @@ function testSplitAwsSecretLabelRedactedInTextFile() {
   assert.strictEqual(result.redactedText.includes(rawSecret), false);
   assert.match(result.redactedText, /AWS Secret Key\s+\[PWM_\d+\]/);
   assert.strictEqual(JSON.stringify(report).includes(rawSecret), false);
+}
+
+function testManualEnterpriseCsvAcceptedAndPreviewRedacts() {
+  const scriptSource = fs.readFileSync(
+    path.join(repoRoot, "scripts/create-enterprise-live-qa-fixtures.ps1"),
+    "utf8"
+  );
+  const runbookSource = fs.readFileSync(
+    path.join(repoRoot, "docs/qa/ENTERPRISE_METADATA_LIVE_SITE_QA_RUNBOOK.md"),
+    "utf8"
+  );
+  const text = [
+    "Kind,Name,Value",
+    "sensitive,Azure resource group,rg-prod-weu-files-001",
+    "sensitive,PRIVATE_IP,10.10.20.30",
+    "harmless,preserve,rg-blue",
+    "harmless,preserve,invoice 123456789012"
+  ].join("\n");
+  const buffer = bufferFromText(text);
+  const validation = validateFileForTextScan({
+    fileName: "enterprise_metadata_live_qa.csv",
+    mimeType: "text/csv",
+    sizeBytes: buffer.byteLength,
+    buffer
+  });
+  const result = scanTextContent({
+    fileName: "enterprise_metadata_live_qa.csv",
+    mimeType: "text/csv",
+    sizeBytes: buffer.byteLength,
+    text,
+    mode: "hide_public"
+  });
+
+  assert.strictEqual(validation.ok, true);
+  assert.strictEqual(result.redactedText.includes("rg-prod-weu-files-001"), false);
+  assert.strictEqual(result.redactedText.includes("10.10.20.30"), false);
+  assert.match(result.redactedText, /\[AZURE_RG_\d+\]/);
+  assert.match(result.redactedText, /\[(?:PRIVATE_IP|PWM)_\d+\]/);
+  assert.ok(result.redactedText.includes("rg-blue"));
+  assert.ok(result.redactedText.includes("invoice 123456789012"));
+  assert.ok(result.redactedPreview.includes("[AZURE_RG_"));
+  assert.ok(scriptSource.includes("enterprise_metadata_live_qa.csv"));
+  assert.ok(runbookSource.includes("enterprise_metadata_live_qa.csv"));
 }
 
 async function testImageRedactorProducesRedactedPngWithoutRawSecretBytes() {
@@ -590,8 +625,9 @@ testEnvSecretsRedacted();
 testJsonCredentialRedacted();
 testSanitizedScannerReportExcludesRawSecretBoundaries();
 testSupportedTextFormatFixturesRedactSecrets();
-testPublicIpRedactedPrivateIpVisible();
+testPublicIpAndPrivateIpRedactedWithTypedPlaceholders();
 testSplitAwsSecretLabelRedactedInTextFile();
+testManualEnterpriseCsvAcceptedAndPreviewRedacts();
 testImageRedactorProducesRedactedPngWithoutRawSecretBytes()
   .then(() => testImageRedactorCanProduceRedactedImageWithoutFindings())
   .then(() => {
