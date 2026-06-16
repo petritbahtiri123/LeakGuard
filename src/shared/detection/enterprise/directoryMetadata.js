@@ -13,7 +13,7 @@
       push(findings, detector, match[0], match.index, match.index + match[0].length, "SPN", 100, ["enterprise", "spn", "strict-prefix"]);
     }
 
-    const dnComponent = "(?:CN|OU|DC)=[^,\\r\\n]{1,80}";
+    const dnComponent = "(?:CN|OU|DC)=[^,\"'`\\r\\n]{1,80}";
     for (let match, re = new RegExp(`\\b${dnComponent}(?:,${dnComponent})+`, "gi"); (match = re.exec(input)) !== null;) {
       push(findings, detector, match[0], match.index, match.index + match[0].length, "LDAP_DN", 100, ["enterprise", "ldap-dn", "strict-components"]);
     }

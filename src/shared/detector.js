@@ -1500,6 +1500,212 @@
     return false;
   }
 
+  const STRUCTURED_METADATA_MARKER_REGEX =
+    /\b(?:tenant[_\s-]?id|subscription[_\s-]?id|aws\s+account|project[_\s-]?(?:id|number)|openstack|domain[_\s-]?id|server[_\s-]?id|namespace|k8s|kubernetes|file[_\s-]?share|username|service\s+account|email|ldap)\b/i;
+  const GUID_VALUE_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const HEX32_VALUE_REGEX = /^[0-9a-f]{32}$/i;
+  const AWS_ACCOUNT_ID_VALUE_REGEX = /^\d{12}$/;
+  const GCP_PROJECT_VALUE_REGEX = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/;
+  const GCP_PROJECT_NUMBER_VALUE_REGEX = /^\d{6,12}$/;
+  const K8S_NAME_VALUE_REGEX = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/;
+  const K8S_SECRET_RESOURCE_VALUE_REGEX = /^secret\/[a-z0-9][a-z0-9.-]{1,62}$/i;
+  const FILE_SHARE_VALUE_REGEX = /^(?:FSA\d{7}|FSB\d{7}|FS\d{7})$/;
+  const DOMAIN_USERNAME_VALUE_REGEX = /^[A-Z][A-Z0-9]{1,30}\\{1,4}[A-Za-z][A-Za-z0-9._-]{2,63}$/i;
+  const LDAP_DN_VALUE_REGEX = /^(?:CN|OU|DC)=[^,"'`\r\n]{1,80}(?:,(?:CN|OU|DC)=[^,"'`\r\n]{1,80})+$/i;
+
+  function normalizeStructuredMetadataLabel(label) {
+    return String(label || "")
+      .toLowerCase()
+      .replace(/[_-]+/g, " ")
+      .replace(/[^\w\s/]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function compactStructuredMetadataLabel(label) {
+    return normalizeStructuredMetadataLabel(label).replace(/[^a-z0-9]/g, "");
+  }
+
+  function hasStructuredMetadataContext(label, pattern) {
+    return pattern.test(normalizeStructuredMetadataLabel(label));
+  }
+
+  function isOpenStackStructuredLabel(label) {
+    return hasStructuredMetadataContext(label, /\b(?:openstack|otc|open telekom cloud)\b/i);
+  }
+
+  function hasEnterpriseTokenValue(value) {
+    const constants = root.PWM.DetectionConstants || {};
+    const tokens = String(value || "").toLowerCase().split(/[-_.]+/).filter(Boolean);
+    return tokens.some(
+      (token) =>
+        constants.ENTERPRISE_ENV_TOKENS?.has(token) ||
+        constants.ENTERPRISE_LOCATION_TOKENS?.has(token) ||
+        constants.ENTERPRISE_SERVICE_TOKENS?.has(token)
+    );
+  }
+
+  function isStructuredUsernameValue(value) {
+    return DOMAIN_USERNAME_VALUE_REGEX.test(String(value || "")) || isLikelyUsernameLikeValue(value);
+  }
+
+  function classifyStructuredMetadataValue(label, rawValue) {
+    const raw = normalizeCandidate(rawValue);
+    if (!raw || raw.length > 512 || isCleanPlaceholder(raw) || containsPlaceholder(raw)) return null;
+
+    const normalized = normalizeStructuredMetadataLabel(label);
+    const compact = compactStructuredMetadataLabel(label);
+    const openStackLabel = isOpenStackStructuredLabel(label);
+
+    if (/\b(?:ldap|distinguished name|dn)\b/i.test(normalized) && LDAP_DN_VALUE_REGEX.test(raw)) {
+      return "LDAP_DN";
+    }
+
+    if ((compact.includes("subscriptionid") || /\bsubscription\s+id\b/i.test(normalized)) && GUID_VALUE_REGEX.test(raw)) {
+      return "AZURE_SUBSCRIPTION_ID";
+    }
+
+    if (compact.includes("tenantid") || /\btenant\s+id\b/i.test(normalized)) {
+      if (openStackLabel && (HEX32_VALUE_REGEX.test(raw) || GUID_VALUE_REGEX.test(raw))) {
+        return "OPENSTACK_TENANT_ID";
+      }
+      if (GUID_VALUE_REGEX.test(raw)) return "AZURE_TENANT_ID";
+    }
+
+    if (openStackLabel && (compact.includes("projectid") || /\bproject\s+id\b/i.test(normalized))) {
+      if (HEX32_VALUE_REGEX.test(raw) || GUID_VALUE_REGEX.test(raw)) return "OPENSTACK_PROJECT_ID";
+    }
+
+    if (openStackLabel && (compact.includes("domainid") || /\bdomain\s+id\b/i.test(normalized))) {
+      if (HEX32_VALUE_REGEX.test(raw) || GUID_VALUE_REGEX.test(raw)) return "OPENSTACK_DOMAIN_ID";
+    }
+
+    if (
+      openStackLabel &&
+      (compact.includes("serverid") ||
+        compact.includes("instanceid") ||
+        compact.includes("resourceid") ||
+        /\b(?:server|instance|resource)\s+id\b/i.test(normalized))
+    ) {
+      if (HEX32_VALUE_REGEX.test(raw) || GUID_VALUE_REGEX.test(raw)) return "OPENSTACK_RESOURCE_ID";
+    }
+
+    if (/\b(?:aws|amazon)\b/i.test(normalized) && /\baccount(?:\s+id)?\b/i.test(normalized)) {
+      if (AWS_ACCOUNT_ID_VALUE_REGEX.test(raw)) return "AWS_ACCOUNT_ID";
+    }
+
+    if (compact.includes("projectnumber") || /\bproject\s+number\b/i.test(normalized)) {
+      if (GCP_PROJECT_NUMBER_VALUE_REGEX.test(raw)) return "GCP_PROJECT_NUMBER";
+    }
+
+    if (compact.includes("projectid") || /\bproject\s+id\b/i.test(normalized)) {
+      if (!openStackLabel && GCP_PROJECT_VALUE_REGEX.test(raw)) return "GCP_PROJECT";
+    }
+
+    if (/\b(?:kubernetes|k8s)\b/i.test(normalized) && /\bnamespace\b/i.test(normalized)) {
+      if (K8S_NAME_VALUE_REGEX.test(raw)) return "K8S_NAMESPACE";
+    }
+
+    if (/^namespace$/i.test(normalized) && K8S_NAME_VALUE_REGEX.test(raw) && hasEnterpriseTokenValue(raw)) {
+      return "K8S_NAMESPACE";
+    }
+
+    if (/\b(?:kubernetes|k8s)\b/i.test(normalized) && /\bresource\b/i.test(normalized)) {
+      if (K8S_SECRET_RESOURCE_VALUE_REGEX.test(raw)) return "K8S_SECRET";
+    }
+
+    if (/\bfile\s+share\b/i.test(normalized) || compact.includes("fileshare")) {
+      if (FILE_SHARE_VALUE_REGEX.test(raw)) return "FILE_SHARE";
+    }
+
+    if (/\b(?:email|e mail|mail)\b/i.test(normalized) && isLikelyEmailAddress(raw)) {
+      return "EMAIL";
+    }
+
+    if (
+      /\b(?:username|user name|service account|identity owner|login|samaccountname|account)\b/i.test(normalized) &&
+      isStructuredUsernameValue(raw)
+    ) {
+      return "USERNAME";
+    }
+
+    return null;
+  }
+
+  function structuredMetadataCategory(placeholderType) {
+    return placeholderType === "USERNAME" || placeholderType === "EMAIL" ? "identity" : "internal_metadata";
+  }
+
+  function pushStructuredMetadataFinding(findings, detector, label, rawCandidate, start, end, source) {
+    const raw = normalizeCandidate(rawCandidate);
+    const placeholderType = classifyStructuredMetadataValue(label, raw);
+    if (!placeholderType || !raw || detector.isAllowlisted(raw)) return;
+
+    findings.push(
+      detector.buildFinding({
+        category: structuredMetadataCategory(placeholderType),
+        placeholderType,
+        raw,
+        start,
+        end,
+        score: placeholderType === "LDAP_DN" ? 100 : 99,
+        methods: ["structured-metadata", source, "full-value", "exact-key"]
+      })
+    );
+  }
+
+  function parseStructuredCsvLine(line) {
+    const input = String(line || "");
+    const cells = [];
+    let index = 0;
+
+    while (index <= input.length) {
+      while (input[index] === " " || input[index] === "\t") index += 1;
+      if (index >= input.length) break;
+
+      if (input[index] === '"') {
+        const valueStart = index + 1;
+        index += 1;
+        let value = "";
+        let valueEnd = valueStart;
+
+        while (index < input.length) {
+          if (input[index] === '"' && input[index + 1] === '"') {
+            value += '"';
+            index += 2;
+            continue;
+          }
+          if (input[index] === '"') {
+            valueEnd = index;
+            index += 1;
+            break;
+          }
+          value += input[index];
+          index += 1;
+          valueEnd = index;
+        }
+
+        while (input[index] === " " || input[index] === "\t") index += 1;
+        if (input[index] === ",") index += 1;
+        cells.push({ value, start: valueStart, end: valueEnd });
+        continue;
+      }
+
+      const rawStart = index;
+      while (index < input.length && input[index] !== ",") index += 1;
+      const rawEnd = index;
+      if (input[index] === ",") index += 1;
+
+      let start = rawStart;
+      let end = rawEnd;
+      while (start < end && /\s/.test(input[start])) start += 1;
+      while (end > start && /\s/.test(input[end - 1])) end -= 1;
+      cells.push({ value: input.slice(start, end), start, end });
+    }
+
+    return cells;
+  }
+
   function isLikelyBarePasswordCandidate(raw, text, start, end) {
     const value = String(raw || "").trim();
     if (!value || value.length < 10 || value.length > 128) return false;
@@ -2303,6 +2509,106 @@
       return findings;
     }
 
+    scanStructuredMetadataRows(text) {
+      const input = String(text || "");
+      if (!STRUCTURED_METADATA_MARKER_REGEX.test(input)) return [];
+
+      const findings = [];
+      const objectRegex = /\{[\s\S]*?\}/g;
+      const jsonField = (block, names) => {
+        const source = Array.isArray(names) ? names.join("|") : names;
+        const regex = new RegExp(`"(${source})"\\s*:\\s*"((?:\\\\.|[^"\\\\\\r\\n])*)"`, "i");
+        const match = regex.exec(block);
+        if (!match) return null;
+        const valueOffset = match[0].lastIndexOf(match[2]);
+        if (valueOffset < 0) return null;
+        return {
+          value: match[2],
+          start: match.index + valueOffset,
+          end: match.index + valueOffset + match[2].length
+        };
+      };
+      let objectMatch;
+
+      while ((objectMatch = objectRegex.exec(input)) !== null) {
+        const block = objectMatch[0];
+        const group = jsonField(block, "Group");
+        const label = jsonField(block, ["Type", "Key", "Name"]);
+        const value = jsonField(block, "Value");
+        if (!label || !value) continue;
+
+        const combinedLabel = [group?.value, label.value].filter(Boolean).join(" ");
+        pushStructuredMetadataFinding(
+          findings,
+          this,
+          combinedLabel,
+          value.value,
+          objectMatch.index + value.start,
+          objectMatch.index + value.end,
+          "json-row"
+        );
+      }
+
+      const lines = input.split(/\n/);
+      let offset = 0;
+      let previousLabel = null;
+
+      for (const line of lines) {
+        const lineWithoutCr = line.endsWith("\r") ? line.slice(0, -1) : line;
+        const labelledRow = /^\s*(?:Type|Key|Name)\s*:\s*(.+?)\s*$/.exec(lineWithoutCr);
+        if (labelledRow) {
+          previousLabel = {
+            value: labelledRow[1].replace(/^["']|["']$/g, "").trim(),
+            lineOffset: offset
+          };
+          offset += line.length + 1;
+          continue;
+        }
+
+        const valueRow = /^\s*Value\s*:\s*(.+?)\s*$/.exec(lineWithoutCr);
+        if (valueRow && previousLabel) {
+          const rawCandidate = valueRow[1].replace(/^["']|["']$/g, "").trim();
+          const rawStartInLine = lineWithoutCr.indexOf(valueRow[1]) + valueRow[1].indexOf(rawCandidate);
+          pushStructuredMetadataFinding(
+            findings,
+            this,
+            previousLabel.value,
+            rawCandidate,
+            offset + rawStartInLine,
+            offset + rawStartInLine + rawCandidate.length,
+            "table-row"
+          );
+          previousLabel = null;
+          offset += line.length + 1;
+          continue;
+        }
+
+        if (lineWithoutCr.trim() === "") {
+          previousLabel = null;
+          offset += line.length + 1;
+          continue;
+        }
+
+        const cells = lineWithoutCr.includes(",") ? parseStructuredCsvLine(lineWithoutCr) : [];
+        if (cells.length >= 2 && !/^type$/i.test(cells[0].value) && !/^name$/i.test(cells[0].value)) {
+          pushStructuredMetadataFinding(
+            findings,
+            this,
+            cells[0].value,
+            cells[1].value,
+            offset + cells[1].start,
+            offset + cells[1].end,
+            "csv-row"
+          );
+        }
+
+        previousLabel = null;
+        offset += line.length + 1;
+      }
+
+      return findings;
+    }
+
     scanAssignments(text, options = {}) {
       if (!options.lineCache) {
         const lineCached = this.scanRepeatedLines(text, (line) =>
@@ -3057,7 +3363,7 @@
         offset += line.length + 1;
 
         if (!trimmed) continue;
-        if (/[=:]/.test(trimmed) || /\s{2,}/.test(trimmed)) continue;
+        if (/[=:,]/.test(trimmed) || /\s{2,}/.test(trimmed)) continue;
 
         const raw = unwrapQuotedStandaloneValue(trimmed);
         const rawOffset = line.indexOf(raw);
@@ -3548,6 +3854,7 @@
         const findings = [
           ...(hasHttpHeaders ? this.scanSensitiveHttpHeaders(input) : []),
           ...this.scanStructuredAssignments(input),
+          ...this.scanStructuredMetadataRows(input),
           ...(hasUrlUserinfo ? this.scanUrlCredentials(input) : []),
           ...this.scanSqlServerPasswordAttributes(input),
           ...this.scanPatterns(input),
