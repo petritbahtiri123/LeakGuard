@@ -7,6 +7,8 @@ const { pathToFileURL } = require("url");
 const repoRoot = path.join(__dirname, "..");
 require(path.join(repoRoot, "src/shared/placeholders.js"));
 require(path.join(repoRoot, "src/shared/sessionMapStore.js"));
+require(path.join(repoRoot, "src/shared/runtime_scripts.js"));
+require(path.join(repoRoot, "src/background/auditLog.js"));
 require(path.join(repoRoot, "src/content/diagnostics/safeSnapshots.js"));
 const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
 const responseObserverSource = fs.readFileSync(
@@ -95,6 +97,8 @@ const {
   canonicalizePlaceholderToken,
   containsLegacyTypedPlaceholder
 } = globalThis.PWM;
+const { RuntimeScripts } = globalThis.PWM;
+const { BackgroundAuditLog } = globalThis.PWM;
 
 function assertNotIncludes(source, needle, message) {
   assert.strictEqual(source.includes(needle), false, message);
@@ -221,6 +225,8 @@ function createBackgroundSecuritySandbox({ allowReveal = true, auditMode = "meta
     }),
     evaluateDestinationPolicy: () => ({ blocked: false }),
     invalidatePolicyCache: () => {},
+    RuntimeScripts,
+    BackgroundAuditLog,
     ext,
     supportsDynamicContentScripts: true,
     supportsStorageSession: false,
@@ -342,7 +348,7 @@ function testAuditMetadataObjectsExcludeRawSecrets() {
   const { sandbox } = createBackgroundSecuritySandbox();
   const rawSecret = "AuditBoundarySecret123!";
   const rawApiKey = "AuditApiKeyBoundary123456";
-  const entry = sandbox.buildAuditEventEntry({
+  const entry = sandbox.PWM.BackgroundAuditLog.buildAuditEventEntry({
     action: "blocked",
     reason: "destination_not_approved",
     url: `https://chat.example.com/path?token=${rawSecret}`,
@@ -799,11 +805,7 @@ function testDocxRedactedOutputStaysTextDerived() {
 function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const baseManifest = JSON.parse(fs.readFileSync(path.join(repoRoot, "manifests/base.json"), "utf8"));
   const staticScripts = baseManifest.content_scripts[0].js;
-  const dynamicScripts = Array.from(
-    backgroundSource.matchAll(
-      /"([^"]+(?:fileLimits|fileTypeRegistry|fileExtractors|fileScanner|pdfRedactor|docxRedactor|xlsxRedactor|ocrRuntime|scannerOcr|imageRedactor|file_paste_helpers|file_handoff_state|file_handoff_pending|file_handoff_flow|rewriteVerificationText|fileTransferPolicy|fileExtractionSessionCache|protectedSiteOcrBroker|contentFileExtractionPipeline|hostMatching|chatgptAdapter|openaiAdapter|geminiDiagnosticsAdapter|geminiAdapter|claudeAdapter|grokAdapter|xAdapter|index|geminiFallbackWriter|safeSnapshots|fileAttachPipeline|placeholderRehydrator|responseObserver|revealController|debugLogger|eventBindings|content)\.js)"/g
-    )
-  ).map((match) => match[1]);
+  const dynamicScripts = RuntimeScripts.contentScripts;
   const adapterScripts = [
     "content/adapters/chatgptAdapter.js",
     "content/adapters/openaiAdapter.js",
@@ -1048,7 +1050,8 @@ function testBackgroundDeterministicRescanBackstopExists() {
     "../shared/detection/providers/otcOpenStack.js",
     "../shared/detection/providers/kubernetes.js",
     "../shared/detection/providers/genericEndpoints.js",
-    "../shared/detection/providers/index.js"
+    "../shared/detection/providers/index.js",
+    "../shared/detection/urlUserinfo.js"
   ];
   const detectionModuleIndexes = detectionModuleScripts.map((script) => serviceWorkerSource.indexOf(script));
 

@@ -13,6 +13,7 @@
     // MV3 background entry points. Chrome starts the service worker; Firefox
     // loads the overlay script list from manifests/firefox*.json.
     "src/background/service_worker.js",
+    "src/background/auditLog.js",
     "src/background/core.js",
 
     // Manifest-declared content scripts. These are classic scripts loaded in
@@ -48,6 +49,7 @@
     "src/shared/detection/providers/kubernetes.js",
     "src/shared/detection/providers/genericEndpoints.js",
     "src/shared/detection/providers/index.js",
+    "src/shared/detection/urlUserinfo.js",
     "src/shared/ai/classifier.js",
     "src/shared/aiCandidateGate.js",
     "src/shared/detector.js",
@@ -68,6 +70,7 @@
     "src/shared/streamingFileRedactor.js",
     "src/shared/protected_sites.js",
     "src/shared/policy.js",
+    "src/shared/runtime_scripts.js",
 
     // Scanner-only OCR classic scripts are loaded from scanner.html, not modules.
     "src/shared/ocr/ocrRuntime.js",
@@ -101,6 +104,7 @@
     "src/content/adapters/index.js",
     "src/content/adapters/geminiFallbackWriter.js",
     "src/content/diagnostics/safeSnapshots.js",
+    "src/content/diagnostics/fileDebugMetadata.js",
     "src/content/files/fileAttachPipeline.js",
     "src/content/rehydration/placeholderRehydrator.js",
     "src/content/rehydration/responseObserver.js",

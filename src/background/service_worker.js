@@ -31,6 +31,7 @@ importScripts(
   "../shared/detection/providers/kubernetes.js",
   "../shared/detection/providers/genericEndpoints.js",
   "../shared/detection/providers/index.js",
+  "../shared/detection/urlUserinfo.js",
   "../shared/detector.js",
   "../shared/ipClassification.js",
   "../shared/ipDetection.js",
@@ -42,5 +43,7 @@ importScripts(
   "../shared/redactor.js",
   "../shared/protected_sites.js",
   "../shared/policy.js",
+  "../shared/runtime_scripts.js",
+  "./auditLog.js",
   "./core.js"
 );

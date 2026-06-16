@@ -7,6 +7,8 @@ const repoRoot = path.join(__dirname, "..");
 const policyPath = path.join(repoRoot, "src/shared/policy.js");
 const policyModule = require(policyPath);
 const protectedSitesModule = require(path.join(repoRoot, "src/shared/protected_sites.js"));
+require(path.join(repoRoot, "src/shared/runtime_scripts.js"));
+require(path.join(repoRoot, "src/background/auditLog.js"));
 const coreSource = fs.readFileSync(path.join(repoRoot, "src/background/core.js"), "utf8");
 const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
 const popupSource = fs.readFileSync(path.join(repoRoot, "src/popup/popup.js"), "utf8");
@@ -282,6 +284,8 @@ function createBackgroundSandbox({
     }),
     evaluateDestinationPolicy: policyModule.evaluateDestinationPolicy,
     invalidatePolicyCache: () => {},
+    RuntimeScripts: globalThis.PWM.RuntimeScripts,
+    BackgroundAuditLog: globalThis.PWM.BackgroundAuditLog,
     ext,
     supportsDynamicContentScripts: true,
     supportsStorageSession: false,

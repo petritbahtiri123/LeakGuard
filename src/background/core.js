@@ -18,6 +18,8 @@ const {
   setProtectedSiteOcrEnabled,
   evaluateDestinationPolicy,
   invalidatePolicyCache,
+  RuntimeScripts,
+  BackgroundAuditLog,
   ext,
   supportsDynamicContentScripts,
   getSessionStorageArea
@@ -29,100 +31,13 @@ const POPUP_STATE_KEY = "pwm:popupState";
 const USER_SITE_SCRIPT_ID_PREFIX = "pwm_user_site_";
 const SESSION_STORAGE_AREA = getSessionStorageArea();
 let syncDynamicContentScriptsPromise = Promise.resolve();
-const CONTENT_SCRIPT_FILES = [
-  "content/file_drag_guard.js",
-  "compat/browser_api.js",
-  "compat/platform.js",
-  "vendor/onnxruntime/ort.wasm.min.js",
-  "shared/entropy.js",
-  "shared/patterns.js",
-  "shared/placeholders/families.js",
-  "shared/detection/constants/enterpriseTokens.js",
-  "shared/detection/constants/providerTokens.js",
-  "shared/detection/constants/contextRegexes.js",
-  "shared/detection/contextWindow.js",
-  "shared/detection/cloudScoring.js",
-  "shared/detection/enterprise/shared.js",
-  "shared/detection/enterprise/uncPaths.js",
-  "shared/detection/enterprise/directoryMetadata.js",
-  "shared/detection/enterprise/internalNetwork.js",
-  "shared/detection/enterprise/fileShares.js",
-  "shared/detection/enterprise/adGroups.js",
-  "shared/detection/enterprise/hostnames.js",
-  "shared/detection/enterprise/identity.js",
-  "shared/detection/enterprise/storageAccounts.js",
-  "shared/detection/enterprise/azureResourceGroups.js",
-  "shared/detection/enterprise/cloudResourceNames.js",
-  "shared/detection/enterprise/index.js",
-  "shared/detection/providers/azure.js",
-  "shared/detection/providers/azureIds.js",
-  "shared/detection/providers/aws.js",
-  "shared/detection/providers/gcp.js",
-  "shared/detection/providers/otcOpenStack.js",
-  "shared/detection/providers/kubernetes.js",
-  "shared/detection/providers/genericEndpoints.js",
-  "shared/detection/providers/index.js",
-  "shared/ai/classifier.js",
-  "shared/aiCandidateGate.js",
-  "shared/detector.js",
-  "shared/placeholders.js",
-  "shared/ipClassification.js",
-  "shared/ipDetection.js",
-  "shared/networkHierarchy.js",
-  "shared/placeholderAllocator.js",
-  "shared/sessionMapStore.js",
-  "shared/knownSecretReuse.js",
-  "shared/transformOutboundPrompt.js",
-  "shared/transformOutboundPromptWithAi.js",
-  "shared/redactor.js",
-  "shared/fileLimits.js",
-  "shared/fileTypeRegistry.js",
-  "shared/fileExtractors.js",
-  "shared/fileScanner.js",
-  "shared/pdfRedactor.js",
-  "shared/docxRedactor.js",
-  "shared/xlsxRedactor.js",
-  "shared/ocr/ocrRuntime.js",
-  "shared/scannerOcr.js",
-  "shared/imageRedactor.js",
-  "shared/streamingFileRedactor.js",
-  "shared/protected_sites.js",
-  "shared/policy.js",
-  "content/composer_helpers.js",
-  "content/file_paste_helpers.js",
-  "content/file_handoff_state.js",
-  "content/file_handoff_pending.js",
-  "content/file_handoff_flow.js",
-  "content/input/rewriteVerificationText.js",
-  "content/files/fileTransferPolicy.js",
-  "content/files/fileExtractionSessionCache.js",
-  "content/files/protectedSiteOcrBroker.js",
-  "content/files/contentFileExtractionPipeline.js",
-  "content/adapters/hostMatching.js",
-  "content/adapters/chatgptAdapter.js",
-  "content/adapters/openaiAdapter.js",
-  "content/adapters/geminiDiagnosticsAdapter.js",
-  "content/adapters/geminiAdapter.js",
-  "content/adapters/claudeAdapter.js",
-  "content/adapters/grokAdapter.js",
-  "content/adapters/xAdapter.js",
-  "content/adapters/index.js",
-  "content/adapters/geminiFallbackWriter.js",
-  "content/diagnostics/safeSnapshots.js",
-  "content/files/fileAttachPipeline.js",
-  "content/rehydration/placeholderRehydrator.js",
-  "content/rehydration/responseObserver.js",
-  "content/rehydration/revealController.js",
-  "content/diagnostics/debugLogger.js",
-  "content/bootstrap/eventBindings.js",
-  "content/content.js"
-];
+const CONTENT_SCRIPT_FILES = RuntimeScripts.contentScripts;
 const CONTENT_STYLE_FILES = ["content/overlay.css"];
-const AUDIT_EVENTS_STORAGE_KEY = "pwm:auditEvents";
-const MAX_AUDIT_EVENTS = 250;
-const DEFAULT_AUDIT_RETENTION_DAYS = 30;
-const MIN_AUDIT_RETENTION_DAYS = 1;
-const MAX_AUDIT_RETENTION_DAYS = 365;
+const {
+  AUDIT_EVENTS_STORAGE_KEY,
+  trimAuditEvents,
+  buildAuditEventEntry
+} = BackgroundAuditLog;
 const DESTINATION_POLICY_BLOCK_MESSAGE =
   "LeakGuard blocked this action because this destination is not approved by enterprise policy.";
 const PROTECTED_SITE_REMOVAL_BLOCK_MESSAGE =
@@ -133,77 +48,6 @@ function createPolicyDecisionError(decision) {
   const error = new Error(decision?.message || DESTINATION_POLICY_BLOCK_MESSAGE);
   error.reason = decision?.reason || "destination_blocked";
   return error;
-}
-
-function normalizeAuditFindingType(type) {
-  const normalized = String(type || "secret")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "");
-
-  return normalized || "secret";
-}
-
-function summarizeAuditFindings(findings) {
-  const normalizedFindings = Array.isArray(findings) ? findings : [];
-  const findingTypes = [...new Set(
-    normalizedFindings.map((finding) => normalizeAuditFindingType(finding?.type || finding?.placeholderType))
-  )];
-
-  return {
-    findingCount: normalizedFindings.length,
-    findingTypes
-  };
-}
-
-function parseAuditUrl(url) {
-  try {
-    const parsed = new URL(url);
-    return {
-      urlOrigin: parsed.origin,
-      siteHost: parsed.hostname
-    };
-  } catch {
-    return {
-      urlOrigin: "",
-      siteHost: ""
-    };
-  }
-}
-
-function normalizeAuditRetentionDays(policySummary) {
-  const rawDays = Number(policySummary?.auditRetentionDays || DEFAULT_AUDIT_RETENTION_DAYS);
-  const finiteDays = Number.isFinite(rawDays) ? rawDays : DEFAULT_AUDIT_RETENTION_DAYS;
-  return Math.max(MIN_AUDIT_RETENTION_DAYS, Math.min(MAX_AUDIT_RETENTION_DAYS, finiteDays));
-}
-
-function trimAuditEvents(events, policySummary) {
-  const normalizedEvents = Array.isArray(events) ? events.filter(Boolean) : [];
-  const retentionMs = normalizeAuditRetentionDays(policySummary) * 24 * 60 * 60 * 1000;
-  const cutoff = Date.now() - retentionMs;
-  return normalizedEvents
-    .filter((event) => {
-      const timestamp = Date.parse(event?.timestamp || "");
-      return Number.isFinite(timestamp) && timestamp >= cutoff;
-    })
-    .slice(-MAX_AUDIT_EVENTS);
-}
-
-function buildAuditEventEntry({ action, reason, url, findings, policySummary }) {
-  const { urlOrigin, siteHost } = parseAuditUrl(url);
-  const findingSummary = summarizeAuditFindings(findings);
-
-  return {
-    timestamp: new Date().toISOString(),
-    action,
-    reason,
-    urlOrigin,
-    siteHost,
-    findingCount: findingSummary.findingCount,
-    findingTypes: findingSummary.findingTypes,
-    policyMode: policySummary?.enterpriseMode ? "enterprise" : "consumer"
-  };
 }
 
 async function recordAuditEvent({ action, reason, url, findings, policySummary }) {

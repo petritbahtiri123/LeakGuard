@@ -4,6 +4,10 @@ const path = require("path");
 
 const repoRoot = path.join(__dirname, "..");
 const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
+const fileDebugMetadataSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/diagnostics/fileDebugMetadata.js"),
+  "utf8"
+);
 const adapterSourceFiles = [
   "src/content/adapters/chatgptAdapter.js",
   "src/content/adapters/openaiAdapter.js",
@@ -65,6 +69,7 @@ require(path.join(repoRoot, "src/content/adapters/xAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/index.js"));
 require(path.join(repoRoot, "src/content/adapters/geminiFallbackWriter.js"));
 require(path.join(repoRoot, "src/content/diagnostics/safeSnapshots.js"));
+require(path.join(repoRoot, "src/content/diagnostics/fileDebugMetadata.js"));
 require(path.join(repoRoot, "src/content/diagnostics/debugLogger.js"));
 require(path.join(repoRoot, "src/content/files/fileAttachPipeline.js"));
 require(path.join(repoRoot, "src/content/file_handoff_flow.js"));
@@ -284,18 +289,18 @@ function contentDebugEventsHarnessSource() {
 
 function fileAttachDebugMetadataHarnessSource() {
   return [
-    extractFunctionSource(contentSource, "normalizeFileDebugString"),
-    extractFunctionSource(contentSource, "isSafeFileDebugToken"),
-    extractFunctionSource(contentSource, "isSafeFileDebugErrorCode"),
-    extractFunctionSource(contentSource, "getFileDebugExtension"),
-    extractFunctionSource(contentSource, "getFileDebugMimeCategory"),
-    extractFunctionSource(contentSource, "describeSafeFileDebugMetadata"),
-    extractFunctionSource(contentSource, "describeSafeFileInputDebugMetadata"),
-    extractFunctionSource(contentSource, "describeSafeFileHandoffAdapterDebugMetadata"),
-    extractFunctionSource(contentSource, "describeSafeFileAttachErrorMetadata"),
-    extractFunctionSource(contentSource, "assignSafeFileAttachErrorMetadata"),
-    extractFunctionSource(contentSource, "copySafeFileDebugScalar"),
-    extractFunctionSource(contentSource, "createSafeFileAttachDebugPayload"),
+    extractFunctionSource(fileDebugMetadataSource, "normalizeFileDebugString"),
+    extractFunctionSource(fileDebugMetadataSource, "isSafeFileDebugToken"),
+    extractFunctionSource(fileDebugMetadataSource, "isSafeFileDebugErrorCode"),
+    extractFunctionSource(fileDebugMetadataSource, "getFileDebugExtension"),
+    extractFunctionSource(fileDebugMetadataSource, "getFileDebugMimeCategory"),
+    extractFunctionSource(fileDebugMetadataSource, "describeSafeFileDebugMetadata"),
+    extractFunctionSource(fileDebugMetadataSource, "describeSafeFileInputDebugMetadata"),
+    extractFunctionSource(fileDebugMetadataSource, "describeSafeFileHandoffAdapterDebugMetadata"),
+    extractFunctionSource(fileDebugMetadataSource, "describeSafeFileAttachErrorMetadata"),
+    extractFunctionSource(fileDebugMetadataSource, "assignSafeFileAttachErrorMetadata"),
+    extractFunctionSource(fileDebugMetadataSource, "copySafeFileDebugScalar"),
+    extractFunctionSource(fileDebugMetadataSource, "createSafeFileAttachDebugPayload"),
     extractFunctionSource(contentSource, "debugFileAttachMetadata")
   ];
 }

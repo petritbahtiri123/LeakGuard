@@ -240,7 +240,8 @@ function testScannerLoadsTypedDetectionRuntimeBeforeDetector() {
     "../shared/detection/providers/otcOpenStack.js",
     "../shared/detection/providers/kubernetes.js",
     "../shared/detection/providers/genericEndpoints.js",
-    "../shared/detection/providers/index.js"
+    "../shared/detection/providers/index.js",
+    "../shared/detection/urlUserinfo.js"
   ];
   const detectionModuleIndexes = detectionModuleScripts.map((script) => scripts.indexOf(script));
 

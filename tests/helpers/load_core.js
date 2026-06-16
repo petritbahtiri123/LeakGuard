@@ -29,6 +29,7 @@ function loadCore() {
   require(path.join(root, "src/shared/detection/providers/kubernetes.js"));
   require(path.join(root, "src/shared/detection/providers/genericEndpoints.js"));
   require(path.join(root, "src/shared/detection/providers/index.js"));
+  require(path.join(root, "src/shared/detection/urlUserinfo.js"));
   require(path.join(root, "src/shared/detector.js"));
   require(path.join(root, "src/shared/placeholders.js"));
   require(path.join(root, "src/shared/ipClassification.js"));
