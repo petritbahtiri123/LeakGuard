@@ -1614,7 +1614,7 @@ async function runProtectedSiteXlsxHandoffQa(connection, page, tempDir) {
         { awaitPromise: true }
       ),
     "protected-site XLSX sanitized handoff",
-    30000
+    qaTimeoutMs
   );
 
   assert.equal(result.name, "protected-site-xlsx.redacted.xlsx");

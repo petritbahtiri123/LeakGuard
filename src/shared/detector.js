@@ -1747,6 +1747,23 @@
     const cells = [];
     const cellRegex = /<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi;
     let cellMatch;
+    const textFromCellInnerHtml = (value) => {
+      const input = String(value || "");
+      let output = "";
+
+      for (let index = 0; index < input.length; index += 1) {
+        if (input[index] === "<") {
+          const closeIndex = input.indexOf(">", index + 1);
+          if (closeIndex >= 0) {
+            index = closeIndex;
+            continue;
+          }
+        }
+        output += input[index];
+      }
+
+      return decodeStructuredHtmlEntities(output).trim();
+    };
 
     while ((cellMatch = cellRegex.exec(rowHtml)) !== null) {
       const inner = cellMatch[1];
@@ -1759,7 +1776,7 @@
       while (end > start && /\s/.test(inner[end - 1])) end -= 1;
 
       const rawInner = inner.slice(start, end);
-      const value = decodeStructuredHtmlEntities(rawInner.replace(/<[^>]*>/g, "")).trim();
+      const value = textFromCellInnerHtml(rawInner);
       cells.push({
         value,
         start: rowOffset + cellMatch.index + innerOffset + start,
