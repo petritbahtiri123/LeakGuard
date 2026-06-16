@@ -1,0 +1,32 @@
+const path = require("path");
+const root = path.join(__dirname, "../..");
+function loadCore() {
+  require(path.join(root, "src/shared/entropy.js"));
+  require(path.join(root, "src/shared/patterns.js"));
+  require(path.join(root, "src/shared/placeholders/families.js"));
+  require(path.join(root, "src/shared/detection/constants/enterpriseTokens.js"));
+  require(path.join(root, "src/shared/detection/constants/providerTokens.js"));
+  require(path.join(root, "src/shared/detection/constants/contextRegexes.js"));
+  require(path.join(root, "src/shared/detection/contextWindow.js"));
+  require(path.join(root, "src/shared/detection/cloudScoring.js"));
+  require(path.join(root, "src/shared/detection/enterprise/shared.js"));
+  require(path.join(root, "src/shared/detection/enterprise/adGroups.js"));
+  require(path.join(root, "src/shared/detection/enterprise/hostnames.js"));
+  require(path.join(root, "src/shared/detection/enterprise/identity.js"));
+  require(path.join(root, "src/shared/detection/enterprise/storageAccounts.js"));
+  require(path.join(root, "src/shared/detection/enterprise/azureResourceGroups.js"));
+  require(path.join(root, "src/shared/detection/enterprise/cloudResourceNames.js"));
+  require(path.join(root, "src/shared/detection/enterprise/index.js"));
+  require(path.join(root, "src/shared/detection/providers/azure.js"));
+  require(path.join(root, "src/shared/detection/providers/aws.js"));
+  require(path.join(root, "src/shared/detection/providers/gcp.js"));
+  require(path.join(root, "src/shared/detection/providers/otcOpenStack.js"));
+  require(path.join(root, "src/shared/detection/providers/kubernetes.js"));
+  require(path.join(root, "src/shared/detection/providers/genericEndpoints.js"));
+  require(path.join(root, "src/shared/detection/providers/index.js"));
+  require(path.join(root, "src/shared/detector.js"));
+  require(path.join(root, "src/shared/placeholders.js"));
+  require(path.join(root, "src/shared/knownSecretReuse.js"));
+  require(path.join(root, "src/shared/redactor.js"));
+}
+module.exports = { loadCore, root };

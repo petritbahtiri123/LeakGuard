@@ -4,6 +4,14 @@ import { spawnSync } from "child_process";
 
 const testFiles = [
   "tests/detector.test.js",
+  "tests/detection/placeholder_families.test.js",
+  "tests/detection/enterprise_cloud_detection_contract.test.js",
+  "tests/detection/cloud_provider_azure.test.js",
+  "tests/detection/cloud_provider_aws.test.js",
+  "tests/detection/cloud_provider_gcp.test.js",
+  "tests/detection/cloud_provider_otc_openstack.test.js",
+  "tests/detection/cloud_provider_kubernetes.test.js",
+  "tests/detection/cloud_provider_negative.test.js",
   "tests/placeholder_trust.test.js",
   "tests/natural_language_context.test.js",
   "tests/break_pack.test.js",

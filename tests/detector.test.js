@@ -2,12 +2,8 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 
-require(path.join(__dirname, "../src/shared/entropy.js"));
-require(path.join(__dirname, "../src/shared/patterns.js"));
-require(path.join(__dirname, "../src/shared/detector.js"));
-require(path.join(__dirname, "../src/shared/placeholders.js"));
-require(path.join(__dirname, "../src/shared/knownSecretReuse.js"));
-require(path.join(__dirname, "../src/shared/redactor.js"));
+const { loadCore } = require("./helpers/load_core.js");
+loadCore();
 
 const {
   Detector,

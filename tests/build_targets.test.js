@@ -1350,6 +1350,32 @@ async function run() {
     }
   }
   const contentScripts = chromeManifest.content_scripts[0].js;
+  const placeholderFamiliesIndex = contentScripts.indexOf("shared/placeholders/families.js");
+  const placeholdersIndex = contentScripts.indexOf("shared/placeholders.js");
+  const detectorIndex = contentScripts.indexOf("shared/detector.js");
+  const detectionModuleScripts = [
+    "shared/detection/constants/enterpriseTokens.js",
+    "shared/detection/constants/providerTokens.js",
+    "shared/detection/constants/contextRegexes.js",
+    "shared/detection/contextWindow.js",
+    "shared/detection/cloudScoring.js",
+    "shared/detection/enterprise/shared.js",
+    "shared/detection/enterprise/adGroups.js",
+    "shared/detection/enterprise/hostnames.js",
+    "shared/detection/enterprise/identity.js",
+    "shared/detection/enterprise/storageAccounts.js",
+    "shared/detection/enterprise/azureResourceGroups.js",
+    "shared/detection/enterprise/cloudResourceNames.js",
+    "shared/detection/enterprise/index.js",
+    "shared/detection/providers/azure.js",
+    "shared/detection/providers/aws.js",
+    "shared/detection/providers/gcp.js",
+    "shared/detection/providers/otcOpenStack.js",
+    "shared/detection/providers/kubernetes.js",
+    "shared/detection/providers/genericEndpoints.js",
+    "shared/detection/providers/index.js"
+  ];
+  const detectionModuleIndexes = detectionModuleScripts.map((script) => contentScripts.indexOf(script));
   const knownSecretReuseIndex = contentScripts.indexOf("shared/knownSecretReuse.js");
   const transformOutboundPromptIndex = contentScripts.indexOf("shared/transformOutboundPrompt.js");
   const redactorIndex = contentScripts.indexOf("shared/redactor.js");
@@ -1395,6 +1421,19 @@ async function run() {
   const contentIndex = contentScripts.indexOf("content/content.js");
 
   assert.ok(knownSecretReuseIndex > -1, "content scripts should include known-secret reuse helpers");
+  assert.ok(placeholderFamiliesIndex > -1, "content scripts should include placeholder family registry");
+  assert.ok(placeholdersIndex > -1, "content scripts should include placeholder manager");
+  assert.ok(detectorIndex > -1, "content scripts should include detector");
+  assert.ok(
+    detectionModuleIndexes.every((index) => index > -1),
+    "content scripts should include modular enterprise/cloud detection helpers"
+  );
+  assert.ok(
+    placeholderFamiliesIndex < placeholdersIndex &&
+      detectionModuleIndexes.every((index) => index < detectorIndex) &&
+      detectionModuleIndexes[detectionModuleIndexes.length - 1] < detectorIndex,
+    "placeholder families must load before placeholders.js and detection modules/indexes must load before detector.js"
+  );
   assert.ok(
     knownSecretReuseIndex < transformOutboundPromptIndex && knownSecretReuseIndex < redactorIndex,
     "known-secret reuse helpers should load before prompt transform and redactor modules"

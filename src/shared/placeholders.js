@@ -10,8 +10,8 @@
   const PWM_PLACEHOLDER_EXACT_REGEX = /^\[PWM_(\d+)\]$/;
   const NETWORK_PLACEHOLDER_EXACT_REGEX =
     /^\[(NET_\d+(?:_SUB_\d+)*(?:_(?:HOST_\d+|GW|VIP|DNS))?|PUB_HOST_\d+(?:_(?:GW|VIP|DNS))?)\]$/;
-  const ENTERPRISE_PLACEHOLDER_EXACT_REGEX =
-    /^\[(?:AZURE_RG|CLOUD_RESOURCE|STORAGE_ACCOUNT|AD_GROUP|HOSTNAME|USERNAME|EMAIL|OTC_RESOURCE|OPENSTACK_RESOURCE|OPENSTACK_PROJECT_ID|OPENSTACK_TENANT_ID|OPENSTACK_DOMAIN_ID|OPENSTACK_USER_ID|OPENSTACK_RESOURCE_ID|OBS_BUCKET|OTC_ENDPOINT|AWS_ARN|AWS_ACCOUNT_ID|AWS_RESOURCE_ID|S3_BUCKET|AWS_ENDPOINT|GCP_PROJECT|GCP_PROJECT_NUMBER|GCP_SERVICE_ACCOUNT|GCP_RESOURCE|GCS_BUCKET|K8S_CLUSTER|K8S_NAMESPACE|K8S_RESOURCE|K8S_SECRET|KUBECONFIG_SECRET|CLOUD_ENDPOINT|INTERNAL_ENDPOINT)_\d+\]$/;
+  const { PlaceholderFamilies = {} } = root.PWM;
+  const ENTERPRISE_PLACEHOLDER_EXACT_REGEX = PlaceholderFamilies.ENTERPRISE_PLACEHOLDER_EXACT_REGEX || /^$/;
   const LEGACY_TYPED_PLACEHOLDER_REGEX = /\[(?!PWM_)[A-Z][A-Z0-9_]*_\d+\]/g;
   const LEGACY_TYPED_PLACEHOLDER_EXACT_REGEX = /^\[(?!PWM_)[A-Z][A-Z0-9_]*_\d+\]$/;
   const ANY_PLACEHOLDER_TOKEN_REGEX =
@@ -418,44 +418,10 @@
         return this.placeholderByFingerprint.get(fingerprint);
       }
 
-      const typedFamilies = new Set([
-        "AZURE_RG",
-        "CLOUD_RESOURCE",
-        "STORAGE_ACCOUNT",
-        "AD_GROUP",
-        "HOSTNAME",
-        "USERNAME",
-        "EMAIL",
-        "OTC_RESOURCE",
-        "OPENSTACK_RESOURCE",
-        "OPENSTACK_PROJECT_ID",
-        "OPENSTACK_TENANT_ID",
-        "OPENSTACK_DOMAIN_ID",
-        "OPENSTACK_USER_ID",
-        "OPENSTACK_RESOURCE_ID",
-        "OBS_BUCKET",
-        "OTC_ENDPOINT",
-        "AWS_ARN",
-        "AWS_ACCOUNT_ID",
-        "AWS_RESOURCE_ID",
-        "S3_BUCKET",
-        "AWS_ENDPOINT",
-        "GCP_PROJECT",
-        "GCP_PROJECT_NUMBER",
-        "GCP_SERVICE_ACCOUNT",
-        "GCP_RESOURCE",
-        "GCS_BUCKET",
-        "K8S_CLUSTER",
-        "K8S_NAMESPACE",
-        "K8S_RESOURCE",
-        "K8S_SECRET",
-        "KUBECONFIG_SECRET",
-        "CLOUD_ENDPOINT",
-        "INTERNAL_ENDPOINT"
-      ]);
-      const family = typedFamilies.has(String(placeholderType || "").toUpperCase())
-        ? String(placeholderType).toUpperCase()
-        : "PWM";
+      const normalizePlaceholderFamily = PlaceholderFamilies.normalizePlaceholderFamily || ((familyName) => String(familyName || "").trim().toUpperCase());
+      const isTypedPlaceholderFamily = PlaceholderFamilies.isTypedPlaceholderFamily || (() => false);
+      const normalizedFamily = normalizePlaceholderFamily(placeholderType);
+      const family = isTypedPlaceholderFamily(normalizedFamily) ? normalizedFamily : "PWM";
       let placeholder = `[${family}_${this.incrementCounter(family)}]`;
       while (this.knownPlaceholders.has(placeholder) || this.fingerprintByPlaceholder.has(placeholder)) {
         placeholder = `[${family}_${this.incrementCounter(family)}]`;
