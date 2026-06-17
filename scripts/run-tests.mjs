@@ -23,6 +23,7 @@ const testFiles = [
   "tests/placeholder_trust.test.js",
   "tests/natural_language_context.test.js",
   "tests/break_pack.test.js",
+  "tests/onix_dataset.test.js",
   "tests/ai_candidate_gate.test.js",
   "tests/transform_with_ai.test.js",
   "tests/ip_transform.test.js",

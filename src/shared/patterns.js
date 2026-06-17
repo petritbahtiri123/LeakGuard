@@ -5,11 +5,17 @@
   const ONIX_DATASET_CATEGORIES = Object.freeze([
     "regex_secret",
     "entropy_secret",
+    "secret",
+    "credential_context",
     "onix_gray_zone",
+    "identity",
     "identity_sensitive",
+    "email",
+    "metadata_sensitive",
     "metadata_safe",
     "normal_text_safe",
-    "adversarial_safe"
+    "adversarial_safe",
+    "unknown_or_ambiguous"
   ]);
 
   const DETERMINISTIC_PROVIDER_REGISTRY = Object.freeze([

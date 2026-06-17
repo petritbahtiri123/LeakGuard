@@ -23,7 +23,7 @@ Run commands from this directory:
 
 ```bash
 python -m pip install -r requirements.txt
-python scripts/generate_dataset.py --count 10000
+python scripts/generate_dataset.py --count 50000
 python scripts/train_classifier.py
 python scripts/evaluate_model.py
 python scripts/export_onnx.py
@@ -54,13 +54,15 @@ On Windows, use this evaluation command instead:
 ai\.venv\Scripts\python.exe ai\scripts\evaluate_model.py
 ```
 
-`npm run prepare:build` should create or refresh `dataset/generated/initial_dataset.jsonl` with 10,000 records, train the sklearn model, run the independent evaluation, and export the ONNX model. The generated model metadata should show a 7,500 / 2,500 internal train-validation split:
+`npm run prepare:build` should create or refresh `dataset/generated/initial_dataset.jsonl` with 50,000 records, train the sklearn model, run the independent evaluation, and export the ONNX model. The generated model metadata should show a 37,500 / 12,500 internal train-validation split:
 
 ```text
 models/leakguard_secret_classifier.training.json
 ```
 
-`scripts/evaluate_model.py` evaluates a deterministic independent synthetic test set with more than 2,000 stratified records, then appends `dataset/test/*.jsonl` held-out records. It does not evaluate on `dataset/generated` or `dataset/labeled` training data. The script prints a classification report, confusion matrix, false positives, and false negatives, then fails if `SECRET` recall drops below `0.98`, `NOT_SECRET` recall drops below `0.95`, or `UNSURE` recall drops below `0.80`.
+`scripts/evaluate_model.py` evaluates a deterministic independent synthetic test set with more than 2,000 stratified records, then appends `dataset/test/*.jsonl` held-out records. It does not evaluate on `dataset/generated` or `dataset/labeled` training data. The script prints a classification report, confusion matrix, false positives, false negatives, category breakdowns, provider/category breakdowns, email recall, gray-zone secret recall, and normal-text false positives. It fails if `SECRET` recall drops below `0.98`, `NOT_SECRET` recall drops below `0.95`, `UNSURE` recall drops below `0.80`, email recall drops below `0.99`, gray-zone secret recall drops below `0.95`, or normal-text false-positive rate rises above `0.03`.
+
+Real-sanitized eval packs live in `dataset/test/` with `source_type: "real_sanitized"` and `sanitized: true`. They are included in standalone evaluation and reported separately as an improvement loop, but they are report-only for gate thresholds until a deliberate training promotion is made. Eval-only changes under `dataset/test/` or `scripts/evaluate_model.py` should not retrain the model during `npm run prepare:build`.
 
 Training merges `dataset/generated/*.jsonl` and `dataset/labeled/*.jsonl`, trains a small scikit-learn logistic regression model, and writes:
 

@@ -210,7 +210,7 @@ python -m venv venv
 Generate synthetic training data:
 
 ```bash
-./venv/bin/python scripts/generate_dataset.py --count 10000
+./venv/bin/python scripts/generate_dataset.py --count 50000
 ```
 
 Add manually reviewed JSONL files to:
