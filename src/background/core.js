@@ -1030,6 +1030,9 @@ async function revealSecret(requestId) {
 
   const manager = new PlaceholderManager();
   manager.setPrivateState(state || {});
+  if (!manager.knowsPlaceholder(request.placeholder)) {
+    return null;
+  }
 
   return manager.getRaw(request.placeholder);
 }

@@ -128,6 +128,25 @@ function testTypedPlaceholderUsesTrailingIndexForTone() {
   assert.strictEqual(span.dataset.pwmTone, "rose");
 }
 
+function testEnterpriseTypedPlaceholderActivatesWithOriginalPlaceholder() {
+  const { span, calls } = createTypedSpan("[AZURE_RG_1]");
+  const click = createEvent();
+  const enter = createEvent({ key: "Enter" });
+
+  assert.strictEqual(span.className, "pwm-secret");
+  assert.strictEqual(span.textContent, "[AZURE_RG_1]");
+  assert.strictEqual(span.dataset.pwmTone, "aqua");
+
+  span.dispatch("click", click);
+  span.dispatch("keydown", enter);
+
+  assert.deepStrictEqual(calls, ["[AZURE_RG_1]", "[AZURE_RG_1]"]);
+  assert.strictEqual(click.defaultPrevented, true);
+  assert.strictEqual(click.propagationStopped, true);
+  assert.strictEqual(enter.defaultPrevented, true);
+  assert.strictEqual(enter.propagationStopped, true);
+}
+
 function testTypedPlaceholderWithoutIndexUsesFallbackTone() {
   const { span } = createTypedSpan("[PRIVATE_IP_X]");
 
@@ -185,6 +204,7 @@ async function run() {
   testRendersPlaceholderTextOnly();
   testStableAttributesAndClasses();
   testTypedPlaceholderUsesTrailingIndexForTone();
+  testEnterpriseTypedPlaceholderActivatesWithOriginalPlaceholder();
   testTypedPlaceholderWithoutIndexUsesFallbackTone();
   testClickActivationCallsInjectedRevealAndStopsEvent();
   testKeyboardActivationCallsInjectedRevealForEnterAndSpace();
