@@ -14,6 +14,7 @@ $Sections = @(
   [pscustomobject]@{ Group = "GCP"; Name = "project_id"; Value = "lg-prod-project-123"; Expected = "[GCP_PROJECT_N]" },
   [pscustomobject]@{ Group = "OTC/OpenStack"; Name = "OTC resource"; Value = "otc-prod-de-ecs-001"; Expected = "[OTC_RESOURCE_N]" },
   [pscustomobject]@{ Group = "OTC/OpenStack"; Name = "OpenStack project_id"; Value = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; Expected = "[OPENSTACK_PROJECT_ID_N]" },
+  [pscustomobject]@{ Group = "OTC/OpenStack"; Name = "OpenStack tenant_id"; Value = "22222222-2222-2222-2222-222222222222"; Expected = "[OPENSTACK_TENANT_ID_N]" },
   [pscustomobject]@{ Group = "Kubernetes"; Name = "Kubernetes namespace"; Value = "prod-payments"; Expected = "[K8S_NAMESPACE_N]" },
   [pscustomobject]@{ Group = "Kubernetes"; Name = "Kubernetes resource"; Value = "secret/db-password"; Expected = "[K8S_SECRET_N]" },
   [pscustomobject]@{ Group = "Internal"; Name = "PRIVATE_IP"; Value = "10.10.20.30"; Expected = "[PRIVATE_IP_N]" },
@@ -39,6 +40,7 @@ $Harmless = @(
   "docs/page",
   "service/name",
   "random GUID 123e4567-e89b-12d3-a456-426614174000",
+  "random FSA7654321 without context",
   "report.final.docx",
   "package.name"
 )
@@ -77,7 +79,11 @@ Write-Utf8File -Path $TxtPath -Content ($TextLines -join [Environment]::NewLine)
 $MdPath = Join-Path $OutputDir "enterprise_metadata_live_qa.md"
 $Markdown = @("# Enterprise Metadata Live QA Synthetic Upload", "", $Header, "", "## Sensitive Synthetic Values", "")
 foreach ($Item in $Sections) {
-  $Markdown += "- $($Item.Group) / $($Item.Name): $($Item.Value) -> $($Item.Expected)"
+  if ($Item.Name -eq "FILE_SHARE") {
+    $Markdown += "- $($Item.Group) / Azure Files share: $($Item.Value) -> $($Item.Expected)"
+  } else {
+    $Markdown += "- $($Item.Group) / $($Item.Name): $($Item.Value) -> $($Item.Expected)"
+  }
 }
 $Markdown += ""
 $Markdown += "## Harmless Controls"
