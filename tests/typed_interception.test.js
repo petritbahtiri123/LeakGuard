@@ -580,6 +580,43 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
     "Firefox beforeinput should synchronously consume risky raw text before any async analysis can yield to the page"
   );
   assert.ok(
+    beforeInputSource.includes("const quickCurrentAnalysis = analyzeText(originalText);") &&
+      beforeInputSource.includes("const quickNextAnalysis = analyzeText(next.text);") &&
+      beforeInputSource.includes("const quickRelevantFindings = selectFindingsOverlappingInsertion(") &&
+      beforeInputSource.indexOf("const quickNextAnalysis = analyzeText(next.text);") <
+        beforeInputSource.lastIndexOf("consumeInterceptionEvent(event);") &&
+      beforeInputSource.lastIndexOf("consumeInterceptionEvent(event);") <
+        beforeInputSource.indexOf("const currentAnalysis = await analyzeTextWithAiAssist(originalText)") &&
+      beforeInputSource.lastIndexOf("consumeInterceptionEvent(event);") <
+        beforeInputSource.indexOf("const nextAnalysis = await analyzeTextWithAiAssist(next.text)"),
+    "non-Firefox beforeinput should synchronously consume deterministic risky input before async AI analysis"
+  );
+  assert.ok(
+    submitSource.includes("const quickAnalysis = analyzeText(text);") &&
+      submitSource.indexOf("const quickAnalysis = analyzeText(text);") <
+        submitSource.lastIndexOf("consumeInterceptionEvent(event);") &&
+      submitSource.lastIndexOf("consumeInterceptionEvent(event);") <
+        submitSource.indexOf("const analysis = await analyzeTextWithAiAssist(text)"),
+    "submit should synchronously consume risky composer text before async AI analysis"
+  );
+  assert.ok(
+    fallbackSendSource.includes("const quickAnalysis = analyzeText(text);") &&
+      fallbackSendSource.indexOf("const quickAnalysis = analyzeText(text);") <
+        fallbackSendSource.indexOf("consumeInterceptionEvent(event);") &&
+      fallbackSendSource.indexOf("consumeInterceptionEvent(event);") <
+        fallbackSendSource.indexOf("const analysis = await analyzeTextWithAiAssist(text)"),
+    "Enter-send fallback should synchronously consume risky composer text before async AI analysis"
+  );
+  assert.ok(
+    beforeInputSource.indexOf("if (!quickRelevantFindings.length && !quickPlaceholderNormalizationChanged)") <
+      beforeInputSource.lastIndexOf("consumeInterceptionEvent(event);") &&
+      submitSource.indexOf("if (!analysisNeedsEventOwnership(quickAnalysis)) return;") <
+        submitSource.lastIndexOf("consumeInterceptionEvent(event);") &&
+      fallbackSendSource.indexOf("if (!analysisNeedsEventOwnership(quickAnalysis)) return;") <
+        fallbackSendSource.indexOf("consumeInterceptionEvent(event);"),
+    "safe beforeinput, submit, and Enter-send events should not be consumed unless sync analysis finds risk"
+  );
+  assert.ok(
     beforeInputSource.includes("event?.isTrusted === false") &&
       beforeInputSource.includes("isProgrammaticInputScanSuppressed()") &&
       beforeInputSource.indexOf("event?.isTrusted === false") <

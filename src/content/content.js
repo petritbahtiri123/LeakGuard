@@ -2619,6 +2619,10 @@
     };
   }
 
+  function analysisNeedsEventOwnership(analysis) {
+    return Boolean((analysis?.findings || []).length || analysis?.placeholderNormalized);
+  }
+
   async function analyzeTextWithAiAssist(text, policy = getActivePolicy()) {
     const originalText = String(text || "");
     const normalizedText = normalizeVisiblePlaceholders(originalText);
@@ -3791,6 +3795,27 @@
         consumeInterceptionEvent(event);
       }
     }
+    const quickCurrentAnalysis = analyzeText(originalText);
+    const quickNextAnalysis = analyzeText(next.text);
+    const quickRelevantFindings = selectFindingsOverlappingInsertion(
+      quickNextAnalysis.findings,
+      selection,
+      insertedText
+    );
+    const quickPlaceholderNormalizationChanged =
+      quickNextAnalysis.placeholderNormalized &&
+      quickNextAnalysis.normalizedText !== next.text &&
+      (normalizeVisiblePlaceholders(insertedText) !== insertedText ||
+        quickNextAnalysis.normalizedText !== quickCurrentAnalysis.normalizedText);
+
+    if (!quickRelevantFindings.length && !quickPlaceholderNormalizationChanged) {
+      return;
+    }
+
+    if (!event.defaultPrevented) {
+      consumeInterceptionEvent(event);
+    }
+
     const currentAnalysis = await analyzeTextWithAiAssist(originalText);
     const nextAnalysis = await analyzeTextWithAiAssist(next.text);
     const relevantFindings = selectFindingsOverlappingInsertion(
@@ -3809,18 +3834,12 @@
       (normalizeVisiblePlaceholders(insertedText) !== insertedText ||
         nextAnalysis.normalizedText !== currentAnalysis.normalizedText);
 
-    if (!relevantFindings.length && !placeholderNormalizationChanged) {
-      return;
-    }
+    if (!relevantFindings.length && !placeholderNormalizationChanged) return;
 
     const typedShouldAutoRedact = shouldAutoRedactTypedSecrets(
       relevantSecretFindings,
       relevantFindings
     );
-
-    if (!event.defaultPrevented) {
-      consumeInterceptionEvent(event);
-    }
 
     const policy = await getPolicyForAction();
     const destinationPolicy = await handleDestinationPolicy(relevantFindings, policy);
@@ -10096,10 +10115,13 @@
     const text = getInputText(input);
     if (!text || !text.trim()) return;
 
-    const analysis = await analyzeTextWithAiAssist(text);
-    if (!analysis.findings.length && !analysis.placeholderNormalized) return;
+    const quickAnalysis = analyzeText(text);
+    if (!analysisNeedsEventOwnership(quickAnalysis)) return;
 
     consumeInterceptionEvent(event);
+
+    const analysis = await analyzeTextWithAiAssist(text);
+    if (!analysis.findings.length && !analysis.placeholderNormalized) return;
 
     const policy = analysis.findings.length ? await getPolicyForAction() : getActivePolicy();
     const destinationPolicy = analysis.findings.length
@@ -10275,10 +10297,13 @@
     const text = getInputText(input);
     if (!text || !text.trim()) return;
 
-    const analysis = await analyzeTextWithAiAssist(text);
-    if (!analysis.findings.length && !analysis.placeholderNormalized) return;
+    const quickAnalysis = analyzeText(text);
+    if (!analysisNeedsEventOwnership(quickAnalysis)) return;
 
     consumeInterceptionEvent(event);
+
+    const analysis = await analyzeTextWithAiAssist(text);
+    if (!analysis.findings.length && !analysis.placeholderNormalized) return;
 
     const policy = analysis.findings.length ? await getPolicyForAction() : getActivePolicy();
     const destinationPolicy = analysis.findings.length
