@@ -1555,6 +1555,36 @@
     return cells;
   }
 
+  function parseStructuredPipeTableLine(line) {
+    const input = String(line || "");
+    const cells = [];
+    let index = 0;
+
+    while (index < input.length) {
+      const pipeIndex = input.indexOf("|", index);
+      if (pipeIndex < 0) break;
+      const nextPipeIndex = input.indexOf("|", pipeIndex + 1);
+      if (nextPipeIndex < 0) break;
+
+      let start = pipeIndex + 1;
+      let end = nextPipeIndex;
+      while (start < end && /\s/.test(input[start])) start += 1;
+      while (end > start && /\s/.test(input[end - 1])) end -= 1;
+      cells.push({
+        value: input.slice(start, end),
+        start,
+        end
+      });
+      index = nextPipeIndex;
+    }
+
+    return cells;
+  }
+
+  function isStructuredPipeSeparatorLine(line) {
+    return /^\s*\|?(?:\s*:?-{2,}:?\s*\|)+\s*:?-{2,}:?\s*\|?\s*$/.test(String(line || ""));
+  }
+
   function decodeStructuredHtmlEntities(value) {
     const decodeCodePoint = (codePoint, fallback) =>
       Number.isInteger(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff
@@ -2509,14 +2539,47 @@
       let offset = 0;
       let previousLabel = null;
       let csvTableHeader = null;
+      let pipeTableHeader = null;
 
       for (const line of lines) {
         const lineWithoutCr = line.endsWith("\r") ? line.slice(0, -1) : line;
-        const delimiter = lineWithoutCr.includes("\t") ? "\t" : lineWithoutCr.includes(",") ? "," : "";
+        const trimmedLine = lineWithoutCr.trim();
+        const looksLikeJsonObject = trimmedLine.startsWith("{") && trimmedLine.endsWith("}");
+        const looksLikePipeTable = trimmedLine.startsWith("|") && trimmedLine.includes("|", 1);
+        const delimiter = looksLikeJsonObject || looksLikePipeTable
+          ? ""
+          : lineWithoutCr.includes("\t")
+            ? "\t"
+            : lineWithoutCr.includes(",")
+              ? ","
+              : "";
         const cells = delimiter ? parseStructuredCsvLine(lineWithoutCr, delimiter) : [];
         const headerNames = cells.map((cell) => normalizeStructuredMetadataLabel(cell.value));
         const valueColumn = headerNames.indexOf("value");
         const labelColumn = headerNames.findIndex((name) => name === "name" || name === "type" || name === "key");
+        const pipeCells = !delimiter && looksLikePipeTable
+          ? parseStructuredPipeTableLine(lineWithoutCr)
+          : [];
+        const pipeHeaderNames = pipeCells.map((cell) => normalizeStructuredMetadataLabel(cell.value));
+        const pipeValueColumn = pipeHeaderNames.indexOf("value");
+        const pipeLabelColumn = pipeHeaderNames.findIndex((name) => name === "name" || name === "type" || name === "key");
+
+        if (pipeValueColumn >= 0 && pipeLabelColumn >= 0) {
+          pipeTableHeader = {
+            group: pipeHeaderNames.indexOf("group"),
+            label: pipeLabelColumn,
+            value: pipeValueColumn
+          };
+          previousLabel = null;
+          offset += line.length + 1;
+          continue;
+        }
+
+        if (pipeTableHeader && isStructuredPipeSeparatorLine(lineWithoutCr)) {
+          previousLabel = null;
+          offset += line.length + 1;
+          continue;
+        }
 
         if (valueColumn >= 0 && labelColumn >= 0) {
           csvTableHeader = {
@@ -2524,6 +2587,27 @@
             label: labelColumn,
             value: valueColumn
           };
+          previousLabel = null;
+          offset += line.length + 1;
+          continue;
+        }
+
+        if (pipeTableHeader && pipeCells.length > pipeTableHeader.value) {
+          const labelCell = pipeCells[pipeTableHeader.label];
+          const valueCell = pipeCells[pipeTableHeader.value];
+          const groupCell = pipeTableHeader.group >= 0 ? pipeCells[pipeTableHeader.group] : null;
+          if (labelCell && valueCell) {
+            const combinedLabel = [groupCell?.value, labelCell.value].filter(Boolean).join(" ");
+            pushStructuredMetadataFinding(
+              findings,
+              this,
+              combinedLabel,
+              valueCell.value,
+              offset + valueCell.start,
+              offset + valueCell.end,
+              "pipe-table-row"
+            );
+          }
           previousLabel = null;
           offset += line.length + 1;
           continue;
@@ -2581,6 +2665,7 @@
         if (lineWithoutCr.trim() === "") {
           previousLabel = null;
           csvTableHeader = null;
+          pipeTableHeader = null;
           offset += line.length + 1;
           continue;
         }

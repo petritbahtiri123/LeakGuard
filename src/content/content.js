@@ -2619,6 +2619,10 @@
     };
   }
 
+  function analysisNeedsEventOwnership(analysis) {
+    return Boolean((analysis?.findings || []).length || analysis?.placeholderNormalized);
+  }
+
   async function analyzeTextWithAiAssist(text, policy = getActivePolicy()) {
     const originalText = String(text || "");
     const normalizedText = normalizeVisiblePlaceholders(originalText);
@@ -3643,6 +3647,59 @@
     return verification.ok;
   }
 
+  async function applySubmitRedactionTransactionally(input, originalText, redactedText, context, findings) {
+    const applied = await rewriteComposerTransactionally(input, originalText, redactedText, context, {
+      caretOffset: String(redactedText || "").length,
+      restoreText: originalText,
+      restoreCaretOffset: String(originalText || "").length,
+      findings
+    });
+
+    if (!applied.ok) {
+      await showRewriteFailure(
+        context,
+        collectFailureDetails(input, redactedText, applied.actual, context)
+      );
+      refreshBadgeFromCurrentInput();
+      return false;
+    }
+
+    if (!(await ensureExactComposerState(input, redactedText, {
+      originalText,
+      findings,
+      context
+    }))) {
+      await showRewriteFailure(
+        context,
+        collectFailureDetails(input, redactedText, getInputText(input), context)
+      );
+      refreshBadgeFromCurrentInput();
+      return false;
+    }
+
+    return true;
+  }
+
+  function queueVerifiedComposerSend(input, expectedText, context, send) {
+    queueMicrotask(() => {
+      ensureExactComposerState(input, expectedText, { context })
+        .then((isExact) => {
+          if (!isExact) {
+            return showRewriteFailure(
+              context,
+              collectFailureDetails(input, expectedText, getInputText(input), context)
+            ).then(() => {
+              refreshBadgeFromCurrentInput();
+            });
+          }
+
+          send();
+          return null;
+        })
+        .catch(handleContentError);
+    });
+  }
+
   function findSendButton(contextEl) {
     const searchRoot = contextEl?.closest("form") || document;
 
@@ -3791,6 +3848,27 @@
         consumeInterceptionEvent(event);
       }
     }
+    const quickCurrentAnalysis = analyzeText(originalText);
+    const quickNextAnalysis = analyzeText(next.text);
+    const quickRelevantFindings = selectFindingsOverlappingInsertion(
+      quickNextAnalysis.findings,
+      selection,
+      insertedText
+    );
+    const quickPlaceholderNormalizationChanged =
+      quickNextAnalysis.placeholderNormalized &&
+      quickNextAnalysis.normalizedText !== next.text &&
+      (normalizeVisiblePlaceholders(insertedText) !== insertedText ||
+        quickNextAnalysis.normalizedText !== quickCurrentAnalysis.normalizedText);
+
+    if (!quickRelevantFindings.length && !quickPlaceholderNormalizationChanged) {
+      return;
+    }
+
+    if (!event.defaultPrevented) {
+      consumeInterceptionEvent(event);
+    }
+
     const currentAnalysis = await analyzeTextWithAiAssist(originalText);
     const nextAnalysis = await analyzeTextWithAiAssist(next.text);
     const relevantFindings = selectFindingsOverlappingInsertion(
@@ -3809,18 +3887,12 @@
       (normalizeVisiblePlaceholders(insertedText) !== insertedText ||
         nextAnalysis.normalizedText !== currentAnalysis.normalizedText);
 
-    if (!relevantFindings.length && !placeholderNormalizationChanged) {
-      return;
-    }
+    if (!relevantFindings.length && !placeholderNormalizationChanged) return;
 
     const typedShouldAutoRedact = shouldAutoRedactTypedSecrets(
       relevantSecretFindings,
       relevantFindings
     );
-
-    if (!event.defaultPrevented) {
-      consumeInterceptionEvent(event);
-    }
 
     const policy = await getPolicyForAction();
     const destinationPolicy = await handleDestinationPolicy(relevantFindings, policy);
@@ -10096,10 +10168,13 @@
     const text = getInputText(input);
     if (!text || !text.trim()) return;
 
-    const analysis = await analyzeTextWithAiAssist(text);
-    if (!analysis.findings.length && !analysis.placeholderNormalized) return;
+    const quickAnalysis = analyzeText(text);
+    if (!analysisNeedsEventOwnership(quickAnalysis)) return;
 
     consumeInterceptionEvent(event);
+
+    const analysis = await analyzeTextWithAiAssist(text);
+    if (!analysis.findings.length && !analysis.placeholderNormalized) return;
 
     const policy = analysis.findings.length ? await getPolicyForAction() : getActivePolicy();
     const destinationPolicy = analysis.findings.length
@@ -10112,36 +10187,23 @@
 
     const httpPolicyHandled = await handleHttpSecretPolicy(policy, analysis.secretFindings, async () => {
       const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
-      const applied = await applyComposerText(input, result.redactedText, {
-        caretOffset: result.redactedText.length,
-        restoreText: analysis.normalizedText,
-        restoreCaretOffset: analysis.normalizedText.length
-      });
-
-      if (!applied.ok) {
-        await showRewriteFailure(
-          "submit",
-          collectFailureDetails(input, result.redactedText, applied.actual, "submit")
-        );
-        refreshBadgeFromCurrentInput();
-        return;
-      }
+      const rewritten = await applySubmitRedactionTransactionally(
+        input,
+        analysis.normalizedText,
+        result.redactedText,
+        "submit",
+        analysis.secretFindings
+      );
+      if (!rewritten) return;
 
       setBadge("Content redacted");
       hideBadgeSoon();
       refreshBadgeFromCurrentInput();
 
-      if (!(await ensureExactComposerState(input, result.redactedText))) {
-        await showRewriteFailure(
-          "submit",
-          collectFailureDetails(input, result.redactedText, getInputText(input), "submit")
-        );
-        refreshBadgeFromCurrentInput();
-        return;
-      }
-
-      bypassNextSubmit = true;
-      queueMicrotask(() => submitComposer(form, input));
+      queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
+        bypassNextSubmit = true;
+        submitComposer(form, input);
+      });
     });
 
     if (httpPolicyHandled) {
@@ -10152,36 +10214,23 @@
       const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings, {
         auditReason: destinationPolicy.reason
       });
-      const applied = await applyComposerText(input, result.redactedText, {
-        caretOffset: result.redactedText.length,
-        restoreText: analysis.normalizedText,
-        restoreCaretOffset: analysis.normalizedText.length
-      });
-
-      if (!applied.ok) {
-        await showRewriteFailure(
-          "submit",
-          collectFailureDetails(input, result.redactedText, applied.actual, "submit")
-        );
-        refreshBadgeFromCurrentInput();
-        return;
-      }
+      const rewritten = await applySubmitRedactionTransactionally(
+        input,
+        analysis.normalizedText,
+        result.redactedText,
+        "submit",
+        analysis.secretFindings
+      );
+      if (!rewritten) return;
 
       setBadge("Destination policy required redaction");
       hideBadgeSoon();
       refreshBadgeFromCurrentInput();
 
-      if (!(await ensureExactComposerState(input, result.redactedText))) {
-        await showRewriteFailure(
-          "submit",
-          collectFailureDetails(input, result.redactedText, getInputText(input), "submit")
-        );
-        refreshBadgeFromCurrentInput();
-        return;
-      }
-
-      bypassNextSubmit = true;
-      queueMicrotask(() => submitComposer(form, input));
+      queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
+        bypassNextSubmit = true;
+        submitComposer(form, input);
+      });
       return;
     }
 
@@ -10205,8 +10254,10 @@
         return;
       }
 
-      bypassNextSubmit = true;
-      queueMicrotask(() => submitComposer(form, input));
+      queueVerifiedComposerSend(input, normalized.text, "submit", () => {
+        bypassNextSubmit = true;
+        submitComposer(form, input);
+      });
       return;
     }
 
@@ -10221,36 +10272,23 @@
 
     const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
 
-    const applied = await applyComposerText(input, result.redactedText, {
-      caretOffset: result.redactedText.length,
-      restoreText: analysis.normalizedText,
-      restoreCaretOffset: analysis.normalizedText.length
-    });
-
-    if (!applied.ok) {
-      await showRewriteFailure(
-        "submit",
-        collectFailureDetails(input, result.redactedText, applied.actual, "submit")
-      );
-      refreshBadgeFromCurrentInput();
-      return;
-    }
+    const rewritten = await applySubmitRedactionTransactionally(
+      input,
+      analysis.normalizedText,
+      result.redactedText,
+      "submit",
+      analysis.secretFindings
+    );
+    if (!rewritten) return;
 
     setBadge("Content redacted");
     hideBadgeSoon();
     refreshBadgeFromCurrentInput();
 
-    if (!(await ensureExactComposerState(input, result.redactedText))) {
-      await showRewriteFailure(
-        "submit",
-        collectFailureDetails(input, result.redactedText, getInputText(input), "submit")
-      );
-      refreshBadgeFromCurrentInput();
-      return;
-    }
-
-    bypassNextSubmit = true;
-    queueMicrotask(() => submitComposer(form, input));
+    queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
+      bypassNextSubmit = true;
+      submitComposer(form, input);
+    });
   }
 
   async function maybeHandleFallbackSendKey(event) {
@@ -10275,10 +10313,13 @@
     const text = getInputText(input);
     if (!text || !text.trim()) return;
 
-    const analysis = await analyzeTextWithAiAssist(text);
-    if (!analysis.findings.length && !analysis.placeholderNormalized) return;
+    const quickAnalysis = analyzeText(text);
+    if (!analysisNeedsEventOwnership(quickAnalysis)) return;
 
     consumeInterceptionEvent(event);
+
+    const analysis = await analyzeTextWithAiAssist(text);
+    if (!analysis.findings.length && !analysis.placeholderNormalized) return;
 
     const policy = analysis.findings.length ? await getPolicyForAction() : getActivePolicy();
     const destinationPolicy = analysis.findings.length
@@ -10291,45 +10332,25 @@
 
     const httpPolicyHandled = await handleHttpSecretPolicy(policy, analysis.secretFindings, async () => {
       const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
-      const applied = await applyComposerText(input, result.redactedText, {
-        caretOffset: result.redactedText.length,
-        restoreText: analysis.normalizedText,
-        restoreCaretOffset: analysis.normalizedText.length
-      });
-
-      if (!applied.ok) {
-        await showRewriteFailure(
-          "submit",
-          collectFailureDetails(input, result.redactedText, applied.actual, "submit")
-        );
-        refreshBadgeFromCurrentInput();
-        return;
-      }
+      const rewritten = await applySubmitRedactionTransactionally(
+        input,
+        analysis.normalizedText,
+        result.redactedText,
+        "submit",
+        analysis.secretFindings
+      );
+      if (!rewritten) return;
 
       setBadge("Content redacted");
       hideBadgeSoon();
       refreshBadgeFromCurrentInput();
 
-      queueMicrotask(() => {
-        ensureExactComposerState(input, result.redactedText)
-          .then((isExact) => {
-            if (!isExact) {
-              return showRewriteFailure(
-                "submit",
-                collectFailureDetails(input, result.redactedText, getInputText(input), "submit")
-              ).then(() => {
-                refreshBadgeFromCurrentInput();
-              });
-            }
-
-            const button = findSendButton(input);
-            if (button) {
-              clearAllRiskSessionState();
-              button.click();
-            }
-            return null;
-          })
-          .catch(handleContentError);
+      queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
+        const button = findSendButton(input);
+        if (button) {
+          clearAllRiskSessionState();
+          button.click();
+        }
       });
     });
 
@@ -10341,45 +10362,25 @@
       const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings, {
         auditReason: destinationPolicy.reason
       });
-      const applied = await applyComposerText(input, result.redactedText, {
-        caretOffset: result.redactedText.length,
-        restoreText: analysis.normalizedText,
-        restoreCaretOffset: analysis.normalizedText.length
-      });
-
-      if (!applied.ok) {
-        await showRewriteFailure(
-          "submit",
-          collectFailureDetails(input, result.redactedText, applied.actual, "submit")
-        );
-        refreshBadgeFromCurrentInput();
-        return;
-      }
+      const rewritten = await applySubmitRedactionTransactionally(
+        input,
+        analysis.normalizedText,
+        result.redactedText,
+        "submit",
+        analysis.secretFindings
+      );
+      if (!rewritten) return;
 
       setBadge("Destination policy required redaction");
       hideBadgeSoon();
       refreshBadgeFromCurrentInput();
 
-      queueMicrotask(() => {
-        ensureExactComposerState(input, result.redactedText)
-          .then((isExact) => {
-            if (!isExact) {
-              return showRewriteFailure(
-                "submit",
-                collectFailureDetails(input, result.redactedText, getInputText(input), "submit")
-              ).then(() => {
-                refreshBadgeFromCurrentInput();
-              });
-            }
-
-            const button = findSendButton(input);
-            if (button) {
-              clearAllRiskSessionState();
-              button.click();
-            }
-            return null;
-          })
-          .catch(handleContentError);
+      queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
+        const button = findSendButton(input);
+        if (button) {
+          clearAllRiskSessionState();
+          button.click();
+        }
       });
       return;
     }
@@ -10430,45 +10431,25 @@
 
     const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
 
-    const applied = await applyComposerText(input, result.redactedText, {
-      caretOffset: result.redactedText.length,
-      restoreText: analysis.normalizedText,
-      restoreCaretOffset: analysis.normalizedText.length
-    });
-
-    if (!applied.ok) {
-      await showRewriteFailure(
-        "submit",
-        collectFailureDetails(input, result.redactedText, applied.actual, "submit")
-      );
-      refreshBadgeFromCurrentInput();
-      return;
-    }
+    const rewritten = await applySubmitRedactionTransactionally(
+      input,
+      analysis.normalizedText,
+      result.redactedText,
+      "submit",
+      analysis.secretFindings
+    );
+    if (!rewritten) return;
 
     setBadge("Content redacted");
     hideBadgeSoon();
     refreshBadgeFromCurrentInput();
 
-    queueMicrotask(() => {
-      ensureExactComposerState(input, result.redactedText)
-        .then((isExact) => {
-          if (!isExact) {
-            return showRewriteFailure(
-              "submit",
-              collectFailureDetails(input, result.redactedText, getInputText(input), "submit")
-            ).then(() => {
-              refreshBadgeFromCurrentInput();
-            });
-          }
-
-          const button = findSendButton(input);
-          if (button) {
-            clearAllRiskSessionState();
-            button.click();
-          }
-          return null;
-        })
-        .catch(handleContentError);
+    queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
+      const button = findSendButton(input);
+      if (button) {
+        clearAllRiskSessionState();
+        button.click();
+      }
     });
   }
 

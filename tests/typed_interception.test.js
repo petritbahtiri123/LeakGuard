@@ -388,6 +388,8 @@ function testPauseBypassGatesPasteAndSendAfterPolicy() {
 
 function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   const applyComposerTextSource = extractFunctionSource(contentSource, "applyComposerText");
+  const submitTransactionalSource = extractFunctionSource(contentSource, "applySubmitRedactionTransactionally");
+  const queueVerifiedSendSource = extractFunctionSource(contentSource, "queueVerifiedComposerSend");
   const typedRewriteSource = extractFunctionSource(contentSource, "applyTypedInterceptionRewrite");
   const beforeInputSource = extractFunctionSource(contentSource, "maybeHandleBeforeInput");
   const fileInsertSource = extractFunctionSource(contentSource, "maybeHandleLocalFileInsert");
@@ -580,6 +582,43 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
     "Firefox beforeinput should synchronously consume risky raw text before any async analysis can yield to the page"
   );
   assert.ok(
+    beforeInputSource.includes("const quickCurrentAnalysis = analyzeText(originalText);") &&
+      beforeInputSource.includes("const quickNextAnalysis = analyzeText(next.text);") &&
+      beforeInputSource.includes("const quickRelevantFindings = selectFindingsOverlappingInsertion(") &&
+      beforeInputSource.indexOf("const quickNextAnalysis = analyzeText(next.text);") <
+        beforeInputSource.lastIndexOf("consumeInterceptionEvent(event);") &&
+      beforeInputSource.lastIndexOf("consumeInterceptionEvent(event);") <
+        beforeInputSource.indexOf("const currentAnalysis = await analyzeTextWithAiAssist(originalText)") &&
+      beforeInputSource.lastIndexOf("consumeInterceptionEvent(event);") <
+        beforeInputSource.indexOf("const nextAnalysis = await analyzeTextWithAiAssist(next.text)"),
+    "non-Firefox beforeinput should synchronously consume deterministic risky input before async AI analysis"
+  );
+  assert.ok(
+    submitSource.includes("const quickAnalysis = analyzeText(text);") &&
+      submitSource.indexOf("const quickAnalysis = analyzeText(text);") <
+        submitSource.lastIndexOf("consumeInterceptionEvent(event);") &&
+      submitSource.lastIndexOf("consumeInterceptionEvent(event);") <
+        submitSource.indexOf("const analysis = await analyzeTextWithAiAssist(text)"),
+    "submit should synchronously consume risky composer text before async AI analysis"
+  );
+  assert.ok(
+    fallbackSendSource.includes("const quickAnalysis = analyzeText(text);") &&
+      fallbackSendSource.indexOf("const quickAnalysis = analyzeText(text);") <
+        fallbackSendSource.indexOf("consumeInterceptionEvent(event);") &&
+      fallbackSendSource.indexOf("consumeInterceptionEvent(event);") <
+        fallbackSendSource.indexOf("const analysis = await analyzeTextWithAiAssist(text)"),
+    "Enter-send fallback should synchronously consume risky composer text before async AI analysis"
+  );
+  assert.ok(
+    beforeInputSource.indexOf("if (!quickRelevantFindings.length && !quickPlaceholderNormalizationChanged)") <
+      beforeInputSource.lastIndexOf("consumeInterceptionEvent(event);") &&
+      submitSource.indexOf("if (!analysisNeedsEventOwnership(quickAnalysis)) return;") <
+        submitSource.lastIndexOf("consumeInterceptionEvent(event);") &&
+      fallbackSendSource.indexOf("if (!analysisNeedsEventOwnership(quickAnalysis)) return;") <
+        fallbackSendSource.indexOf("consumeInterceptionEvent(event);"),
+    "safe beforeinput, submit, and Enter-send events should not be consumed unless sync analysis finds risk"
+  );
+  assert.ok(
     beforeInputSource.includes("event?.isTrusted === false") &&
       beforeInputSource.includes("isProgrammaticInputScanSuppressed()") &&
       beforeInputSource.indexOf("event?.isTrusted === false") <
@@ -633,6 +672,31 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
       applyComposerTextSource.includes("matchesComposerPlan(plan, actual)") &&
       applyComposerTextSource.includes("verifyComposerRewriteSafe"),
     "contenteditable rewrites should verify stable final text and force direct redacted text when raw input remains"
+  );
+  assert.ok(
+    submitTransactionalSource.includes("rewriteComposerTransactionally(") &&
+      submitTransactionalSource.includes("ensureExactComposerState(input, redactedText") &&
+      submitTransactionalSource.includes("showRewriteFailure("),
+    "submit/Enter redaction helper should use transactional rewrite plus exact verification before any send retry"
+  );
+  assert.ok(
+    queueVerifiedSendSource.includes("ensureExactComposerState(input, expectedText") &&
+      queueVerifiedSendSource.indexOf("ensureExactComposerState(input, expectedText") <
+        queueVerifiedSendSource.indexOf("send();") &&
+      queueVerifiedSendSource.includes("showRewriteFailure("),
+    "submit/Enter send retry should re-check exact composer state in the queued send microtask before clicking/submitting"
+  );
+  assert.ok(
+    submitSource.includes("applySubmitRedactionTransactionally(") &&
+      submitSource.includes("queueVerifiedComposerSend(input, result.redactedText") &&
+      !submitSource.includes("applyComposerText(input, result.redactedText"),
+    "risky submit redaction paths should use the transactional raw-leak-resistant helper instead of direct applyComposerText"
+  );
+  assert.ok(
+    fallbackSendSource.includes("applySubmitRedactionTransactionally(") &&
+      fallbackSendSource.includes("queueVerifiedComposerSend(input, result.redactedText") &&
+      !fallbackSendSource.includes("applyComposerText(input, result.redactedText"),
+    "risky Enter-send redaction paths should use the transactional raw-leak-resistant helper instead of direct applyComposerText"
   );
   assert.ok(
     typedRewriteSource.includes("ensureExactComposerState(input, expectedText)") &&
@@ -1019,6 +1083,38 @@ async function testTransactionalRewriteFallbackRemovesRawDuplicate() {
   assert.strictEqual(calls.directWrites, 1, "raw+redacted duplicate should force one direct rewrite");
 }
 
+async function testSubmitTransactionalHelperFailsClosedOnRawRestore() {
+  const factory = new Function(
+    [
+      "const calls = { transactional: 0, failures: 0, exactChecks: 0, refreshes: 0 };",
+      "async function rewriteComposerTransactionally(_input, originalText) { calls.transactional += 1; return { ok: false, actual: originalText, strategy: 'raw-restore-detected' }; }",
+      "async function ensureExactComposerState() { calls.exactChecks += 1; return true; }",
+      "function collectFailureDetails(_input, expectedText, actualText, context) { return { expectedText, actualText, context }; }",
+      "async function showRewriteFailure(context, details) { calls.failures += 1; calls.failureContext = context; calls.failureDetails = details; }",
+      "function refreshBadgeFromCurrentInput() { calls.refreshes += 1; }",
+      extractFunctionSource(contentSource, "applySubmitRedactionTransactionally"),
+      "return { applySubmitRedactionTransactionally, calls };"
+    ].join("\n\n")
+  );
+  const { applySubmitRedactionTransactionally, calls } = factory();
+  const rawText = "OPENAI_API_KEY=sk-proj-rawrestoresecretvalue";
+  const redactedText = "OPENAI_API_KEY=[PWM_1]";
+
+  const ok = await applySubmitRedactionTransactionally(
+    { text: rawText },
+    rawText,
+    redactedText,
+    "submit",
+    [{ raw: rawText }]
+  );
+
+  assert.strictEqual(ok, false, "submit transactional helper should fail closed when raw restore is detected");
+  assert.strictEqual(calls.transactional, 1, "submit helper should attempt the transactional rewrite path");
+  assert.strictEqual(calls.failures, 1, "submit helper should show a rewrite failure instead of allowing send");
+  assert.strictEqual(calls.exactChecks, 0, "exact verification should not bless a failed transactional rewrite");
+  assert.strictEqual(calls.failureDetails.actualText, rawText, "failure details should preserve the unsafe actual text summary input");
+}
+
 function run() {
   testBeforeInputGuardStaysConservative();
   testTypedAssignmentSecretIsCaughtBeforeCommit();
@@ -1047,6 +1143,7 @@ function run() {
     .then(() => testRewriteVerificationFailClosedCases())
     .then(() => testRewriteFailureModalSuppression())
     .then(() => testTransactionalRewriteFallbackRemovesRawDuplicate())
+    .then(() => testSubmitTransactionalHelperFailsClosedOnRawRestore())
     .then(() => {
       console.log("PASS typed beforeinput interception regressions");
     });

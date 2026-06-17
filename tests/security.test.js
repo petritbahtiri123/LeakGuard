@@ -406,6 +406,15 @@ async function testSecureRevealRemainsBoundedToRequestSessionAndExtensionUi() {
 
   storageState[requestKey] = {
     ...storageState[requestKey],
+    placeholder: "[EMAIL_999]"
+  };
+  const unknownContext = await sandbox.getRevealContext(requestId);
+  assert.strictEqual(unknownContext.available, false, "unknown typed placeholders must not become revealable");
+  assert.strictEqual(await sandbox.revealSecret(requestId), null, "unknown typed placeholders must not reveal raw values");
+
+  storageState[requestKey] = {
+    ...storageState[requestKey],
+    placeholder,
     sessionId: "wrong-session"
   };
 
