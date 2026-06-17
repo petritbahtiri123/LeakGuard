@@ -2,6 +2,423 @@
   const root = typeof globalThis !== "undefined" ? globalThis : window;
   root.PWM = root.PWM || {};
 
+  const ONIX_DATASET_CATEGORIES = Object.freeze([
+    "regex_secret",
+    "entropy_secret",
+    "onix_gray_zone",
+    "identity_sensitive",
+    "metadata_safe",
+    "normal_text_safe",
+    "adversarial_safe"
+  ]);
+
+  const DETERMINISTIC_PROVIDER_REGISTRY = Object.freeze([
+    {
+      provider: "aws",
+      name: "registry_aws_access_key_id",
+      type: "AWS_KEY",
+      category: "credential",
+      severity: "high",
+      reason: "aws-access-key-id",
+      requiresContext: false,
+      action: "redact",
+      baseScore: 98,
+      suppressionNotes:
+        "AWS access key IDs have stable AKIA/ASIA prefixes and are safe to redact without entropy.",
+      regex: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g
+    },
+    {
+      provider: "aws",
+      name: "registry_aws_secret_access_key_context",
+      type: "AWS_SECRET_KEY",
+      category: "credential",
+      severity: "high",
+      reason: "aws-secret-access-key-context",
+      requiresContext: true,
+      action: "redact",
+      baseScore: 98,
+      suppressionNotes:
+        "AWS secret access keys are only caught behind explicit secret-access-key labels.",
+      regex:
+        /\b(?:aws[_-]?secret[_-]?access[_-]?key|secret[_-]?access[_-]?key)\b\s*[:=]\s*(?:"([^"\r\n]{20,128})"|'([^'\r\n]{20,128})'|([A-Za-z0-9/+=._-]{20,128}))/gi,
+      captureGroups: [1, 2, 3]
+    },
+    {
+      provider: "aws",
+      name: "registry_aws_session_token_context",
+      type: "TOKEN",
+      category: "credential",
+      severity: "high",
+      reason: "aws-session-token-context",
+      requiresContext: true,
+      action: "redact",
+      baseScore: 96,
+      suppressionNotes:
+        "AWS session tokens require an AWS session/security-token label to avoid generic base64 noise.",
+      regex:
+        /\b(?:aws[_-]?session[_-]?token|x-amz-security-token)\b\s*[:=]\s*(?:"([^"\r\n]{20,512})"|'([^'\r\n]{20,512})'|([A-Za-z0-9/+=._-]{20,512}))/gi,
+      captureGroups: [1, 2, 3]
+    },
+    {
+      provider: "azure",
+      name: "registry_azure_client_secret_context",
+      type: "SECRET",
+      category: "credential",
+      severity: "high",
+      reason: "azure-client-secret-context",
+      requiresContext: true,
+      action: "redact",
+      baseScore: 96,
+      suppressionNotes:
+        "Azure client secrets require explicit client_secret/AZURE_CLIENT_SECRET labels.",
+      regex:
+        /\b(?:azure[_-]?client[_-]?secret|AZURE_CLIENT_SECRET)\b\s*[:=]\s*(?:"([^"\r\n]{8,256})"|'([^'\r\n]{8,256})'|([A-Za-z0-9/+=._~!@#$%^&*-]{8,256}))/gi,
+      captureGroups: [1, 2, 3]
+    },
+    {
+      provider: "azure",
+      name: "registry_azure_tenant_id_context",
+      type: "AZURE_TENANT_ID",
+      category: "internal_metadata",
+      severity: "high",
+      reason: "azure-tenant-id-context",
+      requiresContext: true,
+      action: "redact",
+      baseScore: 94,
+      suppressionNotes:
+        "Tenant GUIDs are redacted only when attached to tenant/directory labels.",
+      regex:
+        /\b(?:azure[_-]?tenant[_-]?id|AZURE_TENANT_ID|directory[_-]?id)\b\s*[:=]\s*"?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"?/gi,
+      captureGroups: [1]
+    },
+    {
+      provider: "azure",
+      name: "registry_azure_subscription_id_context",
+      type: "AZURE_SUBSCRIPTION_ID",
+      category: "internal_metadata",
+      severity: "high",
+      reason: "azure-subscription-id-context",
+      requiresContext: true,
+      action: "redact",
+      baseScore: 94,
+      suppressionNotes:
+        "Subscription GUIDs are redacted only when attached to subscription labels.",
+      regex:
+        /\b(?:azure[_-]?subscription[_-]?id|subscription[_-]?id)\b\s*[:=]\s*"?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"?/gi,
+      captureGroups: [1]
+    },
+    {
+      provider: "azure",
+      name: "registry_azure_storage_account_key",
+      type: "SECRET",
+      category: "credential",
+      severity: "high",
+      reason: "azure-storage-account-key",
+      requiresContext: true,
+      action: "redact",
+      baseScore: 99,
+      suppressionNotes:
+        "Azure storage AccountKey values are captured only inside full storage connection strings.",
+      regex:
+        /\bDefaultEndpointsProtocol=https;AccountName=[^;\s]+;AccountKey=([^;\s]+);EndpointSuffix=core\.windows\.net\b/gi,
+      captureGroups: [1]
+    },
+    {
+      provider: "azure",
+      name: "registry_azure_sas_token",
+      type: "TOKEN",
+      category: "credential",
+      severity: "high",
+      reason: "azure-sas-token",
+      requiresContext: true,
+      action: "redact",
+      baseScore: 97,
+      suppressionNotes:
+        "Azure SAS signatures require sig plus SAS query parameters such as sv, se, sp, and sr.",
+      regex:
+        /\bhttps?:\/\/[^\s"'`<>?]+\?(?=[^\s"'`<>]*\bsv=)(?=[^\s"'`<>]*\bse=)(?=[^\s"'`<>]*\bsp=)(?=[^\s"'`<>]*\bsr=)[^\s"'`<>#]*[?&]sig=([^&#\s"'`<>]+)/gi,
+      captureGroups: [1]
+    },
+    {
+      provider: "gcp",
+      name: "registry_gcp_api_key",
+      type: "API_KEY",
+      category: "credential",
+      severity: "high",
+      reason: "gcp-api-key",
+      requiresContext: false,
+      action: "redact",
+      baseScore: 96,
+      suppressionNotes:
+        "Google API keys have a stable AIza prefix and do not require entropy.",
+      regex: /\bAIza[0-9A-Za-z_-]{35,40}\b/g
+    },
+    {
+      provider: "gcp",
+      name: "registry_gcp_service_account_private_key",
+      type: "PRIVATE_KEY",
+      category: "private_key",
+      severity: "high",
+      reason: "gcp-service-account-private-key",
+      requiresContext: true,
+      action: "redact",
+      baseScore: 100,
+      suppressionNotes:
+        "GCP service-account private keys are detected from the JSON private_key PEM field.",
+      regex:
+        /"private_key"\s*:\s*"(-{5}BEGIN PRIVATE KEY-{5}\\n[\s\S]+?\\n-{5}END PRIVATE KEY-{5}\\n?)"/g,
+      captureGroups: [1]
+    },
+    {
+      provider: "gcp",
+      name: "registry_gcp_client_email",
+      type: "EMAIL",
+      category: "identity",
+      severity: "high",
+      reason: "gcp-service-account-identity",
+      requiresContext: true,
+      action: "redact",
+      baseScore: 96,
+      suppressionNotes:
+        "Service-account identities redact only in structured client_email/service_account contexts.",
+      regex:
+        /(?:"client_email"\s*:\s*"([^"\r\n]+@(?:[a-z][a-z0-9-]{4,28}\.)?(?:iam\.)?gserviceaccount\.com)"|\bservice_account\b\s*[:=]\s*"?([A-Za-z0-9._-]+@(?:[a-z][a-z0-9-]{4,28}\.)?(?:iam\.)?gserviceaccount\.com)"?)/gi,
+      captureGroups: [1, 2]
+    },
+    {
+      provider: "github",
+      name: "registry_github_token",
+      type: "TOKEN",
+      category: "credential",
+      severity: "high",
+      reason: "github-token",
+      requiresContext: false,
+      action: "redact",
+      baseScore: 96,
+      suppressionNotes:
+        "GitHub token prefixes are distinctive; normal repository URLs are not matched.",
+      regex: /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,255}\b/g
+    },
+    {
+      provider: "github",
+      name: "registry_github_pat",
+      type: "TOKEN",
+      category: "credential",
+      severity: "high",
+      reason: "github-token",
+      requiresContext: false,
+      action: "redact",
+      baseScore: 96,
+      suppressionNotes:
+        "Fine-grained GitHub PATs have the github_pat_ prefix and do not require entropy.",
+      regex: /\bgithub_pat_[A-Za-z0-9_]{20,255}\b/g
+    },
+    {
+      provider: "gitlab",
+      name: "registry_gitlab_token",
+      type: "TOKEN",
+      category: "credential",
+      severity: "high",
+      reason: "gitlab-token",
+      requiresContext: false,
+      action: "redact",
+      baseScore: 96,
+      suppressionNotes:
+        "GitLab token families have stable gl-prefixed markers; repository URLs are not matched.",
+      regex:
+        /\b(?:glpat|gldt|glrt|glcbt|glptt|glft|glimt|glagent|glwt)-[A-Za-z0-9_-]{20,255}\b/g
+    },
+    {
+      provider: "slack",
+      name: "registry_slack_token",
+      type: "TOKEN",
+      category: "credential",
+      severity: "high",
+      reason: "slack-token",
+      requiresContext: false,
+      action: "redact",
+      baseScore: 96,
+      suppressionNotes:
+        "Slack xox token prefixes are deterministic provider secrets.",
+      regex: /\b(?:xox(?:a|b|p|r|s)-[A-Za-z0-9-]{10,200}|xapp-[A-Za-z0-9-]{20,200})\b/g
+    },
+    {
+      provider: "slack",
+      name: "registry_slack_webhook",
+      type: "WEBHOOK",
+      category: "webhook",
+      severity: "high",
+      reason: "slack-webhook",
+      requiresContext: false,
+      action: "redact",
+      baseScore: 99,
+      suppressionNotes:
+        "Only canonical Slack webhook service URLs are treated as secrets.",
+      regex:
+        /\bhttps:\/\/hooks\.slack\.com\/services\/T[A-Z0-9]{8,12}\/B[A-Z0-9]{8,12}\/[A-Za-z0-9]{20,64}\b/g
+    },
+    {
+      provider: "kubernetes",
+      name: "registry_kubernetes_secret_token",
+      type: "KUBECONFIG_SECRET",
+      category: "credential",
+      severity: "high",
+      reason: "kubernetes-secret-token",
+      requiresContext: true,
+      action: "redact",
+      baseScore: 97,
+      suppressionNotes:
+        "Kubeconfig bearer tokens require token/auth/kubeconfig context.",
+      regex:
+        /\b(?:kubeconfig|kubernetes|k8s|auth-provider|exec)\b[\s\S]{0,120}\btoken\s*:\s*([A-Za-z0-9+/._=-]{20,})/gi,
+      captureGroups: [1]
+    },
+    {
+      provider: "kubernetes",
+      name: "registry_kubernetes_key_data",
+      type: "KUBECONFIG_SECRET",
+      category: "credential",
+      severity: "high",
+      reason: "kubernetes-key-data",
+      requiresContext: true,
+      action: "redact",
+      baseScore: 97,
+      suppressionNotes:
+        "Kubeconfig certificate/key data labels are explicit structured secrets.",
+      regex:
+        /\b(?:client-key-data|client-certificate-data|certificate-authority-data)\s*:\s*([A-Za-z0-9+/._=-]{20,})/g,
+      captureGroups: [1]
+    },
+    {
+      provider: "docker",
+      name: "registry_docker_auth",
+      type: "TOKEN",
+      category: "credential",
+      severity: "high",
+      reason: "docker-registry-auth",
+      requiresContext: true,
+      action: "redact",
+      baseScore: 96,
+      suppressionNotes:
+        "Docker auth fields redact only inside Docker auth/config style JSON.",
+      regex:
+        /"auths"\s*:\s*\{[\s\S]{0,300}(?:"auth"\s*:\s*"([A-Za-z0-9+/]{20,}={0,2})"|"identitytoken"\s*:\s*"([^"\r\n]{12,})"|"password"\s*:\s*"([^"\r\n]{8,})")/gi,
+      captureGroups: [1, 2, 3]
+    },
+    {
+      provider: "terraform",
+      name: "registry_terraform_secret_context",
+      type: "SECRET",
+      category: "credential",
+      severity: "high",
+      reason: "terraform-secret-context",
+      requiresContext: true,
+      action: "redact",
+      baseScore: 95,
+      suppressionNotes:
+        "Terraform/tfvars secrets require IaC or Terraform token context plus an explicit secret label.",
+      regex:
+        /(?:\bterraform(?:\.tfvars)?\b|\btfvars\b|\.tfvars\b|\bTFE_TOKEN\b|\bTF_TOKEN_app_terraform_io\b|\bapp\.terraform\.io\b)[\s\S]{0,200}\b(?:password|secret|token|client[_-]?secret|access[_-]?key|private[_-]?key)\b\s*[:=]\s*(?:"([^"\r\n]{8,256})"|'([^'\r\n]{8,256})'|([A-Za-z0-9/+=._~!@#$%^&*-]{8,256}))/gi,
+      captureGroups: [1, 2, 3]
+    },
+    {
+      provider: "ssh",
+      name: "registry_private_key_block",
+      type: "PRIVATE_KEY",
+      category: "private_key",
+      severity: "high",
+      reason: "private-key-block",
+      requiresContext: false,
+      action: "redact",
+      baseScore: 100,
+      suppressionNotes:
+        "Private key PEM/OpenSSH blocks are deterministic secrets; public ssh-rsa keys are intentionally not matched.",
+      regex:
+        /-----BEGIN(?: RSA| EC| OPENSSH| DSA| PGP)? PRIVATE KEY-----[\s\S]+?-----END(?: RSA| EC| OPENSSH| DSA| PGP)? PRIVATE KEY-----/g
+    },
+    {
+      provider: "database",
+      name: "registry_database_url_credentials",
+      type: "DB_URI",
+      category: "connection_string",
+      severity: "high",
+      reason: "database-url-credentials",
+      requiresContext: false,
+      action: "redact",
+      baseScore: 99,
+      suppressionNotes:
+        "Database and generic URL credentials redact the credential value while preserving URL shape.",
+      regex:
+        /\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis|amqp|mssql|sqlserver):\/\/[^\/\s:@'"`<>]*:([^@\s'"`<>]+)@[^\s'"`<>]+/gi,
+      captureGroups: [1]
+    },
+    {
+      provider: "database",
+      name: "registry_jdbc_password",
+      type: "PASSWORD",
+      category: "connection_string",
+      severity: "high",
+      reason: "database-url-credentials",
+      methods: ["sqlserver-connection-string", "password-attribute"],
+      requiresContext: true,
+      action: "redact",
+      baseScore: 99,
+      suppressionNotes:
+        "JDBC password attributes are explicit connection-string credentials.",
+      regex:
+        /\bjdbc:[A-Za-z0-9:]+:\/\/[^\s"'`<>;]+(?:;[^;\s"'`<>]+)*;password=([^;\s"'`<>]{8,})/gi,
+      captureGroups: [1]
+    },
+    {
+      provider: "database",
+      name: "registry_generic_url_credentials",
+      type: "PASSWORD",
+      category: "connection_string",
+      severity: "high",
+      reason: "database-url-credentials",
+      requiresContext: false,
+      action: "redact",
+      baseScore: 99,
+      suppressionNotes:
+        "Generic username:password URL userinfo redacts the password only.",
+      regex:
+        /\b[a-z][a-z0-9+.-]*:\/\/[^\/\s:@'"`<>]+:([^@\s'"`<>]+)@[^\s'"`<>]+/gi,
+      captureGroups: [1]
+    },
+    {
+      provider: "identity",
+      name: "registry_identity_username_context",
+      type: "USERNAME",
+      category: "identity",
+      severity: "medium",
+      reason: "identity-username-context",
+      requiresContext: true,
+      action: "redact",
+      baseScore: 78,
+      suppressionNotes:
+        "Username-like values redact only in structured identity key/value contexts.",
+      regex:
+        /\b(?:username|user_name|login|login_name|samaccountname|account|account_name|principal|principal_id|object_id)\b\s*[:=]\s*"?([A-Z][A-Z0-9]{1,30}\\[A-Za-z][A-Za-z0-9._-]{2,63}|[A-Za-z0-9._@-]{3,64})"?/gi,
+      captureGroups: [1]
+    },
+    {
+      provider: "identity",
+      name: "registry_identity_email_context",
+      type: "EMAIL",
+      category: "identity",
+      severity: "high",
+      reason: "identity-email-context",
+      requiresContext: true,
+      action: "redact",
+      baseScore: 92,
+      suppressionNotes:
+        "Email/UPN values redact only in structured identity key/value contexts.",
+      regex:
+        /\b(?:userprincipalname|upn|email|mail|client_email)\b\s*[:=]\s*"?([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})"?/gi,
+      captureGroups: [1]
+    }
+  ]);
+
   const PATTERNS = [
     {
       name: "pem_private_key_block",
@@ -700,6 +1117,8 @@
   root.PWM.EXAMPLE_VALUE_MARKERS = EXAMPLE_VALUE_MARKERS;
   root.PWM.EXAMPLE_HOSTS = EXAMPLE_HOSTS;
   root.PWM.PLACEHOLDER_TYPE_MAP = PLACEHOLDER_TYPE_MAP;
+  root.PWM.DETERMINISTIC_PROVIDER_REGISTRY = DETERMINISTIC_PROVIDER_REGISTRY;
+  root.PWM.ONIX_DATASET_CATEGORIES = ONIX_DATASET_CATEGORIES;
 
   if (typeof module !== "undefined" && module.exports) {
     module.exports = {
@@ -713,7 +1132,9 @@
       SUPPRESSED_VALUE_REGEX,
       EXAMPLE_VALUE_MARKERS,
       EXAMPLE_HOSTS,
-      PLACEHOLDER_TYPE_MAP
+      PLACEHOLDER_TYPE_MAP,
+      DETERMINISTIC_PROVIDER_REGISTRY,
+      ONIX_DATASET_CATEGORIES
     };
   }
 })();

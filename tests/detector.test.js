@@ -10,6 +10,8 @@ const {
   PlaceholderManager,
   Redactor,
   PATTERNS,
+  DETERMINISTIC_PROVIDER_REGISTRY,
+  ONIX_DATASET_CATEGORIES,
   normalizeVisiblePlaceholders,
   canonicalizePlaceholderToken
 } = globalThis.PWM;
@@ -383,6 +385,242 @@ function testMixedGitlabRedactionKeepsConfigReadable() {
   assert.ok(redactedText.includes("endpoint = https://gitlab.com/group/project"));
   assert.ok(redactedText.includes("branch = main"));
   assert.ok(redactedText.includes("notes = keep surrounding config readable"));
+}
+
+function findFindingByRaw(findings, raw) {
+  return findings.find((finding) => finding.raw === raw);
+}
+
+function assertRedactsRaw(text, raw, expectedMethod) {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const findings = detector.scan(text);
+  const finding = findFindingByRaw(findings, raw);
+
+  assert.ok(
+    finding,
+    `expected finding for ${raw}; got ${findings
+      .map((entry) => `${entry.type}:${entry.raw}:${(entry.method || []).join("|")}`)
+      .join(", ")}`
+  );
+  if (expectedMethod) {
+    assert.ok(
+      finding.method.includes(expectedMethod),
+      `expected ${expectedMethod} method for ${raw}, got ${(finding.method || []).join(", ")}`
+    );
+  }
+
+  const result = redactor.redact(text, findings);
+  assert.strictEqual(result.redactedText.includes(raw), false, `raw value should redact: ${raw}`);
+  assert.ok(
+    /\[(?:PWM|EMAIL|USERNAME|[A-Z][A-Z0-9_]*)_\d+\]/.test(result.redactedText),
+    `expected visible placeholder for ${raw}`
+  );
+}
+
+function assertNoRedaction(text, label) {
+  const detector = new Detector();
+  const findings = detector.scan(text);
+
+  assert.deepStrictEqual(findings, [], label || `expected no findings for ${text}`);
+}
+
+function testDeterministicProviderRegistryMetadata() {
+  assert.ok(
+    Array.isArray(DETERMINISTIC_PROVIDER_REGISTRY),
+    "provider-aware deterministic secret registry should be exported"
+  );
+
+  const requiredReasons = [
+    "aws-access-key-id",
+    "aws-secret-access-key-context",
+    "aws-session-token-context",
+    "azure-client-secret-context",
+    "azure-storage-account-key",
+    "azure-sas-token",
+    "azure-tenant-id-context",
+    "azure-subscription-id-context",
+    "gcp-api-key",
+    "gcp-service-account-private-key",
+    "gcp-service-account-identity",
+    "github-token",
+    "gitlab-token",
+    "slack-token",
+    "slack-webhook",
+    "kubernetes-secret-token",
+    "kubernetes-key-data",
+    "docker-registry-auth",
+    "terraform-secret-context",
+    "private-key-block",
+    "database-url-credentials",
+    "identity-username-context",
+    "identity-email-context"
+  ];
+  const reasons = new Set(DETERMINISTIC_PROVIDER_REGISTRY.map((entry) => entry.reason));
+
+  for (const reason of requiredReasons) {
+    assert.ok(reasons.has(reason), `provider registry missing reason ${reason}`);
+  }
+
+  const categories = Array.isArray(ONIX_DATASET_CATEGORIES) ? ONIX_DATASET_CATEGORIES : [];
+  for (const category of [
+    "regex_secret",
+    "entropy_secret",
+    "onix_gray_zone",
+    "identity_sensitive",
+    "metadata_safe",
+    "normal_text_safe",
+    "adversarial_safe"
+  ]) {
+    assert.ok(categories.includes(category), `missing Onix dataset category ${category}`);
+  }
+}
+
+function testProviderRegistryTruePositiveCoverage() {
+  const awsAccessKey = "AKIA1234567890ABCDEF";
+  const awsSessionAccessKey = "ASIA1234567890ABCDEF";
+  const awsSecret = "ABCDEFGHIJKLMNOPQRSTabcdefghijklmnopqrst";
+  const awsSessionToken =
+    "IQoJb3JpZ2luX2VjEJr//////////wEaCXVzLWVhc3QtMSJHMEUCIFakeSessionTokenValue1234567890";
+  const azureClientSecret = "AzureClientSecret123456!";
+  const azureStorageKey = "AbCdEfGhIjKlMnOpQrStUvWxYz1234567890AbCdEfGhIjKlMnOpQrStUvWxYz==";
+  const azureTenantId = "123e4567-e89b-12d3-a456-426614174000";
+  const azureSubscriptionId = "223e4567-e89b-12d3-a456-426614174111";
+  const azureSasSig = "AbCdEfGhIjKlMnOpQrStUvWxYz1234567890%2B%2F%3D";
+  const gcpApiKey = "AIzaSyA0bcdefghijklmnopqrstuvwxYZ123456";
+  const gcpPrivateKey =
+    "-----BEGIN PRIVATE KEY-----\\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\\n-----END PRIVATE KEY-----\\n";
+  const gcpClientEmail = "svc-prod@project-prod-123.iam.gserviceaccount.com";
+  const githubClassic = "ghp_AbCdEfGhIjKlMnOpQrStUvWxYz123456";
+  const githubPat = "github_pat_11AAABBBBCCCCDDDDEEEE_AbCdEfGhIjKlMnOpQrStUvWxYz1234567890";
+  const gitlabPat = "glpat-AbCdEfGhIjKlMnOpQrStUvWxYz123456";
+  const slackToken = "xoxb-123456789012-123456789012-AbCdEfGhIjKlMnOpQrSt";
+  const slackWebhook =
+    "https://hooks.slack.com/services/T12345678/B12345678/abcdefghijklmnopqrstuvwxyzABCD";
+  const kubeToken =
+    "eyJhbGciOiJIUzI1NiIsImtpZCI6Imt1YmUifQ.eyJzdWIiOiJzZXJ2aWNlIn0.signatureValue123";
+  const kubeKeyData = "Q2xpZW50S2V5RGF0YVZhbHVlMTIzNDU2Nzg5MA==";
+  const dockerAuth = "dXNlcjpEb2NrZXJQYXNzMTIzIQ==";
+  const terraformSecret = "TfClientSecretValue123456!";
+  const pemPrivateKey = [
+    "-----BEGIN PRIVATE KEY-----",
+    "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQD",
+    "-----END PRIVATE KEY-----"
+  ].join("\n");
+  const dbPassword = "DbPass123!";
+  const jdbcPassword = "JdbcPass123!";
+  const genericUrlPassword = "UrlPass123!";
+  const username = "admin.user";
+  const upn = "user@example.com";
+  const domainUser = "DOMAIN\\username";
+  const serviceAccount = "my-sa@project.iam.gserviceaccount.com";
+
+  const cases = [
+    [`AWS_ACCESS_KEY_ID=${awsAccessKey}`, awsAccessKey, "aws-access-key-id"],
+    [`AWS_ACCESS_KEY_ID=${awsSessionAccessKey}`, awsSessionAccessKey, "aws-access-key-id"],
+    [`AWS_SECRET_ACCESS_KEY=${awsSecret}`, awsSecret, "aws-secret-access-key-context"],
+    [`AWS_SESSION_TOKEN=${awsSessionToken}`, awsSessionToken, "aws-session-token-context"],
+    [`AZURE_CLIENT_SECRET=${azureClientSecret}`, azureClientSecret, "azure-client-secret-context"],
+    [
+      `DefaultEndpointsProtocol=https;AccountName=prodacct;AccountKey=${azureStorageKey};EndpointSuffix=core.windows.net`,
+      azureStorageKey,
+      "azure-storage-account-key"
+    ],
+    [
+      `https://prodacct.blob.core.windows.net/container/blob.txt?sv=2024-01-01&se=2026-01-01&sp=r&sr=b&sig=${azureSasSig}`,
+      azureSasSig,
+      "azure-sas-token"
+    ],
+    [`AZURE_TENANT_ID=${azureTenantId}`, azureTenantId, "azure-tenant-id-context"],
+    [
+      `AZURE_SUBSCRIPTION_ID=${azureSubscriptionId}`,
+      azureSubscriptionId,
+      "azure-subscription-id-context"
+    ],
+    [`api_key=${gcpApiKey}`, gcpApiKey, "gcp-api-key"],
+    [`{"private_key":"${gcpPrivateKey}"}`, gcpPrivateKey, "gcp-service-account-private-key"],
+    [`{"client_email":"${gcpClientEmail}"}`, gcpClientEmail, "gcp-service-account-identity"],
+    [`GITHUB_TOKEN=${githubClassic}`, githubClassic, "github-token"],
+    [`GITHUB_TOKEN=${githubPat}`, githubPat, "github-token"],
+    [`GITLAB_TOKEN=${gitlabPat}`, gitlabPat, "gitlab-token"],
+    [`SLACK_BOT_TOKEN=${slackToken}`, slackToken, "slack-token"],
+    [`SLACK_WEBHOOK_URL=${slackWebhook}`, slackWebhook, "slack-webhook"],
+    [`kubeconfig:\ntoken: ${kubeToken}`, kubeToken, "kubernetes-secret-token"],
+    [`client-key-data: ${kubeKeyData}`, kubeKeyData, "kubernetes-key-data"],
+    [`{"auths":{"registry.corp.internal":{"auth":"${dockerAuth}"}}}`, dockerAuth, "docker-registry-auth"],
+    [`terraform.tfvars\nclient_secret = "${terraformSecret}"`, terraformSecret, "terraform-secret-context"],
+    [pemPrivateKey, pemPrivateKey, "private-key-block"],
+    [`DATABASE_URL=postgres://user:${dbPassword}@db.internal:5432/app`, dbPassword, "database-url-credentials"],
+    [`MYSQL_URL=mysql://user:${dbPassword}@db.internal:3306/app`, dbPassword, "database-url-credentials"],
+    [`MONGO_URL=mongodb://user:${dbPassword}@db.internal:27017/app`, dbPassword, "database-url-credentials"],
+    [`REDIS_URL=redis://:${dbPassword}@cache.internal:6379/0`, dbPassword, "database-url-credentials"],
+    [
+      `jdbc:sqlserver://db.internal:1433;databaseName=app;user=sa;password=${jdbcPassword};encrypt=true`,
+      jdbcPassword,
+      "database-url-credentials"
+    ],
+    [`https://user:${genericUrlPassword}@service.internal/path`, genericUrlPassword, "database-url-credentials"],
+    [`username=${username}`, username, "identity-username-context"],
+    [`upn=${upn}`, upn, "identity-email-context"],
+    [`login=${domainUser}`, domainUser, "identity-username-context"],
+    [`service_account=${serviceAccount}`, serviceAccount, "gcp-service-account-identity"]
+  ];
+
+  for (const [text, raw, method] of cases) {
+    assertRedactsRaw(text, raw, method);
+  }
+}
+
+function testProviderRegistryFalsePositiveCoverage() {
+  const falsePositives = [
+    [
+      "normal English cloud paragraph",
+      "AWS, Azure, GCP, Kubernetes, Docker, and Terraform are discussed in this planning paragraph without credentials."
+    ],
+    ["existing LeakGuard placeholders", "[PWM_1] [PWM_22] [PWM_999]"],
+    ["uuid alone", "123e4567-e89b-12d3-a456-426614174000"],
+    ["iso timestamp alone", "2026-06-17T10:20:30Z"],
+    ["plain domain", "example.com"],
+    ["plain url", "https://example.com/docs?topic=cloud"],
+    ["plain github repo url", "https://github.com/example/project"],
+    ["plain gitlab repo url", "https://gitlab.com/example/project"],
+    ["plain aws arn", "arn:aws:iam::123456789012:role/AdminRole"],
+    ["plain aws account id", "123456789012"],
+    [
+      "public ssh key",
+      "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC7PublicKeyMaterialOnly user@example.com"
+    ],
+    ["git commit hash", "abcdef1234567890abcdef1234567890abcdef12"],
+    ["normal file path", String.raw`C:\Users\qa\Documents\release-notes.txt`],
+    ["normal ticket id", "Support ticket INC-2026-004812 is assigned to queue CLOUDOPS-77."],
+    ["normal kubernetes names", "deployment/api-server pod/web-frontend service/public-api"],
+    ["plain example email prose", "Please contact user@example.com for public documentation examples."],
+    ["normal names in prose", "Jane Doe and Sam Patel reviewed the deployment plan."]
+  ];
+
+  for (const [label, text] of falsePositives) {
+    assertNoRedaction(text, `${label}: expected no provider secret finding`);
+  }
+}
+
+function testDetectionLifecycleOrderStaysDeterministicFirst() {
+  const detectorSource = fs.readFileSync(path.join(__dirname, "../src/shared/detector.js"), "utf8");
+  const aiTransformSource = fs.readFileSync(
+    path.join(__dirname, "../src/shared/transformOutboundPromptWithAi.js"),
+    "utf8"
+  );
+  const regexIndex = detectorSource.indexOf("...this.scanProviderRegistry(input)");
+  const entropyIndex = detectorSource.indexOf("...this.scanEntropyFallback(input)");
+  const deterministicIndex = aiTransformSource.indexOf("deterministicFindings");
+  const classifierIndex = aiTransformSource.indexOf("classifier.classify");
+
+  assert.ok(regexIndex >= 0, "deterministic provider registry should be part of Detector.scan");
+  assert.ok(entropyIndex > regexIndex, "regex/provider registry must run before entropy fallback");
+  assert.ok(
+    classifierIndex > deterministicIndex,
+    "Onix/classifier handoff must remain after deterministic findings"
+  );
 }
 
 function testLegacyPlaceholderNormalizationHelper() {
@@ -1190,6 +1428,32 @@ function testAwsSecretLabelOnPreviousLineRedactsValue() {
   assert.strictEqual(result.redactedText.includes(rawSecret), false);
   assert.ok(/^\[PWM_\d+\]$/.test(lines[1]), "AWS access key value should still be redacted");
   assert.ok(/^\[PWM_\d+\]$/.test(lines[3]), "split AWS secret value should be redacted");
+}
+
+function testAwsSecretOnLineAfterAccessKeyRedactsValue() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const rawAccessKey = "AKIAQ4EXAMPLE7K9M2P1";
+  const rawSecret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+  const text = [rawAccessKey, rawSecret, "AWS_SESSION_TOKEN=FakeSessionTokenValue123456789"].join(
+    "\n"
+  );
+
+  const findings = detector.scan(text);
+  const result = redactor.redact(text, findings);
+  const lines = result.redactedText.split("\n");
+
+  assert.ok(
+    findings.some(
+      (finding) => finding.type === "AWS_SECRET_KEY" && finding.raw === rawSecret
+    ),
+    "AWS secret values directly after AWS access key values should be detected"
+  );
+  assert.strictEqual(result.redactedText.includes(rawSecret), false);
+  assert.ok(/^\[PWM_\d+\]$/.test(lines[0]), "AWS access key should still redact");
+  assert.ok(/^\[PWM_\d+\]$/.test(lines[1]), "adjacent AWS secret should redact");
+  assert.ok(/^AWS_SESSION_TOKEN=\[PWM_\d+\]$/.test(lines[2]), "AWS session token should still redact");
 }
 
 function testConcatenatedPlaceholderAssignmentsDoNotCreateCompositeFalsePositives() {
@@ -2065,6 +2329,99 @@ function testStandaloneSecretKeywordPasswordRedactsHighConfidenceValue() {
   assert.strictEqual(result.redactedText, "[PWM_1]", "secret-prefixed password-like value should redact cleanly");
 }
 
+function testEntropyClassifierRedactsSecretsAndPreservesSafeTokens() {
+  assert.deepStrictEqual(
+    globalThis.PWM.ENTROPY_CONFIG,
+    {
+      contextValueMinEntropy: 2.8,
+      contextValueMinLength: 8,
+      generalMinEntropy: 4.2,
+      generalMinLength: 20,
+      base64MinEntropy: 4.35,
+      base64MinLength: 20,
+      hexMinEntropy: 3.45,
+      hexMinLength: 32,
+      entropyOnlyShortTokenBlock: 20
+    },
+    "entropy thresholds should be centralized and explicit"
+  );
+
+  assert.strictEqual(globalThis.PWM.calculateEntropy(""), 0);
+  assert.strictEqual(globalThis.PWM.calculateEntropy(null), 0);
+  assert.strictEqual(globalThis.PWM.classifyTokenAlphabet("abcdef0123456789"), "hex");
+  assert.strictEqual(globalThis.PWM.classifyTokenAlphabet("QWxhZGRpbjpvcGVu+IHNlc2FtZQ=="), "base64ish");
+  assert.strictEqual(globalThis.PWM.classifyTokenAlphabet("Token.Value!123"), "general");
+  assert.strictEqual(globalThis.PWM.countCharacterClasses("Ab9!"), 4);
+
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const positiveText = [
+    "password=Welcome123!",
+    'api_key="AIzaSyD9xQ7vK3mN8pR2sT5uW1yZ4aB6cD8eF0gH"',
+    "AWS_ACCESS_KEY_ID=AKIAQ4EXAMPLE7K9M2P1",
+    "GITHUB_TOKEN=ghp_AbCdEfGhIjKlMnOpQrStUvWxYz012345678",
+    "postgres://qa_user:SuperSecret123!@db.internal.example:5432/prod",
+    "-----BEGIN PRIVATE KEY-----",
+    "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC",
+    "-----END PRIVATE KEY-----",
+    "QWxhZGRpbjpvcGVuIHNlc2FtZV9zZWNyZXRfdG9rZW5fMTIzNDU2",
+    "client_secret=Ab9fK2LmN8pQ4RsT7uVxY3ZaB6CdE9Fg",
+    "jwt=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyMTIzIn0.signature1234567890"
+  ].join("\n");
+
+  const positiveResult = redactor.redact(positiveText, detector.scan(positiveText));
+
+  for (const raw of [
+    "Welcome123!",
+    "AIzaSyD9xQ7vK3mN8pR2sT5uW1yZ4aB6cD8eF0gH",
+    "AKIAQ4EXAMPLE7K9M2P1",
+    "ghp_AbCdEfGhIjKlMnOpQrStUvWxYz012345678",
+    "SuperSecret123!",
+    "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC",
+    "QWxhZGRpbjpvcGVuIHNlc2FtZV9zZWNyZXRfdG9rZW5fMTIzNDU2",
+    "Ab9fK2LmN8pQ4RsT7uVxY3ZaB6CdE9Fg",
+    "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyMTIzIn0.signature1234567890"
+  ]) {
+    assert.strictEqual(positiveResult.redactedText.includes(raw), false, `${raw} should redact`);
+  }
+
+  assert.ok(/^password=\[PWM_\d+\]$/m.test(positiveResult.redactedText));
+  assert.ok(/^api_key=\[PWM_\d+\]$/m.test(positiveResult.redactedText));
+  assert.ok(/^AWS_ACCESS_KEY_ID=\[PWM_\d+\]$/m.test(positiveResult.redactedText));
+  assert.ok(/^GITHUB_TOKEN=\[PWM_\d+\]$/m.test(positiveResult.redactedText));
+  assert.ok(
+    /^postgres:\/\/qa_user:\[PWM_\d+\]@db\.internal\.example:5432\/prod$/m.test(
+      positiveResult.redactedText
+    )
+  );
+  assert.ok(/\[PWM_\d+\]/.test(positiveResult.redactedText), "private key should become a placeholder");
+  assert.ok(/^client_secret=\[PWM_\d+\]$/m.test(positiveResult.redactedText));
+  assert.ok(/^jwt=\[PWM_\d+\]$/m.test(positiveResult.redactedText));
+
+  const falsePositiveText = [
+    "Normal English paragraph with project notes and no credentials should stay visible.",
+    "[PWM_1] [PWM_22] [PWM_999]",
+    "id=550e8400-e29b-41d4-a716-446655440000",
+    "created_at=2026-06-17T12:34:56Z",
+    "https://example.com/docs/path?item=123",
+    "example.com",
+    "commit=0123456789abcdef0123456789abcdef01234567",
+    "aB7_kL9xQ2mP",
+    "C:\\Users\\bajra\\Documents\\report-2026-06-17.txt",
+    "ticket=SUP-12345-ABC"
+  ].join("\n");
+
+  const falsePositiveFindings = new Detector().scan(falsePositiveText);
+  const falsePositiveResult = new Redactor(new PlaceholderManager()).redact(
+    falsePositiveText,
+    falsePositiveFindings
+  );
+
+  assert.deepStrictEqual(falsePositiveFindings, [], "safe entropy-adjacent text should not detect");
+  assert.strictEqual(falsePositiveResult.redactedText, falsePositiveText);
+}
+
 function testNaturalLanguageSecretRedactsCredentialLikeValue() {
   const detector = new Detector();
   const manager = new PlaceholderManager();
@@ -2450,6 +2807,10 @@ function run() {
   testProviderTokenShortAndTemplateValuesStayVisible();
   testProviderSpecificHexAssignmentsDetectAndRedact();
   testMixedGitlabRedactionKeepsConfigReadable();
+  testDeterministicProviderRegistryMetadata();
+  testProviderRegistryTruePositiveCoverage();
+  testProviderRegistryFalsePositiveCoverage();
+  testDetectionLifecycleOrderStaysDeterministicFirst();
   testLegacyPlaceholderNormalizationHelper();
   testRepeatedSameSecret();
   testRepeatedAwsAccessKeyWithExampleSubstringStillRedactsAndReusesPlaceholder();
@@ -2477,6 +2838,7 @@ function run() {
   testGenericKeyAssignmentAfterProseLabelRedactsShortProjectKey();
   testAwsSecretAssignmentWithExamplePrefixStillFailsClosedButDocsPlaceholderStaysVisible();
   testAwsSecretLabelOnPreviousLineRedactsValue();
+  testAwsSecretOnLineAfterAccessKeyRedactsValue();
   testConcatenatedPlaceholderAssignmentsDoNotCreateCompositeFalsePositives();
   testUserStressEdgeCasesRedactSecretsButKeepSafeLiterals();
   testInlineStructuredAssignmentsStillMatchAfterEarlierInlineAssignments();
@@ -2501,6 +2863,7 @@ function run() {
   testExactMixedLegacyPlaceholderInputDoesNotReemitTypedTokens();
   testStandaloneBarePasswordHeuristicRedactsHighConfidenceValue();
   testStandaloneSecretKeywordPasswordRedactsHighConfidenceValue();
+  testEntropyClassifierRedactsSecretsAndPreservesSafeTokens();
   testNaturalLanguageSecretRedactsCredentialLikeValue();
   testPlaceholderSuffixSecretRedactsOnlyAppendedMaterial();
   testShapeImpossibleScansAreSkippedForLargeSafeText();

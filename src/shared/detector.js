@@ -13,7 +13,10 @@
     EXAMPLE_VALUE_MARKERS,
     EXAMPLE_HOSTS,
     PLACEHOLDER_TYPE_MAP,
+    DETERMINISTIC_PROVIDER_REGISTRY,
+    ENTROPY_CONFIG,
     calculateEntropy,
+    classifyTokenAlphabet,
     looksStructuredLikeSecret,
     countClassVariety
   } = root.PWM;
@@ -91,6 +94,32 @@
   let activeContextScoreCache = null;
   let activeContextScoreText = null;
   let activeLineBounds = null;
+  const ACTIVE_ENTROPY_CONFIG = ENTROPY_CONFIG || Object.freeze({
+    contextValueMinEntropy: 2.8,
+    contextValueMinLength: 8,
+    generalMinEntropy: 4.2,
+    generalMinLength: 20,
+    base64MinEntropy: 4.35,
+    base64MinLength: 20,
+    hexMinEntropy: 3.45,
+    hexMinLength: 32,
+    entropyOnlyShortTokenBlock: 20
+  });
+  const KNOWN_SECRET_PATTERN_NAMES = new Set([
+    "pem_private_key_block",
+    "openssh_private_key_block",
+    "pem_block",
+    "aws_access_key",
+    "aws_access_key_id_assignment",
+    "aws_secret_access_key_assignment",
+    "google_api_key",
+    "github_token",
+    "github_pat",
+    "slack_token",
+    "jwt_token",
+    "db_uri",
+    "generic_uri_credentials"
+  ]);
   const PATTERN_REQUIRED_MARKERS = {
     pem_private_key_block: ["-----begin"],
     openssh_private_key_block: ["-----begin openssh private key-----"],
@@ -1217,6 +1246,16 @@
     );
   }
 
+  function hasReadablePasswordWordSegment(value) {
+    return /[A-Za-z]{5,}/.test(String(value || ""));
+  }
+
+  function hasSensitiveTokenSegment(value) {
+    return /(?:^|[_-])(?:secret|token|password|passwd|pwd)(?=$|[_-]|\d)/i.test(
+      String(value || "")
+    );
+  }
+
   function inferPlaceholderTypeFromDisclosureLabel(label) {
     const normalized = String(label || "").toLowerCase();
 
@@ -1254,6 +1293,12 @@
     if (placeholderType === "TOKEN" && /^(?:eyJ|gh[pousr]_|github_pat_|glpat-|xox|npm_|pypi-)/i.test(value)) {
       return true;
     }
+
+    const entropyDecision = evaluateEntropyCandidate(value, text, start, end, {
+      key: placeholderType,
+      forceSecretContext: true
+    });
+    if (entropyDecision.redact) return true;
 
     if (looksStructuredLikeSecret(value)) return true;
     if (isLikelyBarePasswordCandidate(value, text, start, end)) return true;
@@ -1312,6 +1357,204 @@
     );
   }
 
+  const SECRET_ENTROPY_CONTEXT_REGEX =
+    /\b(?:password|passwd|pwd|token|secret|api[_\s-]?key|api-key|apikey|access[_\s-]?key|private[_\s-]?key|client[_\s-]?secret|bearer|authorization|connection\s+string|connection[_-]string|dsn|database[_\s-]?url|postgres(?:ql)?|mysql|mongodb|redis)\b/i;
+
+  function getTokenAlphabet(value) {
+    if (typeof classifyTokenAlphabet === "function") {
+      return classifyTokenAlphabet(value);
+    }
+    const input = String(value || "");
+    if (/^[a-fA-F0-9]+$/.test(input)) return "hex";
+    if (/^[A-Za-z0-9+/=_-]+$/.test(input)) return "base64ish";
+    return "general";
+  }
+
+  function hasKnownSecretTokenShape(value) {
+    return /^(?:AKIA|ASIA)[A-Z0-9]{16}$/.test(String(value || "")) ||
+      /^AIza[0-9A-Za-z\-_]{35,40}$/.test(String(value || "")) ||
+      /^(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,255}$/.test(String(value || "")) ||
+      /^github_pat_[A-Za-z0-9_]{20,255}$/.test(String(value || "")) ||
+      /^(?:glpat|gldt|glrt|glcbt|glptt|glft|glimt|glagent|glwt)-[A-Za-z0-9_-]{20,255}$/.test(String(value || "")) ||
+      /^(?:xox(?:a|b|p|r|s)-[A-Za-z0-9-]{10,200}|xapp-[A-Za-z0-9-]{20,200})$/.test(String(value || "")) ||
+      /^eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9._-]{8,}\.[A-Za-z0-9._-]{8,}$/.test(String(value || ""));
+  }
+
+  function isUuidLike(value) {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      String(value || "").trim()
+    );
+  }
+
+  function isIsoDateOrTimestampLike(value) {
+    return /^\d{4}-\d{2}-\d{2}(?:[T\s]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/i.test(
+      String(value || "").trim()
+    );
+  }
+
+  function isPlainUrlWithoutCredentials(value) {
+    const input = String(value || "").trim();
+    if (!/^(?:https?|wss?|ftp|sftp):\/\//i.test(input)) return false;
+    try {
+      const parsed = new URL(input);
+      return !parsed.username && !parsed.password;
+    } catch {
+      return false;
+    }
+  }
+
+  function isDomainLike(value) {
+    return /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i.test(
+      String(value || "").trim()
+    );
+  }
+
+  function isFieldNameToken(text, start, end, value) {
+    const input = String(text || "");
+    const token = String(value || "").trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_.-]{0,80}$/.test(token)) return false;
+    const after = input.slice(end, Math.min(input.length, end + 6));
+    return /^["']?\s*[:=]/.test(after);
+  }
+
+  function getEntropyAllowlistReason(raw, text, start, end) {
+    const value = String(raw || "").trim();
+    if (!value) return "empty";
+    if (/=$/.test(value) && /[A-Za-z0-9/:]/.test(String(text || "")[end] || "")) {
+      return "allowlisted-key";
+    }
+    if (/^[A-Za-z]{4,24}$/.test(value)) return "allowlisted-word";
+    if (/^[A-Z][A-Z0-9_]{2,64}$/.test(value)) return "allowlisted-id";
+    if (/^[a-z]+(?:_[a-z]+)+$/.test(value)) return "allowlisted-word";
+    if (/^[a-z]+(?:-[a-z]+)+$/.test(value)) return "allowlisted-word";
+    if (isFieldNameToken(text, start, end, value)) return "allowlisted-key";
+    if (/^\d{2,5}\/[A-Za-z0-9._-]+$/.test(value)) return "allowlisted-url";
+    if (isCleanPlaceholder(value)) return "allowlisted-placeholder";
+    if (isUuidLike(value)) return "allowlisted-uuid";
+    if (isIsoDateOrTimestampLike(value)) return "allowlisted-timestamp";
+    if (isPlainUrlWithoutCredentials(value)) return "allowlisted-url";
+    if (isDomainLike(value)) return "allowlisted-domain";
+    if (looksLikeFilesystemPath(text, start, end, value)) return "allowlisted-path";
+    if (likelyTemplateValue(value) || looksExampleLike(value) || containsTemplateMarker(value)) {
+      return "allowlisted-template";
+    }
+    if (/^(?:true|false|null|undefined|none|yes|no|on|off)$/i.test(value)) return "allowlisted-literal";
+    if (/^(?:v?\d+\.)+\d+(?:[-+][A-Za-z0-9._-]+)?$/.test(value)) return "allowlisted-version";
+    if (isBuildLabelLike(value) || isSafeValidationMarker(value) || isRegionLikeSegment(value)) {
+      return "allowlisted-id";
+    }
+    return "";
+  }
+
+  function hasSecretEntropyContext(text, start, end, key) {
+    const normalizedKey = normalizeAssignmentKey(key);
+    const keyText = `${normalizedKey} ${String(key || "").replace(/[_-]+/g, " ")}`;
+    if (SECRET_ENTROPY_CONTEXT_REGEX.test(keyText)) return true;
+
+    const line = getLineWindow(text, start, end);
+    const input = String(text || "");
+    const lineStart = input.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
+    const before = line.slice(0, Math.max(0, start - lineStart));
+    const trailingAssignment = /([A-Za-z_][A-Za-z0-9_.-]{1,80})\s*=\s*$/.exec(before);
+    if (trailingAssignment) {
+      const keyText = `${normalizeAssignmentKey(trailingAssignment[1])} ${trailingAssignment[1].replace(/[_-]+/g, " ")}`;
+      if (!SECRET_ENTROPY_CONTEXT_REGEX.test(keyText)) return false;
+    }
+    const context = `${before} ${getContextWindow(text, start, end, 96)}`;
+    return SECRET_ENTROPY_CONTEXT_REGEX.test(context);
+  }
+
+  function hasExplicitSecretEntropyContext(text, start, end, key) {
+    const normalizedKey = normalizeAssignmentKey(key);
+    const keyText = `${normalizedKey} ${String(key || "").replace(/[_-]+/g, " ")}`;
+    if (SECRET_ENTROPY_CONTEXT_REGEX.test(keyText)) return true;
+
+    const input = String(text || "");
+    const line = getLineWindow(text, start, end);
+    const lineStart = input.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
+    const before = line.slice(0, Math.max(0, start - lineStart));
+    return /(?:password|passwd|pwd|token|secret|api[_\s-]?key|api-key|apikey|access[_\s-]?key|private[_\s-]?key|client[_\s-]?secret|bearer|authorization|connection\s+string|connection[_-]string|dsn|database[_\s-]?url|postgres(?:ql)?|mysql|mongodb|redis)\s*(?:=|:|is|equals|set\s+to|should\s+be|becomes|->|→)?\s*$/i.test(
+      before
+    );
+  }
+
+  function evaluateEntropyCandidate(raw, text, start, end, options = {}) {
+    const value = normalizeCandidate(raw);
+    const allowlistReason = getEntropyAllowlistReason(value, text, start, end);
+    if (allowlistReason) {
+      return { redact: false, reason: allowlistReason };
+    }
+    if (value.length < ACTIVE_ENTROPY_CONFIG.contextValueMinLength) {
+      return { redact: false, reason: "below-context-min-length" };
+    }
+
+    const alphabet = getTokenAlphabet(value);
+    const entropy = calculateEntropy(value);
+    const variety = countClassVariety(value);
+    const hasExplicitContext =
+      Boolean(options.forceSecretContext) || hasExplicitSecretEntropyContext(text, start, end, options.key);
+    const hasContext =
+      hasExplicitContext ||
+      hasSensitiveTokenSegment(value) ||
+      hasSecretEntropyContext(text, start, end, options.key);
+
+    if (hasContext) {
+      if (alphabet === "hex") {
+        return {
+          redact:
+            hasExplicitContext &&
+            value.length >= ACTIVE_ENTROPY_CONFIG.hexMinLength &&
+            entropy >= ACTIVE_ENTROPY_CONFIG.hexMinEntropy,
+          reason: "hex-context-high-entropy",
+          entropy,
+          variety,
+          alphabet
+        };
+      }
+      return {
+        redact:
+          (value.length >= ACTIVE_ENTROPY_CONFIG.contextValueMinLength &&
+            entropy >= ACTIVE_ENTROPY_CONFIG.contextValueMinEntropy &&
+            variety >= 2) ||
+          (value.length >= 12 && entropy >= 3.0),
+        reason: "secret-context-entropy",
+        entropy,
+        variety,
+        alphabet
+      };
+    }
+
+    if (value.length < ACTIVE_ENTROPY_CONFIG.entropyOnlyShortTokenBlock) {
+      return { redact: false, reason: "entropy-only-short-token-block", entropy, variety, alphabet };
+    }
+    if (alphabet === "hex") {
+      return { redact: false, reason: "hex-without-context", entropy, variety, alphabet };
+    }
+    if (alphabet === "base64ish") {
+      return {
+        redact:
+          value.length >= ACTIVE_ENTROPY_CONFIG.base64MinLength &&
+          entropy >= ACTIVE_ENTROPY_CONFIG.base64MinEntropy &&
+          variety >= 2,
+        reason: "base64ish-high-entropy",
+        entropy,
+        variety,
+        alphabet
+      };
+    }
+
+    return {
+      redact:
+        value.length >= ACTIVE_ENTROPY_CONFIG.generalMinLength &&
+        entropy >= ACTIVE_ENTROPY_CONFIG.generalMinEntropy &&
+        variety >= 3,
+      reason: "general-high-entropy",
+      entropy,
+      variety,
+      alphabet
+    };
+  }
+
   function shouldSuppressIdentityValue(raw, text, start, end, key, options = {}) {
     if (!raw) return true;
     if (isCleanPlaceholder(raw)) return true;
@@ -1335,6 +1578,16 @@
     }
 
     return false;
+  }
+
+  function hasProviderRegistryIdentityFalseContext(text, start) {
+    const input = String(text || "");
+    const lineStart = input.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
+    const beforeRaw = input.slice(lineStart, Math.max(lineStart, start)).toLowerCase();
+
+    return /\b(?:docs?|documentation|tutorial|example|sample|dummy|fake|template|mock|mailto)\b/.test(
+      beforeRaw
+    ) || /\b(?:https?|wss?|ftp|sftp):\/\/|[?&][A-Za-z0-9_.-]*=$/i.test(beforeRaw);
   }
 
   const STRUCTURED_METADATA_MARKER_REGEX =
@@ -1679,6 +1932,14 @@
     const hasMixedCase = /[a-z]/.test(value) && /[A-Z]/.test(value);
     const hasPasswordKeyword = containsPasswordKeyword(value);
 
+    if (
+      !hasPasswordKeyword &&
+      value.length < ACTIVE_ENTROPY_CONFIG.entropyOnlyShortTokenBlock &&
+      !hasReadablePasswordWordSegment(value)
+    ) {
+      return false;
+    }
+
     if (variety < 3 && !hasPasswordKeyword) return false;
 
     if (
@@ -1948,9 +2209,20 @@
       ) {
         return true;
       }
+      const providerRegistryIdentity =
+        source === "provider-registry" &&
+        (placeholderType === "EMAIL" || placeholderType === "USERNAME");
+      if (
+        providerRegistryIdentity &&
+        (hasProviderRegistryIdentityFalseContext(text, start) ||
+          (placeholderType === "EMAIL" && isEmailInUrlOrUriContext(text, start)))
+      ) {
+        return true;
+      }
       if (
         hasFalseDisclosureContext(text, start, end, { source, key, patternName }) &&
-        !failClosedForExample
+        !failClosedForExample &&
+        !providerRegistryIdentity
       ) {
         return true;
       }
@@ -1975,7 +2247,7 @@
       }
 
       const ctx = contextScore(text, start, end);
-      if (ctx <= -14 && !failClosedForExample) return true;
+      if (ctx <= -14 && !failClosedForExample && !providerRegistryIdentity) return true;
 
       return false;
     }
@@ -2121,7 +2393,103 @@
               start,
               end,
               score,
-              methods: ["pattern", entropy >= 4.0 ? "entropy" : null].filter(Boolean)
+              methods: [
+                "pattern",
+                KNOWN_SECRET_PATTERN_NAMES.has(pattern.name) ? "known-secret-pattern" : null,
+                entropy >= 4.0 ? "entropy" : null
+              ].filter(Boolean)
+            })
+          );
+        }
+      }
+
+      return findings;
+    }
+
+    scanProviderRegistry(text, options = {}) {
+      if (!options.lineCache) {
+        const lineCached = this.scanRepeatedLines(text, (line) =>
+          this.scanProviderRegistry(line, { lineCache: true })
+        );
+        if (lineCached) return lineCached;
+      }
+
+      const registry = Array.isArray(DETERMINISTIC_PROVIDER_REGISTRY)
+        ? DETERMINISTIC_PROVIDER_REGISTRY
+        : [];
+      const findings = [];
+
+      for (const entry of registry) {
+        if (!entry || entry.action === "ignore") continue;
+        const sourceRegex = entry.regex || entry.pattern;
+        if (!(sourceRegex instanceof RegExp)) continue;
+
+        const regex = cloneRegex(sourceRegex);
+        let match;
+
+        while ((match = regex.exec(text)) !== null) {
+          const extracted = extractPatternValue(match, entry);
+          if (entry.reason === "database-url-credentials") {
+            const afterCaptured = match[0].slice(extracted.offset + String(extracted.raw || "").length);
+            if (afterCaptured.indexOf("@") !== afterCaptured.lastIndexOf("@")) continue;
+          }
+          const raw = normalizeCandidate(extracted.raw);
+          let start = match.index + extracted.offset;
+          let end = start + raw.length;
+
+          if (!raw) continue;
+          if (isCleanPlaceholder(raw)) continue;
+          const quoteBefore = text[start - 1];
+          if (
+            (quoteBefore === '"' || quoteBefore === "'" || quoteBefore === "`") &&
+            text[end] === quoteBefore
+          ) {
+            start -= 1;
+            end += 1;
+          }
+          if (
+            this.shouldSuppress({
+              raw,
+              text,
+              start,
+              end,
+              patternName: entry.name,
+              placeholderType: entry.type || "SECRET",
+              source: "provider-registry"
+            })
+          ) {
+            continue;
+          }
+
+          let score = entry.baseScore || 90;
+          const entropy = calculateEntropy(raw);
+          const ctx = contextScore(text, start, end);
+
+          if (entry.severity === "high" && entry.reason) score = Math.max(score, 100);
+          if (entropy >= 4.0) score += 2;
+          score += Math.max(0, ctx);
+          if (entry.severity === "medium") {
+            score = Math.min(score, this.thresholds.high - 1);
+          }
+
+          findings.push(
+            this.buildFinding({
+              category: entry.category || "credential",
+              placeholderType: entry.type || "SECRET",
+              raw,
+              start,
+              end,
+              score,
+              methods: [
+                "provider-registry",
+                "pattern",
+                entry.reason,
+                ...(Array.isArray(entry.methods) ? entry.methods : []),
+                entry.requiresContext ? "context" : null,
+                entry.requiresContext ? "exact-key" : null,
+                entry.reason === "database-url-credentials" ? "db-uri-password" : null,
+                entry.provider
+              ].filter(Boolean)
             })
           );
         }
@@ -3152,6 +3520,56 @@
       return findings;
     }
 
+    scanAdjacentAwsCredentialValues(text) {
+      const findings = [];
+      const regex =
+        /(?:^|\n)[^\S\r\n]*((?:AKIA|ASIA)[A-Z0-9]{16})[^\S\r\n]*(?:\r?\n)[^\S\r\n]*([A-Za-z0-9/+=]{40})[^\S\r\n]*(?=$|\r?\n)/g;
+      let match;
+
+      while ((match = regex.exec(text)) !== null) {
+        const raw = normalizeCandidate(match[2]);
+        if (!raw || this.isAllowlisted(raw)) continue;
+
+        const rawOffset = match[0].lastIndexOf(match[2]);
+        if (rawOffset < 0) continue;
+
+        const start = match.index + rawOffset;
+        const end = start + match[2].length;
+
+        if (
+          this.shouldSuppress({
+            raw,
+            text,
+            start,
+            end,
+            patternName: "aws_secret_access_key_assignment",
+            key: "aws_secret_access_key",
+            placeholderType: "AWS_SECRET_KEY",
+            source: "assignment"
+          })
+        ) {
+          continue;
+        }
+
+        const entropy = calculateEntropy(raw);
+        findings.push(
+          this.buildFinding({
+            category: "credential",
+            placeholderType: "AWS_SECRET_KEY",
+            raw,
+            start,
+            end,
+            score: 97,
+            methods: ["assignment", "adjacent-aws-key", entropy >= 3.6 ? "entropy" : null].filter(
+              Boolean
+            )
+          })
+        );
+      }
+
+      return findings;
+    }
+
     scanSqlServerPasswordAttributes(text) {
       const findings = [];
       const candidates = collectSqlServerPasswordAttributeCandidates(text);
@@ -3496,7 +3914,7 @@
       }
 
       const findings = [];
-      const regex = /\b[A-Za-z0-9+/_-]{16,}={0,2}\b/g;
+      const regex = /\b[A-Za-z0-9+/_-]{8,}={0,2}\b/g;
       let match;
 
       while ((match = regex.exec(text)) !== null) {
@@ -3513,21 +3931,17 @@
         if (looksLikeFilesystemPath(text, start, end, raw)) continue;
         if (hasUnsupportedVendorHexAssignmentContext(text, start, raw)) continue;
         if (hasSafeAssignmentKeyContext(text, start)) continue;
+        if (hasKnownSecretTokenShape(raw)) continue;
         if (this.shouldSuppress({ raw, text, start, end })) continue;
 
-        const entropy = calculateEntropy(raw);
-        const variety = countClassVariety(raw);
-        const ctx = contextScore(text, start, end);
-        let score = 0;
+        const decision = evaluateEntropyCandidate(raw, text, start, end);
+        if (!decision.redact) continue;
 
-        if (raw.length >= 20) score += 12;
-        if (entropy >= 4.1) score += 24;
-        if (entropy >= 4.5) score += 10;
-        if (variety >= 3) score += 10;
-        if (looksStructuredLikeSecret(raw)) score += 12;
-        score += ctx;
-
-        if (score < this.thresholds.medium) continue;
+        let score = 58 + Math.min(6, Math.max(0, contextScore(text, start, end)));
+        if (decision.reason === "secret-context-entropy") score += 10;
+        if (decision.reason === "base64ish-high-entropy") score += 8;
+        if (decision.reason === "general-high-entropy") score += 6;
+        if ((decision.entropy || 0) >= 4.5) score += 4;
 
         findings.push(
           this.buildFinding({
@@ -3537,7 +3951,7 @@
             start,
             end,
             score,
-            methods: ["entropy", "heuristic"]
+            methods: ["entropy", "heuristic", decision.reason].filter(Boolean)
           })
         );
       }
@@ -3939,12 +4353,14 @@
           ...(hasUrlUserinfo ? this.scanUrlCredentials(input) : []),
           ...this.scanSqlServerPasswordAttributes(input),
           ...this.scanPatterns(input),
+          ...this.scanProviderRegistry(input),
           ...this.scanAssignments(input),
           ...this.scanBearerTokenAssignments(input),
           ...this.scanExactInlineSecretAssignments(input),
           ...this.scanExplicitCredentialAssignments(input),
           ...this.scanLabelledProviderKeyValues(input),
           ...this.scanMultilineAwsCredentialLabels(input),
+          ...this.scanAdjacentAwsCredentialValues(input),
           ...this.scanAdversarialAssignments(input),
           ...(root.PWM.EnterpriseDetectors?.scanAll ? root.PWM.EnterpriseDetectors.scanAll(input, this) : []),
           ...(root.PWM.CloudProviderDetectors?.scanAll ? root.PWM.CloudProviderDetectors.scanAll(input, this) : []),
