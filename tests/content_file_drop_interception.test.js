@@ -1536,6 +1536,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "getContentExtractionBlockedMessage"),
       extractFunctionSource(contentSource, "localFileFromContentExtractionResult"),
       extractFunctionSource(contentSource, "isUnsupportedLegacyOfficeFile"),
+      extractFunctionSource(contentSource, "isUnsupportedBinaryFileForProtectedUpload"),
       extractFunctionSource(contentSource, "getLocalFileExtension"),
       extractFunctionSource(contentSource, "getLocalFileMimeType"),
       extractFunctionSource(contentSource, "isUnsupportedImageFileForProtectedUpload"),
@@ -6668,6 +6669,54 @@ async function testProtectedLegacyOfficeFileInputBlocksRawUpload() {
   }
 }
 
+async function testProtectedUnknownBinaryFileInputBlocksRawUpload() {
+  const rawSecret = "sk-proj-ProtectedUnknownBinaryUnitQa1234567890abcdef";
+  const rawFile = createTextFile({
+    name: "payload.bin",
+    type: "application/octet-stream",
+    text: `BIN_API_KEY=${rawSecret}`
+  });
+  const fileInput = createFileInput();
+  fileInput.files = [rawFile];
+  fileInput.value = "C:\\fakepath\\payload.bin";
+  const { maybeHandleFileInputChange, resolveFileDragGuardPolicy, calls } = createHarness({
+    location: { hostname: "local.example" },
+    currentPublicState: {
+      protection: { paused: false }
+    },
+    findComposer: () => null,
+    readLocalTextFileFromDataTransfer: async () => {
+      throw new Error("protected unknown binary should be blocked before the raw reader");
+    },
+    handOffSanitizedLocalFile() {
+      throw new Error("protected unknown binary must not hand off a raw file");
+    }
+  });
+  const dragPolicy = resolveFileDragGuardPolicy({
+    types: ["Files"],
+    files: [rawFile],
+    items: []
+  });
+  const { event, calls: eventCalls } = createEvent({
+    type: "change",
+    target: fileInput
+  });
+
+  await maybeHandleFileInputChange(event);
+
+  assert.strictEqual(dragPolicy.action, "block");
+  assert.strictEqual(dragPolicy.reason, "unsupported_protected_file_blocked");
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(eventCalls.stopImmediatePropagation, 1);
+  assert.strictEqual(fileInput.value, "");
+  assert.strictEqual(calls.reads.length, 0);
+  assert.strictEqual(calls.redactions.length, 0);
+  assert.strictEqual(calls.createdFiles.length, 0);
+  assert.strictEqual(calls.handoffs.length, 0);
+  assert.ok(calls.modals.some(([title]) => title === "Raw file upload blocked"));
+  assert.strictEqual(JSON.stringify(calls).includes(rawSecret), false);
+}
+
 async function testUnsupportedFileReadFailureHidesProcessingUi() {
   const fileInput = createFileInput();
   fileInput.files = [{ name: "unsupported.pdf", type: "application/pdf", size: 128 }];
@@ -9617,6 +9666,10 @@ function testProtectedUnsupportedImageDropBranchBlocksBeforeOriginalReplay() {
     failClosedSource.includes("isUnsupportedImageFileForProtectedUpload"),
     "protected unsupported fail-closed helper should include unsupported image files"
   );
+  assert.ok(
+    failClosedSource.includes("isUnsupportedBinaryFileForProtectedUpload"),
+    "protected unsupported fail-closed helper should include unknown binary files"
+  );
 
   const dropSource = extractFunctionSource(contentSource, "maybeHandleDrop");
   const protectedBlockIndex = dropSource.indexOf("shouldFailClosedProtectedUnsupportedFileTransfer(transferPolicy)");
@@ -9991,8 +10044,7 @@ async function testProtectedUnsupportedImageDropsFailClosedWithoutOriginalReplay
 async function testUnsupportedDocumentAndImageFilesPassThroughByDefault() {
   for (const name of [
     "archive.zip",
-    "installer.exe",
-    "archive.bin"
+    "installer.exe"
   ]) {
     const { editor, child } = createGeminiEditor("");
     const { maybeHandleDrop, calls } = createHarness({
@@ -10110,10 +10162,12 @@ async function testUnsupportedBinaryIsBlockedBeforeGeminiPolicyPassThrough() {
   assert.strictEqual(event.defaultPrevented, true);
   assert.strictEqual(calls.redactions.length, 0);
   assert.strictEqual(calls.handoffs.length, 0);
-  assert.ok(
-    calls.badges.some(([message]) => String(message || "").includes("normal upload may continue"))
+  assert.strictEqual(
+    calls.badges.some(([message]) => String(message || "").includes("normal upload may continue")),
+    false
   );
-  assert.strictEqual(calls.modals.length, 0);
+  assert.ok(calls.badges.some(([message]) => String(message || "").includes("Raw file upload blocked")));
+  assert.ok(calls.modals.some(([title]) => title === "Raw file upload blocked"));
 }
 
 async function testInvalidUtf8DropBlocksWithoutOriginalHandoff() {
@@ -13833,6 +13887,7 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testSupportedDocumentDropUsesContentExtractionPipelineBeforeUnsupportedNotice();
   await testScannedPdfFileInputExplainsFailClosedReason();
   await testProtectedLegacyOfficeFileInputBlocksRawUpload();
+  await testProtectedUnknownBinaryFileInputBlocksRawUpload();
   await testUnsupportedFileReadFailureHidesProcessingUi();
   await testFileProcessingUiClearsAfterException();
   await testLocalFileDropProcessingUiClearsAfterException();

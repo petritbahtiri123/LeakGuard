@@ -8576,6 +8576,12 @@
     return /\.(?:doc|docm|xls|xlsm)$/i.test(String(file?.name || "").toLowerCase());
   }
 
+  function isUnsupportedBinaryFileForProtectedUpload(file) {
+    const extension = getLocalFileExtension(file);
+    const mimeType = getLocalFileMimeType(file);
+    return extension === ".bin" || (extension === "" && mimeType === "application/octet-stream");
+  }
+
   function getLocalFileExtension(file) {
     if (typeof FileScanner.getFileExtension === "function") {
       return String(FileScanner.getFileExtension(file?.name || "") || "").toLowerCase();
@@ -8618,7 +8624,9 @@
     const files = Array.from(policy.files || []);
     return (
       files.length === 1 &&
-      (isUnsupportedLegacyOfficeFile(files[0]) || isUnsupportedImageFileForProtectedUpload(files[0]))
+      (isUnsupportedLegacyOfficeFile(files[0]) ||
+        isUnsupportedImageFileForProtectedUpload(files[0]) ||
+        isUnsupportedBinaryFileForProtectedUpload(files[0]))
     );
   }
 

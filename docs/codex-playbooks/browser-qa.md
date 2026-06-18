@@ -46,3 +46,41 @@ npm run qa:browser
 ```
 
 Only summarize relevant safe failure lines in final responses.
+
+## Fast And Full Matrix
+
+Use the fast command for release/browser gates:
+
+```bash
+npm run qa:browser
+```
+
+Use the opt-in full matrix when hardening browser coverage or before broad file-flow releases:
+
+```bash
+npm run qa:browser:full
+```
+
+Both commands write sanitized JSON to `artifacts/browser-qa/browser-qa-report.json`.
+
+Fast matrix:
+- Text inputs: typed text and paste text through the local protected QA page.
+- File inputs: `.env`, `.json`, `.log`, PDF, DOCX, XLSX, PNG OCR/redaction.
+- File drop: PDF drag/drop sanitized handoff or fail-closed block.
+- Controls: debug metadata-only checks, sanitized handoff checks, unsupported/malformed fail-closed checks.
+
+Full matrix adds browser-path file input coverage for:
+- Text: `.txt`, `.env`, `.json`, `.yaml`, `.yml`, `.log`, `.md`, `.html`, `.js`, `.ps1`, `.ini`, `.xml`, `.csv`.
+- Documents: `.pdf`, `.docx`, `.xlsx`.
+- Images: `.png`, `.jpg`, `.jpeg`, `.webp`.
+- Unsupported/unsafe controls: `.gif`, `.bmp`, `.ico`, `.svg`, unknown binary, malformed PDF/DOCX/XLSX, encrypted PDF, image-only PDF, legacy/macro Office formats.
+
+Current follow-ups:
+- Text drag/drop is not a real harness path yet; keep it documented until the local fixture can exercise it without synthetic flake.
+- `.tf`, `.tfvars`, and `.properties` are not in `FileTypeRegistry.SUPPORTED_TEXT_EXTENSIONS`; add registry support and unit coverage before adding them to the browser supported matrix.
+
+Safe failure output should name the stage, failure code, and canary IDs without raw values, for example:
+
+```text
+FILE_INPUT_REDACTION_FAILED: Chrome / local protected QA page / file input / sanitized handoff failed. Secret canaries checked: LGQA_SECRET_ENV, LGQA_EMAIL_ENV. Safety assessment: real security risk.
+```
