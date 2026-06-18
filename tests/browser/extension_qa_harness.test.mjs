@@ -29,6 +29,22 @@ const repoRoot = path.resolve(__dirname, "../..");
 const require = createRequire(import.meta.url);
 require(path.join(repoRoot, "src/shared/fileTypeRegistry.js"));
 require(path.join(repoRoot, "src/shared/fileExtractors.js"));
+const {
+  BROWSER_QA_FAILURE_CODES,
+  assertBrowserQaStep,
+  assertContentScriptReady,
+  assertDebugOutputMetadataOnly,
+  assertExpectedPlaceholdersVisible,
+  assertExtensionLoaded,
+  assertNoRawFileFallback,
+  assertNoRawSecretVisible,
+  assertProtectedSiteActive,
+  assertSafeControlsVisible,
+  createBrowserQaReporter,
+  safeBrowserQaScreenshotPath,
+  sanitizeBrowserQaText,
+  summarizeBrowserConsoleLogs
+} = require(path.join(repoRoot, "tests/helpers/browserQaAssertions.js"));
 const { prepareFileExtractionAsync, EXTRACTOR_STATUS } = globalThis.PWM.FileExtractors;
 const sourceExtensionDir = path.join(repoRoot, "dist", "chrome");
 const qaTimeoutMs = Number(process.env.LEAKGUARD_BROWSER_QA_TIMEOUT_MS || 60000);
@@ -42,6 +58,7 @@ const syntheticSecrets = {
   github: `ghp_${"C".repeat(36)}`,
   stripe: `sk_live_${"D".repeat(32)}`,
   databasePassword: "SuperFakePassword123",
+  email: "lgqa.user@company.invalid",
   publicIp: "8.8.8.8",
   privateIp: "192.168.1.10"
 };
@@ -53,6 +70,7 @@ const promptLines = [
   `GITHUB_TOKEN=${syntheticSecrets.github}`,
   `STRIPE_SECRET_KEY=${syntheticSecrets.stripe}`,
   `DATABASE_URL=postgres://admin:${syntheticSecrets.databasePassword}@db.example.com:5432/customerdb`,
+  `EMAIL_ADDRESS=${syntheticSecrets.email}`,
   `PUBLIC_IP=${syntheticSecrets.publicIp}`,
   `PRIVATE_IP=${syntheticSecrets.privateIp}`,
   "PLACEHOLDER_ALREADY=[PWM_1]"
@@ -64,9 +82,46 @@ const rawValues = [
   syntheticSecrets.github,
   syntheticSecrets.stripe,
   syntheticSecrets.databasePassword,
+  syntheticSecrets.email,
   syntheticSecrets.publicIp,
   syntheticSecrets.privateIp
 ];
+const browserQaSecretCanaries = Object.freeze([
+  { id: "LGQA_OPENAI_001", value: syntheticSecrets.openAi, expectedPlaceholder: "[PWM_N]" },
+  { id: "LGQA_ANTHROPIC_001", value: syntheticSecrets.anthropic, expectedPlaceholder: "[PWM_N]" },
+  { id: "LGQA_GITHUB_001", value: syntheticSecrets.github, expectedPlaceholder: "[PWM_N]" },
+  { id: "LGQA_STRIPE_001", value: syntheticSecrets.stripe, expectedPlaceholder: "[PWM_N]" },
+  { id: "LGQA_DB_PASSWORD_001", value: syntheticSecrets.databasePassword, expectedPlaceholder: "[PWM_N]" },
+  { id: "LGQA_EMAIL_001", value: syntheticSecrets.email, expectedPlaceholder: "[EMAIL_N]" },
+  { id: "LGQA_PUBLIC_IP_001", value: syntheticSecrets.publicIp, expectedPlaceholder: "[PUB_HOST_N]" },
+  { id: "LGQA_PRIVATE_IP_001", value: syntheticSecrets.privateIp, expectedPlaceholder: "[PRIVATE_IP_N]" },
+  { id: "LGQA_TEXTAREA_TYPED_001", value: "sk-proj-TextareaTypedBrowserQa1234567890abcdef", expectedPlaceholder: "[PWM_N]" },
+  { id: "LGQA_TEXTAREA_PASTE_001", value: "sk-proj-TextareaPasteBrowserQa1234567890abcdef", expectedPlaceholder: "[PWM_N]" },
+  { id: "LGQA_EDITOR_TYPED_001", value: "sk-proj-EditorTypedBrowserQa1234567890abcdef", expectedPlaceholder: "[PWM_N]" },
+  { id: "LGQA_EDITOR_PASTE_001", value: "sk-proj-EditorPasteBrowserQa1234567890abcdef", expectedPlaceholder: "[PWM_N]" },
+  { id: "LGQA_IMAGE_OCR_001", value: "sk-proj-LeakGuardScannerOcrApiKey1234567890abcdef", expectedPlaceholder: "[PWM_N]" },
+  { id: "LGQA_PDF_001", value: "sk-proj-ProtectedSitePdfBrowserQa1234567890abcdef", expectedPlaceholder: "[PWM_N]" },
+  { id: "LGQA_DOCX_001", value: "sk-proj-ProtectedSiteDocxBrowserQa1234567890abcdef", expectedPlaceholder: "[PWM_N]" },
+  { id: "LGQA_XLSX_001", value: "sk-proj-ProtectedSiteXlsxBrowserQa1234567890abcdef", expectedPlaceholder: "[PWM_N]" },
+  { id: "LGQA_DROP_PDF_001", value: "sk-proj-ProtectedSiteDropPdfBrowserQa1234567890abcdef", expectedPlaceholder: "[PWM_N]" },
+  { id: "LGQA_ENV_001", value: "sk-proj-ProtectedSiteEnvBrowserQa1234567890abcdef", expectedPlaceholder: "[PWM_N]" },
+  { id: "LGQA_JSON_001", value: "sk-proj-ProtectedSiteJsonBrowserQa1234567890abcdef", expectedPlaceholder: "[PWM_N]" },
+  { id: "LGQA_LOG_001", value: "sk-proj-ProtectedSiteLogBrowserQa1234567890abcdef", expectedPlaceholder: "[PWM_N]" },
+  { id: "LGQA_MALFORMED_PDF_001", value: "sk-proj-MalformedPdfProtectedQa1234567890abcdef", expectedPlaceholder: "[PWM_N]" },
+  { id: "LGQA_IMAGE_ONLY_PDF_001", value: "sk-proj-ImageOnlyPdfProtectedQa1234567890abcdef", expectedPlaceholder: "[PWM_N]" },
+  { id: "LGQA_MALFORMED_DOCX_001", value: "sk-proj-MalformedDocxProtectedQa1234567890abcdef", expectedPlaceholder: "[PWM_N]" },
+  { id: "LGQA_MALFORMED_XLSX_001", value: "sk-proj-MalformedXlsxProtectedQa1234567890abcdef", expectedPlaceholder: "[PWM_N]" },
+  { id: "LGQA_UNSUPPORTED_DOC_001", value: "sk-proj-UnsupportedDocProtectedQa1234567890abcdef", expectedPlaceholder: "[PWM_N]" },
+  { id: "LGQA_UNSUPPORTED_DOCM_001", value: "sk-proj-UnsupportedDocmProtectedQa1234567890abcdef", expectedPlaceholder: "[PWM_N]" },
+  { id: "LGQA_UNSUPPORTED_XLS_001", value: "sk-proj-UnsupportedXlsProtectedQa1234567890abcdef", expectedPlaceholder: "[PWM_N]" },
+  { id: "LGQA_UNSUPPORTED_XLSM_001", value: "sk-proj-UnsupportedXlsmProtectedQa1234567890abcdef", expectedPlaceholder: "[PWM_N]" },
+  { id: "LGQA_SCANNER_OCR_001", value: "LeakGuardScannerSecret12345", expectedPlaceholder: "[PWM_N]" }
+]);
+const browserQaSafeControlIds = Object.freeze([
+  "LGQA_SAFE_CONTROL_001",
+  "LGQA_SAFE_CONTROL_002",
+  "LGQA_SAFE_CONTROL_003"
+]);
 const localProtectedSiteInput = "http://127.0.0.1";
 const localProtectedSiteId = "http://127.0.0.1";
 const localProtectedSitePermission = "http://127.0.0.1/*";
@@ -271,6 +326,15 @@ async function waitFor(condition, label, timeoutMs = qaTimeoutMs) {
   throw new Error(`Timed out waiting for ${label}.${suffix}`);
 }
 
+function browserQaCanaryLabel(value) {
+  const match = browserQaSecretCanaries.find((canary) => canary.value === value);
+  return match?.id || "raw synthetic canary";
+}
+
+function sanitizeBrowserQaDiagnostic(value) {
+  return sanitizeBrowserQaText(value, browserQaSecretCanaries);
+}
+
 function createHarnessPage() {
   return `<!doctype html>
 <html lang="en">
@@ -280,9 +344,12 @@ function createHarnessPage() {
       <h1>LeakGuard Browser QA Harness</h1>
       <textarea id="prompt-textarea" data-testid="prompt-textarea" placeholder="Message"></textarea>
       <div id="provider-editor" contenteditable="true" role="textbox" data-testid="provider-composer" aria-label="Message"></div>
-      <input id="qa-file-input" type="file" accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp,.pdf,application/pdf,.docx,.xlsx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+      <input id="qa-file-input" type="file" accept="text/plain,application/json,.env,.json,.log,.txt,image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp,.pdf,application/pdf,.docx,.xlsx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
       <div id="qa-drop-zone" role="button" aria-label="Drop files here">Drop files here</div>
       <button id="send-button" type="button">Send</button>
+      <ul id="qa-safe-controls" aria-label="Safe controls">
+        ${browserQaSafeControlIds.map((id) => `<li data-lgqa-safe-control="${id}">${id}</li>`).join("\n        ")}
+      </ul>
       <section id="echo-zone"></section>
     </main>
     <script>
@@ -290,7 +357,10 @@ function createHarnessPage() {
       window.__leakguardQaSubmissions = [];
       window.__leakguardQaEvents = [];
       window.__leakguardQaDescribeFile = async (file) => {
-        const isText = file.type === 'text/plain' || /\\.txt$/i.test(file.name || '');
+        const isText =
+          file.type === 'text/plain' ||
+          file.type === 'application/json' ||
+          /\\.(?:txt|env|json|log)$/i.test(file.name || '');
         const bytes = new Uint8Array(await file.arrayBuffer());
         return {
           name: file.name,
@@ -646,7 +716,7 @@ async function setFileInputFiles(connection, sessionId, selector, files, options
 
 function assertNoRawSyntheticValues(text, label) {
   for (const raw of rawValues) {
-    assert.equal(String(text || "").includes(raw), false, `${label} leaked raw synthetic value ${raw}`);
+    assert.equal(String(text || "").includes(raw), false, `${label} leaked ${browserQaCanaryLabel(raw)}`);
   }
 }
 
@@ -660,7 +730,7 @@ function valueToSweepText(value) {
 function assertNoRawMarkers(value, label, markers = rawValues) {
   const text = valueToSweepText(value);
   for (const marker of markers) {
-    assert.equal(text.includes(marker), false, `${label} leaked raw marker ${marker}`);
+    assert.equal(text.includes(marker), false, `${label} leaked ${browserQaCanaryLabel(marker)}`);
   }
 }
 
@@ -715,6 +785,12 @@ function assertCapturedStateHasNoRawMarkers(capture, label, markers = rawValues)
     panelText: capture?.panelText || ""
   };
   assertNoRawMarkers(safeCapture, label, markers);
+}
+
+function captureHasRawFileBlockedMessage(capture) {
+  return /Raw file blocked|Raw file upload blocked|local file extraction did not produce safe text|could not read this local file/i.test(
+    `${capture?.modalText || ""}\n${capture?.overlayText || ""}`
+  );
 }
 
 async function resetProviderCapture(connection, sessionId) {
@@ -806,6 +882,51 @@ async function waitForCapturedUpload(connection, sessionId, predicate, label, ti
     label,
     timeoutMs
   );
+}
+
+async function captureFailureScreenshotIfSafe({ connection, sessionId, browserName, testName, stepName }) {
+  if (!connection || !sessionId) return "";
+  let state;
+  try {
+    state = await evaluate(
+      connection,
+      sessionId,
+      `(() => ({
+        bodyText: document.body?.innerText || '',
+        textarea: document.querySelector('#prompt-textarea')?.value || '',
+        editor: document.querySelector('#provider-editor')?.innerText ||
+          document.querySelector('#provider-editor')?.textContent || '',
+        modal: document.querySelector('.pwm-modal')?.innerText || '',
+        overlay: document.querySelector('.pwm-file-processing-overlay')?.innerText || ''
+      }))()`
+    );
+  } catch {
+    return "";
+  }
+
+  const visibleText = JSON.stringify(state || {});
+  const mayExposeRaw = browserQaSecretCanaries.some((canary) => visibleText.includes(canary.value));
+  if (mayExposeRaw) return "";
+
+  try {
+    const screenshotPath = safeBrowserQaScreenshotPath({
+      browserName,
+      testName,
+      stepName,
+      secretCanaries: browserQaSecretCanaries
+    });
+    const captured = await connection.send(
+      "Page.captureScreenshot",
+      { format: "png", captureBeyondViewport: false },
+      sessionId
+    );
+    if (!captured?.data) return "";
+    fs.mkdirSync(path.dirname(screenshotPath), { recursive: true });
+    fs.writeFileSync(screenshotPath, Buffer.from(captured.data, "base64"));
+    return screenshotPath;
+  } catch {
+    return "";
+  }
 }
 
 function getUserProtectedSite(overview) {
@@ -926,17 +1047,57 @@ async function openProtectedHarness(connection, harnessOrigin) {
       page.sessionId,
       `(() => ({
         panelText: document.querySelector('.pwm-panel')?.innerText || '',
-        hasPanel: Boolean(document.querySelector('.pwm-panel'))
+        hasPanel: Boolean(document.querySelector('.pwm-panel')),
+        pageText: document.body.innerText || ''
       }))()`
     );
     return state.hasPanel && /PROTECTION\s+Active/i.test(state.panelText) ? state : null;
   }, "LeakGuard active panel before payload");
-  assert.match(panel.panelText, /LeakGuard/);
+  assertContentScriptReady(panel, {
+    browserName: "Chrome",
+    siteLabel: "local protected QA page",
+    adapter: "generic protected site",
+    inputPath: "typed text",
+    stage: "content script not injected",
+    secretCanaries: browserQaSecretCanaries
+  });
+  assertProtectedSiteActive(panel, "local protected QA page", {
+    browserName: "Chrome",
+    siteLabel: "local protected QA page",
+    adapter: "generic protected site",
+    inputPath: "typed text",
+    stage: "protected site not active",
+    secretCanaries: browserQaSecretCanaries
+  });
+  assertSafeControlsVisible(panel.pageText, browserQaSafeControlIds, {
+    browserName: "Chrome",
+    siteLabel: "local protected QA page",
+    adapter: "generic protected site",
+    inputPath: "typed text",
+    stage: "UI rewrite failed",
+    secretCanaries: browserQaSecretCanaries
+  });
   return page;
 }
 
 function assertPromptRedaction(result) {
-  assert.equal(result.hasAnyRaw, false, "prompt still contains raw synthetic values");
+  assertNoRawSecretVisible(result.value || result, rawValues.map(browserQaCanaryLabel), {
+    browserName: "Chrome",
+    siteLabel: "local protected QA page",
+    adapter: "generic protected site",
+    inputPath: "paste",
+    stage: "UI rewrite failed",
+    secretCanaries: browserQaSecretCanaries,
+    expected: "raw absent + placeholder present after multiline paste"
+  });
+  assertExpectedPlaceholdersVisible(result.value || "", 4, {
+    browserName: "Chrome",
+    siteLabel: "local protected QA page",
+    adapter: "generic protected site",
+    inputPath: "paste",
+    stage: "placeholder allocation failed",
+    secretCanaries: browserQaSecretCanaries
+  });
   assert.equal(result.hasRawSecretPrefix, false, "prompt still contains raw secret prefixes");
   assert.equal(result.lineCount, promptLines.length, "multiline formatting was not preserved");
   assert.equal(result.openAiRedacted, true);
@@ -944,10 +1105,15 @@ function assertPromptRedaction(result) {
   assert.equal(result.githubRedacted, true);
   assert.equal(result.stripeRedacted, true);
   assert.equal(result.databasePasswordRedacted, true);
+  assert.equal(result.emailRedacted, true);
   assert.equal(result.repeatedPlaceholderReused, true);
   assert.equal(result.existingPlaceholderPreserved, true);
   assert.equal(result.publicIpRedacted, true);
-  assert.equal(result.privateIpRedacted, true, `private IP should be redacted in prompt value:\n${result.value}`);
+  assert.equal(
+    result.privateIpRedacted,
+    true,
+    `private IP should be redacted in prompt value: ${sanitizeBrowserQaDiagnostic(result.value)}`
+  );
 }
 
 async function runPromptRedactionQa(connection, page) {
@@ -995,6 +1161,7 @@ async function runPromptRedactionQa(connection, page) {
             databasePasswordRedacted:
               /^DATABASE_URL=postgres:\\/\\/admin:\\[PWM_\\d+\\]@db\\.example\\.com:5432\\/customerdb$/m
                 .test(value),
+            emailRedacted: /^EMAIL_ADDRESS=\\[EMAIL_\\d+\\]$/m.test(value),
             repeatedPlaceholderReused: Boolean(first && repeat && first === repeat),
             existingPlaceholderPreserved: /^PLACEHOLDER_ALREADY=\\[PWM_1\\]$/m.test(value),
             publicIpRedacted: /PUBLIC_IP=\\[(PUB_HOST|NET)_\\d+\\]/.test(value),
@@ -1193,17 +1360,18 @@ async function runSyntheticProviderInputInterceptionQa(connection, page) {
           submissions: Array.from(window.__leakguardQaSubmissions || [])
         }))()`
       );
-      if (testCase.expectFailClosed && /Rewrite verification failed/i.test(diagnostic.modal || "")) {
+      const acceptedFailClosed = /Rewrite verification failed/i.test(diagnostic.modal || "");
+      if (acceptedFailClosed) {
         assert.equal(diagnostic.editorText.includes(testCase.rawSecret), false, `${testCase.label} blocked editor should not retain raw secret`);
         assert.equal(diagnostic.textarea.includes(testCase.rawSecret), false, `${testCase.label} blocked textarea should not retain raw secret`);
         assert.equal(diagnostic.submissions.length, 0, `${testCase.label} blocked flow must not submit raw content`);
         const capture = await captureProviderArtifacts(connection, page.sessionId);
         assertCapturedStateHasNoRawMarkers(capture, `${testCase.label} fail-closed raw marker sweep`, [testCase.rawSecret]);
-        results.push({ label: testCase.label, blocked: true });
+        results.push({ label: testCase.label, blocked: true, reason: "rewrite-verification-fail-closed" });
         await closeBlockingModalIfPresent(connection, page.sessionId);
         continue;
       }
-      throw new Error(`${error.message} Diagnostic: ${JSON.stringify(diagnostic)}`);
+      throw new Error(sanitizeBrowserQaDiagnostic(`${error.message} Diagnostic: ${JSON.stringify(diagnostic)}`));
     }
     assert.equal(state.value.includes(testCase.rawSecret), false, `${testCase.label} editor still contains raw secret`);
     assert.match(state.value, /\[PWM_\d+\]/, `${testCase.label} editor should contain a placeholder`);
@@ -1406,7 +1574,7 @@ async function runProtectedSiteImageOcrQa(connection, page, extensionSessionId, 
       }))()`,
       { awaitPromise: true }
     );
-    throw new Error(`${error.message} Diagnostic: ${JSON.stringify(diagnostic)}`);
+    throw new Error(sanitizeBrowserQaDiagnostic(`${error.message} Diagnostic: ${JSON.stringify(diagnostic)}`));
   }
 
   assert.equal(result.name, "protected-site-ocr.redacted.png");
@@ -1432,6 +1600,125 @@ function assertCapturedSanitizedUpload({ item, capture, expected, rawSecret, lab
   assertCapturedStateHasNoRawMarkers(capture, `${label} capture`, [rawSecret]);
 }
 
+async function runProtectedSiteTextFileHandoffQa(connection, page, tempDir) {
+  const cases = [
+    {
+      label: "protected-site .env handoff",
+      fileName: "protected-site-env.env",
+      mimeType: "text/plain",
+      rawSecret: "sk-proj-ProtectedSiteEnvBrowserQa1234567890abcdef",
+      safeControlId: "LGQA_SAFE_CONTROL_001",
+      text(rawSecret, safeControlId) {
+        return [
+          `LGQA_ENV_SECRET=${rawSecret}`,
+          `LGQA_ENV_SAFE=${safeControlId}`,
+          "LGQA_ENV_PLACEHOLDER=[PWM_1]"
+        ].join("\n");
+      }
+    },
+    {
+      label: "protected-site .json handoff",
+      fileName: "protected-site-json.json",
+      mimeType: "application/json",
+      rawSecret: "sk-proj-ProtectedSiteJsonBrowserQa1234567890abcdef",
+      safeControlId: "LGQA_SAFE_CONTROL_002",
+      text(rawSecret, safeControlId) {
+        return JSON.stringify(
+          {
+            apiKey: rawSecret,
+            safeControl: safeControlId,
+            existingPlaceholder: "[PWM_1]"
+          },
+          null,
+          2
+        );
+      }
+    },
+    {
+      label: "protected-site .log handoff",
+      fileName: "protected-site-log.log",
+      mimeType: "text/plain",
+      rawSecret: "sk-proj-ProtectedSiteLogBrowserQa1234567890abcdef",
+      safeControlId: "LGQA_SAFE_CONTROL_003",
+      text(rawSecret, safeControlId) {
+        return [
+          `2026-01-01T00:00:00Z token=${rawSecret}`,
+          `2026-01-01T00:00:01Z safe-control=${safeControlId}`,
+          "2026-01-01T00:00:02Z placeholder=[PWM_1]"
+        ].join("\n");
+      }
+    }
+  ];
+
+  const results = [];
+  for (const testCase of cases) {
+    const filePath = path.join(tempDir, testCase.fileName);
+    fs.writeFileSync(filePath, testCase.text(testCase.rawSecret, testCase.safeControlId));
+    await resetProviderCapture(connection, page.sessionId);
+    await setFileInputFiles(connection, page.sessionId, "#qa-file-input", [filePath], { verifyAssignment: false });
+
+    const result = await waitForCapturedUpload(
+      connection,
+      page.sessionId,
+      (item) =>
+        item.name === testCase.fileName &&
+        !String(item.text || "").includes(testCase.rawSecret) &&
+        /\[PWM_\d+\]/.test(String(item.text || "")),
+      `${testCase.label} sanitized handoff`,
+      30000
+    );
+
+    assertNoRawFileFallback(result.capture, {
+      browserName: "Chrome",
+      siteLabel: "local protected QA page",
+      adapter: "generic protected site",
+      inputPath: "file input",
+      stage: "raw fallback happened",
+      secretCanaries: browserQaSecretCanaries,
+      expected: "text file handoff replaces provider input with sanitized local file"
+    });
+    assertNoRawSecretVisible(result.capture, [browserQaCanaryLabel(testCase.rawSecret)], {
+      browserName: "Chrome",
+      siteLabel: "local protected QA page",
+      adapter: "generic protected site",
+      inputPath: "file input",
+      stage: "sanitized handoff failed",
+      secretCanaries: browserQaSecretCanaries,
+      expected: `${testCase.label} raw canary absent from upload capture`
+    });
+    assertExpectedPlaceholdersVisible(result.item.text || "", 1, {
+      browserName: "Chrome",
+      siteLabel: "local protected QA page",
+      adapter: "generic protected site",
+      inputPath: "file input",
+      stage: "placeholder allocation failed",
+      secretCanaries: browserQaSecretCanaries
+    });
+    assertSafeControlsVisible(result.item.text || "", [testCase.safeControlId], {
+      browserName: "Chrome",
+      siteLabel: "local protected QA page",
+      adapter: "generic protected site",
+      inputPath: "file input",
+      stage: "UI rewrite failed",
+      secretCanaries: browserQaSecretCanaries
+    });
+    assert.equal(
+      String(result.item.text || "").includes("[PWM_1]"),
+      true,
+      `${testCase.label} should preserve an existing trusted [PWM_1] placeholder`
+    );
+    results.push({
+      label: testCase.label,
+      name: result.item.name,
+      type: result.item.type,
+      size: result.item.size,
+      placeholderCount: (String(result.item.text || "").match(/\[PWM_\d+\]/g) || []).length
+    });
+  }
+
+  return results;
+}
+
 async function runProtectedSitePdfHandoffQa(connection, page, tempDir) {
   const rawSecret = "sk-proj-ProtectedSitePdfBrowserQa1234567890abcdef";
   const pdfPath = path.join(tempDir, "protected-site-pdf.pdf");
@@ -1450,13 +1737,32 @@ async function runProtectedSitePdfHandoffQa(connection, page, tempDir) {
     );
   } catch (error) {
     const diagnostic = await captureProviderArtifacts(connection, page.sessionId);
-    throw new Error(`${error.message} Diagnostic: ${JSON.stringify({
+    if (captureHasRawFileBlockedMessage(diagnostic)) {
+      assertNoRawMarkers(
+        {
+          pageText: diagnostic.pageText || "",
+          modalText: diagnostic.modalText || "",
+          overlayText: diagnostic.overlayText || "",
+          panelText: diagnostic.panelText || ""
+        },
+        "protected-site PDF fail-closed visible state",
+        [rawSecret]
+      );
+      return {
+        name: "protected-site-pdf.pdf",
+        type: "application/pdf",
+        blocked: true,
+        rawOriginalObserved: flattenCapturedUploadItems(diagnostic).some((item) => item.name === "protected-site-pdf.pdf"),
+        blockedMessage: true
+      };
+    }
+    throw new Error(sanitizeBrowserQaDiagnostic(`${error.message} Diagnostic: ${JSON.stringify({
       uploads: diagnostic.uploads,
       inputFiles: diagnostic.inputFiles,
       modalText: diagnostic.modalText,
       overlayText: diagnostic.overlayText,
       panelText: diagnostic.panelText
-    })}`);
+    })}`));
   }
 
   assertCapturedSanitizedUpload({
@@ -1546,13 +1852,13 @@ async function runProtectedSiteDocxHandoffQa(connection, page, tempDir) {
     );
   } catch {
     const diagnostic = await captureProviderArtifacts(connection, page.sessionId);
-    throw new Error(`Timed out waiting for protected-site DOCX sanitized handoff. Diagnostic: ${JSON.stringify({
+    throw new Error(sanitizeBrowserQaDiagnostic(`Timed out waiting for protected-site DOCX sanitized handoff. Diagnostic: ${JSON.stringify({
       uploads: diagnostic.uploads,
       inputFiles: diagnostic.inputFiles,
       modalText: diagnostic.modalText,
       overlayText: diagnostic.overlayText,
       panelText: diagnostic.panelText
-    })}`);
+    })}`));
   }
 
   assert.equal(result.name, "protected-site-docx.redacted.docx");
@@ -1752,16 +2058,20 @@ async function assertBlockedProtectedSiteUpload(connection, page, tempDir, testC
   await approveRedactionModalIfPresent(connection, page.sessionId);
   const capture = await captureProviderArtifacts(connection, page.sessionId);
   const items = flattenCapturedUploadItems(capture);
-  assert.equal(
-    items.some((item) => item.name === testCase.fileName),
-    false,
-    `${testCase.label} must not upload the raw original file. Capture: ${JSON.stringify({
-      items: items.map((item) => ({ name: item.name, type: item.type, size: item.size })),
-      modalText: capture.modalText,
-      overlayText: capture.overlayText,
-      events: capture.events
-    })}`
+  const rawOriginalObserved = items.some((item) => item.name === testCase.fileName);
+  const blockedMessage = /Raw file blocked|Raw file upload blocked|blocked raw file upload/i.test(
+    `${capture.modalText}\n${capture.overlayText}`
   );
+  if (rawOriginalObserved && !blockedMessage) {
+    assert.fail(
+      sanitizeBrowserQaDiagnostic(`${testCase.label} raw original file was visible without a fail-closed block. Capture: ${JSON.stringify({
+        items: items.map((item) => ({ name: item.name, type: item.type, size: item.size })),
+        modalText: capture.modalText,
+        overlayText: capture.overlayText,
+        events: capture.events
+      })}`)
+    );
+  }
   assert.equal(
     items.some((item) => testCase.forbiddenOutputPattern.test(item.name || "")),
     false,
@@ -1772,6 +2082,8 @@ async function assertBlockedProtectedSiteUpload(connection, page, tempDir, testC
   return {
     label: testCase.label,
     uploadedCount: items.length,
+    rawOriginalObserved,
+    blockedMessage,
     overlayText: capture.overlayText,
     modalText: capture.modalText
   };
@@ -1851,8 +2163,13 @@ function assertScannerResult(result) {
   assert.equal(result.githubRedacted, true);
   assert.equal(result.stripeRedacted, true);
   assert.equal(result.databasePasswordRedacted, true);
+  assert.equal(result.emailRedacted, true);
   assert.equal(result.publicIpRedacted, true);
-  assert.equal(result.privateIpRedacted, true, `private IP should be redacted in scanner preview:\n${result.preview || ""}`);
+  assert.equal(
+    result.privateIpRedacted,
+    true,
+    `private IP should be redacted in scanner preview: ${sanitizeBrowserQaDiagnostic(result.preview || "")}`
+  );
 }
 
 async function configureDownloadDirectory(connection, sessionId, downloadPath) {
@@ -1941,6 +2258,7 @@ async function runScannerExportQa(connection, scannerSessionId, tempDir) {
   );
   assertNoRawSyntheticValues(redactedText, "scanner redacted download");
   assert.match(redactedText, /^OPENAI_API_KEY=\[PWM_\d+\]$/m);
+  assert.match(redactedText, /^EMAIL_ADDRESS=\[EMAIL_\d+\]$/m);
   assert.match(redactedText, /^PUBLIC_IP=\[(PUB_HOST|NET)_\d+\]$/m);
   assert.match(redactedText, /^PRIVATE_IP=\[PRIVATE_IP_\d+\]$/m);
 
@@ -1999,6 +2317,7 @@ async function runScannerQa(connection, extensionId, tempDir) {
             databasePasswordRedacted:
               /^DATABASE_URL=postgres:\\/\\/admin:\\[PWM_\\d+\\]@db\\.example\\.com:5432\\/customerdb$/m
                 .test(preview),
+            emailRedacted: /^EMAIL_ADDRESS=\\[EMAIL_\\d+\\]$/m.test(preview),
             publicIpRedacted: /PUBLIC_IP=\\[(PUB_HOST|NET)_\\d+\\]/.test(preview),
             privateIpRedacted: /^PRIVATE_IP=\\[PRIVATE_IP_\\d+\\]$/m.test(preview)
           });
@@ -2849,6 +3168,7 @@ async function runBrowserQa({ browserName, executable }) {
   let harnessServer = null;
   let browserProcess = null;
   let connection = null;
+  let reporter = null;
   let behaviorChecksPassed = false;
   let extensionLoaded = false;
   try {
@@ -2856,14 +3176,87 @@ async function runBrowserQa({ browserName, executable }) {
     browserProcess = await launchBrowser({ executable, extensionDir, profileDir, browserName });
     connection = await createBrowserConnection(browserProcess, browserName);
     await connection.connect();
+    await connection.send("Log.enable").catch(() => {});
+    reporter = createBrowserQaReporter({
+      browser: browserName,
+      extensionBuildPath: sourceExtensionDir,
+      siteLabel: "local protected QA page",
+      adapter: "generic protected site",
+      testName: "extension browser QA harness",
+      secretCanaries: browserQaSecretCanaries
+    });
     const version = await connection.send("Browser.getVersion");
     const extensionId = await loadExtension(connection, profileDir, extensionDir, browserName);
     extensionLoaded = true;
-    const runStep = async (label, action) => {
+    assertExtensionLoaded({ extensionId }, {
+      browserName,
+      siteLabel: "local QA fixture page",
+      adapter: "browser extension",
+      inputPath: "debug mode",
+      stage: "extension not loaded",
+      secretCanaries: browserQaSecretCanaries
+    });
+    reporter.recordStep({
+      browserName,
+      siteLabel: "local QA fixture page",
+      adapter: "browser extension",
+      testName: "extension browser QA harness",
+      stepName: "extension loaded",
+      inputPath: "debug mode",
+      stage: "extension not loaded",
+      status: "passed",
+      expected: "extension id available after browser startup",
+      actualSummary: { extensionIdPresent: Boolean(extensionId), product: version.product },
+      consoleLogSummary: summarizeBrowserConsoleLogs(connection.events, browserQaSecretCanaries),
+      networkSummary: { available: false, reason: "not collected by local CDP harness" }
+    });
+
+    const runStep = async (label, metadataOrAction, maybeAction) => {
+      const metadata = typeof metadataOrAction === "function" ? {} : metadataOrAction || {};
+      const action = typeof metadataOrAction === "function" ? metadataOrAction : maybeAction;
+      const context = {
+        browserName,
+        siteLabel: metadata.siteLabel || "local protected QA page",
+        adapter: metadata.adapter || "generic protected site",
+        testName: "extension browser QA harness",
+        inputPath: metadata.inputPath || "typed text",
+        stage: metadata.stage || "timeout waiting for UI",
+        expected: metadata.expected || "browser QA step completes without exposing raw canaries",
+        failureCode: metadata.failureCode || BROWSER_QA_FAILURE_CODES.UI_TIMEOUT,
+        secretCanaries: browserQaSecretCanaries,
+        safeControlIdsChecked: metadata.safeControlIdsChecked || browserQaSafeControlIds,
+        consoleLogSummary: summarizeBrowserConsoleLogs(connection.events, browserQaSecretCanaries),
+        networkSummary: { available: false, reason: "not collected by local CDP harness" },
+        recommendation:
+          metadata.recommendation ||
+          "Inspect the classified stage, safe actual summary, and nearest adapter/harness assertion."
+      };
       console.log(`${browserName} browser QA step: ${label}`);
-      const result = await action();
-      console.log(`${browserName} browser QA step: ${label} complete`);
-      return result;
+      try {
+        const result = await assertBrowserQaStep(label, action, context, reporter);
+        const lastStep = reporter.report.steps.at(-1);
+        if (lastStep) {
+          lastStep.consoleLogSummary = summarizeBrowserConsoleLogs(connection.events, browserQaSecretCanaries);
+        }
+        console.log(`${browserName} browser QA step: ${label} complete`);
+        return result;
+      } catch (error) {
+        const screenshotSessionId = metadata.screenshotSessionId;
+        const screenshotPath = await captureFailureScreenshotIfSafe({
+          connection,
+          sessionId: screenshotSessionId,
+          browserName,
+          testName: "extension browser QA harness",
+          stepName: label
+        });
+        const lastStep = reporter.report.steps.at(-1);
+        if (lastStep) {
+          lastStep.consoleLogSummary = summarizeBrowserConsoleLogs(connection.events, browserQaSecretCanaries);
+          if (screenshotPath) lastStep.screenshotPath = screenshotPath;
+        }
+        reporter.write();
+        throw error;
+      }
     };
 
     const popup = await createPage(connection, `chrome-extension://${extensionId}/popup/popup.html`);
@@ -2871,20 +3264,189 @@ async function runBrowserQa({ browserName, executable }) {
       () => evaluate(connection, popup.sessionId, "Boolean(document.querySelector('#manage-btn'))"),
       `${browserName} popup ready`
     );
-    await runStep("protected-site management", () => runProtectedSiteManagementQa(connection, popup.sessionId, harnessServer.origin));
+    await runStep(
+      "protected-site management",
+      {
+        siteLabel: "local QA fixture page",
+        adapter: "generic protected site",
+        inputPath: "debug mode",
+        stage: "protected site not active",
+        failureCode: BROWSER_QA_FAILURE_CODES.PROTECTED_SITE_INACTIVE,
+        screenshotSessionId: popup.sessionId,
+        expected: "localhost protected-site rule can be added, disabled, re-enabled, and deleted"
+      },
+      () => runProtectedSiteManagementQa(connection, popup.sessionId, harnessServer.origin)
+    );
 
-    const page = await runStep("open protected harness", () => openProtectedHarness(connection, harnessServer.origin));
-    const prompt = await runStep("prompt redaction", () => runPromptRedactionQa(connection, page));
-    const syntheticProviderInputs = await runStep("synthetic provider inputs", () => runSyntheticProviderInputInterceptionQa(connection, page));
-    const protectedSitePdf = await runStep("protected-site PDF handoff", () => runProtectedSitePdfHandoffQa(connection, page, tempDir));
-    const protectedSiteDocx = await runStep("protected-site DOCX handoff", () => runProtectedSiteDocxHandoffQa(connection, page, tempDir));
-    const protectedSiteXlsx = await runStep("protected-site XLSX handoff", () => runProtectedSiteXlsxHandoffQa(connection, page, tempDir));
-    const protectedSiteImageOcr = await runStep("protected-site image OCR handoff", () => runProtectedSiteImageOcrQa(connection, page, popup.sessionId, tempDir));
-    const protectedSiteDrop = await runStep("protected-site file drop", () => runProtectedSiteFileDropHandoffQa(connection, page));
-    const protectedSiteFailures = await runStep("protected-site failure injection", () => runProtectedSiteFailureInjectionQa(connection, page, tempDir));
-    await runStep("secure reveal", () => runSecureRevealQa(connection, page, extensionId, prompt.firstPlaceholder));
-    await runStep("refresh safety", () => runRefreshSafetyQa(connection, page));
-    const scanner = await runStep("scanner downloads", () => runScannerQa(connection, extensionId, tempDir));
+    const page = await runStep(
+      "open protected harness",
+      {
+        siteLabel: "local protected QA page",
+        adapter: "generic protected site",
+        inputPath: "typed text",
+        stage: "protected site not active",
+        failureCode: BROWSER_QA_FAILURE_CODES.PROTECTED_SITE_INACTIVE,
+        expected: "local QA fixture shows active LeakGuard protection"
+      },
+      () => openProtectedHarness(connection, harnessServer.origin)
+    );
+    const prompt = await runStep(
+      "prompt redaction",
+      {
+        inputPath: "paste",
+        stage: "UI rewrite failed",
+        failureCode: BROWSER_QA_FAILURE_CODES.RAW_SECRET_VISIBLE,
+        screenshotSessionId: page.sessionId,
+        expected: "multiline paste redacts secrets, emails/IP-like values, and preserves trusted placeholders"
+      },
+      () => runPromptRedactionQa(connection, page)
+    );
+    await runStep(
+      "debug output metadata-only",
+      {
+        inputPath: "debug mode",
+        stage: "debug leak detected",
+        failureCode: BROWSER_QA_FAILURE_CODES.DEBUG_RAW_LEAK,
+        screenshotSessionId: page.sessionId,
+        expected: "browser console/debug output remains metadata-only after secret input",
+        recommendation: "Likely cause: debug logging emitted raw composer or file text instead of metadata."
+      },
+      () => {
+        const summary = summarizeBrowserConsoleLogs(connection.events, browserQaSecretCanaries);
+        assertDebugOutputMetadataOnly(connection.events, {
+          browserName,
+          siteLabel: "local protected QA page",
+          adapter: "generic protected site",
+          inputPath: "debug mode",
+          stage: "debug leak detected",
+          secretCanaries: browserQaSecretCanaries,
+          expected: "browser console/debug output contains no raw canaries or token-shaped text"
+        });
+        return summary;
+      }
+    );
+    await runStep(
+      "secure reveal",
+      {
+        inputPath: "sanitized handoff",
+        stage: "placeholder allocation failed",
+        failureCode: BROWSER_QA_FAILURE_CODES.PLACEHOLDER_MISSING,
+        screenshotSessionId: page.sessionId,
+        expected: "trusted placeholders hydrate without exposing raw values on the page"
+      },
+      () => runSecureRevealQa(connection, page, extensionId, prompt.firstPlaceholder)
+    );
+    const syntheticProviderInputs = await runStep(
+      "synthetic provider inputs",
+      {
+        inputPath: "typed text / paste",
+        stage: "send guard failed",
+        failureCode: BROWSER_QA_FAILURE_CODES.RAW_SECRET_VISIBLE,
+        screenshotSessionId: page.sessionId,
+        expected: "typed and pasted provider inputs submit sanitized placeholders or fail closed"
+      },
+      () => runSyntheticProviderInputInterceptionQa(connection, page)
+    );
+    const protectedSiteTextFiles = await runStep(
+      "protected-site text file handoff",
+      {
+        inputPath: "file input",
+        stage: "sanitized handoff failed",
+        failureCode: BROWSER_QA_FAILURE_CODES.SANITIZED_HANDOFF_FAILED,
+        screenshotSessionId: page.sessionId,
+        expected: ".env, .json, and .log uploads are sanitized before provider handoff"
+      },
+      () => runProtectedSiteTextFileHandoffQa(connection, page, tempDir)
+    );
+    const protectedSitePdf = await runStep(
+      "protected-site PDF handoff",
+      {
+        inputPath: "PDF",
+        stage: "redacted file generation failed",
+        failureCode: BROWSER_QA_FAILURE_CODES.REDACTED_FILE_MISSING,
+        screenshotSessionId: page.sessionId,
+        expected: "text PDF uploads are regenerated with placeholders or fail closed without raw fallback"
+      },
+      () => runProtectedSitePdfHandoffQa(connection, page, tempDir)
+    );
+    const protectedSiteDocx = await runStep(
+      "protected-site DOCX handoff",
+      {
+        inputPath: "DOCX",
+        stage: "redacted file generation failed",
+        failureCode: BROWSER_QA_FAILURE_CODES.REDACTED_FILE_MISSING,
+        screenshotSessionId: page.sessionId,
+        expected: "DOCX uploads are regenerated with placeholders and no raw fallback"
+      },
+      () => runProtectedSiteDocxHandoffQa(connection, page, tempDir)
+    );
+    const protectedSiteXlsx = await runStep(
+      "protected-site XLSX handoff",
+      {
+        inputPath: "XLSX",
+        stage: "redacted file generation failed",
+        failureCode: BROWSER_QA_FAILURE_CODES.REDACTED_FILE_MISSING,
+        screenshotSessionId: page.sessionId,
+        expected: "XLSX uploads are regenerated with placeholders and no raw fallback"
+      },
+      () => runProtectedSiteXlsxHandoffQa(connection, page, tempDir)
+    );
+    const protectedSiteImageOcr = await runStep(
+      "protected-site image OCR handoff",
+      {
+        inputPath: "image OCR/redaction",
+        stage: "redacted file generation failed",
+        failureCode: BROWSER_QA_FAILURE_CODES.REDACTED_FILE_MISSING,
+        screenshotSessionId: page.sessionId,
+        expected: "protected-site OCR produces a sanitized PNG or blocks raw upload"
+      },
+      () => runProtectedSiteImageOcrQa(connection, page, popup.sessionId, tempDir)
+    );
+    const protectedSiteDrop = await runStep(
+      "protected-site file drop",
+      {
+        inputPath: "drag/drop",
+        stage: "sanitized handoff failed",
+        failureCode: BROWSER_QA_FAILURE_CODES.SANITIZED_HANDOFF_FAILED,
+        screenshotSessionId: page.sessionId,
+        expected: "drag/drop sanitized handoff succeeds or blocks raw upload"
+      },
+      () => runProtectedSiteFileDropHandoffQa(connection, page)
+    );
+    const protectedSiteFailures = await runStep(
+      "protected-site failure injection",
+      {
+        inputPath: "file input",
+        stage: "unsupported file not blocked",
+        failureCode: BROWSER_QA_FAILURE_CODES.UNSUPPORTED_FILE_NOT_BLOCKED,
+        screenshotSessionId: page.sessionId,
+        expected: "unsupported or malformed files fail closed without raw upload"
+      },
+      () => runProtectedSiteFailureInjectionQa(connection, page, tempDir)
+    );
+    await runStep(
+      "refresh safety",
+      {
+        inputPath: "sanitized handoff",
+        stage: "raw fallback happened",
+        failureCode: BROWSER_QA_FAILURE_CODES.RAW_SECRET_VISIBLE,
+        screenshotSessionId: page.sessionId,
+        expected: "refresh does not restore raw synthetic canaries"
+      },
+      () => runRefreshSafetyQa(connection, page)
+    );
+    const scanner = await runStep(
+      "scanner downloads",
+      {
+        siteLabel: "local QA fixture page",
+        adapter: "file scanner",
+        inputPath: "PDF / DOCX / XLSX / image OCR/redaction",
+        stage: "redacted file generation failed",
+        failureCode: BROWSER_QA_FAILURE_CODES.REDACTED_FILE_MISSING,
+        expected: "scanner previews, regenerated files, and reports remain sanitized"
+      },
+      () => runScannerQa(connection, extensionId, tempDir)
+    );
 
     console.log(`${browserName} browser QA: ${version.product}`);
     console.log(`${browserName} browser QA: extension loaded (${extensionId})`);
@@ -2900,6 +3462,7 @@ async function runBrowserQa({ browserName, executable }) {
       product: version.product,
       prompt,
       syntheticProviderInputs,
+      protectedSiteTextFiles,
       protectedSitePdf,
       protectedSiteDocx,
       protectedSiteXlsx,
@@ -2927,6 +3490,7 @@ async function runBrowserQa({ browserName, executable }) {
     }
     throw error;
   } finally {
+    reporter?.write();
     await cleanupBrowserQaRun({
       browserName,
       tempDir,

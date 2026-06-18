@@ -3617,9 +3617,10 @@
 
   function hasUnsafeVisibleSecret(text) {
     const analysis = analyzeText(text);
-    return (analysis.secretFindings || []).some(
-      (finding) => isHighConfidenceRewriteFinding(finding) && !containsVisiblePlaceholderToken(finding.raw)
-    );
+    return (analysis.secretFindings || []).some((finding) => {
+      const { raw = "" } = finding || {};
+      return isHighConfidenceRewriteFinding(finding) && !containsVisiblePlaceholderToken(raw);
+    });
   }
 
   function shouldSuppressStaleTypedRewriteFailure(rewriteGeneration, input, actualText = null) {

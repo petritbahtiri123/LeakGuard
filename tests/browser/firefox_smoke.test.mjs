@@ -3,6 +3,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { createSign, generateKeyPairSync, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import https from "node:https";
+import { createRequire } from "node:module";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -12,6 +13,8 @@ import { findExecutable } from "./chrome_smoke.test.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "../..");
+const require = createRequire(import.meta.url);
+const { sanitizeBrowserQaText } = require(path.join(repoRoot, "tests/helpers/browserQaAssertions.js"));
 const extensionDir = path.join(repoRoot, "dist", "firefox");
 const smokeTimeoutMs = Number(process.env.LEAKGUARD_FIREFOX_SMOKE_TIMEOUT_MS || 60000);
 const webdriverCommandTimeoutMs = Number(process.env.LEAKGUARD_FIREFOX_WEBDRIVER_TIMEOUT_MS || 30000);
@@ -52,6 +55,23 @@ const rawValues = [
   syntheticSecrets.publicIp,
   syntheticSecrets.privateIp
 ];
+const firefoxSmokeSecretCanaries = Object.freeze([
+  { id: "LGQA_FIREFOX_OPENAI_001", value: syntheticSecrets.openAi, expectedPlaceholder: "[PWM_N]" },
+  { id: "LGQA_FIREFOX_ANTHROPIC_001", value: syntheticSecrets.anthropic, expectedPlaceholder: "[PWM_N]" },
+  { id: "LGQA_FIREFOX_GITHUB_001", value: syntheticSecrets.github, expectedPlaceholder: "[PWM_N]" },
+  { id: "LGQA_FIREFOX_STRIPE_001", value: syntheticSecrets.stripe, expectedPlaceholder: "[PWM_N]" },
+  { id: "LGQA_FIREFOX_DB_PASSWORD_001", value: syntheticSecrets.databasePassword, expectedPlaceholder: "[PWM_N]" },
+  { id: "LGQA_FIREFOX_PUBLIC_IP_001", value: syntheticSecrets.publicIp, expectedPlaceholder: "[PUB_HOST_N]" },
+  { id: "LGQA_FIREFOX_PRIVATE_IP_001", value: syntheticSecrets.privateIp, expectedPlaceholder: "[PRIVATE_IP_N]" }
+]);
+
+function firefoxSmokeCanaryLabel(raw) {
+  return firefoxSmokeSecretCanaries.find((canary) => canary.value === raw)?.id || "raw synthetic canary";
+}
+
+function sanitizeFirefoxSmokeDiagnostic(value) {
+  return sanitizeBrowserQaText(value, firefoxSmokeSecretCanaries);
+}
 
 function assertBuiltExtensionExists() {
   const manifestPath = path.join(extensionDir, "manifest.json");
@@ -458,7 +478,7 @@ async function getFirefoxExtensionOrigin(profileDir, extensionId) {
 
 function assertNoRawSyntheticValues(text, label) {
   for (const raw of rawValues) {
-    assert.equal(String(text || "").includes(raw), false, `${label} leaked raw synthetic value ${raw}`);
+    assert.equal(String(text || "").includes(raw), false, `${label} leaked ${firefoxSmokeCanaryLabel(raw)}`);
   }
 }
 
@@ -873,7 +893,11 @@ async function runFirefoxPromptRedactionQa(webdriver) {
   assert.equal(result.repeatedPlaceholderReused, true);
   assert.equal(result.existingPlaceholderPreserved, true);
   assert.equal(result.publicIpRedacted, true);
-  assert.equal(result.privateIpRedacted, true, result.value || "Firefox prompt did not redact private IP");
+  assert.equal(
+    result.privateIpRedacted,
+    true,
+    sanitizeFirefoxSmokeDiagnostic(result.value || "Firefox prompt did not redact private IP")
+  );
   return result;
 }
 
@@ -1003,9 +1027,21 @@ async function runFirefoxScannerQa(webdriver, extensionOrigin, tempDir, download
     "leakguard-firefox-qa.redacted.env"
   );
   assertNoRawSyntheticValues(redactedText, "Firefox scanner redacted download");
-  assert.match(redactedText, /^OPENAI_API_KEY=\[PWM_\d+\]$/m);
-  assert.match(redactedText, /^PUBLIC_IP=\[(PUB_HOST|NET)_\d+\]$/m);
-  assert.match(redactedText, /^PRIVATE_IP=\[PRIVATE_IP_\d+\]$/m);
+  assert.equal(
+    /^OPENAI_API_KEY=\[PWM_\d+\]$/m.test(redactedText),
+    true,
+    "Firefox scanner redacted download should rewrite OPENAI_API_KEY to [PWM_N]"
+  );
+  assert.equal(
+    /^PUBLIC_IP=\[(PUB_HOST|NET)_\d+\]$/m.test(redactedText),
+    true,
+    "Firefox scanner redacted download should rewrite public IP to [PUB_HOST_N]"
+  );
+  assert.equal(
+    /^PRIVATE_IP=\[PRIVATE_IP_\d+\]$/m.test(redactedText),
+    true,
+    "Firefox scanner redacted download should rewrite private IP to [PRIVATE_IP_N]"
+  );
 
   const reportText = await clickDownloadAndReadText(
     webdriver,
@@ -1018,7 +1054,11 @@ async function runFirefoxScannerQa(webdriver, extensionOrigin, tempDir, download
   assert.equal(report.product, "LeakGuard");
   assert.equal(report.localOnly, true);
   assert.ok(Array.isArray(report.findings));
-  assert.match(report.redactedPreview || "", /\[(PWM|PUB_HOST|NET)_\d+\]/);
+  assert.equal(
+    /\[(PWM|PUB_HOST|NET)_\d+\]/.test(report.redactedPreview || ""),
+    true,
+    "Firefox scanner report should contain redacted placeholders"
+  );
   assert.equal(JSON.stringify(report).includes("redactedText"), false);
 
   await webdriver.clickElement("#clear-btn");

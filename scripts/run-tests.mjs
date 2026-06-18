@@ -57,6 +57,7 @@ const testFiles = [
   "tests/file_paste_helpers.test.js",
   "tests/streaming_file_redactor.test.js",
   "tests/manual_qa_artifact_safety.test.js",
+  "tests/browser_qa_assertions.test.js",
   "tests/productization.test.js",
   "tests/security.test.js",
   "tests/runtime_script_order_contract.test.js",
