@@ -66,9 +66,16 @@ function assertDetectorModulesBeforeDetector(scripts, label) {
 
 function getScannerPageScripts() {
   const source = fs.readFileSync(path.join(repoRoot, "src/scanner/scanner.html"), "utf8");
-  return [...source.matchAll(/<script\s+src="([^"]+)"><\/script>/g)].map(([, src]) =>
-    src.replace(/^\.\.\//, "")
-  );
+  return source
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("<script ") && line.includes('src="'))
+    .map((line) => {
+      const srcStart = line.indexOf('src="') + 'src="'.length;
+      const srcEnd = line.indexOf('"', srcStart);
+      assert.ok(srcEnd > srcStart, `scanner script tag should have a quoted src: ${line}`);
+      return line.slice(srcStart, srcEnd).replace(/^\.\.\//, "");
+    });
 }
 
 function testContentRuntimeScriptOrder() {
