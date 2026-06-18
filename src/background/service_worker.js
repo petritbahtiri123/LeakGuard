@@ -32,6 +32,7 @@ importScripts(
   "../shared/detection/providers/genericEndpoints.js",
   "../shared/detection/providers/index.js",
   "../shared/detection/urlUserinfo.js",
+  "../shared/detection/httpHeaders.js",
   "../shared/detector.js",
   "../shared/ipClassification.js",
   "../shared/ipDetection.js",

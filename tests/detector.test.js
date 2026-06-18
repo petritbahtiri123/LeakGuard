@@ -2165,6 +2165,11 @@ function testShapeGatesStillDetectPositiveCredentialShapes() {
   const findings = detector.scan(text, { manager });
   const redactedText = redactor.redact(text, findings).redactedText;
 
+  assert.strictEqual(globalThis.PWM.DetectionHttpHeaders.isSensitiveHttpHeaderName("Authorization"), true);
+  assert.strictEqual(globalThis.PWM.DetectionHttpHeaders.isSensitiveHttpHeaderName("X-API-Key"), true);
+  assert.strictEqual(globalThis.PWM.DetectionHttpHeaders.isSensitiveHttpHeaderName("Cookie"), true);
+  assert.strictEqual(globalThis.PWM.DetectionHttpHeaders.inferHttpHeaderPlaceholderType("X-API-Key"), "API_KEY");
+  assert.strictEqual(globalThis.PWM.DetectionHttpHeaders.inferHttpHeaderPlaceholderType("Authorization"), "TOKEN");
   assert.ok(/^Authorization: Bearer \[PWM_\d+\]$/m.test(redactedText));
   assert.ok(/^X-API-Key: \[PWM_\d+\]$/m.test(redactedText));
   assert.ok(/^Cookie: sessionid=\[PWM_\d+\]; theme=dark$/m.test(redactedText));

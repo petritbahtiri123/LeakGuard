@@ -78,6 +78,7 @@
         "shared/detection/providers/genericEndpoints.js",
         "shared/detection/providers/index.js",
         "shared/detection/urlUserinfo.js",
+        "shared/detection/httpHeaders.js",
         "shared/ai/classifier.js",
         "shared/aiCandidateGate.js",
         "shared/detector.js",
