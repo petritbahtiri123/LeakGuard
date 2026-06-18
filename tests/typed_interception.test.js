@@ -877,7 +877,7 @@ function createRewriteVerificationHarness(overrides = {}) {
       input.textContent = input.text.replace(/\n/g, "");
       return true;
     },
-    analyzeText: (text) => {
+    analyzeText: overrides.analyzeText || ((text) => {
       const rawSecrets = [/RawSecretABCDE12345/g, /OriginalSecretXYZ98765/g];
       const findings = [];
       for (const regex of rawSecrets) {
@@ -892,7 +892,7 @@ function createRewriteVerificationHarness(overrides = {}) {
         }
       }
       return { findings, secretFindings: findings };
-    }
+    })
   });
 }
 
@@ -938,6 +938,125 @@ async function testGenericRewriteVerificationSafeCases() {
     context: "chatgpt-wrapper"
   });
   assert.strictEqual(wrapped.ok, true, "ChatGPT/contenteditable wrapper newline differences should pass safely");
+
+  const enterpriseWrapped = await verifyComposerRewriteSafe({
+    input: createVerificationInput("GCP project number:\n[GCP_PROJECT_NUMBER_1]\n", {
+      innerText: "GCP project number:\n[GCP_PROJECT_NUMBER_1]\n",
+      textContent: "GCP project number:[GCP_PROJECT_NUMBER_1]"
+    }),
+    expectedText: "GCP project number: [GCP_PROJECT_NUMBER_1]",
+    originalText: "GCP project number: 123456789012",
+    findings: [{ raw: "123456789012", type: "GCP_PROJECT_NUMBER", severity: "high", score: 90 }],
+    context: "enterprise-placeholder-wrapper"
+  });
+  assert.strictEqual(
+    enterpriseWrapped.ok,
+    true,
+    "enterprise/cloud placeholders should verify after ChatGPT wraps them onto separate lines"
+  );
+
+  const placeholderRescanHarness = createRewriteVerificationHarness({
+    analyzeText: (text) => {
+      const findings = [];
+      for (const match of String(text || "").matchAll(/\[(?:PWM|KUBECONFIG_SECRET)_\d+\]/g)) {
+        findings.push({
+          raw: match[0],
+          severity: "high",
+          score: 100,
+          start: match.index,
+          end: match.index + match[0].length
+        });
+      }
+      for (const match of String(text || "").matchAll(/postgres:\/\/[^\s]+/g)) {
+        findings.push({
+          raw: match[0],
+          type: "CONNECTION_STRING",
+          severity: "high",
+          score: 92,
+          start: match.index,
+          end: match.index + match[0].length
+        });
+      }
+      for (const match of String(text || "").matchAll(/jdbc:sqlserver:\/\/[^\s;]+:[0-9]+;databaseName=[^;]+;user=/g)) {
+        findings.push({
+          raw: match[0],
+          type: "DB_URI",
+          severity: "high",
+          score: 92,
+          start: match.index,
+          end: match.index + match[0].length
+        });
+      }
+      return { findings, secretFindings: findings };
+    }
+  });
+  const placeholderOnly = await placeholderRescanHarness.verifyComposerRewriteSafe({
+    input: createVerificationInput("Authorization: Bearer [PWM_1]\nkubeconfig token: [KUBECONFIG_SECRET_1]"),
+    expectedText: "Authorization: Bearer [PWM_1]\nkubeconfig token: [KUBECONFIG_SECRET_1]",
+    originalText: "Authorization: Bearer RawSecretABCDE12345\nkubeconfig token: OriginalSecretXYZ98765",
+    findings: [
+      { raw: "RawSecretABCDE12345", severity: "high", score: 90 },
+      { raw: "OriginalSecretXYZ98765", severity: "high", score: 90 }
+    ],
+    context: "placeholder-rescan"
+  });
+  assert.strictEqual(
+    placeholderOnly.ok,
+    true,
+    "rewrite verification should not fail just because sanitized placeholders rescan as sensitive values"
+  );
+
+  const preservedLabel = await placeholderRescanHarness.verifyComposerRewriteSafe({
+    input: createVerificationInput("GCP project_id: [GCP_PROJECT_1]"),
+    expectedText: "GCP project_id: [GCP_PROJECT_1]",
+    originalText: "GCP project_id: my-prod-project",
+    findings: [
+      {
+        raw: "project_id",
+        type: "USERNAME",
+        severity: "high",
+        score: 99,
+        method: ["structured-metadata", "csv-row", "full-value", "exact-key"]
+      },
+      { raw: "my-prod-project", type: "GCP_PROJECT", severity: "high", score: 90 }
+    ],
+    context: "preserved-structured-label"
+  });
+  assert.strictEqual(
+    preservedLabel.ok,
+    true,
+    "rewrite verification should allow preserved structured key labels next to redacted values"
+  );
+
+  const sanitizedConnectionString = await placeholderRescanHarness.verifyComposerRewriteSafe({
+    input: createVerificationInput("DATABASE_URL=postgres://admin:[PWM_1]@db.prod.internal:5432/app"),
+    expectedText: "DATABASE_URL=postgres://admin:[PWM_1]@db.prod.internal:5432/app",
+    originalText: "DATABASE_URL=postgres://admin:RawSecretABCDE12345@db.prod.internal:5432/app",
+    findings: [{ raw: "RawSecretABCDE12345", severity: "high", score: 90 }],
+    context: "sanitized-connection-string"
+  });
+  assert.strictEqual(
+    sanitizedConnectionString.ok,
+    true,
+    "rewrite verification should allow sanitized connection strings whose secret segment is a placeholder"
+  );
+
+  const sanitizedJdbc = await placeholderRescanHarness.verifyComposerRewriteSafe({
+    input: createVerificationInput(
+      "JDBC_URL=jdbc:sqlserver://sql.corp.internal:1433;databaseName=payroll;user=[USERNAME_1];password=[PWM_1]"
+    ),
+    expectedText:
+      "JDBC_URL=jdbc:sqlserver://sql.corp.internal:1433;databaseName=payroll;user=[USERNAME_1];password=[PWM_1]",
+    originalText:
+      "JDBC_URL=jdbc:sqlserver://sql.corp.internal:1433;databaseName=payroll;user=svc;password=RawSecretABCDE12345",
+    findings: [{ raw: "RawSecretABCDE12345", severity: "high", score: 90 }],
+    context: "sanitized-jdbc"
+  });
+  assert.strictEqual(
+    sanitizedJdbc.ok,
+    true,
+    "rewrite verification should allow sanitized JDBC lines when the detector range stops before placeholders"
+  );
 }
 
 async function testMultilineCollapseRetryAndFailures() {
