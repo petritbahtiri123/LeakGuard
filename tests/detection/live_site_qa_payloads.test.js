@@ -7,6 +7,12 @@ loadCore();
 const { Detector, PlaceholderManager, Redactor } = globalThis.PWM;
 
 const fixtureDir = path.join(root, "tests/fixtures/manual/live-site-qa");
+const fullMatrixUploadPath = path.join(
+  fixtureDir,
+  "full-redaction-matrix",
+  "uploads",
+  "full-redaction-smoke-js.js"
+);
 const payloadFiles = [
   "chatgpt_gemini_typed_paste_payload.txt",
   "file_upload_payload.txt",
@@ -37,6 +43,14 @@ const expectedFamilies = [
   "EMAIL"
 ];
 
+const fullMatrixExpectedFamilies = [
+  ...expectedFamilies.filter((family) => family !== "HOSTNAME"),
+  "GCP_PROJECT_NUMBER",
+  "AWS_ENDPOINT",
+  "CLOUD_ENDPOINT",
+  "INTERNAL_ENDPOINT"
+];
+
 const rawSensitiveValues = [
   "rg-prod-weu-files-001",
   "stdeberfileprd1234567",
@@ -59,6 +73,16 @@ const rawSensitiveValues = [
   "fs-prod-weu-01.corp.local",
   "CORP\\adm-test.user",
   "test.user@example.com"
+];
+
+const fullMatrixRawSensitiveValues = [
+  ...rawSensitiveValues,
+  "123456789012",
+  "123456789012:role/LeakGuardQaRole",
+  "prod-weu-kv.vault.azure.net",
+  "vpce-0abc123def4567890.execute-api.eu-central-1.vpce.amazonaws.com",
+  "https://api.prod.internal/v1/payments",
+  "api.prod.internal"
 ];
 
 const harmlessValues = [
@@ -105,6 +129,17 @@ function run() {
     for (const harmless of harmlessValues) {
       assert.ok(redactedText.includes(harmless), `${fileName} should preserve harmless value ${harmless}`);
     }
+  }
+
+  assert.ok(fs.existsSync(fullMatrixUploadPath), `missing full redaction matrix upload: ${fullMatrixUploadPath}`);
+  const fullMatrixText = fs.readFileSync(fullMatrixUploadPath, "utf8");
+  assert.match(fullMatrixText, /synthetic|fake|example|test|qa/i, "full-redaction-smoke-js.js should identify itself as synthetic");
+  const fullMatrixRedacted = redact(fullMatrixText);
+  for (const family of fullMatrixExpectedFamilies) {
+    assert.ok(new RegExp(`\\[${family}_\\d+\\]`).test(fullMatrixRedacted), `full matrix missing ${family}`);
+  }
+  for (const raw of fullMatrixRawSensitiveValues) {
+    assert.strictEqual(fullMatrixRedacted.includes(raw), false, `full matrix leaked ${raw}`);
   }
 
   const notesPath = path.join(fixtureDir, "expected_redaction_notes.md");

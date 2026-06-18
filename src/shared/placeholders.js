@@ -190,6 +190,15 @@
     return `${hashA.toString(16).padStart(8, "0")}${hashB.toString(16).padStart(8, "0")}`;
   }
 
+  function placeholderFamilyFromToken(placeholder) {
+    const match = /^\[([A-Z][A-Z0-9_]*)_\d+\]$/.exec(canonicalizePlaceholderToken(placeholder));
+    return match ? match[1] : null;
+  }
+
+  function placeholderFingerprintValue(raw, family) {
+    return family === "PWM" ? raw : `family:${family}\u0000${raw}`;
+  }
+
   class PlaceholderManager {
     constructor() {
       this.reset();
@@ -416,16 +425,28 @@
 
     getPlaceholder(rawValue, placeholderType = "SECRET") {
       const raw = String(rawValue);
-      const fingerprint = sessionFingerprint(this.ensureSessionId(), raw);
+      const normalizePlaceholderFamily = PlaceholderFamilies.normalizePlaceholderFamily || ((familyName) => String(familyName || "").trim().toUpperCase());
+      const isTypedPlaceholderFamily = PlaceholderFamilies.isTypedPlaceholderFamily || (() => false);
+      const normalizedFamily = normalizePlaceholderFamily(placeholderType);
+      const family = isTypedPlaceholderFamily(normalizedFamily) ? normalizedFamily : "PWM";
+      const sessionId = this.ensureSessionId();
+      const fingerprint = sessionFingerprint(sessionId, placeholderFingerprintValue(raw, family));
 
       if (this.placeholderByFingerprint.has(fingerprint)) {
         return this.placeholderByFingerprint.get(fingerprint);
       }
 
-      const normalizePlaceholderFamily = PlaceholderFamilies.normalizePlaceholderFamily || ((familyName) => String(familyName || "").trim().toUpperCase());
-      const isTypedPlaceholderFamily = PlaceholderFamilies.isTypedPlaceholderFamily || (() => false);
-      const normalizedFamily = normalizePlaceholderFamily(placeholderType);
-      const family = isTypedPlaceholderFamily(normalizedFamily) ? normalizedFamily : "PWM";
+      if (family !== "PWM") {
+        const legacyFingerprint = sessionFingerprint(sessionId, raw);
+        const legacyPlaceholder = this.placeholderByFingerprint.get(legacyFingerprint);
+        if (placeholderFamilyFromToken(legacyPlaceholder) === family) {
+          this.placeholderByFingerprint.set(fingerprint, legacyPlaceholder);
+          this.fingerprintByPlaceholder.set(legacyPlaceholder, fingerprint);
+          this.secretByFingerprint.set(fingerprint, raw);
+          return legacyPlaceholder;
+        }
+      }
+
       let placeholder = `[${family}_${this.incrementCounter(family)}]`;
       while (this.knownPlaceholders.has(placeholder) || this.fingerprintByPlaceholder.has(placeholder)) {
         placeholder = `[${family}_${this.incrementCounter(family)}]`;

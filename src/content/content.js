@@ -24,7 +24,8 @@
     ResponseObserver,
     RevealController,
     FileDebugMetadata,
-    ChatGptComposerSync
+    ChatGptComposerSync,
+    PlaceholderFamilies = {}
   } = globalThis.PWM;
   const {
     normalizeComposerText,
@@ -2730,6 +2731,26 @@
 
   function analysisNeedsEventOwnership(analysis) {
     return Boolean((analysis?.findings || []).length || analysis?.placeholderNormalized);
+  }
+
+  function isKnownSanitizedPlaceholderToken(raw) {
+    const token = normalizeVisiblePlaceholders(String(raw || "").trim());
+    if (!token) return false;
+
+    const corePlaceholderRegex = new RegExp(`^(?:${PLACEHOLDER_TOKEN_REGEX.source})$`);
+    if (corePlaceholderRegex.test(token)) return true;
+
+    const typedMatch = /^\[([A-Z][A-Z0-9_]*)_\d+\]$/.exec(token);
+    return Boolean(
+      typedMatch &&
+        typeof PlaceholderFamilies.isTypedPlaceholderFamily === "function" &&
+        PlaceholderFamilies.isTypedPlaceholderFamily(typedMatch[1])
+    );
+  }
+
+  function analysisHasOnlySanitizedPlaceholderFindings(analysis) {
+    const findings = analysis?.findings || [];
+    return findings.length > 0 && findings.every((finding) => isKnownSanitizedPlaceholderToken(finding?.raw));
   }
 
   async function analyzeTextWithAiAssist(text, policy = getActivePolicy()) {
@@ -9530,6 +9551,17 @@
     const analysis = await analyzeTextWithAiAssist(text);
     if (!analysis.findings.length && !analysis.placeholderNormalized) return;
 
+    if (analysisHasOnlySanitizedPlaceholderFindings(analysis)) {
+      const normalized = await applyNormalizedComposerRewrite(input, text, "submit");
+      if (!normalized.ok) return;
+
+      queueVerifiedComposerSend(input, normalized.text, "submit", () => {
+        bypassNextSubmit = true;
+        submitComposer(form, input);
+      });
+      return;
+    }
+
     const policy = analysis.findings.length ? await getPolicyForAction() : getActivePolicy();
     const destinationPolicy = analysis.findings.length
       ? await handleDestinationPolicy(analysis.findings, policy)
@@ -9744,6 +9776,20 @@
 
     const analysis = await analyzeTextWithAiAssist(text);
     if (!analysis.findings.length && !analysis.placeholderNormalized) return;
+
+    if (analysisHasOnlySanitizedPlaceholderFindings(analysis)) {
+      const normalized = await applyNormalizedComposerRewrite(input, text, "submit");
+      if (!normalized.ok) return;
+
+      queueVerifiedComposerSend(input, normalized.text, "submit", () => {
+        const button = findSendButton(input);
+        if (button) {
+          clearAllRiskSessionState();
+          button.click();
+        }
+      });
+      return;
+    }
 
     const policy = analysis.findings.length ? await getPolicyForAction() : getActivePolicy();
     const destinationPolicy = analysis.findings.length

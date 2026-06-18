@@ -1,7 +1,7 @@
 const assert = require("assert");
 const { loadCore } = require("../helpers/load_core.js");
 loadCore();
-const { Detector } = globalThis.PWM;
+const { Detector, PlaceholderManager, Redactor } = globalThis.PWM;
 const { classifyStructuredMetadataValue } = globalThis.PWM.DetectionStructuredMetadata;
 
 function findingsFor(text) {
@@ -32,6 +32,52 @@ function assertStructuredFinding(text, raw, expected) {
 }
 
 function run() {
+  assertStructuredFinding("GCP project_number: 123456789012", "123456789012", {
+    type: "GCP_PROJECT_NUMBER",
+    category: "internal_metadata",
+    score: 99,
+    method: ["structured-metadata", "assignment-row", "full-value", "exact-key"]
+  });
+
+  assertStructuredFinding("FILE_SHARE=FSA1234567", "FSA1234567", {
+    type: "FILE_SHARE",
+    category: "internal_metadata",
+    score: 99,
+    method: ["structured-metadata", "assignment-row", "full-value", "exact-key"]
+  });
+
+  assertStructuredFinding("AZURE_KEYVAULT=prod-weu-kv.vault.azure.net", "prod-weu-kv.vault.azure.net", {
+    type: "CLOUD_ENDPOINT",
+    category: "internal_metadata",
+    score: 99,
+    method: ["structured-metadata", "assignment-row", "full-value", "exact-key"]
+  });
+
+  assertStructuredFinding(
+    "AWS_PRIVATE_API=vpce-0abc123def4567890.execute-api.eu-central-1.vpce.amazonaws.com",
+    "vpce-0abc123def4567890.execute-api.eu-central-1.vpce.amazonaws.com",
+    {
+      type: "AWS_ENDPOINT",
+      category: "internal_metadata",
+      score: 99,
+      method: ["structured-metadata", "assignment-row", "full-value", "exact-key"]
+    }
+  );
+
+  assertStructuredFinding("INTERNAL_URL=https://api.prod.internal/v1/payments", "https://api.prod.internal/v1/payments", {
+    type: "INTERNAL_ENDPOINT",
+    category: "internal_metadata",
+    score: 99,
+    method: ["structured-metadata", "assignment-row", "full-value", "exact-key"]
+  });
+
+  const collisionManager = new PlaceholderManager();
+  const collisionText = "AWS account id: 123456789012\nGCP project_number: 123456789012";
+  const collisionFindings = new Detector().scan(collisionText, { manager: collisionManager });
+  const collisionRedacted = new Redactor(collisionManager).redact(collisionText, collisionFindings).redactedText;
+  assert.match(collisionRedacted, /^AWS account id: \[AWS_ACCOUNT_ID_\d+\]$/m);
+  assert.match(collisionRedacted, /^GCP project_number: \[GCP_PROJECT_NUMBER_\d+\]$/m);
+
   assertStructuredFinding("Group,Name,Value\nStorage,File Share,FSA1234567", "FSA1234567", {
     type: "FILE_SHARE",
     category: "internal_metadata",

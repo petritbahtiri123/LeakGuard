@@ -48,7 +48,7 @@
   }
 
   const STRUCTURED_METADATA_MARKER_REGEX =
-    /\b(?:tenant[_\s-]?id|subscription[_\s-]?id|aws\s+account|project[_\s-]?(?:id|number)|openstack|domain[_\s-]?id|server[_\s-]?id|namespace|k8s|kubernetes|file[_\s-]?share|username|service\s+account|email|ldap)\b/i;
+    /\b(?:tenant[_\s-]?id|subscription[_\s-]?id|aws\s+account|project[_\s-]?(?:id|number)|openstack|domain[_\s-]?id|server[_\s-]?id|namespace|k8s|kubernetes|file[_\s-]?share|azure[_\s-]?key[_\s-]?vault|key[_\s-]?vault|aws[_\s-]?private[_\s-]?api|private[_\s-]?api|internal[_\s-]?(?:url|endpoint|host)|endpoint|username|service\s+account|email|ldap)\b/i;
   const GUID_VALUE_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const HEX32_VALUE_REGEX = /^[0-9a-f]{32}$/i;
   const AWS_ACCOUNT_ID_VALUE_REGEX = /^\d{12}$/;
@@ -58,6 +58,12 @@
   const K8S_SECRET_RESOURCE_VALUE_REGEX = /^secret\/[a-z0-9][a-z0-9.-]{1,62}$/i;
   const FILE_SHARE_VALUE_REGEX = /^(?:FSA\d{7}|FSB\d{7}|FS\d{7})$/;
   const STORAGE_ACCOUNT_VALUE_REGEX = /^st[a-z0-9]{6,22}$/i;
+  const INTERNAL_ENDPOINT_VALUE_REGEX =
+    /^(?:https?:\/\/)?[a-z0-9][a-z0-9.-]{1,160}\.(?:internal|corp|local|lan)(?::\d{1,5})?(?:\/[^\s"'`<>]*)?$/i;
+  const CLOUD_ENDPOINT_VALUE_REGEX =
+    /^(?:https?:\/\/)?[a-z0-9][a-z0-9.-]{1,160}\.(?:privatelink\.[a-z0-9.-]+|private\.[a-z0-9.-]+|cloudapp\.azure\.com|file\.core\.windows\.net|blob\.core\.windows\.net|database\.windows\.net|vault\.azure\.net|openstack\.[a-z0-9.-]+)(?::\d{1,5})?(?:\/[^\s"'`<>]*)?$/i;
+  const AWS_PRIVATE_API_ENDPOINT_VALUE_REGEX =
+    /^vpce-[0-9a-f]{8,17}\.execute-api\.[a-z0-9-]+\.vpce\.amazonaws\.com$/i;
   const OTC_RESOURCE_VALUE_REGEX =
     /^(?:(?:otc-)?(?:ecs|evs|vpc|subnet|sg|security-group|obs|cce|rds|elb|eip|keypair|image|flavor|as|nat|vpn)|otc)-[a-z0-9][a-z0-9-]{4,62}$/i;
   const DOMAIN_USERNAME_VALUE_REGEX = /^[A-Z][A-Z0-9]{1,30}\\{1,4}[A-Za-z][A-Za-z0-9._-]{2,63}$/i;
@@ -176,6 +182,18 @@
       if (FILE_SHARE_VALUE_REGEX.test(raw)) return "FILE_SHARE";
     }
 
+    if (/\b(?:aws|amazon)\b/i.test(normalized) && /\b(?:private\s+api|endpoint|url|api)\b/i.test(normalized)) {
+      if (AWS_PRIVATE_API_ENDPOINT_VALUE_REGEX.test(raw)) return "AWS_ENDPOINT";
+    }
+
+    if (/\b(?:key\s*vault|keyvault|endpoint|url)\b/i.test(normalized)) {
+      if (CLOUD_ENDPOINT_VALUE_REGEX.test(raw)) return "CLOUD_ENDPOINT";
+    }
+
+    if (/\binternal\b/i.test(normalized) && /\b(?:url|endpoint|host)\b/i.test(normalized)) {
+      if (INTERNAL_ENDPOINT_VALUE_REGEX.test(raw)) return "INTERNAL_ENDPOINT";
+    }
+
     if (/\b(?:email|e mail|mail)\b/i.test(normalized) && isLikelyEmailAddress(raw)) {
       return "EMAIL";
     }
@@ -194,10 +212,11 @@
     return placeholderType === "USERNAME" || placeholderType === "EMAIL" ? "identity" : "internal_metadata";
   }
 
-  function pushStructuredMetadataFinding(findings, detector, label, rawCandidate, start, end, source) {
+  function pushStructuredMetadataFinding(findings, detector, label, rawCandidate, start, end, source, options = {}) {
     const raw = normalizeCandidate(rawCandidate);
     const placeholderType = classifyStructuredMetadataValue(label, raw);
     if (!placeholderType || !raw || detector.isAllowlisted(raw)) return;
+    if (options.skipIdentity && (placeholderType === "USERNAME" || placeholderType === "EMAIL")) return;
 
     findings.push(
       detector.buildFinding({
@@ -470,6 +489,12 @@
       const pipeHeaderNames = pipeCells.map((cell) => normalizeStructuredMetadataLabel(cell.value));
       const pipeValueColumn = pipeHeaderNames.indexOf("value");
       const pipeLabelColumn = pipeHeaderNames.findIndex((name) => name === "name" || name === "type" || name === "key");
+      const assignmentRow =
+        !looksLikeJsonObject && !looksLikePipeTable
+          ? /^\s*([A-Za-z_][A-Za-z0-9_. -]{0,80})\s*[:=]\s*(?:"([^"\r\n]+)"|'([^'\r\n]+)'|`([^`\r\n]+)`|([^\r\n]+?))\s*$/.exec(
+              lineWithoutCr
+            )
+          : null;
 
       if (pipeValueColumn >= 0 && pipeLabelColumn >= 0) {
         pipeTableHeader = {
@@ -546,6 +571,32 @@
         previousLabel = null;
         offset += line.length + 1;
         continue;
+      }
+
+      if (assignmentRow) {
+        const rawCandidate = [assignmentRow[2], assignmentRow[3], assignmentRow[4], assignmentRow[5]].find(
+          (candidate) => typeof candidate === "string"
+        );
+        const raw = normalizeCandidate(rawCandidate);
+        const rawStartInLine = lineWithoutCr.indexOf(rawCandidate) + String(rawCandidate || "").indexOf(raw);
+        const previousCount = findings.length;
+        if (raw && rawStartInLine >= 0) {
+          pushStructuredMetadataFinding(
+            findings,
+            detector,
+            assignmentRow[1],
+            raw,
+            offset + rawStartInLine,
+            offset + rawStartInLine + raw.length,
+            "assignment-row",
+            { skipIdentity: true }
+          );
+        }
+        if (findings.length > previousCount) {
+          previousLabel = null;
+          offset += line.length + 1;
+          continue;
+        }
       }
 
       if (csvTableHeader && cells.length > csvTableHeader.value) {

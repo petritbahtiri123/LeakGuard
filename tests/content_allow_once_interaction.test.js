@@ -230,6 +230,20 @@ function analyzeInteractionText(text) {
     }
   }
 
+  const placeholderRegex =
+    /\[(GCP_PROJECT_NUMBER|FILE_SHARE|AWS_ENDPOINT|CLOUD_ENDPOINT|INTERNAL_ENDPOINT)_\d+\]/g;
+  let placeholderMatch;
+  while ((placeholderMatch = placeholderRegex.exec(normalizedText)) !== null) {
+    findings.push({
+      type: placeholderMatch[1],
+      severity: "high",
+      method: ["placeholder-trust", "context"],
+      raw: placeholderMatch[0],
+      start: placeholderMatch.index,
+      end: placeholderMatch.index + placeholderMatch[0].length
+    });
+  }
+
   return {
     originalText: text,
     normalizedText,
@@ -247,7 +261,8 @@ function createHarness(options = {}) {
     redactions: [],
     rewrites: [],
     badges: [],
-    refreshes: 0
+    refreshes: 0,
+    submits: 0
   };
   const composer = new FakeElement(document, "textarea");
   composer.selectionStart = 0;
@@ -283,15 +298,30 @@ function createHarness(options = {}) {
     document,
     Event: FakeEvent,
     InputEvent: FakeEvent,
+    queueMicrotask,
     extensionRuntimeAvailable: true,
     modalOpen: false,
+    bypassNextSubmit: false,
     lastTypedPromptText: "",
     typedScanGeneration: 0,
     activeRiskEditor: null,
     editorRiskState: new WeakMap(),
     PLACEHOLDER_TOKEN_REGEX: /\[PWM_\d+\]/g,
+    ANY_PLACEHOLDER_TOKEN_REGEX:
+      /\[(?:PWM_\d+|NET_\d+(?:_SUB_\d+)*(?:_(?:HOST_\d+|GW|VIP|DNS))?|PUB_HOST_\d+(?:_(?:GW|VIP|DNS))?|[A-Z][A-Z0-9_]*_\d+)\]/g,
+    PlaceholderFamilies: {
+      isTypedPlaceholderFamily: (family) =>
+        [
+          "GCP_PROJECT_NUMBER",
+          "FILE_SHARE",
+          "AWS_ENDPOINT",
+          "CLOUD_ENDPOINT",
+          "INTERNAL_ENDPOINT"
+        ].includes(String(family || "").toUpperCase())
+    },
     buildRiskFingerprint,
     normalizeComposerText,
+    normalizeVisiblePlaceholders: normalizeComposerText,
     spliceSelectionText,
     isSanitizedFileHandoffEvent: () => false,
     isGeminiHost: () => false,
@@ -359,6 +389,17 @@ function createHarness(options = {}) {
       changed: false,
       text
     }),
+    applySubmitRedactionTransactionally: async () => {
+      calls.rewrites.push({ context: "submit-redaction" });
+      return true;
+    },
+    queueVerifiedComposerSend: (_input, expectedText, context, send) => {
+      calls.rewrites.push({ insertedText: expectedText, context });
+      send();
+    },
+    submitComposer: () => {
+      calls.submits += 1;
+    },
     consumeInterceptionEvent: (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -377,6 +418,9 @@ function createHarness(options = {}) {
       extractFunctionSource(contentSource, "noteActiveRiskEditor"),
       extractFunctionSource(contentSource, "clearAllRiskSessionState"),
       extractFunctionSource(contentSource, "getRiskFingerprintForFindings"),
+      extractFunctionSource(contentSource, "analysisNeedsEventOwnership"),
+      extractFunctionSource(contentSource, "isKnownSanitizedPlaceholderToken"),
+      extractFunctionSource(contentSource, "analysisHasOnlySanitizedPlaceholderFindings"),
       extractFunctionSource(contentSource, "closeModal"),
       extractFunctionSource(contentSource, "appendFindingRow"),
       extractFunctionSource(contentSource, "showDecisionModal"),
@@ -385,8 +429,9 @@ function createHarness(options = {}) {
       extractFunctionSource(contentSource, "getPasteTransfer"),
       extractFunctionSource(contentSource, "getPastedPlainText"),
       extractFunctionSource(contentSource, "maybeHandlePaste"),
+      extractFunctionSource(contentSource, "maybeHandleSubmit"),
       extractFunctionSource(contentSource, "maybeHandleTypedSecrets"),
-      "return { maybeHandlePaste, maybeHandleTypedSecrets, showDecisionModal, showMessageModal };"
+      "return { maybeHandlePaste, maybeHandleSubmit, maybeHandleTypedSecrets, showDecisionModal, showMessageModal };"
     ].join("\n")
   );
 
@@ -471,6 +516,31 @@ async function testTypedScanAutoRedactsWithoutDecisionModal() {
   assert.strictEqual(composer.value, "username=[PWM_1]", "typed sensitive content should be rewritten automatically");
 }
 
+async function testSubmitAllowsSanitizedPlaceholderOnlyContent() {
+  const harness = createHarness();
+  const { calls, composer, document } = harness;
+  composer.value = [
+    "GCP project_number: [GCP_PROJECT_NUMBER_1]",
+    "FILE_SHARE=[FILE_SHARE_1]",
+    "AZURE_KEYVAULT=[CLOUD_ENDPOINT_1]",
+    "AWS_PRIVATE_API=[AWS_ENDPOINT_1]",
+    "INTERNAL_URL=[INTERNAL_ENDPOINT_1]"
+  ].join("\n");
+
+  const submit = new FakeEvent("submit", {
+    bubbles: true,
+    cancelable: true,
+    target: composer
+  });
+
+  await harness.maybeHandleSubmit(submit);
+
+  assert.strictEqual(submit.defaultPrevented, true, "sanitized submit should be owned before host handlers");
+  assert.strictEqual(calls.redactions.length, 0, "sanitized placeholders should not be redacted again");
+  assert.strictEqual(calls.submits, 1, "sanitized placeholder-only content should be sent");
+  assert.strictEqual(countDecisionModals(document), 0, "sanitized placeholder-only submit should not open a modal");
+}
+
 async function testLegacyDecisionModalButtonsConsumeClicks() {
   const harness = createHarness();
   const { document, showDecisionModal } = harness;
@@ -521,6 +591,7 @@ async function run() {
   await testPausedBrowserInteractionKeepsRawTextWithoutPrompt();
   await testBlockDefaultActionFailsClosedWithoutDecisionModal();
   await testTypedScanAutoRedactsWithoutDecisionModal();
+  await testSubmitAllowsSanitizedPlaceholderOnlyContent();
   await testLegacyDecisionModalButtonsConsumeClicks();
   await testMessageModalCloseButtonConsumesClicks();
   console.log("PASS content strict protection browser interaction regressions");
