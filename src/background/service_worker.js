@@ -33,6 +33,7 @@ importScripts(
   "../shared/detection/providers/index.js",
   "../shared/detection/urlUserinfo.js",
   "../shared/detection/httpHeaders.js",
+  "../shared/detection/structuredMetadata.js",
   "../shared/detector.js",
   "../shared/ipClassification.js",
   "../shared/ipDetection.js",
