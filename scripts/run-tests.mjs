@@ -59,6 +59,7 @@ const testFiles = [
   "tests/productization.test.js",
   "tests/security.test.js",
   "tests/runtime_script_order_contract.test.js",
+  "tests/runtime_script_order.test.js",
   "tests/synthetic_pack.test.js",
   "tests/adversarial_redaction.test.js",
   "tests/performance/redaction-benchmark-flake.test.mjs",
