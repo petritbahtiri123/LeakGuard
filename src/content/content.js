@@ -47,7 +47,8 @@
   const {
     dataTransferHasFiles,
     readLocalTextFileFromDataTransfer,
-    createSanitizedTextFile
+    createSanitizedTextFile,
+    redactSensitiveFileName
   } = FilePasteHelpers || {};
   const FileScanner = globalThis.PWM?.FileScanner || {};
   const {
@@ -5211,7 +5212,9 @@
   }
 
   function formatSanitizedFileFallbackText(payload) {
-    const fileName = payload?.originalFile?.name || payload?.sanitizedFile?.name || "sanitized-file.txt";
+    const fileName = typeof redactSensitiveFileName === "function"
+      ? redactSensitiveFileName(payload?.sanitizedFile?.name || payload?.originalFile?.name || "sanitized-file.txt")
+      : sanitizeDownloadFileNameSegment(payload?.sanitizedFile?.name || payload?.originalFile?.name || "sanitized-file.txt");
     const language = fallbackLanguageFromFileName(fileName);
     return `LeakGuard sanitized file: ${fileName}\n\n\`\`\`${language}\n${String(
       payload?.redactedText || ""
@@ -6323,7 +6326,11 @@
   }
 
   function buildSanitizedDownloadFileName(sanitizedFile) {
-    const originalName = sanitizeDownloadFileNameSegment(sanitizedFile?.name || "sanitized-file.txt");
+    const originalName = sanitizeDownloadFileNameSegment(
+      typeof redactSensitiveFileName === "function"
+        ? redactSensitiveFileName(sanitizedFile?.name || "sanitized-file.txt")
+        : sanitizedFile?.name || "sanitized-file.txt"
+    );
     const timestamp = new Date().toISOString().replace(/[:.]/g, "").replace(/\d{3}Z$/, "Z");
     return `LeakGuard/redacted/${timestamp}-${originalName}`;
   }
@@ -6365,7 +6372,11 @@
   }
 
   function buildGeminiSanitizedDownloadFileName(sanitizedFile) {
-    const originalName = sanitizeDownloadFileNameSegment(sanitizedFile?.name || "sanitized-file.txt");
+    const originalName = sanitizeDownloadFileNameSegment(
+      typeof redactSensitiveFileName === "function"
+        ? redactSensitiveFileName(sanitizedFile?.name || "sanitized-file.txt")
+        : sanitizedFile?.name || "sanitized-file.txt"
+    );
     const timestamp = new Date().toISOString().replace(/[:.]/g, "").replace(/\d{3}Z$/, "Z");
     return `LeakGuard/redacted/${timestamp}-${originalName}`;
   }

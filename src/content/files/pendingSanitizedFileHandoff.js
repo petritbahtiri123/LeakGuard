@@ -202,7 +202,7 @@
     }
 
     function has(site, sanitizedFile) { const pending = state[site]?.pending; return Boolean(pending && (!sanitizedFile || pending.sanitizedFile === sanitizedFile)); }
-    function debug(site) { const pending = state[site]?.pending; if (!pending) return null; const out = { keys: Object.keys(pending), sanitizedFile: pending.sanitizedFile, sanitizedFileDebug: describeFileForDebug(pending.sanitizedFile), expiresAt: pending.expiresAt }; if (site === "gemini") out.sessionHash = pending.sessionHash || ""; return out; }
+    function debug(site) { const pending = state[site]?.pending; if (!pending) return null; const out = { keys: Object.keys(pending), sanitizedFileDebug: describeFileForDebug(pending.sanitizedFile), expiresAt: pending.expiresAt }; if (site === "gemini") out.sessionHash = pending.sessionHash || ""; return out; }
 
     function schedulePendingGeminiSanitizedFileAttempt(reason = "") {
       return schedule("gemini", attemptGemini, reason);

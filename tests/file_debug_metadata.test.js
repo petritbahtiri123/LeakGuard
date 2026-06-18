@@ -6,6 +6,10 @@ const repoRoot = path.join(__dirname, "..");
 require(path.join(repoRoot, "src/content/diagnostics/fileDebugMetadata.js"));
 require(path.join(repoRoot, "src/content/diagnostics/debugLogger.js"));
 const ContentDebugFacade = require(path.join(repoRoot, "src/content/diagnostics/contentDebugFacade.js"));
+const { createPendingSanitizedFileHandoffManager } = require(path.join(
+  repoRoot,
+  "src/content/files/pendingSanitizedFileHandoff.js"
+));
 
 const { FileDebugMetadata } = globalThis.PWM;
 
@@ -137,6 +141,50 @@ assert.strictEqual(JSON.stringify(payload).includes("customer-secret.env"), fals
   assert.strictEqual(fileDescription.size, 42);
   assert.strictEqual(elementDescription.idLength, `upload-${rawSecret}`.length);
   assert.strictEqual(elementDescription.ariaLabelLength, `Attach ${rawSecret}`.length);
+}
+
+{
+  const rawSecret = "sk-pending-debug-secret-value-123456789";
+  const pendingFile = {
+    name: "pending-debug.env",
+    type: "text/plain",
+    size: 52,
+    text: `API_KEY=${rawSecret}`
+  };
+  const manager = createPendingSanitizedFileHandoffManager({
+    clearTimeoutFn: () => {},
+    describeFileForDebug: (file) => ({
+      name: file?.name || "",
+      type: file?.type || "",
+      size: Number(file?.size || 0)
+    }),
+    documentRef: {
+      addEventListener() {},
+      removeEventListener() {},
+      documentElement: {}
+    },
+    getGeminiSessionHash: () => "session-metadata",
+    isGeminiHost: () => true,
+    setTimeoutFn: () => 0
+  });
+
+  assert.strictEqual(
+    manager.queuePendingGeminiSanitizedFileHandoff({ type: "drop" }, null, pendingFile, {}),
+    true
+  );
+  const debugState = manager.getPendingGeminiSanitizedFileHandoffDebug();
+  assert.ok(debugState, "expected pending debug state");
+  assert.strictEqual(
+    Object.prototype.hasOwnProperty.call(debugState, "sanitizedFile"),
+    false,
+    "pending debug state must not expose the File object"
+  );
+  assert.deepStrictEqual(debugState.sanitizedFileDebug, {
+    name: "pending-debug.env",
+    type: "text/plain",
+    size: 52
+  });
+  assert.strictEqual(JSON.stringify(debugState).includes(rawSecret), false);
 }
 
 console.log("PASS file debug metadata");

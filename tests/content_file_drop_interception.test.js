@@ -344,6 +344,37 @@ function createAdapterRegistryForTest() {
   });
 }
 
+function createSanitizedFallbackFormatterHarness() {
+  const factory = new Function(
+    [
+      "const redactSensitiveFileName = (value) => String(value || '');",
+      "const sanitizeDownloadFileNameSegment = (value) => String(value || 'sanitized-file.txt');",
+      extractFunctionSource(contentSource, "fallbackLanguageFromFileName"),
+      extractFunctionSource(contentSource, "formatSanitizedFileFallbackText"),
+      "return { formatSanitizedFileFallbackText };"
+    ].join("\n\n")
+  );
+  return factory();
+}
+
+function testSanitizedFileFallbackTextPrefersRedactedSanitizedFileName() {
+  const rawSecret = "sk-proj-FallbackFileNameSecret1234567890abcdef";
+  const redactedText = "API_KEY=[PWM_1]\nSERVICE=orders";
+  const { formatSanitizedFileFallbackText } = createSanitizedFallbackFormatterHarness();
+  const fallbackText = formatSanitizedFileFallbackText({
+    originalFile: {
+      name: `customer-${rawSecret}.env`
+    },
+    sanitizedFile: {
+      name: "customer-[PWM_1].env"
+    },
+    redactedText
+  });
+
+  assert.strictEqual(fallbackText.includes(rawSecret), false);
+  assert.ok(fallbackText.includes(`LeakGuard sanitized file: customer-[PWM_1].env\n\n\`\`\`env\n${redactedText}`));
+}
+
 function fileHandoffStateHarnessSource() {
   return [
     extractFunctionSource(fileHandoffStateSource, "createFileHandoffState"),
@@ -3943,7 +3974,16 @@ async function testGeminiPendingHandoffStoresSanitizedFileOnly() {
     pending.keys.sort(),
     ["createdAt", "expiresAt", "sanitizedFile", "sessionHash"].sort()
   );
-  assert.strictEqual(pending.sanitizedFile, sanitizedFile);
+  assert.strictEqual(
+    Object.prototype.hasOwnProperty.call(pending, "sanitizedFile"),
+    false,
+    "pending handoff debug must expose metadata, not the File object"
+  );
+  assert.deepStrictEqual(pending.sanitizedFileDebug, {
+    name: sanitizedFile.name,
+    type: sanitizedFile.type,
+    size: sanitizedFile.size
+  });
   assert.strictEqual(JSON.stringify(pending.sanitizedFileDebug).includes(rawSecret), false);
   assert.strictEqual(harness.fallbackDrops.length, 0);
   assert.strictEqual(harness.consoleErrors.length, 0);
@@ -4089,7 +4129,16 @@ async function testGeminiPendingHandoffReplacementClearsOldState() {
   const pending = harness.getPendingGeminiSanitizedFileHandoffDebug();
   assert.strictEqual(harness.hasPendingGeminiSanitizedFileHandoff(firstSanitizedFile), false);
   assert.strictEqual(harness.hasPendingGeminiSanitizedFileHandoff(secondSanitizedFile), true);
-  assert.strictEqual(pending.sanitizedFile, secondSanitizedFile);
+  assert.strictEqual(
+    Object.prototype.hasOwnProperty.call(pending, "sanitizedFile"),
+    false,
+    "replacement debug must not expose the pending File object"
+  );
+  assert.deepStrictEqual(pending.sanitizedFileDebug, {
+    name: secondSanitizedFile.name,
+    type: secondSanitizedFile.type,
+    size: secondSanitizedFile.size
+  });
   assert.strictEqual(harness.clickHandlers.length, 1);
   assert.ok(harness.observers.some((observer) => observer.disconnected));
   assert.ok(
@@ -13665,6 +13714,7 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
 }
 
 (async () => {
+  testSanitizedFileFallbackTextPrefersRedactedSanitizedFileName();
   await testFileDragoverIsAcceptedWithoutComposerTarget();
   await testFileDragoverIsAcceptedWithoutHelperLoaded();
   await testFileDropIsHandledWithoutComposerTarget();

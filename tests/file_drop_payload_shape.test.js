@@ -7,6 +7,7 @@ require(path.join(repoRoot, "src/content/diagnostics/safeSnapshots.js"));
 require(path.join(repoRoot, "src/content/files/fileAttachPipeline.js"));
 
 function testFileAttachPipelineCreatesSanitizedPayloadMetadata() {
+  const rawSecret = "sk-proj-PayloadFileNameSecret1234567890abcdef";
   const sanitizedFile = {
     name: "service.env",
     type: "text/plain",
@@ -15,8 +16,8 @@ function testFileAttachPipelineCreatesSanitizedPayloadMetadata() {
   const localFile = {
     text: "API_KEY=raw-secret",
     file: {
-      name: "service.env",
-      type: "text/plain",
+      name: `service-${rawSecret}.env`,
+      type: `text/plain;token=${rawSecret}`,
       size: 42,
       lastModified: 1234
     }
@@ -55,11 +56,12 @@ function testFileAttachPipelineCreatesSanitizedPayloadMetadata() {
   assert.strictEqual(payload.redactedText, "API_KEY=[PWM_1]\nHOST=[NET_2]\nTOKEN=[PWM_1]");
   assert.strictEqual(payload.rawText, "API_KEY=raw-secret");
   assert.deepStrictEqual(payload.originalFile, {
-    name: "service.env",
+    name: "file.env",
     type: "text/plain",
     size: 42,
     lastModified: 1234
   });
+  assert.strictEqual(JSON.stringify(payload.originalFile).includes(rawSecret), false);
   assert.deepStrictEqual(payload.placeholders, ["[PWM_1]", "[NET_2]"]);
   assert.deepStrictEqual(payload.replacements, [
     {

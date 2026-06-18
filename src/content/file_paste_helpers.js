@@ -244,12 +244,45 @@
       .replace(/\r\n?/g, "\n");
   }
 
-  function createSanitizedTextFile(fileInfo, redactedText) {
-    const FileScanner = root.PWM.FileScanner || {};
-    const normalizedName =
-      String(fileInfo?.name || "").split(/[\\/]/).pop() ||
+  function sanitizeFileNameSegment(value, fallback = "leakguard-redacted.txt") {
+    const normalized = String(value || fallback)
+      .split(/[\\/]/)
+      .pop()
+      .replace(/[\\/:*?"<>|\u0000-\u001f]+/g, "-")
+      .replace(/\s+/g, " ")
+      .trim()
+      .replace(/^\.+|\.+$/g, "");
+    return normalized || fallback;
+  }
+
+  function redactSensitiveFileNameWithLocalFallback(fileName) {
+    let count = 0;
+    const sensitiveTokenPattern =
+      /\b(?:sk-(?:proj-|live-|test-)?[A-Za-z0-9_-]{12,}|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|(?:api[_-]?key|password|secret|token)[-_]?[A-Za-z0-9_-]{8,})\b/gi;
+    return String(fileName || "").replace(sensitiveTokenPattern, () => `[PWM_${++count}]`);
+  }
+
+  function redactSensitiveFileName(fileName) {
+    const fallbackName =
       FileLimits.DEFAULT_SANITIZED_TEXT_FILE_NAME ||
       "leakguard-redacted.txt";
+    const normalizedName = sanitizeFileNameSegment(fileName, fallbackName);
+    const transformer = root.PWM?.transformOutboundPrompt;
+    if (typeof transformer === "function") {
+      try {
+        const result = transformer(normalizedName);
+        const redactedName = sanitizeFileNameSegment(result?.redactedText || normalizedName, fallbackName);
+        if (redactedName && redactedName !== normalizedName) return redactedName;
+      } catch {
+        // Filename redaction falls back to local token-shape scrubbing.
+      }
+    }
+    return sanitizeFileNameSegment(redactSensitiveFileNameWithLocalFallback(normalizedName), fallbackName);
+  }
+
+  function createSanitizedTextFile(fileInfo, redactedText) {
+    const FileScanner = root.PWM.FileScanner || {};
+    const normalizedName = redactSensitiveFileName(fileInfo?.name);
     const mimeType =
       FileScanner.normalizeMimeType?.(fileInfo?.type) ||
       String(fileInfo?.type || "").split(";")[0].trim().toLowerCase() ||
@@ -294,7 +327,8 @@
     listDataTransferFiles,
     dataTransferHasUnavailableFileItems,
     readLocalTextFileFromDataTransfer,
-    createSanitizedTextFile
+    createSanitizedTextFile,
+    redactSensitiveFileName
   };
 
   if (typeof module !== "undefined" && module.exports) {

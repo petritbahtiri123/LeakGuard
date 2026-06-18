@@ -610,8 +610,8 @@ function testFileAttachPipelineStaysPureAndContentOwnsFileAttachSideEffects() {
 function testFileSnapshotDebugPayloadsStayMetadataOnly() {
   const rawSecret = "SnapshotPayloadRawSecret123!";
   const file = {
-    name: "service.env",
-    type: "text/plain",
+    name: `service-${rawSecret}.env`,
+    type: `text/plain;token=${rawSecret}`,
     size: 123,
     lastModified: 456,
     text: `API_KEY=${rawSecret}`,
@@ -629,7 +629,17 @@ function testFileSnapshotDebugPayloadsStayMetadataOnly() {
   assert.notStrictEqual(snapshotSourceEnd, -1, "expected snapshot helper boundary");
   const describeSnapshotSource = contentSource.slice(snapshotSourceStart, snapshotSourceEnd);
 
-  assert.deepStrictEqual(Object.keys(description), ["name", "type", "size"]);
+  assert.deepStrictEqual(description, {
+    name: "file.env",
+    type: "text/plain",
+    size: 123
+  });
+  assert.deepStrictEqual(metadata, {
+    name: "file.env",
+    type: "text/plain",
+    size: 123,
+    lastModified: 456
+  });
   assert.deepStrictEqual(Object.keys(metadata), ["name", "type", "size", "lastModified"]);
   assert.strictEqual(JSON.stringify({ description, metadata }).includes(rawSecret), false);
   assertNotIncludes(
