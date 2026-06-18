@@ -22,7 +22,8 @@
     PlaceholderRehydrator,
     ResponseObserver,
     RevealController,
-    FileDebugMetadata
+    FileDebugMetadata,
+    ChatGptComposerSync
   } = globalThis.PWM;
   const {
     normalizeComposerText,
@@ -191,8 +192,6 @@
   const PROGRAMMATIC_INPUT_SUPPRESS_MS = 500;
   const CHATGPT_LARGE_PASTE_FILE_THRESHOLD = 16 * 1024;
   const CHATGPT_SANITIZED_PASTE_FILE_NAME = "leakguard-redacted-paste.txt";
-  const CHATGPT_SYNC_EVENT_DATA_MAX_CHARS = 256 * 1024;
-  const CHATGPT_SYNC_VERIFY_DELAY_MS = 80;
   const GEMINI_DIRECT_TEXT_INSERT_THRESHOLD = 8 * 1024;
   const GEMINI_AUTO_INSERT_TEXT_LIMIT = 256 * 1024;
   const GEMINI_LARGE_TEXT_SUPPRESS_MS = 2500;
@@ -3176,285 +3175,23 @@
     );
   }
 
-  function focusChatGptComposer(input) {
-    if (!input || typeof input.focus !== "function") return;
-    try {
-      input.focus({ preventScroll: true });
-    } catch {
-      try {
-        input.focus();
-      } catch {
-        // Focus is a sync hint only.
-      }
-    }
-  }
-
-  function placeChatGptCaretAtEnd(input) {
-    if (!input) return;
-    try {
-      if (isTextArea(input) && typeof input.setSelectionRange === "function") {
-        const textLength = getInputText(input).length;
-        input.setSelectionRange(textLength, textLength);
-        return;
-      }
-    } catch {
-      // Best-effort only.
-    }
-
-    if (!isContentEditable(input) || typeof window?.getSelection !== "function") return;
-    try {
-      const selection = window.getSelection();
-      const range = document.createRange?.();
-      if (!selection || !range) return;
-      range.selectNodeContents(input);
-      range.collapse(false);
-      selection.removeAllRanges();
-      selection.addRange(range);
-    } catch {
-      // Selection APIs can be blocked by host-controlled DOM.
-    }
-  }
-
-  function dispatchChatGptComposerInputEvent(input, inputType, data) {
-    if (!input?.dispatchEvent) return false;
-    const safeData =
-      typeof data === "string" && data.length <= CHATGPT_SYNC_EVENT_DATA_MAX_CHARS
-        ? data
-        : null;
-    let event = null;
-    try {
-      event = new InputEvent("input", {
-        bubbles: true,
-        composed: true,
-        inputType,
-        data: safeData
-      });
-    } catch {
-      event = new Event("input", { bubbles: true, composed: true });
-    }
-    try {
-      input.dispatchEvent(event);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  function dispatchChatGptComposerBeforeInput(input, inputType, data) {
-    if (!input?.dispatchEvent) return false;
-    const safeData =
-      typeof data === "string" && data.length <= CHATGPT_SYNC_EVENT_DATA_MAX_CHARS
-        ? data
-        : null;
-    let event = null;
-    try {
-      event = new InputEvent("beforeinput", {
-        bubbles: true,
-        cancelable: true,
-        composed: true,
-        inputType,
-        data: safeData
-      });
-    } catch {
-      event = new Event("beforeinput", { bubbles: true, cancelable: true, composed: true });
-    }
-    try {
-      input.dispatchEvent(event);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  function dispatchChatGptComposerChange(input) {
-    if (!input?.dispatchEvent) return false;
-    try {
-      input.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  function nudgeChatGptComposerState(input, expectedText, strategy) {
-    focusChatGptComposer(input);
-    placeChatGptCaretAtEnd(input);
-    try {
-      document.dispatchEvent?.(new Event("selectionchange", { bubbles: true }));
-    } catch {
-      // Host may not expose document-level dispatch.
-    }
-    debugChatGptSync("chatgpt-sync:react-state-nudge", input, expectedText, null, {
-      strategy
-    });
-  }
-
-  async function waitForChatGptComposerVerification() {
-    await new Promise((resolve) => window.setTimeout(resolve, CHATGPT_SYNC_VERIFY_DELAY_MS));
-  }
-
-  function tryChatGptExecCommandWrite(input, writeText, options = {}) {
-    if (!isContentEditable(input)) return false;
-    if (writeText.length > CHATGPT_SYNC_EVENT_DATA_MAX_CHARS) return false;
-    if (typeof document?.execCommand !== "function") return false;
-
-    focusChatGptComposer(input);
-    dispatchChatGptComposerBeforeInput(input, "insertReplacementText", writeText);
-
-    let selected = false;
-    try {
-      selected = Boolean(document.execCommand("selectAll", false, null));
-    } catch {
-      selected = false;
-    }
-    if (!selected) return false;
-
-    let inserted = false;
-    try {
-      inserted = Boolean(document.execCommand("insertText", false, writeText));
-    } catch {
-      inserted = false;
-    }
-    if (!inserted) return false;
-
-    if (Number.isFinite(options.caretOffset)) {
-      placeChatGptCaretAtEnd(input);
-    } else {
-      placeChatGptCaretAtEnd(input);
-    }
-    dispatchChatGptComposerInputEvent(input, "insertReplacementText", writeText);
-    dispatchChatGptComposerChange(input);
-    return true;
-  }
-
-  function tryChatGptDirectWrite(input, writeText, options = {}) {
-    suppressFollowupInputScan(options.suppressMs || PROGRAMMATIC_INPUT_SUPPRESS_MS);
-    focusChatGptComposer(input);
-    const written = setInputTextDirect(input, writeText, {
-      caretOffset: options.caretOffset
-    });
-    if (!written) return false;
-    dispatchChatGptComposerInputEvent(input, "insertReplacementText", null);
-    dispatchChatGptComposerChange(input);
-    return true;
-  }
-
-  function tryChatGptComposerHelperWrite(input, writeText, options = {}) {
-    suppressFollowupInputScan(options.suppressMs || PROGRAMMATIC_INPUT_SUPPRESS_MS);
-    focusChatGptComposer(input);
-    setInputText(input, writeText, {
-      caretOffset: options.caretOffset
-    });
-    return true;
-  }
-
-  async function runChatGptSyncedWriteAttempt(input, plan, options, strategy) {
-    const expected = plan.canonical;
-    const writeText = plan.writeText;
-    debugChatGptSync("chatgpt-sync:write-plan", input, expected, null, {
-      strategy,
-      eventData: writeText.length <= CHATGPT_SYNC_EVENT_DATA_MAX_CHARS ? "included" : "omitted"
-    });
-
-    suppressFollowupInputScan(options.suppressMs || PROGRAMMATIC_INPUT_SUPPRESS_MS);
-    let writeAccepted = false;
-    if (strategy === "exec-command") {
-      writeAccepted = tryChatGptExecCommandWrite(input, writeText, options);
-    } else if (strategy === "composer-helper") {
-      writeAccepted = tryChatGptComposerHelperWrite(input, writeText, options);
-    } else {
-      writeAccepted = tryChatGptDirectWrite(input, writeText, options);
-    }
-
-    const actualAfterWrite = getInputText(input);
-    debugChatGptSync("chatgpt-sync:after-write", input, expected, actualAfterWrite, {
-      strategy,
-      writeAccepted
-    });
-    nudgeChatGptComposerState(input, expected, strategy);
-    await waitForChatGptComposerVerification();
-    const actual = await readStableComposerText(input, 2);
-    const verification = writeAccepted
-      ? await verifyComposerRewriteSafe({
-          input,
-          expectedText: expected,
-          originalText: options.rawInsertedText || options.restoreText || "",
-          redactedText: expected,
-          findings: options.findings,
-          context: options.context || "chatgpt-sync",
-          caretOffset: options.caretOffset,
-          actualText: actual
-        })
-      : { ok: false, actual };
-    if (writeAccepted && verification.ok) {
-      debugChatGptSync("chatgpt-sync:verification-pass", input, expected, actual, {
-        strategy,
-        verificationStrategy: verification.strategy
-      });
-      return {
-        ok: true,
-        actual: verification.actual || actual,
-        strategy: `chatgpt-${strategy}`
-      };
-    }
-
-    debugChatGptSync("chatgpt-sync:verification-failed", input, expected, actual, {
-      strategy,
-      writeAccepted
-    });
+  function getChatGptComposerSyncDependencies() {
     return {
-      ok: false,
-      actual,
-      strategy: `chatgpt-${strategy}`
+      debugChatGptSync,
+      isChatGptHost,
+      readStableComposerText,
+      suppressFollowupInputScan,
+      verifyComposerRewriteSafe
     };
-  }
-
-  async function applyChatGptSyncedComposerText(input, expectedText, options = {}) {
-    if (!isChatGptHost()) {
-      return { ok: false, actual: getInputText(input), strategy: "not-chatgpt" };
-    }
-    const plan = buildComposerWritePlan(input, expectedText);
-    debugChatGptSync("chatgpt-sync:before-write", input, plan.canonical, null, {
-      context: options.context || ""
-    });
-
-    const writeText = plan.writeText;
-    const attempts =
-      isContentEditable(input) && writeText.length <= CHATGPT_SYNC_EVENT_DATA_MAX_CHARS
-        ? ["exec-command", "direct-dom"]
-        : writeText.length <= CHATGPT_SYNC_EVENT_DATA_MAX_CHARS
-          ? ["direct-dom", "composer-helper"]
-          : ["direct-dom"];
-
-    let lastResult = {
-      ok: false,
-      actual: getInputText(input),
-      strategy: "not-attempted"
-    };
-    for (const strategy of attempts) {
-      lastResult = await runChatGptSyncedWriteAttempt(input, plan, options, strategy);
-      if (lastResult.ok) {
-        return lastResult;
-      }
-    }
-
-    if (typeof options.restoreText === "string") {
-      tryChatGptDirectWrite(input, normalizeComposerText(options.restoreText), {
-        caretOffset: options.restoreCaretOffset,
-        suppressMs: options.suppressMs
-      });
-      await readStableComposerText(input, 2);
-    }
-
-    return lastResult;
   }
 
   async function applyComposerText(input, expectedText, options) {
     options = options || {};
     if (typeof isChatGptHost === "function" && isChatGptHost()) {
-      return applyChatGptSyncedComposerText(input, expectedText, {
+      return ChatGptComposerSync.applyChatGptSyncedComposerText(input, expectedText, {
         ...options,
-        context: options.context || "composer-rewrite"
+        context: options.context || "composer-rewrite",
+        dependencies: getChatGptComposerSyncDependencies()
       });
     }
 
@@ -4495,12 +4232,13 @@
         end: Number(selection?.end ?? 0)
       }
     });
-    const applied = await applyChatGptSyncedComposerText(input, next.text, {
+    const applied = await ChatGptComposerSync.applyChatGptSyncedComposerText(input, next.text, {
       context: "large-paste-text-fallback",
       caretOffset: next.caretOffset,
       restoreText: originalText,
       restoreCaretOffset: selection?.end,
-      suppressMs: GEMINI_LARGE_TEXT_SUPPRESS_MS
+      suppressMs: GEMINI_LARGE_TEXT_SUPPRESS_MS,
+      dependencies: getChatGptComposerSyncDependencies()
     });
 
     if (applied.ok) {

@@ -68,6 +68,7 @@
     "content/file_handoff_pending.js",
     "content/file_handoff_flow.js",
     "content/input/rewriteVerificationText.js",
+    "content/composer/chatgptComposerSync.js",
     "content/files/fileTransferPolicy.js",
     "content/files/fileExtractionSessionCache.js",
     "content/files/protectedSiteOcrBroker.js",
