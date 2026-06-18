@@ -123,6 +123,12 @@ class FakeElement {
     this.dispatchEvent(new FakeEvent("click", { bubbles: true, cancelable: true, target: this }));
   }
 
+  clickEvent() {
+    const event = new FakeEvent("click", { bubbles: true, cancelable: true, target: this });
+    this.dispatchEvent(event);
+    return event;
+  }
+
   focus() {
     this.ownerDocument.activeElement = this;
   }
@@ -310,15 +316,15 @@ function createHarness(options = {}) {
       allowUserOverride: true,
       allowProtectionPause: true,
       protectionPauseMaxMinutes: 15,
-      defaultAction: "redact"
+      defaultAction: options.defaultAction || "redact"
     }),
     getActivePolicy: () => ({
       allowUserOverride: true,
       allowProtectionPause: true,
       protectionPauseMaxMinutes: 15,
-      defaultAction: "redact"
+      defaultAction: options.defaultAction || "redact"
     }),
-    resolveDecisionAction: (action) => action,
+    resolveDecisionAction: (action) => (action === "redact" ? "redact" : "cancel"),
     handleDestinationPolicy: async () => ({ blocked: false }),
     shouldForceDestinationRedaction: () => false,
     isProtectionPauseActiveAfterPolicy: () => Boolean(options.paused),
@@ -332,6 +338,13 @@ function createHarness(options = {}) {
           .replaceAll("other.dev", "[PWM_2]")
           .replaceAll("8.8.8.8", "[PUB_HOST_1]")
       };
+    },
+    applyComposerText: async (input, text, options = {}) => {
+      calls.rewrites.push({ input, insertedText: text, context: "input", options });
+      input.value = text;
+      input.selectionStart = options.caretOffset ?? text.length;
+      input.selectionEnd = options.caretOffset ?? text.length;
+      return { ok: true, actual: text };
     },
     applyPasteDecision: async (input, originalText, selection, insertedText, context) => {
       calls.rewrites.push({ input, originalText, selection, insertedText, context });
@@ -367,12 +380,13 @@ function createHarness(options = {}) {
       extractFunctionSource(contentSource, "closeModal"),
       extractFunctionSource(contentSource, "appendFindingRow"),
       extractFunctionSource(contentSource, "showDecisionModal"),
+      extractFunctionSource(contentSource, "showMessageModal"),
       extractFunctionSource(contentSource, "promptForSensitiveContentDecision"),
       extractFunctionSource(contentSource, "getPasteTransfer"),
       extractFunctionSource(contentSource, "getPastedPlainText"),
       extractFunctionSource(contentSource, "maybeHandlePaste"),
       extractFunctionSource(contentSource, "maybeHandleTypedSecrets"),
-      "return { maybeHandlePaste, maybeHandleTypedSecrets };"
+      "return { maybeHandlePaste, maybeHandleTypedSecrets, showDecisionModal, showMessageModal };"
     ].join("\n")
   );
 
@@ -397,40 +411,20 @@ function createPasteEvent(text, target) {
   });
 }
 
-async function pasteAndClickDecision(harness, text, decisionText) {
-  const { composer, document, maybeHandlePaste } = harness;
-  const paste = createPasteEvent(text, composer);
-  const pastePromise = maybeHandlePaste(paste);
-
-  await waitForMicrotasks();
-  assert.strictEqual(countDecisionModals(document), 1, "suspicious paste should open one decision modal");
-
-  const button = findButtonByText(document, decisionText);
-  assert.ok(button, `expected ${decisionText} button`);
-  button.click();
-  await pastePromise;
-
-  return paste;
-}
-
-async function testStrictModalHasNoAllowOnceAndCancelKeepsRawTextOut() {
+async function testSensitivePasteAutoRedactsWithoutDecisionModal() {
   const harness = createHarness();
   const { calls, composer, document } = harness;
 
   const suspicious = "username=wayland.dev";
-  const paste = createPasteEvent(suspicious, composer);
-  const pastePromise = harness.maybeHandlePaste(paste);
+  const pastePromise = harness.maybeHandlePaste(createPasteEvent(suspicious, composer));
 
   await waitForMicrotasks();
-  assert.strictEqual(countDecisionModals(document), 1, "suspicious paste should open one decision modal");
+  assert.strictEqual(countDecisionModals(document), 0, "suspicious paste should not open a decision modal");
   assert.strictEqual(findButtonByText(document, "Allow once"), null, "strict modal should not expose Allow once");
-  findButtonByText(document, "Cancel").click();
   await pastePromise;
 
-  assert.strictEqual(paste.defaultPrevented, true);
-  assert.strictEqual(composer.value, "", "cancelled strict modal should not insert raw paste text");
-  assert.strictEqual(calls.redactions.length, 0, "cancel should not request redaction");
-  assert.strictEqual(countDecisionModals(document), 0, "modal should close after Cancel");
+  assert.strictEqual(calls.redactions.length, 1, "suspicious paste should request redaction automatically");
+  assert.strictEqual(composer.value, "username=[PWM_1]", "suspicious paste should be rewritten automatically");
 }
 
 async function testPausedBrowserInteractionKeepsRawTextWithoutPrompt() {
@@ -447,20 +441,88 @@ async function testPausedBrowserInteractionKeepsRawTextWithoutPrompt() {
   assert.strictEqual(countDecisionModals(document), 0, "paused protection should not open a decision modal");
 }
 
-async function testRedactStillRewritesFromBrowserDecisionModal() {
+async function testBlockDefaultActionFailsClosedWithoutDecisionModal() {
+  const harness = createHarness({ defaultAction: "block" });
+  const { calls, composer, document } = harness;
+  const pastePromise = harness.maybeHandlePaste(createPasteEvent("username=wayland.dev", composer));
+
+  await waitForMicrotasks();
+  assert.strictEqual(countDecisionModals(document), 0, "blocked default action should not open a decision modal");
+  await pastePromise;
+
+  assert.strictEqual(calls.redactions.length, 0, "blocked default action should not request redaction");
+  assert.strictEqual(composer.value, "", "blocked default action should keep raw paste out of the composer");
+}
+
+async function testTypedScanAutoRedactsWithoutDecisionModal() {
   const harness = createHarness();
-  const { calls, composer } = harness;
+  const { calls, composer, document } = harness;
 
-  await pasteAndClickDecision(harness, "username=wayland.dev", "Redact");
+  composer.value = "username=wayland.dev";
+  composer.selectionStart = composer.value.length;
+  composer.selectionEnd = composer.value.length;
+  const scanPromise = harness.maybeHandleTypedSecrets();
 
-  assert.strictEqual(calls.redactions.length, 1, "Redact should request redaction");
-  assert.strictEqual(composer.value, "username=[PWM_1]", "Redact should rewrite the suspicious value");
+  await waitForMicrotasks();
+  assert.strictEqual(countDecisionModals(document), 0, "typed sensitive content should not open a decision modal");
+  await scanPromise;
+
+  assert.strictEqual(calls.redactions.length, 1, "typed sensitive content should request redaction automatically");
+  assert.strictEqual(composer.value, "username=[PWM_1]", "typed sensitive content should be rewritten automatically");
+}
+
+async function testLegacyDecisionModalButtonsConsumeClicks() {
+  const harness = createHarness();
+  const { document, showDecisionModal } = harness;
+  const modalPromise = showDecisionModal(analyzeInteractionText("username=wayland.dev").findings, "paste");
+
+  await waitForMicrotasks();
+  const redactButton = findButtonByText(document, "Redact");
+  assert.ok(redactButton, "expected Redact button");
+
+  const click = redactButton.clickEvent();
+  const decision = await modalPromise;
+
+  assert.strictEqual(click.defaultPrevented, true, "modal action click should prevent host default behavior");
+  assert.strictEqual(click.propagationStopped, true, "modal action click should stop host propagation");
+  assert.strictEqual(
+    click.immediatePropagationStopped,
+    true,
+    "modal action click should stop immediate host propagation"
+  );
+  assert.deepStrictEqual(decision, { action: "redact" });
+  assert.strictEqual(countDecisionModals(document), 0, "decision modal should close after action click");
+}
+
+async function testMessageModalCloseButtonConsumesClicks() {
+  const harness = createHarness();
+  const { document, showMessageModal } = harness;
+  const modalPromise = showMessageModal("Sensitive content blocked", "Nothing raw was sent.");
+
+  await waitForMicrotasks();
+  const closeButton = findButtonByText(document, "Close");
+  assert.ok(closeButton, "expected Close button");
+
+  const click = closeButton.clickEvent();
+  await modalPromise;
+
+  assert.strictEqual(click.defaultPrevented, true, "message modal close click should prevent host default behavior");
+  assert.strictEqual(click.propagationStopped, true, "message modal close click should stop host propagation");
+  assert.strictEqual(
+    click.immediatePropagationStopped,
+    true,
+    "message modal close click should stop immediate host propagation"
+  );
+  assert.strictEqual(countDecisionModals(document), 0, "message modal should close after Close click");
 }
 
 async function run() {
-  await testStrictModalHasNoAllowOnceAndCancelKeepsRawTextOut();
+  await testSensitivePasteAutoRedactsWithoutDecisionModal();
   await testPausedBrowserInteractionKeepsRawTextWithoutPrompt();
-  await testRedactStillRewritesFromBrowserDecisionModal();
+  await testBlockDefaultActionFailsClosedWithoutDecisionModal();
+  await testTypedScanAutoRedactsWithoutDecisionModal();
+  await testLegacyDecisionModalButtonsConsumeClicks();
+  await testMessageModalCloseButtonConsumesClicks();
   console.log("PASS content strict protection browser interaction regressions");
 }
 

@@ -1602,6 +1602,7 @@
         try {
           clickEvent.preventDefault?.();
           clickEvent.stopPropagation?.();
+          clickEvent.stopImmediatePropagation?.();
         } catch {
           // Host events can be partial.
         }
@@ -2106,7 +2107,10 @@
     const toggle = document.createElement("button");
     toggle.className = "pwm-panel-toggle";
     toggle.type = "button";
-    toggle.addEventListener("click", () => {
+    toggle.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
       setStatusPanelCollapsed(!statusPanelCollapsed);
     });
 
@@ -2144,7 +2148,10 @@
     manageBtn.className = "pwm-btn pwm-panel-manage";
     manageBtn.type = "button";
     manageBtn.textContent = "Manage Sites";
-    manageBtn.addEventListener("click", () => {
+    manageBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
       openProtectedSitesUi()
         .then((response) => {
           if (!response?.opened) {
@@ -2163,7 +2170,10 @@
     statusPanelPauseBtn = document.createElement("button");
     statusPanelPauseBtn.className = "pwm-btn pwm-panel-pause";
     statusPanelPauseBtn.type = "button";
-    statusPanelPauseBtn.addEventListener("click", () => {
+    statusPanelPauseBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
       const protection = getActiveProtection();
       setProtectionPaused(!protection.paused).catch((error) => {
         setBadge(error?.message || "Protection pause unavailable");
@@ -2488,6 +2498,10 @@
       state.pendingDecisionFingerprint === riskFingerprint
     ) {
       return state.pendingDecisionPromise;
+    }
+
+    if (policy?.defaultAction === "redact" || policy?.defaultAction === "block") {
+      return resolveDecisionAction(policy.defaultAction, policy);
     }
 
     const decisionPromise = showDecisionModal(findings, mode, {
@@ -2926,7 +2940,7 @@
         return null;
       };
 
-      const consumeModalKeyEvent = (event) => {
+      const consumeModalEvent = (event) => {
         event.preventDefault();
         event.stopPropagation();
         if (typeof event.stopImmediatePropagation === "function") {
@@ -2936,28 +2950,35 @@
 
       const onKeyDown = (event) => {
         if (event.key === "Escape") {
-          consumeModalKeyEvent(event);
+          consumeModalEvent(event);
           finish({ action: "cancel" });
           return;
         }
 
         if (event.key === "Enter" || event.key === " ") {
-          consumeModalKeyEvent(event);
+          consumeModalEvent(event);
           finish({ action: getFocusedAction() || "redact" });
         }
       };
 
       const onKeyPassthrough = (event) => {
         if (event.key === "Escape" || event.key === "Enter" || event.key === " ") {
-          consumeModalKeyEvent(event);
+          consumeModalEvent(event);
         }
       };
 
-      cancelBtn.addEventListener("click", () => finish({ action: "cancel" }));
-      redactBtn.addEventListener("click", () => finish({ action: "redact" }));
+      cancelBtn.addEventListener("click", (event) => {
+        consumeModalEvent(event);
+        finish({ action: "cancel" });
+      });
+      redactBtn.addEventListener("click", (event) => {
+        consumeModalEvent(event);
+        finish({ action: "redact" });
+      });
 
       backdrop.addEventListener("click", (event) => {
         if (event.target === backdrop) {
+          consumeModalEvent(event);
           finish({ action: "cancel" });
         }
       });
@@ -3039,9 +3060,13 @@
         consumeModalEvent(event);
       };
 
-      closeBtn.addEventListener("click", finish);
+      closeBtn.addEventListener("click", (event) => {
+        consumeModalEvent(event);
+        finish();
+      });
       backdrop.addEventListener("click", (event) => {
         if (event.target === backdrop) {
+          consumeModalEvent(event);
           finish();
         }
       });
@@ -3138,10 +3163,17 @@
         consumeModalEvent(event);
       };
 
-      cancelBtn.addEventListener("click", () => finish("cancel"));
-      insertBtn.addEventListener("click", () => finish("insert"));
+      cancelBtn.addEventListener("click", (event) => {
+        consumeModalEvent(event);
+        finish("cancel");
+      });
+      insertBtn.addEventListener("click", (event) => {
+        consumeModalEvent(event);
+        finish("insert");
+      });
       backdrop.addEventListener("click", (event) => {
         if (event.target === backdrop) {
+          consumeModalEvent(event);
           finish("cancel");
         }
       });
@@ -9647,6 +9679,11 @@
 
   async function maybeHandleSendButtonClick(event) {
     if (!extensionRuntimeAvailable) {
+      return;
+    }
+
+    const clickTarget = normalizeTarget(event.target);
+    if (clickTarget?.closest?.(".pwm-modal-backdrop")) {
       return;
     }
 

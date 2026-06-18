@@ -587,6 +587,12 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
       contentSource.includes("maybeHandleSendButtonClick(event).catch(handleContentError);"),
     "risky send-button clicks should be captured before host click handlers can submit raw composer text"
   );
+  const sendButtonClickSource = extractFunctionSource(contentSource, "maybeHandleSendButtonClick");
+  const modalClickGuardIndex = sendButtonClickSource.indexOf(".pwm-modal-backdrop");
+  assert.ok(
+    modalClickGuardIndex >= 0 && modalClickGuardIndex < sendButtonClickSource.indexOf("if (modalOpen)"),
+    "captured send-button click guard must not consume LeakGuard modal button clicks before target handlers run"
+  );
   assert.ok(
     beforeInputSource.includes("if (isFirefoxRuntime())") &&
       beforeInputSource.indexOf("consumeInterceptionEvent(event);") <
