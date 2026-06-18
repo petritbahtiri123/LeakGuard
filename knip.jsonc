@@ -14,6 +14,7 @@
     // loads the overlay script list from manifests/firefox*.json.
     "src/background/service_worker.js",
     "src/background/auditLog.js",
+    "src/background/protectedSiteRegistry.js",
     "src/background/core.js",
 
     // Manifest-declared content scripts. These are classic scripts loaded in
@@ -70,6 +71,7 @@
     "src/shared/streamingFileRedactor.js",
     "src/shared/protected_sites.js",
     "src/shared/policy.js",
+    "src/content/composer/chatgptComposerSync.js",
     "src/shared/runtime_scripts.js",
 
     // Scanner-only OCR classic scripts are loaded from scanner.html, not modules.
@@ -106,10 +108,12 @@
     "src/content/diagnostics/safeSnapshots.js",
     "src/content/diagnostics/fileDebugMetadata.js",
     "src/content/files/fileAttachPipeline.js",
+    "src/content/files/pendingSanitizedFileHandoff.js",
     "src/content/rehydration/placeholderRehydrator.js",
     "src/content/rehydration/responseObserver.js",
     "src/content/rehydration/revealController.js",
     "src/content/diagnostics/debugLogger.js",
+    "src/content/diagnostics/contentDebugFacade.js",
     "src/content/bootstrap/eventBindings.js",
     "src/content/content.js",
     "src/content/overlay.css",

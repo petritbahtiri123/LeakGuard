@@ -1433,6 +1433,7 @@ async function run() {
   const responseObserverIndex = contentScripts.indexOf("content/rehydration/responseObserver.js");
   const revealControllerIndex = contentScripts.indexOf("content/rehydration/revealController.js");
   const debugLoggerIndex = contentScripts.indexOf("content/diagnostics/debugLogger.js");
+  const contentDebugFacadeIndex = contentScripts.indexOf("content/diagnostics/contentDebugFacade.js");
   const contentEventBindingsIndex = contentScripts.indexOf("content/bootstrap/eventBindings.js");
   const contentIndex = contentScripts.indexOf("content/content.js");
 
@@ -1485,6 +1486,7 @@ async function run() {
   assert.ok(responseObserverIndex > -1, "content scripts should include response observer helpers");
   assert.ok(revealControllerIndex > -1, "content scripts should include reveal controller helpers");
   assert.ok(debugLoggerIndex > -1, "content scripts should include raw-safe debug logger helpers");
+  assert.ok(contentDebugFacadeIndex > -1, "content scripts should include raw-safe content debug facade helpers");
   assert.ok(contentEventBindingsIndex > -1, "content scripts should include content event binding helpers");
   const adapterOrderAligned = adapterIndexes.every(
     (index, offset) => offset === 0 || adapterIndexes[offset - 1] < index
@@ -1518,7 +1520,8 @@ async function run() {
       placeholderRehydratorIndex < responseObserverIndex &&
       responseObserverIndex < revealControllerIndex &&
       revealControllerIndex < debugLoggerIndex &&
-      debugLoggerIndex < contentEventBindingsIndex &&
+      debugLoggerIndex < contentDebugFacadeIndex &&
+      contentDebugFacadeIndex < contentEventBindingsIndex &&
       contentEventBindingsIndex < contentIndex,
     "file scanner, streaming redactor, file paste helper, file handoff, pure helper, adapter, and content script injection order should stay aligned"
   );

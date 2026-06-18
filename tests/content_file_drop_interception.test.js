@@ -4,6 +4,10 @@ const path = require("path");
 
 const repoRoot = path.join(__dirname, "..");
 const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
+const chatGptComposerSyncSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/composer/chatgptComposerSync.js"),
+  "utf8"
+);
 const fileDebugMetadataSource = fs.readFileSync(
   path.join(repoRoot, "src/content/diagnostics/fileDebugMetadata.js"),
   "utf8"
@@ -29,6 +33,10 @@ const fileHandoffPendingSource = fs.readFileSync(
   path.join(repoRoot, "src/content/file_handoff_pending.js"),
   "utf8"
 );
+const pendingSanitizedFileHandoffSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/files/pendingSanitizedFileHandoff.js"),
+  "utf8"
+);
 const fileHandoffFlowSource = fs.readFileSync(
   path.join(repoRoot, "src/content/file_handoff_flow.js"),
   "utf8"
@@ -44,6 +52,7 @@ require(path.join(repoRoot, "src/shared/fileLimits.js"));
 require(path.join(repoRoot, "src/content/file_paste_helpers.js"));
 require(path.join(repoRoot, "src/content/composer_helpers.js"));
 require(path.join(repoRoot, "src/content/input/rewriteVerificationText.js"));
+require(path.join(repoRoot, "src/content/composer/chatgptComposerSync.js"));
 require(path.join(repoRoot, "src/content/files/fileTransferPolicy.js"));
 require(path.join(repoRoot, "src/shared/entropy.js"));
 require(path.join(repoRoot, "src/shared/patterns.js"));
@@ -379,6 +388,47 @@ function fileHandoffStateHarnessSource() {
 
 function fileHandoffPendingHarnessSource() {
   return [
+    extractFunctionSource(pendingSanitizedFileHandoffSource, "createPendingSanitizedFileHandoffManager"),
+    `const pendingSanitizedFileHandoff = createPendingSanitizedFileHandoffManager({
+      clearPendingGeminiGhostIngressClickInterceptor,
+      clearPendingSanitizedAttachPrompt,
+      createPendingAttachEvent: (event, type) => createPendingAttachEvent(event, type),
+      createSanitizedDataTransferForHandoff,
+      createSanitizedFileHandoffDetails,
+      debugReveal,
+      describeElementForDebug,
+      describeFileForDebug,
+      describeFileHandoffAdapter,
+      describeFileInputForDebug,
+      describeGeminiHandoffDiscovery,
+      describeGeminiOverlayExposure: typeof describeGeminiOverlayExposure === "function" ? describeGeminiOverlayExposure : () => ({}),
+      describeGrokPendingInputDiscovery,
+      discoverGeminiFileHandoffElements,
+      discoverGrokPendingFileInput,
+      documentRef: document,
+      geminiTtlMs: GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MS,
+      genericTtlMs: GROK_PENDING_SANITIZED_FILE_HANDOFF_MS,
+      getFileHandoffAdapterById,
+      getGeminiSessionHash: () => lastGeminiDropSessionHash || "",
+      getPendingSanitizedAttachPromptMessage,
+      grokTtlMs: GROK_PENDING_SANITIZED_FILE_HANDOFF_MS,
+      handOffSanitizedFileInput,
+      handleContentError,
+      hideBadgeSoon,
+      hideDmzOverlay,
+      isFileHandoffAdapterPendingAttachEnabled,
+      isGeminiHost,
+      isGrokHost,
+      isLikelyGeminiUploadClickTarget,
+      isLikelyGrokUploadClickTarget,
+      logSanitizedFileHandoffFailure,
+      normalizeFileHandoffAdapter,
+      normalizeTarget,
+      refreshBadgeFromCurrentInput,
+      setBadge,
+      showFileProcessingSuccess,
+      showPendingSanitizedAttachPrompt
+    });`,
     extractFunctionSource(fileHandoffPendingSource, "createFileHandoffPending"),
     `const {
       createPendingAttachEvent,
@@ -1288,18 +1338,18 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "getChatGptSendButtonDebugState"),
       extractFunctionSource(contentSource, "getChatGptComposerSyncDebug"),
       extractFunctionSource(contentSource, "debugChatGptSync"),
-      extractFunctionSource(contentSource, "focusChatGptComposer"),
-      extractFunctionSource(contentSource, "placeChatGptCaretAtEnd"),
-      extractFunctionSource(contentSource, "dispatchChatGptComposerInputEvent"),
-      extractFunctionSource(contentSource, "dispatchChatGptComposerBeforeInput"),
-      extractFunctionSource(contentSource, "dispatchChatGptComposerChange"),
-      extractFunctionSource(contentSource, "nudgeChatGptComposerState"),
-      extractFunctionSource(contentSource, "waitForChatGptComposerVerification"),
-      extractFunctionSource(contentSource, "tryChatGptExecCommandWrite"),
-      extractFunctionSource(contentSource, "tryChatGptDirectWrite"),
-      extractFunctionSource(contentSource, "tryChatGptComposerHelperWrite"),
-      extractFunctionSource(contentSource, "runChatGptSyncedWriteAttempt"),
-      extractFunctionSource(contentSource, "applyChatGptSyncedComposerText"),
+      extractFunctionSource(chatGptComposerSyncSource, "focusChatGptComposer"),
+      extractFunctionSource(chatGptComposerSyncSource, "placeChatGptCaretAtEnd"),
+      extractFunctionSource(chatGptComposerSyncSource, "dispatchChatGptComposerInputEvent"),
+      extractFunctionSource(chatGptComposerSyncSource, "dispatchChatGptComposerBeforeInput"),
+      extractFunctionSource(chatGptComposerSyncSource, "dispatchChatGptComposerChange"),
+      extractFunctionSource(chatGptComposerSyncSource, "nudgeChatGptComposerState"),
+      extractFunctionSource(chatGptComposerSyncSource, "waitForChatGptComposerVerification"),
+      extractFunctionSource(chatGptComposerSyncSource, "tryChatGptExecCommandWrite"),
+      extractFunctionSource(chatGptComposerSyncSource, "tryChatGptDirectWrite"),
+      extractFunctionSource(chatGptComposerSyncSource, "tryChatGptComposerHelperWrite"),
+      extractFunctionSource(chatGptComposerSyncSource, "runChatGptSyncedWriteAttempt"),
+      extractFunctionSource(chatGptComposerSyncSource, "applyChatGptSyncedComposerText"),
       extractFunctionSource(contentSource, "applyChatGptLargePasteTextFallback"),
       extractFunctionSource(contentSource, "maybeHandleChatGptLargeTextPaste"),
       extractFunctionSource(contentSource, "resolveGeminiEditorTarget"),
@@ -1349,7 +1399,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "clearPendingGeminiGhostIngressClickInterceptor"),
       extractFunctionSource(contentSource, "clearPendingGeminiSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "isLikelyGeminiUploadClickTarget"),
-      extractFunctionSource(contentSource, "schedulePendingGeminiSanitizedFileAttempt"),
+      extractFunctionSource(pendingSanitizedFileHandoffSource, "schedulePendingGeminiSanitizedFileAttempt"),
       extractFunctionSource(contentSource, "describeGeminiHandoffDiscovery"),
       extractFunctionSource(contentSource, "attemptPendingGeminiSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "queuePendingGeminiSanitizedFileHandoff"),
@@ -1359,7 +1409,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "scoreGrokFileInput"),
       extractFunctionSource(contentSource, "discoverGrokPendingFileInput"),
       extractFunctionSource(contentSource, "describeGrokPendingInputDiscovery"),
-      extractFunctionSource(contentSource, "schedulePendingGrokSanitizedFileAttempt"),
+      extractFunctionSource(pendingSanitizedFileHandoffSource, "schedulePendingGrokSanitizedFileAttempt"),
       extractFunctionSource(contentSource, "attemptPendingGrokSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "queuePendingGrokSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "clearPendingGenericSanitizedFileHandoff"),
@@ -2163,7 +2213,7 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "performPendingGrokUserAttach"),
       extractFunctionSource(contentSource, "clearPendingGeminiSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "isLikelyGeminiUploadClickTarget"),
-      extractFunctionSource(contentSource, "schedulePendingGeminiSanitizedFileAttempt"),
+      extractFunctionSource(pendingSanitizedFileHandoffSource, "schedulePendingGeminiSanitizedFileAttempt"),
       extractFunctionSource(contentSource, "describeGeminiHandoffDiscovery"),
       extractFunctionSource(contentSource, "describeGeminiOverlayExposure"),
       extractFunctionSource(contentSource, "attemptPendingGeminiSanitizedFileHandoff"),
@@ -2176,7 +2226,7 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "scoreGrokFileInput"),
       extractFunctionSource(contentSource, "discoverGrokPendingFileInput"),
       extractFunctionSource(contentSource, "describeGrokPendingInputDiscovery"),
-      extractFunctionSource(contentSource, "schedulePendingGrokSanitizedFileAttempt"),
+      extractFunctionSource(pendingSanitizedFileHandoffSource, "schedulePendingGrokSanitizedFileAttempt"),
       extractFunctionSource(contentSource, "attemptPendingGrokSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "queuePendingGrokSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "clearPendingGenericSanitizedFileHandoff"),

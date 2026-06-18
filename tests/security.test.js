@@ -10,6 +10,8 @@ require(path.join(repoRoot, "src/shared/sessionMapStore.js"));
 require(path.join(repoRoot, "src/shared/runtime_scripts.js"));
 require(path.join(repoRoot, "src/background/auditLog.js"));
 require(path.join(repoRoot, "src/content/diagnostics/safeSnapshots.js"));
+require(path.join(repoRoot, "src/content/diagnostics/debugLogger.js"));
+const ContentDebugFacade = require(path.join(repoRoot, "src/content/diagnostics/contentDebugFacade.js"));
 const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
 const responseObserverSource = fs.readFileSync(
   path.join(repoRoot, "src/content/rehydration/responseObserver.js"),
@@ -25,6 +27,10 @@ const fileHandoffFlowSource = fs.readFileSync(
 );
 const geminiFallbackWriterSource = fs.readFileSync(
   path.join(repoRoot, "src/content/adapters/geminiFallbackWriter.js"),
+  "utf8"
+);
+const protectedSiteRegistrySource = fs.readFileSync(
+  path.join(repoRoot, "src/background/protectedSiteRegistry.js"),
   "utf8"
 );
 const backgroundSource = fs.readFileSync(
@@ -233,6 +239,9 @@ function createBackgroundSecuritySandbox({ allowReveal = true, auditMode = "meta
     getSessionStorageArea: () => storageArea
   };
 
+  vm.runInNewContext(protectedSiteRegistrySource, sandbox, {
+    filename: "protectedSiteRegistry.js"
+  });
   vm.runInNewContext(backgroundSource, sandbox, {
     filename: "core.js"
   });
@@ -853,6 +862,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const staticResponseObserver = staticScripts.indexOf("content/rehydration/responseObserver.js");
   const staticRevealController = staticScripts.indexOf("content/rehydration/revealController.js");
   const staticDebugLogger = staticScripts.indexOf("content/diagnostics/debugLogger.js");
+  const staticContentDebugFacade = staticScripts.indexOf("content/diagnostics/contentDebugFacade.js");
   const staticContentEventBindings = staticScripts.indexOf("content/bootstrap/eventBindings.js");
   const staticContent = staticScripts.indexOf("content/content.js");
   const dynamicFileLimits = dynamicScripts.indexOf("shared/fileLimits.js");
@@ -883,6 +893,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const dynamicResponseObserver = dynamicScripts.indexOf("content/rehydration/responseObserver.js");
   const dynamicRevealController = dynamicScripts.indexOf("content/rehydration/revealController.js");
   const dynamicDebugLogger = dynamicScripts.indexOf("content/diagnostics/debugLogger.js");
+  const dynamicContentDebugFacade = dynamicScripts.indexOf("content/diagnostics/contentDebugFacade.js");
   const dynamicContentEventBindings = dynamicScripts.indexOf("content/bootstrap/eventBindings.js");
   const dynamicContent = dynamicScripts.indexOf("content/content.js");
 
@@ -915,6 +926,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       staticResponseObserver > -1 &&
       staticRevealController > -1 &&
       staticDebugLogger > -1 &&
+      staticContentDebugFacade > -1 &&
       staticContentEventBindings > -1 &&
       staticContent > -1,
     "static manifest should include file limits, scanner, file paste helper, file handoff helpers, adapter helpers, pure helpers, and content script"
@@ -948,6 +960,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       dynamicResponseObserver > -1 &&
       dynamicRevealController > -1 &&
       dynamicDebugLogger > -1 &&
+      dynamicContentDebugFacade > -1 &&
       dynamicContentEventBindings > -1 &&
       dynamicContent > -1,
     "dynamic injection should include file limits, scanner, file paste helper, file handoff helpers, adapter helpers, pure helpers, and content script"
@@ -987,7 +1000,8 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       staticPlaceholderRehydrator < staticResponseObserver &&
       staticResponseObserver < staticRevealController &&
       staticRevealController < staticDebugLogger &&
-      staticDebugLogger < staticContentEventBindings &&
+      staticDebugLogger < staticContentDebugFacade &&
+      staticContentDebugFacade < staticContentEventBindings &&
       staticContentEventBindings < staticContent,
     "static manifest file paste order should load dependencies before content.js"
   );
@@ -1020,7 +1034,8 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       dynamicPlaceholderRehydrator < dynamicResponseObserver &&
       dynamicResponseObserver < dynamicRevealController &&
       dynamicRevealController < dynamicDebugLogger &&
-      dynamicDebugLogger < dynamicContentEventBindings &&
+      dynamicDebugLogger < dynamicContentDebugFacade &&
+      dynamicContentDebugFacade < dynamicContentEventBindings &&
       dynamicContentEventBindings < dynamicContent,
     "dynamic injection file paste order should load dependencies before content.js"
   );
@@ -1250,6 +1265,63 @@ function testOnlyPwmPlaceholdersRemainCanonical() {
   PLACEHOLDER_TOKEN_REGEX.lastIndex = 0;
 }
 
+function testContentDebugFacadeDiagnosticsStayMetadataOnly() {
+  const rawSecret = "sk-live-content-debug-secret-value-123456789";
+  const rawComposerText = `send ${rawSecret} to [PWM_1]`;
+  const calls = [];
+  const facade = ContentDebugFacade.createContentDebugFacade({
+    root: {},
+    DebugLogger: globalThis.PWM.DebugLogger,
+    normalizeText: (value) => String(value || ""),
+    normalizeEditorInnerText: (value) => String(value || ""),
+    normalizeVisiblePlaceholders: (value) => String(value || ""),
+    placeholderTokenRegex: /\[PWM_\d+\]/g,
+    getInputText: (input) => input.text,
+    getSelectionOffsets: () => ({ start: 0, end: 0 }),
+    findSendButton: () => ({ disabled: false, getAttribute: () => null }),
+    getHost: () => "chatgpt.com",
+    isChatGptHost: () => true,
+    createSafeFileAttachDebugPayload: (payload) => payload,
+    console: {
+      groupCollapsed(label) { calls.push(["groupCollapsed", label]); },
+      log(payload) { calls.push(["log", payload]); },
+      groupEnd() { calls.push(["groupEnd"]); }
+    },
+    localStorage: { getItem: () => "1" },
+    sessionStorage: { getItem: () => null }
+  });
+
+  const snapshot = facade.collectComposerDebugSnapshot(
+    { text: rawComposerText, innerText: rawComposerText, textContent: rawComposerText },
+    rawComposerText,
+    rawComposerText
+  );
+  const sync = facade.getChatGptComposerSyncDebug(
+    {
+      text: rawComposerText,
+      innerText: rawComposerText,
+      textContent: rawComposerText,
+      tagName: "DIV",
+      id: "secret-composer-id",
+      className: `composer ${rawSecret}`,
+      getAttribute(name) {
+        return name === "data-testid" ? `prompt-${rawSecret}` : "";
+      }
+    },
+    rawComposerText,
+    rawComposerText
+  );
+  const serialized = JSON.stringify({ snapshot, sync });
+
+  assert.strictEqual(serialized.includes(rawSecret), false, "content debug facade must not expose raw secret text");
+  assert.strictEqual(serialized.includes("secret-composer-id"), false, "content debug facade must not expose raw element identifiers");
+  assert.deepStrictEqual(Object.keys(snapshot.expected).sort(), ["length", "lineCount", "placeholderCount"]);
+  assert.strictEqual(sync.expectedLength, rawComposerText.length);
+  assert.strictEqual(sync.actualPlaceholderCount, 1);
+  assert.strictEqual(sync.input.classLength, `composer ${rawSecret}`.length);
+  assert.strictEqual(sync.input.dataTestIdLength, `prompt-${rawSecret}`.length);
+}
+
 async function run() {
   const { buildManifest, getOnnxRuntimeWebAccessibleResources } = await import(
     pathToFileURL(path.join(repoRoot, "scripts/build-extension.mjs")).href
@@ -1288,6 +1360,7 @@ async function run() {
   testProtectedSiteOcrBrokerMessageSurfaceIsNarrow();
   testPageUiNoLongerLeaksClassificationsOrMaskedFragments();
   testOnlyPwmPlaceholdersRemainCanonical();
+  testContentDebugFacadeDiagnosticsStayMetadataOnly();
   console.log("PASS security hardening static regressions");
 }
 

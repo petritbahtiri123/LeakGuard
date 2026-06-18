@@ -36,6 +36,8 @@
     "shared/detection/providers/genericEndpoints.js",
     "shared/detection/providers/index.js",
     "shared/detection/urlUserinfo.js",
+    "shared/detection/httpHeaders.js",
+    "shared/detection/structuredMetadata.js",
     "shared/ai/classifier.js",
     "shared/aiCandidateGate.js",
     "shared/detector.js",
@@ -68,6 +70,7 @@
     "content/file_handoff_pending.js",
     "content/file_handoff_flow.js",
     "content/input/rewriteVerificationText.js",
+    "content/composer/chatgptComposerSync.js",
     "content/files/fileTransferPolicy.js",
     "content/files/fileExtractionSessionCache.js",
     "content/files/protectedSiteOcrBroker.js",
@@ -85,10 +88,12 @@
     "content/diagnostics/safeSnapshots.js",
     "content/diagnostics/fileDebugMetadata.js",
     "content/files/fileAttachPipeline.js",
+    "content/files/pendingSanitizedFileHandoff.js",
     "content/rehydration/placeholderRehydrator.js",
     "content/rehydration/responseObserver.js",
     "content/rehydration/revealController.js",
     "content/diagnostics/debugLogger.js",
+    "content/diagnostics/contentDebugFacade.js",
     "content/bootstrap/eventBindings.js",
     "shared/runtime_scripts.js",
     "content/content.js"
@@ -128,6 +133,8 @@
     "shared/detection/providers/genericEndpoints.js",
     "shared/detection/providers/index.js",
     "shared/detection/urlUserinfo.js",
+    "shared/detection/httpHeaders.js",
+    "shared/detection/structuredMetadata.js",
     "shared/detector.js",
     "shared/ipClassification.js",
     "shared/ipDetection.js",
@@ -141,6 +148,7 @@
     "shared/policy.js",
     "shared/runtime_scripts.js",
     "background/auditLog.js",
+    "background/protectedSiteRegistry.js",
     "background/core.js"
   ]);
 
