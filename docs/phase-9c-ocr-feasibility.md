@@ -2,6 +2,8 @@
 
 Date: 2026-06-09
 
+> Historical feasibility note, 2026-06-18: local scanner/protected-site OCR has moved beyond this feasibility snapshot. Use `docs/FILE_CAPABILITY_MATRIX.md`, `docs/FILE_UPLOAD_SCANNING_GUIDE.md`, and `docs/RELEASE_QA_CHECKLIST.md` for current OCR support, default settings, and fail-closed behavior.
+
 Scope: planning and validation only. This report does not implement OCR, add
 dependencies, add permissions, or change scanner behavior.
 

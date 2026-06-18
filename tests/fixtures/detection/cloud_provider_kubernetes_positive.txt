@@ -1,0 +1,7 @@
+Kubernetes namespace: prod-payments context: aks-prod-weu cluster: cce-prod-de-001 cluster: gke-prod-eu-001 cluster: eks-prod-eu-001.
+pod/nginx-prod-abc123 deployment/payment-api service/payment-api secret/db-password configmap/app-config ingress/prod-ingress.
+kubeconfig server: https://10.10.20.30:6443
+certificate-authority-data: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tQUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo=
+client-certificate-data: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tWllYV1ZVVFNSUVBPTk1MS0pJSEdGRURDQkE=
+client-key-data: LS0tLS1CRUdJTiBSU0EgUFJJVkFURSBLRVktLS0tLUFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFla
+token: eyJhbGciOiJSUzI1NiIsImtpZCI6InN5bnRoZXRpYyJ9.payload.signature

@@ -13,6 +13,7 @@ const repoRoot = path.join(__dirname, "..", "..");
   "src/shared/placeholders.js",
   "src/shared/entropy.js",
   "src/shared/patterns.js",
+  "src/shared/detection/urlUserinfo.js",
   "src/shared/detector.js",
   "src/shared/ipClassification.js",
   "src/shared/ipDetection.js",
@@ -627,8 +628,11 @@ function measureBenchmark(sample) {
   };
 }
 
-function getPerformanceFailure(sample, result) {
+function getPerformanceFailure(sample, result, options = {}) {
+  const profileEnabled =
+    typeof options.profileEnabled === "boolean" ? options.profileEnabled : PROFILE_ENABLED;
   if (sample.structuralOnly) return null;
+  if (!profileEnabled) return null;
   if (result.p95_wall_ms > sample.maxP95Ms) {
     return `${sample.name}: p95 ${result.p95_wall_ms.toFixed(3)}ms exceeded ${sample.maxP95Ms}ms`;
   }

@@ -1,0 +1,3 @@
+Open Telekom Cloud OTC project contains otc-prod-de-ecs-001 otc-prd-de-vpc-001 ecs-prod-de-app-001 vpc-prod-de-core-001 subnet-prod-de-app-001 sg-prod-web-001 security-group-prod-web-001 evs-prod-db-001 obs-prod-backup-001 cce-prod-de-001 rds-prod-de-001 elb-prod-public-001 eip-prod-nat-001 keypair-prod-admin image-prod-base-ubuntu flavor-prod-standard.
+OpenStack project_id=11111111111111111111111111111111 tenant_id=11111111-2222-3333-4444-555555555555 domain_id=22222222222222222222222222222222 server_id=33333333-2222-3333-4444-555555555555.
+OBS bucket my-prod-backup.obs.eu-de.otc.t-systems.com and my-prod-backup.obs.eu-nl.otc.t-systems.com.

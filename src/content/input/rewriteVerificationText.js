@@ -30,7 +30,38 @@
   }
 
   function getPlaceholderTokenRegex(options = {}) {
-    return options.placeholderTokenRegex || root.PWM?.PLACEHOLDER_TOKEN_REGEX || /\[(?:PWM|NET|PUB_HOST)_\d+\]/g;
+    return (
+      options.placeholderTokenRegex ||
+      root.PWM?.ANY_PLACEHOLDER_TOKEN_REGEX ||
+      root.PWM?.PLACEHOLDER_TOKEN_REGEX ||
+      /\[(?:PWM|NET|PUB_HOST)_\d+\]/g
+    );
+  }
+
+  function isPlaceholderToken(value, options = {}) {
+    const normalized = getNormalizeVisiblePlaceholders(options)(String(value || "").trim());
+    if (!normalized) return false;
+    const placeholderTokenRegex = getPlaceholderTokenRegex(options);
+    const exactRegex = new RegExp(`^(?:${placeholderTokenRegex.source})$`);
+    return exactRegex.test(normalized);
+  }
+
+  function containsPlaceholderToken(value, options = {}) {
+    const normalized = getNormalizeVisiblePlaceholders(options)(String(value || ""));
+    if (!normalized) return false;
+    const placeholderTokenRegex = getPlaceholderTokenRegex(options);
+    const containsRegex = new RegExp(placeholderTokenRegex.source);
+    return containsRegex.test(normalized);
+  }
+
+  function findingLineContainsPlaceholder(finding, options = {}) {
+    const sourceText = String(options.sourceText || "");
+    if (!sourceText || !finding) return false;
+    const start = Math.max(0, Number(finding.start || 0));
+    const lineStart = sourceText.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
+    let lineEnd = sourceText.indexOf("\n", start);
+    if (lineEnd < 0) lineEnd = sourceText.length;
+    return containsPlaceholderToken(sourceText.slice(lineStart, lineEnd), options);
   }
 
   function normalizeVerificationText(text, options = {}) {
@@ -148,32 +179,50 @@
     return false;
   }
 
+  function isPreservedContextKeyFinding(finding) {
+    return Array.isArray(finding?.method) && finding.method.includes("exact-key");
+  }
+
+  function isCredentialPrefixOnlyFinding(finding) {
+    const raw = String(finding?.raw || "").trim();
+    if (!raw) return false;
+    return /(?:^|[;?&])(?:user|username|password)=$/i.test(raw) || /[:/@]$/.test(raw);
+  }
+
+  function isUnsafeRewriteFinding(finding, options = {}) {
+    return (
+      isHighConfidenceRewriteFinding(finding) &&
+      !isPlaceholderToken(finding.raw, options) &&
+      !containsPlaceholderToken(finding.raw, options) &&
+      !findingLineContainsPlaceholder(finding, options) &&
+      !isPreservedContextKeyFinding(finding) &&
+      !isCredentialPrefixOnlyFinding(finding)
+    );
+  }
+
   function collectOriginalRawSecretValues(originalText, findings, options = {}) {
     const normalizeComposerText = getNormalizeComposerText(options);
-    const placeholderTokenRegex = getPlaceholderTokenRegex(options);
     const analyzeText = options.analyzeText;
     const rawValues = new Set();
     const addRawValue = (raw) => {
       const normalized = normalizeComposerText(raw);
-      if (!normalized || placeholderTokenRegex.test(normalized)) {
-        placeholderTokenRegex.lastIndex = 0;
+      if (!normalized || isPlaceholderToken(normalized, options)) {
         return;
       }
-      placeholderTokenRegex.lastIndex = 0;
       rawValues.add(normalized);
     };
 
     for (const finding of Array.isArray(findings) ? findings : []) {
-      if (isHighConfidenceRewriteFinding(finding)) {
-        addRawValue(finding["raw"]);
+        if (isUnsafeRewriteFinding(finding, { ...options, sourceText: originalText })) {
+          addRawValue(finding["raw"]);
+        }
       }
-    }
 
     if (typeof analyzeText === "function" && typeof originalText === "string" && originalText.trim()) {
       try {
         const analysis = analyzeText(originalText);
         for (const finding of analysis.findings || analysis.secretFindings || []) {
-          if (isHighConfidenceRewriteFinding(finding)) {
+          if (isUnsafeRewriteFinding(finding, { ...options, sourceText: originalText })) {
             addRawValue(finding["raw"]);
           }
         }
@@ -199,7 +248,9 @@
 
     try {
       const analysis = analyzeText(normalized);
-      return (analysis.secretFindings || []).some(isHighConfidenceRewriteFinding);
+      return (analysis.secretFindings || []).some((finding) =>
+        isUnsafeRewriteFinding(finding, { ...options, sourceText: normalized })
+      );
     } catch {
       return false;
     }
@@ -394,6 +445,9 @@
     normalizeLooseVerificationText,
     listExpectedPlaceholders,
     listPlaceholderTokens,
+    isPlaceholderToken,
+    containsPlaceholderToken,
+    findingLineContainsPlaceholder,
     samePlaceholderTokenSet,
     actualContainsExpectedPlaceholders,
     countVerificationLineBreaks,
@@ -402,6 +456,9 @@
     detectMultilineCollapse,
     isReasonablyCloseRewriteLength,
     isHighConfidenceRewriteFinding,
+    isPreservedContextKeyFinding,
+    isCredentialPrefixOnlyFinding,
+    isUnsafeRewriteFinding,
     collectOriginalRawSecretValues,
     candidateHasHighConfidenceSecret,
     summarizeVerificationCandidate,

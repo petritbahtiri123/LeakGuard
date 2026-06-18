@@ -51,7 +51,7 @@ LeakGuard is designed for risk reduction, not as a complete data-loss-prevention
 - streaming local redaction for supported text-file composer uploads above 4 MiB and up to 50 MB
 - ChatGPT large paste / generated Plain Text attachment protection
 - Gemini sanitized file handoff and large text fallback protection
-- warning-only pass-through for unsupported files without claiming they were scanned, protected, or sanitized
+- explicit warning for unsupported files without claiming they were scanned, protected, or sanitized; protected paths block raw upload when LeakGuard cannot safely pass through
 - fail-closed blocking for supported text files above 50 MB or failed sanitized file handoff after LeakGuard attempts sanitization
 - Manifest V3 service-worker architecture
 - deterministic per-session placeholder mapping

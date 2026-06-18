@@ -1,5 +1,7 @@
 # LeakGuard File Scanner Plan
 
+> Historical planning note: this document records the original scanner rollout plan and is not the current module ownership source. For current file capability, fail-closed, OCR, regenerated-output, and runtime ownership behavior, read `docs/FILE_CAPABILITY_MATRIX.md`, `docs/FILE_UPLOAD_SCANNING_GUIDE.md`, `docs/file-handoff-architecture.md`, and `docs/REPO_MAP.md`.
+
 ## Goal
 
 Add a local-only File Scanner module that lets users scan text-like files before pasting, uploading, or sharing them with AI tools. Phase 1 should reuse LeakGuard's existing deterministic detection and redaction pipeline, avoid new heavy dependencies, and preserve the current prompt redaction behavior.
@@ -8,13 +10,13 @@ The scanner must not upload files, call external APIs, emit telemetry, or persis
 
 ## Launch Implementation Status
 
-The launch implementation now covers Phase 1B and Phase 1C for text-based files:
+The launch implementation has expanded beyond the original Phase 1B and Phase 1C text-file scope:
 
 - `src/shared/fileScanner.js` validates local text files, rejects oversized/binary/invalid UTF-8 inputs, runs deterministic scanning, and builds sanitized reports.
 - `src/scanner/scanner.html`, `src/scanner/scanner.css`, and `src/scanner/scanner.js` provide the extension-owned File Scanner page.
 - The popup opens the scanner page without adding host permissions or content-script injection.
 - Redacted text copies and sanitized JSON findings reports are generated only after explicit user clicks.
-- PDF, DOCX, image OCR, and visual redaction remain deferred.
+- Text PDF, DOCX, XLSX, image metadata, scanner OCR, protected-site OCR, and regenerated sanitized outputs are now covered in the current capability docs linked above.
 
 ## Existing Architecture
 
@@ -23,8 +25,8 @@ LeakGuard currently uses one shared source tree and packages browser-specific ex
 - `manifests/base.json`: declares the popup, options page, built-in content scripts, permissions, CSP, and web-accessible AI model/runtime assets.
 - `scripts/build-extension.mjs`: copies `src/background`, `src/content`, `src/popup`, `src/options`, `src/ui`, `src/shared`, `src/compat`, icons, config, AI model files, and selected ONNX Runtime assets into each `dist/*` target.
 - `scripts/build-all.mjs`: builds Chrome, Chrome enterprise, Firefox, and Firefox enterprise targets.
-- `src/background/core.js`: handles protected-site state, dynamic content-script registration, secure reveal staging, policy loading, and popup/options messages.
-- `src/content/content.js`: intercepts protected AI-site composers, runs scan/redaction decisions, updates the in-page status UI, and stages secure reveal requests.
+- `src/background/core.js`: final background orchestration script; protected-site registry/dynamic content script registration now lives in `src/background/protectedSiteRegistry.js`.
+- `src/content/content.js`: final content orchestration script; file extraction/handoff, adapters, diagnostics, and bootstrap helpers now live in focused `src/content/*` modules.
 - `src/popup/*`: extension popup for current-site state, protected-site management, and secure reveal.
 - `src/options/*`: extension options page for protected-site management.
 - `src/ui/reveal_panel.*`: extension-owned reveal panel UI.

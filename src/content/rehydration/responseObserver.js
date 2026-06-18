@@ -22,7 +22,11 @@
   }
 
   function getPlaceholderTokenRegex(options = {}) {
-    const regex = options.placeholderTokenRegex || root.PWM?.PLACEHOLDER_TOKEN_REGEX || /\[(?:PWM|NET|PUB_HOST)_\d+\]/g;
+    const regex =
+      options.placeholderTokenRegex ||
+      root.PWM?.ANY_PLACEHOLDER_TOKEN_REGEX ||
+      root.PWM?.PLACEHOLDER_TOKEN_REGEX ||
+      /\[(?:PWM_\d+|NET_\d+(?:_SUB_\d+)*(?:_(?:HOST_\d+|GW|VIP|DNS))?|PUB_HOST_\d+(?:_(?:GW|VIP|DNS))?|[A-Z][A-Z0-9_]*_\d+)\]/g;
     return new RegExp(regex.source, "g");
   }
 

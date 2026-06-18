@@ -1,0 +1,4 @@
+Normal slash paths docs/page and service/name stay visible.
+Normal comma-separated prose apples, oranges, and pears stays visible.
+A single DN-looking part CN=John Doe alone stays visible.
+Public URL https://example.com/docs/page stays visible.
