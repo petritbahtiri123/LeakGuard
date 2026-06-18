@@ -1,0 +1,338 @@
+{
+  "source": "tests/fixtures/manual/live-site-qa/full_redaction_smoke_payload.txt",
+  "generatedAt": "2026-06-18T17:19:01.838Z",
+  "adapters": [
+    {
+      "id": "chatgpt",
+      "url": "https://chatgpt.com/",
+      "file": "adapters/chatgpt_paste_payload.txt"
+    },
+    {
+      "id": "openai",
+      "url": "https://chat.openai.com/",
+      "file": "adapters/openai_paste_payload.txt"
+    },
+    {
+      "id": "gemini",
+      "url": "https://gemini.google.com/app",
+      "file": "adapters/gemini_paste_payload.txt"
+    },
+    {
+      "id": "claude",
+      "url": "https://claude.ai/",
+      "file": "adapters/claude_paste_payload.txt"
+    },
+    {
+      "id": "grok",
+      "url": "https://grok.com/",
+      "file": "adapters/grok_paste_payload.txt"
+    },
+    {
+      "id": "x",
+      "url": "https://x.com/compose/post",
+      "file": "adapters/x_paste_payload.txt"
+    }
+  ],
+  "uploadFixtures": [
+    {
+      "family": "text",
+      "extension": ".bash",
+      "file": "uploads/full-redaction-smoke-bash.bash",
+      "mimeType": "text/plain"
+    },
+    {
+      "family": "text",
+      "extension": ".bat",
+      "file": "uploads/full-redaction-smoke-bat.bat",
+      "mimeType": "text/plain"
+    },
+    {
+      "family": "text",
+      "extension": ".c",
+      "file": "uploads/full-redaction-smoke-c.c",
+      "mimeType": "text/plain"
+    },
+    {
+      "family": "text",
+      "extension": ".cfg",
+      "file": "uploads/full-redaction-smoke-cfg.cfg",
+      "mimeType": "text/plain"
+    },
+    {
+      "family": "text",
+      "extension": ".cmd",
+      "file": "uploads/full-redaction-smoke-cmd.cmd",
+      "mimeType": "text/plain"
+    },
+    {
+      "family": "text",
+      "extension": ".conf",
+      "file": "uploads/full-redaction-smoke-conf.conf",
+      "mimeType": "text/plain"
+    },
+    {
+      "family": "text",
+      "extension": ".cpp",
+      "file": "uploads/full-redaction-smoke-cpp.cpp",
+      "mimeType": "text/plain"
+    },
+    {
+      "family": "text",
+      "extension": ".cs",
+      "file": "uploads/full-redaction-smoke-cs.cs",
+      "mimeType": "text/plain"
+    },
+    {
+      "family": "text",
+      "extension": ".css",
+      "file": "uploads/full-redaction-smoke-css.css",
+      "mimeType": "text/css"
+    },
+    {
+      "family": "text",
+      "extension": ".csv",
+      "file": "uploads/full-redaction-smoke-csv.csv",
+      "mimeType": "text/csv"
+    },
+    {
+      "family": "text",
+      "extension": ".env",
+      "file": "uploads/full-redaction-smoke-env.env",
+      "mimeType": "text/plain"
+    },
+    {
+      "family": "text",
+      "extension": ".go",
+      "file": "uploads/full-redaction-smoke-go.go",
+      "mimeType": "text/plain"
+    },
+    {
+      "family": "text",
+      "extension": ".h",
+      "file": "uploads/full-redaction-smoke-h.h",
+      "mimeType": "text/plain"
+    },
+    {
+      "family": "text",
+      "extension": ".hpp",
+      "file": "uploads/full-redaction-smoke-hpp.hpp",
+      "mimeType": "text/plain"
+    },
+    {
+      "family": "text",
+      "extension": ".html",
+      "file": "uploads/full-redaction-smoke-html.html",
+      "mimeType": "text/html"
+    },
+    {
+      "family": "text",
+      "extension": ".ini",
+      "file": "uploads/full-redaction-smoke-ini.ini",
+      "mimeType": "text/plain"
+    },
+    {
+      "family": "text",
+      "extension": ".java",
+      "file": "uploads/full-redaction-smoke-java.java",
+      "mimeType": "text/plain"
+    },
+    {
+      "family": "text",
+      "extension": ".js",
+      "file": "uploads/full-redaction-smoke-js.js",
+      "mimeType": "text/javascript"
+    },
+    {
+      "family": "text",
+      "extension": ".json",
+      "file": "uploads/full-redaction-smoke-json.json",
+      "mimeType": "application/json"
+    },
+    {
+      "family": "text",
+      "extension": ".jsx",
+      "file": "uploads/full-redaction-smoke-jsx.jsx",
+      "mimeType": "text/plain"
+    },
+    {
+      "family": "text",
+      "extension": ".key",
+      "file": "uploads/full-redaction-smoke-key.key",
+      "mimeType": "application/octet-stream"
+    },
+    {
+      "family": "text",
+      "extension": ".log",
+      "file": "uploads/full-redaction-smoke-log.log",
+      "mimeType": "text/plain"
+    },
+    {
+      "family": "text",
+      "extension": ".markdown",
+      "file": "uploads/full-redaction-smoke-markdown.markdown",
+      "mimeType": "text/markdown"
+    },
+    {
+      "family": "text",
+      "extension": ".md",
+      "file": "uploads/full-redaction-smoke-md.md",
+      "mimeType": "text/markdown"
+    },
+    {
+      "family": "text",
+      "extension": ".pem",
+      "file": "uploads/full-redaction-smoke-pem.pem",
+      "mimeType": "application/x-pem-file"
+    },
+    {
+      "family": "text",
+      "extension": ".php",
+      "file": "uploads/full-redaction-smoke-php.php",
+      "mimeType": "text/plain"
+    },
+    {
+      "family": "text",
+      "extension": ".ps1",
+      "file": "uploads/full-redaction-smoke-ps1.ps1",
+      "mimeType": "text/plain"
+    },
+    {
+      "family": "text",
+      "extension": ".py",
+      "file": "uploads/full-redaction-smoke-py.py",
+      "mimeType": "text/plain"
+    },
+    {
+      "family": "text",
+      "extension": ".rb",
+      "file": "uploads/full-redaction-smoke-rb.rb",
+      "mimeType": "text/plain"
+    },
+    {
+      "family": "text",
+      "extension": ".rs",
+      "file": "uploads/full-redaction-smoke-rs.rs",
+      "mimeType": "text/plain"
+    },
+    {
+      "family": "text",
+      "extension": ".scss",
+      "file": "uploads/full-redaction-smoke-scss.scss",
+      "mimeType": "text/plain"
+    },
+    {
+      "family": "text",
+      "extension": ".sh",
+      "file": "uploads/full-redaction-smoke-sh.sh",
+      "mimeType": "text/plain"
+    },
+    {
+      "family": "text",
+      "extension": ".sql",
+      "file": "uploads/full-redaction-smoke-sql.sql",
+      "mimeType": "application/sql"
+    },
+    {
+      "family": "text",
+      "extension": ".toml",
+      "file": "uploads/full-redaction-smoke-toml.toml",
+      "mimeType": "application/toml"
+    },
+    {
+      "family": "text",
+      "extension": ".ts",
+      "file": "uploads/full-redaction-smoke-ts.ts",
+      "mimeType": "text/plain"
+    },
+    {
+      "family": "text",
+      "extension": ".tsx",
+      "file": "uploads/full-redaction-smoke-tsx.tsx",
+      "mimeType": "text/plain"
+    },
+    {
+      "family": "text",
+      "extension": ".txt",
+      "file": "uploads/full-redaction-smoke-txt.txt",
+      "mimeType": "text/plain"
+    },
+    {
+      "family": "text",
+      "extension": ".xml",
+      "file": "uploads/full-redaction-smoke-xml.xml",
+      "mimeType": "application/xml"
+    },
+    {
+      "family": "text",
+      "extension": ".yaml",
+      "file": "uploads/full-redaction-smoke-yaml.yaml",
+      "mimeType": "application/x-yaml"
+    },
+    {
+      "family": "text",
+      "extension": ".yml",
+      "file": "uploads/full-redaction-smoke-yml.yml",
+      "mimeType": "application/x-yaml"
+    },
+    {
+      "family": "text",
+      "extension": ".zsh",
+      "file": "uploads/full-redaction-smoke-zsh.zsh",
+      "mimeType": "text/plain"
+    },
+    {
+      "family": "text",
+      "basename": "dockerfile",
+      "file": "uploads/Dockerfile",
+      "mimeType": "text/plain"
+    },
+    {
+      "family": "text",
+      "basename": "makefile",
+      "file": "uploads/Makefile",
+      "mimeType": "text/plain"
+    },
+    {
+      "family": "document",
+      "extension": ".pdf",
+      "file": "uploads/full-redaction-smoke.pdf",
+      "mimeType": "application/pdf"
+    },
+    {
+      "family": "document",
+      "extension": ".docx",
+      "file": "uploads/full-redaction-smoke.docx",
+      "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    },
+    {
+      "family": "document",
+      "extension": ".xlsx",
+      "file": "uploads/full-redaction-smoke.xlsx",
+      "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    },
+    {
+      "family": "image",
+      "extension": ".png",
+      "file": "uploads/full-redaction-smoke.png",
+      "mimeType": "image/png"
+    },
+    {
+      "family": "image",
+      "extension": ".jpg",
+      "file": "uploads/full-redaction-smoke.jpg",
+      "mimeType": "image/jpeg"
+    },
+    {
+      "family": "image",
+      "extension": ".jpeg",
+      "file": "uploads/full-redaction-smoke.jpeg",
+      "mimeType": "image/jpeg"
+    },
+    {
+      "family": "image",
+      "extension": ".webp",
+      "file": "uploads/full-redaction-smoke.webp",
+      "mimeType": "image/webp"
+    }
+  ]
+}

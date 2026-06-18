@@ -582,6 +582,12 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
     "beforeinput paste/typing, submit, and Enter-send interception should all stop immediate propagation to block host races"
   );
   assert.ok(
+    contentSource.includes("async function maybeHandleSendButtonClick") &&
+      contentSource.includes('document.addEventListener(\n      "click"') &&
+      contentSource.includes("maybeHandleSendButtonClick(event).catch(handleContentError);"),
+    "risky send-button clicks should be captured before host click handlers can submit raw composer text"
+  );
+  assert.ok(
     beforeInputSource.includes("if (isFirefoxRuntime())") &&
       beforeInputSource.indexOf("consumeInterceptionEvent(event);") <
         beforeInputSource.indexOf("await analyzeTextWithAiAssist(originalText)") &&

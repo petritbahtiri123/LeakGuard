@@ -160,6 +160,7 @@
   let lastBadgeText = "";
   let badgeHideTimer = 0;
   let bypassNextSubmit = false;
+  let bypassNextSendButtonClick = false;
   let inputScanTimer = 0;
   let rehydrateObserver = null;
   let modalOpen = false;
@@ -3553,7 +3554,11 @@
 
     const button = findSendButton(input);
     if (button) {
+      bypassNextSendButtonClick = true;
       button.click();
+      queueMicrotask(() => {
+        bypassNextSendButtonClick = false;
+      });
     }
   }
 
@@ -9558,6 +9563,71 @@
     });
   }
 
+  function findSendButtonClickTarget(event) {
+    const candidates = [];
+    if (typeof event?.composedPath === "function") {
+      candidates.push(...event.composedPath());
+    }
+    candidates.push(event?.target);
+
+    for (const candidate of candidates) {
+      if (!candidate || candidate === window || candidate === document) continue;
+      const element = candidate.nodeType === Node.ELEMENT_NODE ? candidate : candidate.parentElement;
+      if (!element) continue;
+
+      for (const selector of SEND_BUTTON_SELECTORS) {
+        const button = element.matches?.(selector) ? element : element.closest?.(selector);
+        if (button && isVisible(button)) {
+          return button;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  function createSyntheticSubmitInterceptionEvent(target) {
+    return {
+      target,
+      preventDefault() {},
+      stopPropagation() {},
+      stopImmediatePropagation() {}
+    };
+  }
+
+  async function maybeHandleSendButtonClick(event) {
+    if (!extensionRuntimeAvailable) {
+      return;
+    }
+
+    if (modalOpen) {
+      consumeInterceptionEvent(event);
+      return;
+    }
+
+    if (bypassNextSendButtonClick) {
+      bypassNextSendButtonClick = false;
+      return;
+    }
+
+    const button = findSendButtonClickTarget(event);
+    if (!button) return;
+
+    const input = findComposer(button);
+    if (!input) return;
+    noteActiveRiskEditor(input);
+
+    const text = getInputText(input);
+    if (!text || !text.trim()) return;
+
+    const quickAnalysis = analyzeText(text);
+    if (!analysisNeedsEventOwnership(quickAnalysis)) return;
+
+    consumeInterceptionEvent(event);
+    const form = button.closest?.("form") || input.closest?.("form") || null;
+    await maybeHandleSubmit(createSyntheticSubmitInterceptionEvent(form || input));
+  }
+
   async function maybeHandleFallbackSendKey(event) {
     if (
       !extensionRuntimeAvailable ||
@@ -10203,6 +10273,14 @@
       "input",
       (event) => {
         maybeHandleFileInputChange(event).catch(handleContentError);
+      },
+      true
+    );
+
+    document.addEventListener(
+      "click",
+      (event) => {
+        maybeHandleSendButtonClick(event).catch(handleContentError);
       },
       true
     );
