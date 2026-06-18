@@ -18,6 +18,7 @@
     FilePasteHelpers,
     createFileHandoffState,
     createFileHandoffPending,
+    createPendingSanitizedFileHandoffManager,
     createFileHandoffFlow,
     PlaceholderRehydrator,
     ResponseObserver,
@@ -275,17 +276,7 @@
   let fileDragDetectedLogged = false;
   let lastGeminiDropSessionHash = "";
   const geminiSanitizedDownloadFallbacks = new WeakSet();
-  let pendingGeminiSanitizedFileHandoff = null;
-  let pendingGeminiSanitizedFileObserver = null;
-  let pendingGeminiSanitizedFileTimer = 0;
-  let pendingGeminiSanitizedFileClickHandler = null;
   let pendingGeminiGhostIngressClickCleanup = null;
-  let pendingGrokSanitizedFileHandoff = null;
-  let pendingGrokSanitizedFileObserver = null;
-  let pendingGrokSanitizedFileTimer = 0;
-  let pendingGrokSanitizedFileClickHandler = null;
-  let pendingGenericSanitizedFileHandoff = null;
-  let pendingGenericSanitizedFileTimer = 0;
   const FILE_HANDOFF_PENDING_ATTACH_ENABLED = Object.freeze({
     gemini: true,
     grok: true,
@@ -343,6 +334,93 @@
     shouldSuppressFirefoxFileInputEvent,
     clearLocalFileInputSelection
   } = fileHandoffState;
+  const pendingSanitizedFileHandoff = createPendingSanitizedFileHandoffManager({
+    clearPendingGeminiGhostIngressClickInterceptor,
+    clearPendingSanitizedAttachPrompt,
+    createPendingAttachEvent: (event, type) => createPendingAttachEvent(event, type),
+    createSanitizedDataTransferForHandoff,
+    createSanitizedFileHandoffDetails,
+    debugReveal,
+    describeElementForDebug,
+    describeFileForDebug,
+    describeFileHandoffAdapter,
+    describeFileInputForDebug,
+    describeGeminiHandoffDiscovery,
+    describeGeminiOverlayExposure,
+    describeGrokPendingInputDiscovery,
+    discoverGeminiFileHandoffElements,
+    discoverGrokPendingFileInput,
+    documentRef: document,
+    geminiTtlMs: GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MS,
+    genericTtlMs: GROK_PENDING_SANITIZED_FILE_HANDOFF_MS,
+    getFileHandoffAdapterById,
+    getGeminiSessionHash: () => lastGeminiDropSessionHash || "",
+    getPendingSanitizedAttachPromptMessage,
+    grokTtlMs: GROK_PENDING_SANITIZED_FILE_HANDOFF_MS,
+    handOffSanitizedFileInput,
+    handleContentError,
+    hideBadgeSoon,
+    hideDmzOverlay,
+    isFileHandoffAdapterPendingAttachEnabled,
+    isGeminiHost,
+    isGrokHost,
+    isLikelyGeminiUploadClickTarget,
+    isLikelyGrokUploadClickTarget,
+    logSanitizedFileHandoffFailure,
+    normalizeFileHandoffAdapter,
+    normalizeTarget,
+    refreshBadgeFromCurrentInput,
+    setBadge,
+    showFileProcessingSuccess,
+    showPendingSanitizedAttachPrompt
+  });
+  function attemptPendingGeminiSanitizedFileHandoff(reason = "") {
+    return pendingSanitizedFileHandoff.attemptPendingGeminiSanitizedFileHandoff(reason);
+  }
+
+  function attemptPendingGrokSanitizedFileHandoff(reason = "") {
+    return pendingSanitizedFileHandoff.attemptPendingGrokSanitizedFileHandoff(reason);
+  }
+
+  function clearPendingGeminiSanitizedFileHandoff(reason = "") {
+    return pendingSanitizedFileHandoff.clearPendingGeminiSanitizedFileHandoff(reason);
+  }
+
+  function clearPendingGrokSanitizedFileHandoff(reason = "") {
+    return pendingSanitizedFileHandoff.clearPendingGrokSanitizedFileHandoff(reason);
+  }
+
+  function clearPendingGenericSanitizedFileHandoff(reason = "") {
+    return pendingSanitizedFileHandoff.clearPendingGenericSanitizedFileHandoff(reason);
+  }
+
+  function queuePendingGeminiSanitizedFileHandoff(event, input, sanitizedFile, details = null) {
+    return pendingSanitizedFileHandoff.queuePendingGeminiSanitizedFileHandoff(event, input, sanitizedFile, details);
+  }
+
+  function queuePendingGrokSanitizedFileHandoff(event, input, sanitizedFile, details = null) {
+    return pendingSanitizedFileHandoff.queuePendingGrokSanitizedFileHandoff(event, input, sanitizedFile, details);
+  }
+
+  function queuePendingGenericSanitizedFileHandoff(adapter, event, input, sanitizedFile, details = null) {
+    return pendingSanitizedFileHandoff.queuePendingGenericSanitizedFileHandoff(adapter, event, input, sanitizedFile, details);
+  }
+
+  function hasPendingGeminiSanitizedFileHandoff(sanitizedFile) {
+    return pendingSanitizedFileHandoff.hasPendingGeminiSanitizedFileHandoff(sanitizedFile);
+  }
+
+  function hasPendingGrokSanitizedFileHandoff(sanitizedFile) {
+    return pendingSanitizedFileHandoff.hasPendingGrokSanitizedFileHandoff(sanitizedFile);
+  }
+
+  function getPendingGeminiSanitizedFileHandoffDebug() {
+    return pendingSanitizedFileHandoff.getPendingGeminiSanitizedFileHandoffDebug();
+  }
+
+  function getPendingGrokSanitizedFileHandoffDebug() {
+    return pendingSanitizedFileHandoff.getPendingGrokSanitizedFileHandoffDebug();
+  }
   const fileHandoffPending = createFileHandoffPending({
     attemptPendingGeminiSanitizedFileHandoff,
     attemptPendingGrokSanitizedFileHandoff,
@@ -6566,63 +6644,6 @@
     return true;
   }
 
-  function clearPendingGeminiSanitizedFileHandoff(reason = "") {
-    clearPendingGeminiGhostIngressClickInterceptor(reason || "pending-cleared");
-    if (!pendingGeminiSanitizedFileHandoff) {
-      clearPendingSanitizedAttachPrompt(reason || "gemini-pending-cleared");
-      return;
-    }
-
-    const pending = pendingGeminiSanitizedFileHandoff;
-    pendingGeminiSanitizedFileHandoff = null;
-    clearPendingSanitizedAttachPrompt(reason || "gemini-pending-cleared");
-
-    if (pendingGeminiSanitizedFileObserver) {
-      try {
-        pendingGeminiSanitizedFileObserver.disconnect();
-      } catch {
-        debugReveal("file-handoff:pending-cleanup-failed", {
-          site: "gemini",
-          phase: "observer-disconnect",
-          reason,
-          hadPending: true
-        });
-      }
-      pendingGeminiSanitizedFileObserver = null;
-    }
-
-    if (pendingGeminiSanitizedFileTimer) {
-      clearTimeout(pendingGeminiSanitizedFileTimer);
-      pendingGeminiSanitizedFileTimer = 0;
-    }
-
-    if (pendingGeminiSanitizedFileClickHandler) {
-      try {
-        document.removeEventListener("click", pendingGeminiSanitizedFileClickHandler, true);
-      } catch {
-        debugReveal("file-handoff:pending-cleanup-failed", {
-          site: "gemini",
-          phase: "click-listener-remove",
-          reason,
-          hadPending: true
-        });
-      }
-      pendingGeminiSanitizedFileClickHandler = null;
-    }
-
-    debugReveal("file-handoff:gemini-pending-cleared", {
-      reason,
-      ageMs: Math.max(0, Date.now() - Number(pending.createdAt || 0)),
-      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
-    });
-    debugReveal("file-handoff:pending-cleared", {
-      site: "gemini",
-      reason,
-      ageMs: Math.max(0, Date.now() - Number(pending.createdAt || 0)),
-      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
-    });
-  }
-
   function isLikelyGeminiUploadClickTarget(target) {
     const candidate = normalizeTarget(target);
     const explicitSelectors = [
@@ -6659,21 +6680,6 @@
 
     const haystack = `${meta?.ariaLabel || ""} ${meta?.title || ""} ${meta?.textSnippet || ""} ${meta?.className || ""}`.toLowerCase();
     return /\b(upload|file|files|attach)\b/.test(haystack);
-  }
-
-  function schedulePendingGeminiSanitizedFileAttempt(reason = "") {
-    if (!pendingGeminiSanitizedFileHandoff) return;
-    const attempt = () => {
-      try {
-        attemptPendingGeminiSanitizedFileHandoff(reason);
-      } catch (error) {
-        handleContentError(error);
-      }
-    };
-
-    setTimeout(attempt, 0);
-    setTimeout(attempt, 250);
-    setTimeout(attempt, 1000);
   }
 
   function describeGeminiHandoffDiscovery(discovery) {
@@ -6716,256 +6722,6 @@
       selectedOverlayItem: details.selectedOverlayItem,
       overlayCandidates: details.overlayCandidates
     };
-  }
-
-  function attemptPendingGeminiSanitizedFileHandoff(reason = "") {
-    const pending = pendingGeminiSanitizedFileHandoff;
-    if (!pending || !isGeminiHost()) return false;
-
-    if (Date.now() > pending.expiresAt) {
-      clearPendingGeminiSanitizedFileHandoff("expired");
-      return false;
-    }
-
-    const event = {
-      type: "pending-gemini-sanitized-file",
-      target: null
-    };
-    const discovery = discoverGeminiFileHandoffElements(event, null);
-    const fileInput = discovery.fileInput;
-    if (!fileInput) {
-      debugReveal("file-handoff:gemini-pending-input-not-found", {
-        reason,
-        ...describeGeminiHandoffDiscovery(discovery),
-        overlay: describeGeminiOverlayExposure(),
-        sanitizedFile: describeFileForDebug(pending.sanitizedFile)
-      });
-      return false;
-    }
-    debugReveal("file-handoff:pending-input-captured", {
-      site: "gemini",
-      reason,
-      input: describeFileInputForDebug(fileInput, "pending-gemini-file-input"),
-      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
-    });
-
-    const details = createSanitizedFileHandoffDetails(
-      event,
-      pending.sanitizedFile,
-      "gemini:pending-file-input-assignment"
-    );
-    details.fileInputCountBeforeClick = discovery.fileInputCount;
-    details.fileInputCountAfterTopTriggerClick = discovery.fileInputCount;
-    details.fileInputCountAfterOverlayItemClick = discovery.fileInputCount;
-    details.openShadowRootCount = discovery.openShadowRootCount;
-    details.failureReason = reason || "pending_file_input_assignment";
-
-    const transfer = createSanitizedDataTransferForHandoff(pending.sanitizedFile, details);
-    if (!transfer) {
-      details.failureReason = "data_transfer_failed";
-      logSanitizedFileHandoffFailure(details);
-      return false;
-    }
-
-    const assigned = handOffSanitizedFileInput(fileInput, transfer, {
-      dispatchInput: true,
-      details
-    });
-    if (!assigned) {
-      logSanitizedFileHandoffFailure(details);
-      return false;
-    }
-
-    debugReveal("file-handoff:gemini-pending-assigned", {
-      reason,
-      input: describeFileInputForDebug(fileInput, "pending-gemini-file-input"),
-      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
-    });
-    debugReveal("file-handoff:pending-assigned", {
-      site: "gemini",
-      reason,
-      input: describeFileInputForDebug(fileInput, "pending-gemini-file-input"),
-      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
-    });
-    clearPendingGeminiSanitizedFileHandoff("assigned");
-    showFileProcessingSuccess("Sanitized file attached.", {
-      site: "gemini",
-      reason: "pending-attached"
-    });
-    setBadge("LeakGuard attached the sanitized file.");
-    hideBadgeSoon(3200);
-    refreshBadgeFromCurrentInput();
-    return true;
-  }
-
-  function queuePendingGeminiSanitizedFileHandoff(event, input, sanitizedFile, details = null) {
-    if (!isGeminiHost() || event?.type !== "drop" || !sanitizedFile) return false;
-
-    const requestedHandoffStage = String(details?.handoffStage || "");
-    const isStreamingPending = requestedHandoffStage.includes("streaming");
-    clearPendingGeminiSanitizedFileHandoff("replaced");
-    pendingGeminiSanitizedFileHandoff = {
-      sanitizedFile,
-      createdAt: Date.now(),
-      expiresAt: Date.now() + GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MS,
-      sessionHash: lastGeminiDropSessionHash || ""
-    };
-
-    if (details) {
-      details.handoffStage = isStreamingPending
-        ? requestedHandoffStage
-        : "gemini:pending-user-upload-input";
-      details.failureReason = "pending_until_user_exposes_file_input";
-    }
-
-    if (typeof MutationObserver === "function") {
-      try {
-        pendingGeminiSanitizedFileObserver = new MutationObserver(() => {
-          attemptPendingGeminiSanitizedFileHandoff("mutation");
-        });
-        pendingGeminiSanitizedFileObserver.observe(document.documentElement || document, {
-          childList: true,
-          subtree: true
-        });
-      } catch {
-        pendingGeminiSanitizedFileObserver = null;
-      }
-    }
-
-    pendingGeminiSanitizedFileClickHandler = (clickEvent) => {
-      if (!pendingGeminiSanitizedFileHandoff) return;
-      if (isLikelyGeminiUploadClickTarget(clickEvent?.target)) {
-        debugReveal("file-handoff:gemini-upload-click-observed", {
-          target: describeElementForDebug(normalizeTarget(clickEvent?.target), "pending-upload-click"),
-          pendingAgeMs: Math.max(
-            0,
-            Date.now() - Number(pendingGeminiSanitizedFileHandoff.createdAt || 0)
-          )
-        });
-        debugReveal("file-handoff:pending-site-upload-click-observed", {
-          site: "gemini",
-          target: describeElementForDebug(normalizeTarget(clickEvent?.target), "pending-upload-click"),
-          pendingAgeMs: Math.max(
-            0,
-            Date.now() - Number(pendingGeminiSanitizedFileHandoff.createdAt || 0)
-          )
-        });
-        schedulePendingGeminiSanitizedFileAttempt("upload-click");
-      }
-    };
-    try {
-      document.addEventListener("click", pendingGeminiSanitizedFileClickHandler, true);
-    } catch {
-      pendingGeminiSanitizedFileClickHandler = null;
-    }
-
-    pendingGeminiSanitizedFileTimer = setTimeout(() => {
-      clearPendingGeminiSanitizedFileHandoff("expired");
-    }, GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MS);
-
-    debugReveal("file-handoff:gemini-pending-queued", {
-      ttlMs: GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MS,
-      sanitizedFile: describeFileForDebug(sanitizedFile),
-      sessionHash: lastGeminiDropSessionHash || ""
-    });
-    if (isStreamingPending) {
-      debugReveal("file-handoff:gemini-streaming-pending-queued", {
-        ttlMs: GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MS,
-        sanitizedFile: describeFileForDebug(sanitizedFile),
-        sessionHash: lastGeminiDropSessionHash || ""
-      });
-    }
-    debugReveal("pending-attach-synthetic-loop-suppressed", {
-      site: "gemini",
-      streaming: isStreamingPending,
-      sanitizedFile: describeFileForDebug(sanitizedFile)
-    });
-    hideDmzOverlay();
-    const pendingEvent = createPendingAttachEvent(event, "pending-gemini-sanitized-file-attach");
-    showPendingSanitizedAttachPrompt(getFileHandoffAdapterById("gemini"), {
-      site: "gemini",
-      event: pendingEvent,
-      input,
-      sanitizedFile,
-      message: getPendingSanitizedAttachPromptMessage("gemini")
-    });
-    setBadge(getPendingSanitizedAttachPromptMessage("gemini"));
-    hideBadgeSoon(6500);
-    return true;
-  }
-
-  function hasPendingGeminiSanitizedFileHandoff(sanitizedFile) {
-    return Boolean(
-      pendingGeminiSanitizedFileHandoff &&
-        (!sanitizedFile || pendingGeminiSanitizedFileHandoff.sanitizedFile === sanitizedFile)
-    );
-  }
-
-  function getPendingGeminiSanitizedFileHandoffDebug() {
-    if (!pendingGeminiSanitizedFileHandoff) return null;
-    return {
-      keys: Object.keys(pendingGeminiSanitizedFileHandoff),
-      sanitizedFile: pendingGeminiSanitizedFileHandoff.sanitizedFile,
-      sanitizedFileDebug: describeFileForDebug(pendingGeminiSanitizedFileHandoff.sanitizedFile),
-      expiresAt: pendingGeminiSanitizedFileHandoff.expiresAt,
-      sessionHash: pendingGeminiSanitizedFileHandoff.sessionHash || ""
-    };
-  }
-
-  function clearPendingGrokSanitizedFileHandoff(reason = "") {
-    if (!pendingGrokSanitizedFileHandoff) {
-      clearPendingSanitizedAttachPrompt(reason || "grok-pending-cleared");
-      return;
-    }
-
-    const pending = pendingGrokSanitizedFileHandoff;
-    pendingGrokSanitizedFileHandoff = null;
-    clearPendingSanitizedAttachPrompt(reason || "grok-pending-cleared");
-
-    if (pendingGrokSanitizedFileObserver) {
-      try {
-        pendingGrokSanitizedFileObserver.disconnect();
-      } catch {
-        debugReveal("file-handoff:pending-cleanup-failed", {
-          site: "grok",
-          phase: "observer-disconnect",
-          reason,
-          hadPending: true
-        });
-      }
-      pendingGrokSanitizedFileObserver = null;
-    }
-
-    if (pendingGrokSanitizedFileTimer) {
-      clearTimeout(pendingGrokSanitizedFileTimer);
-      pendingGrokSanitizedFileTimer = 0;
-    }
-
-    if (pendingGrokSanitizedFileClickHandler) {
-      try {
-        document.removeEventListener("click", pendingGrokSanitizedFileClickHandler, true);
-      } catch {
-        debugReveal("file-handoff:pending-cleanup-failed", {
-          site: "grok",
-          phase: "click-listener-remove",
-          reason,
-          hadPending: true
-        });
-      }
-      pendingGrokSanitizedFileClickHandler = null;
-    }
-
-    debugReveal("file-handoff:grok-pending-cleared", {
-      reason,
-      ageMs: Math.max(0, Date.now() - Number(pending.createdAt || 0)),
-      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
-    });
-    debugReveal("file-handoff:pending-cleared", {
-      site: "grok",
-      reason,
-      ageMs: Math.max(0, Date.now() - Number(pending.createdAt || 0)),
-      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
-    });
   }
 
   function getGrokUploadClickCandidates(clickEventOrTarget) {
@@ -7089,296 +6845,6 @@
           score: scoreGrokFileInput(input, source)
         }))
     };
-  }
-
-  function schedulePendingGrokSanitizedFileAttempt(reason = "") {
-    if (!pendingGrokSanitizedFileHandoff) return;
-    const attempt = () => {
-      try {
-        attemptPendingGrokSanitizedFileHandoff(reason);
-      } catch (error) {
-        handleContentError(error);
-      }
-    };
-
-    setTimeout(attempt, 0);
-    setTimeout(attempt, 250);
-    setTimeout(attempt, 1000);
-  }
-
-  function attemptPendingGrokSanitizedFileHandoff(reason = "") {
-    const pending = pendingGrokSanitizedFileHandoff;
-    if (!pending || !isGrokHost()) return false;
-
-    if (Date.now() > pending.expiresAt) {
-      clearPendingGrokSanitizedFileHandoff("expired");
-      return false;
-    }
-
-    const event = {
-      type: "pending-grok-sanitized-file",
-      target: pending.target || null
-    };
-    const discovery = discoverGrokPendingFileInput(event, pending.input || null);
-    const fileInput = discovery.fileInput;
-    if (!fileInput) {
-      debugReveal("file-handoff:grok-pending-input-not-found", {
-        reason,
-        ...describeGrokPendingInputDiscovery(discovery),
-        sanitizedFile: describeFileForDebug(pending.sanitizedFile)
-      });
-      return false;
-    }
-    debugReveal("file-handoff:pending-input-captured", {
-      site: "grok",
-      reason,
-      input: describeFileInputForDebug(fileInput, "pending-grok-file-input"),
-      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
-    });
-
-    const details = createSanitizedFileHandoffDetails(
-      event,
-      pending.sanitizedFile,
-      "grok:pending-file-input-assignment"
-    );
-    details.fileInputCountBeforeClick = discovery.fileInputCount;
-    details.fileInputCountAfterTopTriggerClick = discovery.fileInputCount;
-    details.fileInputCountAfterOverlayItemClick = discovery.fileInputCount;
-    details.openShadowRootCount = discovery.openShadowRootCount;
-    details.failureReason = reason || "pending_file_input_assignment";
-
-    const transfer = createSanitizedDataTransferForHandoff(pending.sanitizedFile, details);
-    if (!transfer) {
-      details.failureReason = "data_transfer_failed";
-      logSanitizedFileHandoffFailure(details);
-      return false;
-    }
-
-    const assigned = handOffSanitizedFileInput(fileInput, transfer, {
-      dispatchInput: true,
-      details
-    });
-    if (!assigned) {
-      logSanitizedFileHandoffFailure(details);
-      return false;
-    }
-
-    debugReveal("file-handoff:grok-pending-assigned", {
-      reason,
-      input: describeFileInputForDebug(fileInput, "pending-grok-file-input"),
-      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
-    });
-    debugReveal("file-handoff:pending-assigned", {
-      site: "grok",
-      reason,
-      input: describeFileInputForDebug(fileInput, "pending-grok-file-input"),
-      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
-    });
-    clearPendingGrokSanitizedFileHandoff("assigned");
-    showFileProcessingSuccess("Sanitized file attached.", {
-      site: "grok",
-      reason: "pending-attached"
-    });
-    setBadge("LeakGuard attached the sanitized file.");
-    hideBadgeSoon(3200);
-    refreshBadgeFromCurrentInput();
-    return true;
-  }
-
-  function queuePendingGrokSanitizedFileHandoff(event, input, sanitizedFile, details = null) {
-    if (!isGrokHost() || event?.type !== "drop" || !sanitizedFile) return false;
-
-    const requestedHandoffStage = String(details?.handoffStage || "");
-    const isStreamingPending = requestedHandoffStage.includes("streaming");
-    clearPendingGrokSanitizedFileHandoff("replaced");
-    pendingGrokSanitizedFileHandoff = {
-      sanitizedFile,
-      input: input || null,
-      target: normalizeTarget(event?.target),
-      createdAt: Date.now(),
-      expiresAt: Date.now() + GROK_PENDING_SANITIZED_FILE_HANDOFF_MS
-    };
-
-    if (details) {
-      details.handoffStage = isStreamingPending
-        ? requestedHandoffStage
-        : "grok:pending-user-upload-input";
-      details.failureReason = "pending_until_user_exposes_file_input";
-    }
-
-    if (typeof MutationObserver === "function") {
-      try {
-        pendingGrokSanitizedFileObserver = new MutationObserver(() => {
-          attemptPendingGrokSanitizedFileHandoff("mutation");
-        });
-        pendingGrokSanitizedFileObserver.observe(document.documentElement || document, {
-          childList: true,
-          subtree: true
-        });
-      } catch {
-        pendingGrokSanitizedFileObserver = null;
-      }
-    }
-
-    pendingGrokSanitizedFileClickHandler = (clickEvent) => {
-      if (!pendingGrokSanitizedFileHandoff) return;
-      if (isLikelyGrokUploadClickTarget(clickEvent)) {
-        debugReveal("file-handoff:grok-upload-click-observed", {
-          target: describeElementForDebug(normalizeTarget(clickEvent?.target), "pending-grok-upload-click"),
-          pendingAgeMs: Math.max(
-            0,
-            Date.now() - Number(pendingGrokSanitizedFileHandoff.createdAt || 0)
-          )
-        });
-        debugReveal("file-handoff:pending-site-upload-click-observed", {
-          site: "grok",
-          target: describeElementForDebug(normalizeTarget(clickEvent?.target), "pending-grok-upload-click"),
-          pendingAgeMs: Math.max(
-            0,
-            Date.now() - Number(pendingGrokSanitizedFileHandoff.createdAt || 0)
-          )
-        });
-        schedulePendingGrokSanitizedFileAttempt("upload-click");
-      }
-    };
-    try {
-      document.addEventListener("click", pendingGrokSanitizedFileClickHandler, true);
-    } catch {
-      pendingGrokSanitizedFileClickHandler = null;
-    }
-
-    pendingGrokSanitizedFileTimer = setTimeout(() => {
-      clearPendingGrokSanitizedFileHandoff("expired");
-    }, GROK_PENDING_SANITIZED_FILE_HANDOFF_MS);
-
-    debugReveal("file-handoff:grok-pending-queued", {
-      ttlMs: GROK_PENDING_SANITIZED_FILE_HANDOFF_MS,
-      sanitizedFile: describeFileForDebug(sanitizedFile)
-    });
-    if (isStreamingPending) {
-      debugReveal("file-handoff:grok-streaming-pending-queued", {
-        ttlMs: GROK_PENDING_SANITIZED_FILE_HANDOFF_MS,
-        sanitizedFile: describeFileForDebug(sanitizedFile)
-      });
-    }
-    debugReveal("pending-attach-synthetic-loop-suppressed", {
-      site: "grok",
-      streaming: isStreamingPending,
-      sanitizedFile: describeFileForDebug(sanitizedFile)
-    });
-    hideDmzOverlay();
-    const pendingEvent = createPendingAttachEvent(event, "pending-grok-sanitized-file-attach");
-    showPendingSanitizedAttachPrompt(getFileHandoffAdapterById("grok"), {
-      site: "grok",
-      event: pendingEvent,
-      input,
-      sanitizedFile,
-      message: getPendingSanitizedAttachPromptMessage("grok")
-    });
-    setBadge(getPendingSanitizedAttachPromptMessage("grok"));
-    hideBadgeSoon(6500);
-    return true;
-  }
-
-  function hasPendingGrokSanitizedFileHandoff(sanitizedFile) {
-    return Boolean(
-      pendingGrokSanitizedFileHandoff &&
-        (!sanitizedFile || pendingGrokSanitizedFileHandoff.sanitizedFile === sanitizedFile)
-    );
-  }
-
-  function getPendingGrokSanitizedFileHandoffDebug() {
-    if (!pendingGrokSanitizedFileHandoff) return null;
-    return {
-      keys: Object.keys(pendingGrokSanitizedFileHandoff),
-      sanitizedFile: pendingGrokSanitizedFileHandoff.sanitizedFile,
-      sanitizedFileDebug: describeFileForDebug(pendingGrokSanitizedFileHandoff.sanitizedFile),
-      expiresAt: pendingGrokSanitizedFileHandoff.expiresAt
-    };
-  }
-
-  function clearPendingGenericSanitizedFileHandoff(reason = "") {
-    if (!pendingGenericSanitizedFileHandoff) {
-      clearPendingSanitizedAttachPrompt(reason || "generic-pending-cleared");
-      return;
-    }
-
-    const pending = pendingGenericSanitizedFileHandoff;
-    pendingGenericSanitizedFileHandoff = null;
-    clearPendingSanitizedAttachPrompt(reason || "generic-pending-cleared");
-
-    if (pendingGenericSanitizedFileTimer) {
-      clearTimeout(pendingGenericSanitizedFileTimer);
-      pendingGenericSanitizedFileTimer = 0;
-    }
-
-    debugReveal("file-handoff:generic-pending-cleared", {
-      site: pending.site || "",
-      reason,
-      ageMs: Math.max(0, Date.now() - Number(pending.createdAt || 0)),
-      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
-    });
-    debugReveal("file-handoff:pending-cleared", {
-      site: pending.site || "",
-      reason,
-      ageMs: Math.max(0, Date.now() - Number(pending.createdAt || 0)),
-      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
-    });
-  }
-
-  function queuePendingGenericSanitizedFileHandoff(adapter, event, input, sanitizedFile, details = null) {
-    const selectedAdapter = normalizeFileHandoffAdapter(adapter);
-    if (!selectedAdapter || !sanitizedFile) return false;
-    if (selectedAdapter.id === "gemini" || selectedAdapter.id === "grok" || selectedAdapter.id === "generic") {
-      return false;
-    }
-    if (!isFileHandoffAdapterPendingAttachEnabled(selectedAdapter)) return false;
-
-    const requestedHandoffStage = String(details?.handoffStage || "");
-    clearPendingGenericSanitizedFileHandoff("replaced");
-    pendingGenericSanitizedFileHandoff = {
-      site: selectedAdapter.id,
-      sanitizedFile,
-      input: input || null,
-      target: normalizeTarget(event?.target),
-      createdAt: Date.now(),
-      expiresAt: Date.now() + GROK_PENDING_SANITIZED_FILE_HANDOFF_MS
-    };
-
-    if (details) {
-      details.handoffStage = requestedHandoffStage || `${selectedAdapter.id}:pending-user-upload-input`;
-      details.failureReason = "pending_until_user_exposes_file_input";
-    }
-
-    pendingGenericSanitizedFileTimer = setTimeout(() => {
-      clearPendingGenericSanitizedFileHandoff("expired");
-    }, GROK_PENDING_SANITIZED_FILE_HANDOFF_MS);
-
-    debugReveal("file-handoff:generic-pending-queued", {
-      site: selectedAdapter.id,
-      ttlMs: GROK_PENDING_SANITIZED_FILE_HANDOFF_MS,
-      sanitizedFile: describeFileForDebug(sanitizedFile)
-    });
-    debugReveal("pending-attach-synthetic-loop-suppressed", {
-      site: selectedAdapter.id,
-      streaming: requestedHandoffStage.includes("streaming"),
-      sanitizedFile: describeFileForDebug(sanitizedFile)
-    });
-    hideDmzOverlay();
-    const pendingEvent = createPendingAttachEvent(
-      event,
-      `pending-${selectedAdapter.id}-sanitized-file-attach`
-    );
-    showPendingSanitizedAttachPrompt(selectedAdapter, {
-      site: selectedAdapter.id,
-      event: pendingEvent,
-      input,
-      sanitizedFile,
-      message: getPendingSanitizedAttachPromptMessage(selectedAdapter.id)
-    });
-    setBadge(getPendingSanitizedAttachPromptMessage(selectedAdapter.id));
-    hideBadgeSoon(6500);
-    return true;
   }
 
   function clearFileDragSession(options = {}) {

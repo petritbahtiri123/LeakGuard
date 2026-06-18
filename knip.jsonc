@@ -107,6 +107,7 @@
     "src/content/diagnostics/safeSnapshots.js",
     "src/content/diagnostics/fileDebugMetadata.js",
     "src/content/files/fileAttachPipeline.js",
+    "src/content/files/pendingSanitizedFileHandoff.js",
     "src/content/rehydration/placeholderRehydrator.js",
     "src/content/rehydration/responseObserver.js",
     "src/content/rehydration/revealController.js",

@@ -33,6 +33,10 @@ const fileHandoffPendingSource = fs.readFileSync(
   path.join(repoRoot, "src/content/file_handoff_pending.js"),
   "utf8"
 );
+const pendingSanitizedFileHandoffSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/files/pendingSanitizedFileHandoff.js"),
+  "utf8"
+);
 const fileHandoffFlowSource = fs.readFileSync(
   path.join(repoRoot, "src/content/file_handoff_flow.js"),
   "utf8"
@@ -384,6 +388,47 @@ function fileHandoffStateHarnessSource() {
 
 function fileHandoffPendingHarnessSource() {
   return [
+    extractFunctionSource(pendingSanitizedFileHandoffSource, "createPendingSanitizedFileHandoffManager"),
+    `const pendingSanitizedFileHandoff = createPendingSanitizedFileHandoffManager({
+      clearPendingGeminiGhostIngressClickInterceptor,
+      clearPendingSanitizedAttachPrompt,
+      createPendingAttachEvent: (event, type) => createPendingAttachEvent(event, type),
+      createSanitizedDataTransferForHandoff,
+      createSanitizedFileHandoffDetails,
+      debugReveal,
+      describeElementForDebug,
+      describeFileForDebug,
+      describeFileHandoffAdapter,
+      describeFileInputForDebug,
+      describeGeminiHandoffDiscovery,
+      describeGeminiOverlayExposure: typeof describeGeminiOverlayExposure === "function" ? describeGeminiOverlayExposure : () => ({}),
+      describeGrokPendingInputDiscovery,
+      discoverGeminiFileHandoffElements,
+      discoverGrokPendingFileInput,
+      documentRef: document,
+      geminiTtlMs: GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MS,
+      genericTtlMs: GROK_PENDING_SANITIZED_FILE_HANDOFF_MS,
+      getFileHandoffAdapterById,
+      getGeminiSessionHash: () => lastGeminiDropSessionHash || "",
+      getPendingSanitizedAttachPromptMessage,
+      grokTtlMs: GROK_PENDING_SANITIZED_FILE_HANDOFF_MS,
+      handOffSanitizedFileInput,
+      handleContentError,
+      hideBadgeSoon,
+      hideDmzOverlay,
+      isFileHandoffAdapterPendingAttachEnabled,
+      isGeminiHost,
+      isGrokHost,
+      isLikelyGeminiUploadClickTarget,
+      isLikelyGrokUploadClickTarget,
+      logSanitizedFileHandoffFailure,
+      normalizeFileHandoffAdapter,
+      normalizeTarget,
+      refreshBadgeFromCurrentInput,
+      setBadge,
+      showFileProcessingSuccess,
+      showPendingSanitizedAttachPrompt
+    });`,
     extractFunctionSource(fileHandoffPendingSource, "createFileHandoffPending"),
     `const {
       createPendingAttachEvent,
@@ -1354,7 +1399,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "clearPendingGeminiGhostIngressClickInterceptor"),
       extractFunctionSource(contentSource, "clearPendingGeminiSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "isLikelyGeminiUploadClickTarget"),
-      extractFunctionSource(contentSource, "schedulePendingGeminiSanitizedFileAttempt"),
+      extractFunctionSource(pendingSanitizedFileHandoffSource, "schedulePendingGeminiSanitizedFileAttempt"),
       extractFunctionSource(contentSource, "describeGeminiHandoffDiscovery"),
       extractFunctionSource(contentSource, "attemptPendingGeminiSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "queuePendingGeminiSanitizedFileHandoff"),
@@ -1364,7 +1409,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "scoreGrokFileInput"),
       extractFunctionSource(contentSource, "discoverGrokPendingFileInput"),
       extractFunctionSource(contentSource, "describeGrokPendingInputDiscovery"),
-      extractFunctionSource(contentSource, "schedulePendingGrokSanitizedFileAttempt"),
+      extractFunctionSource(pendingSanitizedFileHandoffSource, "schedulePendingGrokSanitizedFileAttempt"),
       extractFunctionSource(contentSource, "attemptPendingGrokSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "queuePendingGrokSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "clearPendingGenericSanitizedFileHandoff"),
@@ -2168,7 +2213,7 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "performPendingGrokUserAttach"),
       extractFunctionSource(contentSource, "clearPendingGeminiSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "isLikelyGeminiUploadClickTarget"),
-      extractFunctionSource(contentSource, "schedulePendingGeminiSanitizedFileAttempt"),
+      extractFunctionSource(pendingSanitizedFileHandoffSource, "schedulePendingGeminiSanitizedFileAttempt"),
       extractFunctionSource(contentSource, "describeGeminiHandoffDiscovery"),
       extractFunctionSource(contentSource, "describeGeminiOverlayExposure"),
       extractFunctionSource(contentSource, "attemptPendingGeminiSanitizedFileHandoff"),
@@ -2181,7 +2226,7 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "scoreGrokFileInput"),
       extractFunctionSource(contentSource, "discoverGrokPendingFileInput"),
       extractFunctionSource(contentSource, "describeGrokPendingInputDiscovery"),
-      extractFunctionSource(contentSource, "schedulePendingGrokSanitizedFileAttempt"),
+      extractFunctionSource(pendingSanitizedFileHandoffSource, "schedulePendingGrokSanitizedFileAttempt"),
       extractFunctionSource(contentSource, "attemptPendingGrokSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "queuePendingGrokSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "clearPendingGenericSanitizedFileHandoff"),
