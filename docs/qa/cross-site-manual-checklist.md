@@ -4,6 +4,18 @@ Use this checklist for manual LeakGuard verification on protected AI composer si
 
 For the focused post-PR 4I file attach checkpoint, use `docs/qa/file-attach-manual-checkpoint-after-pr4i.md`.
 
+For the enterprise/cloud/internal metadata release candidate, review [Enterprise Metadata Release-Candidate Evidence](../ENTERPRISE_METADATA_RELEASE_CANDIDATE_EVIDENCE.md) and record live logged-in provider results in [Enterprise Metadata Live Manual QA Results](ENTERPRISE_METADATA_LIVE_MANUAL_QA_RESULTS.md).
+
+Local evidence refresh commands:
+
+```powershell
+npm run docs:check-links
+node tests/security.test.js
+node tests/productization.test.js
+node tests/build_targets.test.js
+git diff --check
+```
+
 Sites:
 - ChatGPT
 - Gemini
@@ -202,7 +214,7 @@ Expected result:
 - File is read and redacted locally before the site receives it.
 - Raw values `LeakGuardFileApiKey1234567890abcdef`, `LeakGuardFileDbPassword123!`, and `LeakGuardFileBearerToken1234567890` are not visible in composer text, file preview, or generated attachment content.
 - Public IP `8.8.8.8` is replaced with `[PUB_HOST_N]`.
-- Private IP `192.168.1.10`, `token_limit=4096`, and safe context remain visible.
+- Private IP `192.168.1.10` is replaced with `[PRIVATE_IP_N]`; `token_limit=4096` and safe context remain visible.
 - Unsupported binary/document files follow current policy: pass through by default, or block in strict mode.
 
 Gemini-specific expected result:

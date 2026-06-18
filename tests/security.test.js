@@ -7,7 +7,11 @@ const { pathToFileURL } = require("url");
 const repoRoot = path.join(__dirname, "..");
 require(path.join(repoRoot, "src/shared/placeholders.js"));
 require(path.join(repoRoot, "src/shared/sessionMapStore.js"));
+require(path.join(repoRoot, "src/shared/runtime_scripts.js"));
+require(path.join(repoRoot, "src/background/auditLog.js"));
 require(path.join(repoRoot, "src/content/diagnostics/safeSnapshots.js"));
+require(path.join(repoRoot, "src/content/diagnostics/debugLogger.js"));
+const ContentDebugFacade = require(path.join(repoRoot, "src/content/diagnostics/contentDebugFacade.js"));
 const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
 const responseObserverSource = fs.readFileSync(
   path.join(repoRoot, "src/content/rehydration/responseObserver.js"),
@@ -23,6 +27,10 @@ const fileHandoffFlowSource = fs.readFileSync(
 );
 const geminiFallbackWriterSource = fs.readFileSync(
   path.join(repoRoot, "src/content/adapters/geminiFallbackWriter.js"),
+  "utf8"
+);
+const protectedSiteRegistrySource = fs.readFileSync(
+  path.join(repoRoot, "src/background/protectedSiteRegistry.js"),
   "utf8"
 );
 const backgroundSource = fs.readFileSync(
@@ -95,6 +103,8 @@ const {
   canonicalizePlaceholderToken,
   containsLegacyTypedPlaceholder
 } = globalThis.PWM;
+const { RuntimeScripts } = globalThis.PWM;
+const { BackgroundAuditLog } = globalThis.PWM;
 
 function assertNotIncludes(source, needle, message) {
   assert.strictEqual(source.includes(needle), false, message);
@@ -221,12 +231,17 @@ function createBackgroundSecuritySandbox({ allowReveal = true, auditMode = "meta
     }),
     evaluateDestinationPolicy: () => ({ blocked: false }),
     invalidatePolicyCache: () => {},
+    RuntimeScripts,
+    BackgroundAuditLog,
     ext,
     supportsDynamicContentScripts: true,
     supportsStorageSession: false,
     getSessionStorageArea: () => storageArea
   };
 
+  vm.runInNewContext(protectedSiteRegistrySource, sandbox, {
+    filename: "protectedSiteRegistry.js"
+  });
   vm.runInNewContext(backgroundSource, sandbox, {
     filename: "core.js"
   });
@@ -342,7 +357,7 @@ function testAuditMetadataObjectsExcludeRawSecrets() {
   const { sandbox } = createBackgroundSecuritySandbox();
   const rawSecret = "AuditBoundarySecret123!";
   const rawApiKey = "AuditApiKeyBoundary123456";
-  const entry = sandbox.buildAuditEventEntry({
+  const entry = sandbox.PWM.BackgroundAuditLog.buildAuditEventEntry({
     action: "blocked",
     reason: "destination_not_approved",
     url: `https://chat.example.com/path?token=${rawSecret}`,
@@ -400,6 +415,15 @@ async function testSecureRevealRemainsBoundedToRequestSessionAndExtensionUi() {
 
   storageState[requestKey] = {
     ...storageState[requestKey],
+    placeholder: "[EMAIL_999]"
+  };
+  const unknownContext = await sandbox.getRevealContext(requestId);
+  assert.strictEqual(unknownContext.available, false, "unknown typed placeholders must not become revealable");
+  assert.strictEqual(await sandbox.revealSecret(requestId), null, "unknown typed placeholders must not reveal raw values");
+
+  storageState[requestKey] = {
+    ...storageState[requestKey],
+    placeholder,
     sessionId: "wrong-session"
   };
 
@@ -586,8 +610,8 @@ function testFileAttachPipelineStaysPureAndContentOwnsFileAttachSideEffects() {
 function testFileSnapshotDebugPayloadsStayMetadataOnly() {
   const rawSecret = "SnapshotPayloadRawSecret123!";
   const file = {
-    name: "service.env",
-    type: "text/plain",
+    name: `service-${rawSecret}.env`,
+    type: `text/plain;token=${rawSecret}`,
     size: 123,
     lastModified: 456,
     text: `API_KEY=${rawSecret}`,
@@ -605,7 +629,17 @@ function testFileSnapshotDebugPayloadsStayMetadataOnly() {
   assert.notStrictEqual(snapshotSourceEnd, -1, "expected snapshot helper boundary");
   const describeSnapshotSource = contentSource.slice(snapshotSourceStart, snapshotSourceEnd);
 
-  assert.deepStrictEqual(Object.keys(description), ["name", "type", "size"]);
+  assert.deepStrictEqual(description, {
+    name: "file.env",
+    type: "text/plain",
+    size: 123
+  });
+  assert.deepStrictEqual(metadata, {
+    name: "file.env",
+    type: "text/plain",
+    size: 123,
+    lastModified: 456
+  });
   assert.deepStrictEqual(Object.keys(metadata), ["name", "type", "size", "lastModified"]);
   assert.strictEqual(JSON.stringify({ description, metadata }).includes(rawSecret), false);
   assertNotIncludes(
@@ -799,11 +833,7 @@ function testDocxRedactedOutputStaysTextDerived() {
 function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const baseManifest = JSON.parse(fs.readFileSync(path.join(repoRoot, "manifests/base.json"), "utf8"));
   const staticScripts = baseManifest.content_scripts[0].js;
-  const dynamicScripts = Array.from(
-    backgroundSource.matchAll(
-      /"([^"]+(?:fileLimits|fileTypeRegistry|fileExtractors|fileScanner|pdfRedactor|docxRedactor|xlsxRedactor|ocrRuntime|scannerOcr|imageRedactor|file_paste_helpers|file_handoff_state|file_handoff_pending|file_handoff_flow|rewriteVerificationText|fileTransferPolicy|fileExtractionSessionCache|protectedSiteOcrBroker|contentFileExtractionPipeline|hostMatching|chatgptAdapter|openaiAdapter|geminiDiagnosticsAdapter|geminiAdapter|claudeAdapter|grokAdapter|xAdapter|index|geminiFallbackWriter|safeSnapshots|fileAttachPipeline|placeholderRehydrator|responseObserver|revealController|debugLogger|eventBindings|content)\.js)"/g
-    )
-  ).map((match) => match[1]);
+  const dynamicScripts = RuntimeScripts.contentScripts;
   const adapterScripts = [
     "content/adapters/chatgptAdapter.js",
     "content/adapters/openaiAdapter.js",
@@ -842,6 +872,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const staticResponseObserver = staticScripts.indexOf("content/rehydration/responseObserver.js");
   const staticRevealController = staticScripts.indexOf("content/rehydration/revealController.js");
   const staticDebugLogger = staticScripts.indexOf("content/diagnostics/debugLogger.js");
+  const staticContentDebugFacade = staticScripts.indexOf("content/diagnostics/contentDebugFacade.js");
   const staticContentEventBindings = staticScripts.indexOf("content/bootstrap/eventBindings.js");
   const staticContent = staticScripts.indexOf("content/content.js");
   const dynamicFileLimits = dynamicScripts.indexOf("shared/fileLimits.js");
@@ -872,6 +903,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
   const dynamicResponseObserver = dynamicScripts.indexOf("content/rehydration/responseObserver.js");
   const dynamicRevealController = dynamicScripts.indexOf("content/rehydration/revealController.js");
   const dynamicDebugLogger = dynamicScripts.indexOf("content/diagnostics/debugLogger.js");
+  const dynamicContentDebugFacade = dynamicScripts.indexOf("content/diagnostics/contentDebugFacade.js");
   const dynamicContentEventBindings = dynamicScripts.indexOf("content/bootstrap/eventBindings.js");
   const dynamicContent = dynamicScripts.indexOf("content/content.js");
 
@@ -904,6 +936,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       staticResponseObserver > -1 &&
       staticRevealController > -1 &&
       staticDebugLogger > -1 &&
+      staticContentDebugFacade > -1 &&
       staticContentEventBindings > -1 &&
       staticContent > -1,
     "static manifest should include file limits, scanner, file paste helper, file handoff helpers, adapter helpers, pure helpers, and content script"
@@ -937,6 +970,7 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       dynamicResponseObserver > -1 &&
       dynamicRevealController > -1 &&
       dynamicDebugLogger > -1 &&
+      dynamicContentDebugFacade > -1 &&
       dynamicContentEventBindings > -1 &&
       dynamicContent > -1,
     "dynamic injection should include file limits, scanner, file paste helper, file handoff helpers, adapter helpers, pure helpers, and content script"
@@ -976,7 +1010,8 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       staticPlaceholderRehydrator < staticResponseObserver &&
       staticResponseObserver < staticRevealController &&
       staticRevealController < staticDebugLogger &&
-      staticDebugLogger < staticContentEventBindings &&
+      staticDebugLogger < staticContentDebugFacade &&
+      staticContentDebugFacade < staticContentEventBindings &&
       staticContentEventBindings < staticContent,
     "static manifest file paste order should load dependencies before content.js"
   );
@@ -1009,7 +1044,8 @@ function testStaticAndDynamicFilePasteInjectionOrderStaysAligned() {
       dynamicPlaceholderRehydrator < dynamicResponseObserver &&
       dynamicResponseObserver < dynamicRevealController &&
       dynamicRevealController < dynamicDebugLogger &&
-      dynamicDebugLogger < dynamicContentEventBindings &&
+      dynamicDebugLogger < dynamicContentDebugFacade &&
+      dynamicContentDebugFacade < dynamicContentEventBindings &&
       dynamicContentEventBindings < dynamicContent,
     "dynamic injection file paste order should load dependencies before content.js"
   );
@@ -1020,10 +1056,52 @@ function testBackgroundDeterministicRescanBackstopExists() {
     path.join(repoRoot, "src/background/service_worker.js"),
     "utf8"
   );
+  const placeholderFamiliesIndex = serviceWorkerSource.indexOf("../shared/placeholders/families.js");
+  const placeholdersIndex = serviceWorkerSource.indexOf("../shared/placeholders.js");
+  const detectorIndex = serviceWorkerSource.indexOf("../shared/detector.js");
+  const detectionModuleScripts = [
+    "../shared/detection/constants/enterpriseTokens.js",
+    "../shared/detection/constants/providerTokens.js",
+    "../shared/detection/constants/contextRegexes.js",
+    "../shared/detection/contextWindow.js",
+    "../shared/detection/cloudScoring.js",
+    "../shared/detection/enterprise/shared.js",
+    "../shared/detection/enterprise/uncPaths.js",
+    "../shared/detection/enterprise/directoryMetadata.js",
+    "../shared/detection/enterprise/internalNetwork.js",
+    "../shared/detection/enterprise/fileShares.js",
+    "../shared/detection/enterprise/adGroups.js",
+    "../shared/detection/enterprise/hostnames.js",
+    "../shared/detection/enterprise/identity.js",
+    "../shared/detection/enterprise/storageAccounts.js",
+    "../shared/detection/enterprise/azureResourceGroups.js",
+    "../shared/detection/enterprise/cloudResourceNames.js",
+    "../shared/detection/enterprise/index.js",
+    "../shared/detection/providers/azure.js",
+    "../shared/detection/providers/azureIds.js",
+    "../shared/detection/providers/aws.js",
+    "../shared/detection/providers/gcp.js",
+    "../shared/detection/providers/otcOpenStack.js",
+    "../shared/detection/providers/kubernetes.js",
+    "../shared/detection/providers/genericEndpoints.js",
+    "../shared/detection/providers/index.js",
+    "../shared/detection/urlUserinfo.js"
+  ];
+  const detectionModuleIndexes = detectionModuleScripts.map((script) => serviceWorkerSource.indexOf(script));
 
   assert.ok(
     serviceWorkerSource.indexOf("../shared/detector.js") > serviceWorkerSource.indexOf("../shared/patterns.js"),
     "background service worker should load deterministic detector dependencies"
+  );
+  assert.ok(placeholderFamiliesIndex > -1, "background service worker should load placeholder family registry");
+  assert.ok(
+    detectionModuleIndexes.every((index) => index > -1),
+    "background service worker should load modular enterprise/cloud detection helpers"
+  );
+  assert.ok(
+    placeholderFamiliesIndex < placeholdersIndex &&
+      detectionModuleIndexes.every((index) => index < detectorIndex),
+    "background service worker should load typed placeholder families before placeholders.js and detection modules before detector.js"
   );
   assert.ok(
     backgroundSource.includes(".scan(text, { manager })") &&
@@ -1076,6 +1154,14 @@ function testContentPublicStateIsMinimized() {
   assert.ok(
     contentSource.includes("currentPublicState.trustedPlaceholders"),
     "content script should use the sanitized trusted placeholder list for detection"
+  );
+  assert.ok(
+    contentSource.includes("ANY_PLACEHOLDER_TOKEN_REGEX") &&
+      contentSource.includes("placeholderTokenRegex") &&
+      contentSource.includes("trustedPlaceholders: currentPublicState.trustedPlaceholders") &&
+      contentSource.includes("knownPlaceholders: currentPublicState.trustedPlaceholders") &&
+      contentSource.includes("canonicalizePlaceholderToken: globalThis.PWM?.canonicalizePlaceholderToken"),
+    "content response hydration should use the broad placeholder regex and latest trusted placeholder list"
   );
 }
 
@@ -1189,6 +1275,63 @@ function testOnlyPwmPlaceholdersRemainCanonical() {
   PLACEHOLDER_TOKEN_REGEX.lastIndex = 0;
 }
 
+function testContentDebugFacadeDiagnosticsStayMetadataOnly() {
+  const rawSecret = "sk-live-content-debug-secret-value-123456789";
+  const rawComposerText = `send ${rawSecret} to [PWM_1]`;
+  const calls = [];
+  const facade = ContentDebugFacade.createContentDebugFacade({
+    root: {},
+    DebugLogger: globalThis.PWM.DebugLogger,
+    normalizeText: (value) => String(value || ""),
+    normalizeEditorInnerText: (value) => String(value || ""),
+    normalizeVisiblePlaceholders: (value) => String(value || ""),
+    placeholderTokenRegex: /\[PWM_\d+\]/g,
+    getInputText: (input) => input.text,
+    getSelectionOffsets: () => ({ start: 0, end: 0 }),
+    findSendButton: () => ({ disabled: false, getAttribute: () => null }),
+    getHost: () => "chatgpt.com",
+    isChatGptHost: () => true,
+    createSafeFileAttachDebugPayload: (payload) => payload,
+    console: {
+      groupCollapsed(label) { calls.push(["groupCollapsed", label]); },
+      log(payload) { calls.push(["log", payload]); },
+      groupEnd() { calls.push(["groupEnd"]); }
+    },
+    localStorage: { getItem: () => "1" },
+    sessionStorage: { getItem: () => null }
+  });
+
+  const snapshot = facade.collectComposerDebugSnapshot(
+    { text: rawComposerText, innerText: rawComposerText, textContent: rawComposerText },
+    rawComposerText,
+    rawComposerText
+  );
+  const sync = facade.getChatGptComposerSyncDebug(
+    {
+      text: rawComposerText,
+      innerText: rawComposerText,
+      textContent: rawComposerText,
+      tagName: "DIV",
+      id: "secret-composer-id",
+      className: `composer ${rawSecret}`,
+      getAttribute(name) {
+        return name === "data-testid" ? `prompt-${rawSecret}` : "";
+      }
+    },
+    rawComposerText,
+    rawComposerText
+  );
+  const serialized = JSON.stringify({ snapshot, sync });
+
+  assert.strictEqual(serialized.includes(rawSecret), false, "content debug facade must not expose raw secret text");
+  assert.strictEqual(serialized.includes("secret-composer-id"), false, "content debug facade must not expose raw element identifiers");
+  assert.deepStrictEqual(Object.keys(snapshot.expected).sort(), ["length", "lineCount", "placeholderCount"]);
+  assert.strictEqual(sync.expectedLength, rawComposerText.length);
+  assert.strictEqual(sync.actualPlaceholderCount, 1);
+  assert.strictEqual(sync.input.classLength, `composer ${rawSecret}`.length);
+  assert.strictEqual(sync.input.dataTestIdLength, `prompt-${rawSecret}`.length);
+}
+
 async function run() {
   const { buildManifest, getOnnxRuntimeWebAccessibleResources } = await import(
     pathToFileURL(path.join(repoRoot, "scripts/build-extension.mjs")).href
@@ -1227,6 +1370,7 @@ async function run() {
   testProtectedSiteOcrBrokerMessageSurfaceIsNarrow();
   testPageUiNoLongerLeaksClassificationsOrMaskedFragments();
   testOnlyPwmPlaceholdersRemainCanonical();
+  testContentDebugFacadeDiagnosticsStayMetadataOnly();
   console.log("PASS security hardening static regressions");
 }
 

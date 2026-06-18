@@ -47,7 +47,7 @@ This release does not scan or redact:
 - binary files
 - legacy or macro Office formats such as `.doc`, `.docm`, `.xls`, `.xlsm`, `.xlsb`, and `.xltm`
 
-Unsupported files are not marked as scanned, protected, or sanitized. In composer paths, LeakGuard shows a local warning before normal site upload continues where that pass-through is safe for the browser/site path. For some Firefox protected-site drop paths, unsupported files may be blocked when LeakGuard cannot safely pass them through.
+Unsupported files are not marked as scanned, protected, or sanitized. In composer paths, LeakGuard may allow normal site upload only where that pass-through is explicitly outside a consumed/sanitized protection path and safe for the browser/site path. If LeakGuard consumes the file event, attempts sanitization, or cannot safely pass the file through, the protected flow fails closed and blocks raw upload.
 
 ## Size Limits
 
@@ -99,8 +99,7 @@ If safe sanitized file handoff is not available, LeakGuard may insert sanitized 
 ## Site-Specific Notes
 
 - ChatGPT large paste flows that can become generated `Plain Text` attachments are intercepted and redacted before sanitized text or file handoff.
-- Gemini and Grok can use a trusted pending attach prompt for sanitized file handoff when the site requires a user-triggered upload flow.
-- ChatGPT, Claude, OpenAI Chat, and X have adapter definitions and diagnostics, but pending attach is enabled only where focused evidence and tests support it.
+- Built-in adapters can use a trusted pending attach prompt for sanitized file handoff when the site requires a user-triggered upload flow. Pending attach stores sanitized files in memory only and must not replay raw files.
 
 Unsupported files and failed sanitized handoffs should not be represented as protected.
 

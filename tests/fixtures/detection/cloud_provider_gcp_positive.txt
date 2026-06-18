@@ -1,0 +1,4 @@
+GCP projects/my-prod-project hosts project_id: my-prod-project and project_number: 123456789012.
+serviceAccount: svc-prod@appspot.gserviceaccount.com and service-account@project-id.iam.gserviceaccount.com are identities.
+//compute.googleapis.com/projects/my-prod-project/zones/europe-west3-a/instances/vm-prod-001 runs the workload.
+gke-prod-eu-001 uses gs://gcs-prod-backup-001 and storage.googleapis.com/gcs-prod-backup-001.

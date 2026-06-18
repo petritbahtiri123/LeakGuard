@@ -24,11 +24,12 @@ const modelFiles = [
   path.join(aiRoot, "models", "leakguard_secret_classifier.features.json"),
   path.join(aiRoot, "models", "leakguard_secret_classifier.onnx")
 ];
-const modelSourcePaths = [
+const modelTrainingSourcePaths = [
   path.join(aiRoot, "requirements.txt"),
-  path.join(aiRoot, "scripts"),
+  path.join(aiRoot, "scripts", "features.py"),
+  path.join(aiRoot, "scripts", "train_classifier.py"),
+  path.join(aiRoot, "scripts", "export_onnx.py"),
   path.join(aiRoot, "dataset", "labeled"),
-  path.join(aiRoot, "dataset", "test"),
   generatedDataset
 ];
 
@@ -167,7 +168,7 @@ function oldestMtime(paths) {
 
 function modelIsCurrent(targetCount) {
   if (!generatedDatasetIsCurrent(targetCount)) return false;
-  return oldestMtime(modelFiles) > newestMtime(modelSourcePaths);
+  return oldestMtime(modelFiles) > newestMtime(modelTrainingSourcePaths);
 }
 
 function generatedDatasetIsCurrent(targetCount) {
@@ -180,7 +181,7 @@ function generatedDatasetIsCurrent(targetCount) {
 function prepareModel() {
   ensurePythonEnvironment();
 
-  const targetCount = Number(process.env.LEAKGUARD_TRAINING_EXAMPLES || "10000");
+  const targetCount = Number(process.env.LEAKGUARD_TRAINING_EXAMPLES || "50000");
   if (!Number.isInteger(targetCount) || targetCount <= 0) {
     throw new Error("LEAKGUARD_TRAINING_EXAMPLES must be a positive integer.");
   }

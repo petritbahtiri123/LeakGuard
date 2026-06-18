@@ -1,0 +1,38 @@
+LeakGuard Synthetic Enterprise Metadata Live QA
+Generated locally. All values are fake examples for manual QA only.
+
+Group	Name	Value	Expected
+Azure	Azure resource group	rg-prod-weu-files-001	[AZURE_RG_N]
+Azure	Azure storage account	stdeberfileprd1234567	[STORAGE_ACCOUNT_N]
+Azure	tenantId	99999999-8888-7777-6666-555555555555	[AZURE_TENANT_ID_N]
+Azure	subscriptionId	11111111-2222-3333-4444-555555555555	[AZURE_SUBSCRIPTION_ID_N]
+AWS	AWS ARN	arn:aws:iam::123456789012:role/LeakGuardQaRole	[AWS_ARN_N]
+AWS	AWS account id	210987654321	[AWS_ACCOUNT_ID_N]
+GCP	project_id	lg-prod-project-123	[GCP_PROJECT_N]
+OTC/OpenStack	OTC resource	otc-prod-de-ecs-001	[OTC_RESOURCE_N]
+OTC/OpenStack	OpenStack project_id	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	[OPENSTACK_PROJECT_ID_N]
+Kubernetes	Kubernetes namespace	prod-payments	[K8S_NAMESPACE_N]
+Kubernetes	Kubernetes resource	secret/db-password	[K8S_SECRET_N]
+Internal	PRIVATE_IP	10.10.20.30	[PRIVATE_IP_N]
+Internal	PRIVATE_CIDR	10.10.20.0/24	[PRIVATE_CIDR_N]
+Internal	UNC_PATH	\\fs-prod-weu-01\FSA1234567	[UNC_PATH_N]
+Internal	SPN	cifs/stdeberfileprd1234567.file.core.windows.net	[SPN_N]
+Internal	LDAP_DN	CN=svc-backup-prod,OU=Service Accounts,OU=SH070,DC=corp,DC=local	[LDAP_DN_N]
+Internal	FILE_SHARE	FSA1234567	[FILE_SHARE_N]
+Internal	AD_GROUP	AD123-SH070-FILE-L-STFSA1234567R	[AD_GROUP_N]
+Internal	HOSTNAME	fs-prod-weu-01.corp.local	[HOSTNAME_N]
+Internal	USERNAME	CORP\adm-test.user	[USERNAME_N]
+Internal	EMAIL	test.user@example.com	[EMAIL_N]
+Harmless Controls
+rg-blue
+rg-test
+product-roadmap-item
+invoice 123456789012
+8.8.8.8
+192.0.2.44
+192.0.2.0/24
+docs/page
+service/name
+random GUID 123e4567-e89b-12d3-a456-426614174000
+report.final.docx
+package.name

@@ -99,6 +99,27 @@ function testMediumConfidenceCandidatesForLocalAssist() {
   assert.ok(candidates.some((candidate) => candidate.kind === "urlCredential" && candidate.value === "MaybeUrlPass123"));
 }
 
+function testStructuredIdentityCandidatesReachLocalAssist() {
+  const text = [
+    "username=svc-backup",
+    "login=svc-prod-deploy",
+    "service_account=svc-cloud-runner",
+    "Jane Doe and Sam Patel reviewed the access runbook."
+  ].join("\n");
+  const candidates = extractAiCandidates(text, { policyMode: "enterprise" });
+
+  for (const value of ["svc-backup", "svc-prod-deploy", "svc-cloud-runner"]) {
+    assert.ok(
+      candidates.some((candidate) => candidate.value === value),
+      `structured identity value should reach local AI assist: ${value}`
+    );
+  }
+  assert.ok(
+    !candidates.some((candidate) => /Jane|Sam|Patel/.test(candidate.contextText)),
+    "normal human names in prose should not become identity candidates"
+  );
+}
+
 function testCandidateExtractionDoesNotUseNetworkApis() {
   const originalFetch = globalThis.fetch;
   const originalXmlHttpRequest = globalThis.XMLHttpRequest;
@@ -140,6 +161,7 @@ testPlaceholdersAreIgnored();
 testPolicyThresholds();
 testRangeShapes();
 testMediumConfidenceCandidatesForLocalAssist();
+testStructuredIdentityCandidatesReachLocalAssist();
 testCandidateExtractionDoesNotUseNetworkApis();
 
 console.log("PASS AI candidate gate regressions");

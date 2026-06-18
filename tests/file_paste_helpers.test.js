@@ -121,6 +121,25 @@ async function testSanitizedFileProducedForHandoff() {
   );
 }
 
+async function testSanitizedFileNameRedactsSecretLookingOriginalName() {
+  const rawSecret = "sk-proj-FileNameSecretBrowserQa1234567890abcdef";
+  const redactedText = "API_KEY=[PWM_1]\ntoken_limit=4096";
+  const sanitizedFile = createSanitizedTextFile(
+    {
+      name: `customer-${rawSecret}.env`,
+      type: "text/plain"
+    },
+    redactedText
+  );
+  const sanitizedText = await readFileLikeText(sanitizedFile);
+
+  assert.ok(sanitizedFile, "expected an in-memory sanitized File/Blob");
+  assert.strictEqual(sanitizedFile.name.includes(rawSecret), false);
+  assert.match(sanitizedFile.name, /^customer-\[PWM_\d+\]\.env$/);
+  assert.strictEqual(sanitizedFile.type, "text/plain");
+  assert.strictEqual(sanitizedText, redactedText);
+}
+
 async function testClipboardFilesArrayPathDecodesLocally() {
   const text = "API_KEY=LeakGuardClipboardFilesApiKey1234567890";
   const file = createFile({ name: "clipboard.env", text });
@@ -286,6 +305,7 @@ async function testOversizedTextFileRequiresStreamingWithoutWholeFileRead() {
   await testSupportedEnvFileDecodesLocally();
   await testFirefoxStyleEnvFileWithEmptyMimeDecodesLocally();
   await testSanitizedFileProducedForHandoff();
+  await testSanitizedFileNameRedactsSecretLookingOriginalName();
   await testClipboardFilesArrayPathDecodesLocally();
   await testClipboardItemsFilePathDecodesLocally();
   await testFirefoxItemsOnlyFilePathDecodesLocally();

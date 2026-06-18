@@ -2,7 +2,10 @@
   const root = typeof globalThis !== "undefined" ? globalThis : window;
   root.PWM = root.PWM || {};
 
-  const FALLBACK_PLACEHOLDER_TOKEN_REGEX = /\[(?:PWM|NET|PUB_HOST)_\d+(?:_SUB_\d+)*(?:_(?:HOST_\d+|GW|VIP|DNS))?\]/g;
+  const FALLBACK_PLACEHOLDER_TOKEN_REGEX =
+    /\[(?:PWM_\d+|NET_\d+(?:_SUB_\d+)*(?:_(?:HOST_\d+|GW|VIP|DNS))?|PUB_HOST_\d+(?:_(?:GW|VIP|DNS))?|[A-Z][A-Z0-9_]*_\d+)\]/g;
+  const COUNT_TRUSTED_PLACEHOLDER_REGEX =
+    /^\[(?:PWM_\d+|NET_\d+(?:_SUB_\d+)*(?:_(?:HOST_\d+|GW|VIP|DNS))?|PUB_HOST_\d+(?:_(?:GW|VIP|DNS))?)\]$/;
 
   function getNormalizeVisiblePlaceholders(options = {}) {
     return options.normalizeVisiblePlaceholders || root.PWM?.normalizeVisiblePlaceholders || ((value) => String(value || ""));
@@ -11,6 +14,33 @@
   function getPlaceholderTokenRegex(options = {}) {
     const regex = options.placeholderTokenRegex || root.PWM?.PLACEHOLDER_TOKEN_REGEX || FALLBACK_PLACEHOLDER_TOKEN_REGEX;
     return new RegExp(regex.source, "g");
+  }
+
+  function getCanonicalizePlaceholderToken(options = {}) {
+    return options.canonicalizePlaceholderToken || root.PWM?.canonicalizePlaceholderToken || ((value) => String(value || ""));
+  }
+
+  function getExplicitTrustedPlaceholders(options = {}) {
+    const canonicalizePlaceholderToken = getCanonicalizePlaceholderToken(options);
+    const source = Array.isArray(options.trustedPlaceholders)
+      ? options.trustedPlaceholders
+      : Array.isArray(options.knownPlaceholders)
+        ? options.knownPlaceholders
+        : [];
+
+    return new Set(source.filter(Boolean).map((placeholder) => canonicalizePlaceholderToken(placeholder)));
+  }
+
+  function isExplicitlyTrustedPlaceholder(placeholder, options = {}) {
+    const canonicalizePlaceholderToken = getCanonicalizePlaceholderToken(options);
+    const canonical = canonicalizePlaceholderToken(placeholder);
+    const trustedPlaceholders = getExplicitTrustedPlaceholders(options);
+    const manager = options.manager || null;
+
+    return (
+      trustedPlaceholders.has(canonical) ||
+      (manager && typeof manager.knowsPlaceholder === "function" && manager.knowsPlaceholder(canonical))
+    );
   }
 
   function placeholderSessionIndex(placeholder) {
@@ -24,15 +54,27 @@
     );
 
     if (!semanticMatch) {
-      return null;
+      const typedMatch = /^\[[A-Z][A-Z0-9_]*_(\d+)\]$/.exec(String(placeholder || ""));
+      return typedMatch ? Number(typedMatch[1]) : null;
     }
 
     return Number(semanticMatch[1] || semanticMatch[2] || 0);
   }
 
-  function isPlaceholderTrustedForSession(placeholder, placeholderCount) {
+  function isPlaceholderTrustedForSession(placeholder, placeholderCount, options = {}) {
+    const canonicalizePlaceholderToken = getCanonicalizePlaceholderToken(options);
+    const canonical = canonicalizePlaceholderToken(placeholder);
+
+    if (isExplicitlyTrustedPlaceholder(canonical, options)) {
+      return true;
+    }
+
+    if (!COUNT_TRUSTED_PLACEHOLDER_REGEX.test(canonical)) {
+      return false;
+    }
+
     const count = Number(placeholderCount || 0);
-    const index = placeholderSessionIndex(placeholder);
+    const index = placeholderSessionIndex(canonical);
 
     if (!count || !Number.isFinite(index)) {
       return false;
@@ -60,10 +102,12 @@
         });
       }
 
-      if (isPlaceholderTrustedForSession(placeholder, placeholderCount)) {
+      const canonicalPlaceholder = getCanonicalizePlaceholderToken(options)(placeholder);
+
+      if (isPlaceholderTrustedForSession(canonicalPlaceholder, placeholderCount, options)) {
         segments.push({
           type: "secret",
-          placeholder
+          placeholder: canonicalPlaceholder
         });
       } else {
         segments.push({

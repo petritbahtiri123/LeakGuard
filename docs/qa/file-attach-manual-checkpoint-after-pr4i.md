@@ -1,5 +1,7 @@
 # File Attach Manual QA Checkpoint After PR 4I
 
+> Historical checkpoint note, 2026-06-18: this was a PR 4I manual QA checkpoint. Use `docs/FILE_CAPABILITY_MATRIX.md`, `docs/file-handoff-architecture.md`, `docs/codex-playbooks/file-handoff-fail-closed.md`, and `docs/RELEASE_QA_CHECKLIST.md` for current file handoff and fail-closed behavior.
+
 Use this checkpoint before further file attach extraction or PR 5 work. PR 4A-4I extracted pure planning helpers, but `maybeHandleLocalFileInsert()` still intentionally owns side effects such as event consumption, local file reads, streaming redaction, pending attach queueing, fallback insertion, browser/file-input behavior, UI, badge, overlay updates, and fail-closed handling.
 
 Use synthetic inputs only. Do not use real credentials, customer data, private files, real hostnames, or production secrets.

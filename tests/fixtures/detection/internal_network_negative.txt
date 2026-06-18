@@ -1,0 +1,5 @@
+Public IPs 8.8.8.8 and 1.1.1.1 stay visible.
+Documentation IPs 192.0.2.10 198.51.100.25 203.0.113.7 stay visible.
+Documentation CIDRs 192.0.2.0/24 198.51.100.0/24 203.0.113.0/24 stay visible.
+Random GUID 99999999-8888-7777-6666-555555555555 has no tenant or subscription key.
+Invalid CIDRs 10.0.0.0/33 and 999.10.10.10/24 stay visible.

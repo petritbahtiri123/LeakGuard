@@ -2,18 +2,16 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 
-require(path.join(__dirname, "../src/shared/entropy.js"));
-require(path.join(__dirname, "../src/shared/patterns.js"));
-require(path.join(__dirname, "../src/shared/detector.js"));
-require(path.join(__dirname, "../src/shared/placeholders.js"));
-require(path.join(__dirname, "../src/shared/knownSecretReuse.js"));
-require(path.join(__dirname, "../src/shared/redactor.js"));
+const { loadCore } = require("./helpers/load_core.js");
+loadCore();
 
 const {
   Detector,
   PlaceholderManager,
   Redactor,
   PATTERNS,
+  DETERMINISTIC_PROVIDER_REGISTRY,
+  ONIX_DATASET_CATEGORIES,
   normalizeVisiblePlaceholders,
   canonicalizePlaceholderToken
 } = globalThis.PWM;
@@ -175,11 +173,12 @@ function assertNoTypedPlaceholders(text, label) {
 
 function assertContainsGenericPlaceholder(resultText, label) {
   const matches = getPlaceholders(resultText);
+  const typedMatches = resultText.match(LEGACY_PLACEHOLDER_REGEX) || [];
   assert.ok(matches.length >= 1, label || "expected generic placeholder");
   assert.strictEqual(
-    LEGACY_PLACEHOLDER_REGEX.test(resultText),
-    false,
-    "expected only neutral PWM placeholders"
+    matches.length + typedMatches.length >= 1,
+    true,
+    "expected at least one visible placeholder"
   );
 }
 
@@ -386,6 +385,242 @@ function testMixedGitlabRedactionKeepsConfigReadable() {
   assert.ok(redactedText.includes("endpoint = https://gitlab.com/group/project"));
   assert.ok(redactedText.includes("branch = main"));
   assert.ok(redactedText.includes("notes = keep surrounding config readable"));
+}
+
+function findFindingByRaw(findings, raw) {
+  return findings.find((finding) => finding.raw === raw);
+}
+
+function assertRedactsRaw(text, raw, expectedMethod) {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const findings = detector.scan(text);
+  const finding = findFindingByRaw(findings, raw);
+
+  assert.ok(
+    finding,
+    `expected finding for ${raw}; got ${findings
+      .map((entry) => `${entry.type}:${entry.raw}:${(entry.method || []).join("|")}`)
+      .join(", ")}`
+  );
+  if (expectedMethod) {
+    assert.ok(
+      finding.method.includes(expectedMethod),
+      `expected ${expectedMethod} method for ${raw}, got ${(finding.method || []).join(", ")}`
+    );
+  }
+
+  const result = redactor.redact(text, findings);
+  assert.strictEqual(result.redactedText.includes(raw), false, `raw value should redact: ${raw}`);
+  assert.ok(
+    /\[(?:PWM|EMAIL|USERNAME|[A-Z][A-Z0-9_]*)_\d+\]/.test(result.redactedText),
+    `expected visible placeholder for ${raw}`
+  );
+}
+
+function assertNoRedaction(text, label) {
+  const detector = new Detector();
+  const findings = detector.scan(text);
+
+  assert.deepStrictEqual(findings, [], label || `expected no findings for ${text}`);
+}
+
+function testDeterministicProviderRegistryMetadata() {
+  assert.ok(
+    Array.isArray(DETERMINISTIC_PROVIDER_REGISTRY),
+    "provider-aware deterministic secret registry should be exported"
+  );
+
+  const requiredReasons = [
+    "aws-access-key-id",
+    "aws-secret-access-key-context",
+    "aws-session-token-context",
+    "azure-client-secret-context",
+    "azure-storage-account-key",
+    "azure-sas-token",
+    "azure-tenant-id-context",
+    "azure-subscription-id-context",
+    "gcp-api-key",
+    "gcp-service-account-private-key",
+    "gcp-service-account-identity",
+    "github-token",
+    "gitlab-token",
+    "slack-token",
+    "slack-webhook",
+    "kubernetes-secret-token",
+    "kubernetes-key-data",
+    "docker-registry-auth",
+    "terraform-secret-context",
+    "private-key-block",
+    "database-url-credentials",
+    "identity-username-context",
+    "identity-email-context"
+  ];
+  const reasons = new Set(DETERMINISTIC_PROVIDER_REGISTRY.map((entry) => entry.reason));
+
+  for (const reason of requiredReasons) {
+    assert.ok(reasons.has(reason), `provider registry missing reason ${reason}`);
+  }
+
+  const categories = Array.isArray(ONIX_DATASET_CATEGORIES) ? ONIX_DATASET_CATEGORIES : [];
+  for (const category of [
+    "regex_secret",
+    "entropy_secret",
+    "onix_gray_zone",
+    "identity_sensitive",
+    "metadata_safe",
+    "normal_text_safe",
+    "adversarial_safe"
+  ]) {
+    assert.ok(categories.includes(category), `missing Onix dataset category ${category}`);
+  }
+}
+
+function testProviderRegistryTruePositiveCoverage() {
+  const awsAccessKey = "AKIA1234567890ABCDEF";
+  const awsSessionAccessKey = "ASIA1234567890ABCDEF";
+  const awsSecret = "ABCDEFGHIJKLMNOPQRSTabcdefghijklmnopqrst";
+  const awsSessionToken =
+    "IQoJb3JpZ2luX2VjEJr//////////wEaCXVzLWVhc3QtMSJHMEUCIFakeSessionTokenValue1234567890";
+  const azureClientSecret = "AzureClientSecret123456!";
+  const azureStorageKey = "AbCdEfGhIjKlMnOpQrStUvWxYz1234567890AbCdEfGhIjKlMnOpQrStUvWxYz==";
+  const azureTenantId = "123e4567-e89b-12d3-a456-426614174000";
+  const azureSubscriptionId = "223e4567-e89b-12d3-a456-426614174111";
+  const azureSasSig = "AbCdEfGhIjKlMnOpQrStUvWxYz1234567890%2B%2F%3D";
+  const gcpApiKey = "AIzaSyA0bcdefghijklmnopqrstuvwxYZ123456";
+  const gcpPrivateKey =
+    "-----BEGIN PRIVATE KEY-----\\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\\n-----END PRIVATE KEY-----\\n";
+  const gcpClientEmail = "svc-prod@project-prod-123.iam.gserviceaccount.com";
+  const githubClassic = "ghp_AbCdEfGhIjKlMnOpQrStUvWxYz123456";
+  const githubPat = "github_pat_11AAABBBBCCCCDDDDEEEE_AbCdEfGhIjKlMnOpQrStUvWxYz1234567890";
+  const gitlabPat = "glpat-AbCdEfGhIjKlMnOpQrStUvWxYz123456";
+  const slackToken = "xoxb-123456789012-123456789012-AbCdEfGhIjKlMnOpQrSt";
+  const slackWebhook =
+    "https://hooks.slack.com/services/T12345678/B12345678/abcdefghijklmnopqrstuvwxyzABCD";
+  const kubeToken =
+    "eyJhbGciOiJIUzI1NiIsImtpZCI6Imt1YmUifQ.eyJzdWIiOiJzZXJ2aWNlIn0.signatureValue123";
+  const kubeKeyData = "Q2xpZW50S2V5RGF0YVZhbHVlMTIzNDU2Nzg5MA==";
+  const dockerAuth = "dXNlcjpEb2NrZXJQYXNzMTIzIQ==";
+  const terraformSecret = "TfClientSecretValue123456!";
+  const pemPrivateKey = [
+    "-----BEGIN PRIVATE KEY-----",
+    "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQD",
+    "-----END PRIVATE KEY-----"
+  ].join("\n");
+  const dbPassword = "DbPass123!";
+  const jdbcPassword = "JdbcPass123!";
+  const genericUrlPassword = "UrlPass123!";
+  const username = "admin.user";
+  const upn = "user@example.com";
+  const domainUser = "DOMAIN\\username";
+  const serviceAccount = "my-sa@project.iam.gserviceaccount.com";
+
+  const cases = [
+    [`AWS_ACCESS_KEY_ID=${awsAccessKey}`, awsAccessKey, "aws-access-key-id"],
+    [`AWS_ACCESS_KEY_ID=${awsSessionAccessKey}`, awsSessionAccessKey, "aws-access-key-id"],
+    [`AWS_SECRET_ACCESS_KEY=${awsSecret}`, awsSecret, "aws-secret-access-key-context"],
+    [`AWS_SESSION_TOKEN=${awsSessionToken}`, awsSessionToken, "aws-session-token-context"],
+    [`AZURE_CLIENT_SECRET=${azureClientSecret}`, azureClientSecret, "azure-client-secret-context"],
+    [
+      `DefaultEndpointsProtocol=https;AccountName=prodacct;AccountKey=${azureStorageKey};EndpointSuffix=core.windows.net`,
+      azureStorageKey,
+      "azure-storage-account-key"
+    ],
+    [
+      `https://prodacct.blob.core.windows.net/container/blob.txt?sv=2024-01-01&se=2026-01-01&sp=r&sr=b&sig=${azureSasSig}`,
+      azureSasSig,
+      "azure-sas-token"
+    ],
+    [`AZURE_TENANT_ID=${azureTenantId}`, azureTenantId, "azure-tenant-id-context"],
+    [
+      `AZURE_SUBSCRIPTION_ID=${azureSubscriptionId}`,
+      azureSubscriptionId,
+      "azure-subscription-id-context"
+    ],
+    [`api_key=${gcpApiKey}`, gcpApiKey, "gcp-api-key"],
+    [`{"private_key":"${gcpPrivateKey}"}`, gcpPrivateKey, "gcp-service-account-private-key"],
+    [`{"client_email":"${gcpClientEmail}"}`, gcpClientEmail, "gcp-service-account-identity"],
+    [`GITHUB_TOKEN=${githubClassic}`, githubClassic, "github-token"],
+    [`GITHUB_TOKEN=${githubPat}`, githubPat, "github-token"],
+    [`GITLAB_TOKEN=${gitlabPat}`, gitlabPat, "gitlab-token"],
+    [`SLACK_BOT_TOKEN=${slackToken}`, slackToken, "slack-token"],
+    [`SLACK_WEBHOOK_URL=${slackWebhook}`, slackWebhook, "slack-webhook"],
+    [`kubeconfig:\ntoken: ${kubeToken}`, kubeToken, "kubernetes-secret-token"],
+    [`client-key-data: ${kubeKeyData}`, kubeKeyData, "kubernetes-key-data"],
+    [`{"auths":{"registry.corp.internal":{"auth":"${dockerAuth}"}}}`, dockerAuth, "docker-registry-auth"],
+    [`terraform.tfvars\nclient_secret = "${terraformSecret}"`, terraformSecret, "terraform-secret-context"],
+    [pemPrivateKey, pemPrivateKey, "private-key-block"],
+    [`DATABASE_URL=postgres://user:${dbPassword}@db.internal:5432/app`, dbPassword, "database-url-credentials"],
+    [`MYSQL_URL=mysql://user:${dbPassword}@db.internal:3306/app`, dbPassword, "database-url-credentials"],
+    [`MONGO_URL=mongodb://user:${dbPassword}@db.internal:27017/app`, dbPassword, "database-url-credentials"],
+    [`REDIS_URL=redis://:${dbPassword}@cache.internal:6379/0`, dbPassword, "database-url-credentials"],
+    [
+      `jdbc:sqlserver://db.internal:1433;databaseName=app;user=sa;password=${jdbcPassword};encrypt=true`,
+      jdbcPassword,
+      "database-url-credentials"
+    ],
+    [`https://user:${genericUrlPassword}@service.internal/path`, genericUrlPassword, "database-url-credentials"],
+    [`username=${username}`, username, "identity-username-context"],
+    [`upn=${upn}`, upn, "identity-email-context"],
+    [`login=${domainUser}`, domainUser, "identity-username-context"],
+    [`service_account=${serviceAccount}`, serviceAccount, "gcp-service-account-identity"]
+  ];
+
+  for (const [text, raw, method] of cases) {
+    assertRedactsRaw(text, raw, method);
+  }
+}
+
+function testProviderRegistryFalsePositiveCoverage() {
+  const falsePositives = [
+    [
+      "normal English cloud paragraph",
+      "AWS, Azure, GCP, Kubernetes, Docker, and Terraform are discussed in this planning paragraph without credentials."
+    ],
+    ["existing LeakGuard placeholders", "[PWM_1] [PWM_22] [PWM_999]"],
+    ["uuid alone", "123e4567-e89b-12d3-a456-426614174000"],
+    ["iso timestamp alone", "2026-06-17T10:20:30Z"],
+    ["plain domain", "example.com"],
+    ["plain url", "https://example.com/docs?topic=cloud"],
+    ["plain github repo url", "https://github.com/example/project"],
+    ["plain gitlab repo url", "https://gitlab.com/example/project"],
+    ["plain aws arn", "arn:aws:iam::123456789012:role/AdminRole"],
+    ["plain aws account id", "123456789012"],
+    [
+      "public ssh key",
+      "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC7PublicKeyMaterialOnly user@example.com"
+    ],
+    ["git commit hash", "abcdef1234567890abcdef1234567890abcdef12"],
+    ["normal file path", String.raw`C:\Users\qa\Documents\release-notes.txt`],
+    ["normal ticket id", "Support ticket INC-2026-004812 is assigned to queue CLOUDOPS-77."],
+    ["normal kubernetes names", "deployment/api-server pod/web-frontend service/public-api"],
+    ["plain example email prose", "Please contact user@example.com for public documentation examples."],
+    ["normal names in prose", "Jane Doe and Sam Patel reviewed the deployment plan."]
+  ];
+
+  for (const [label, text] of falsePositives) {
+    assertNoRedaction(text, `${label}: expected no provider secret finding`);
+  }
+}
+
+function testDetectionLifecycleOrderStaysDeterministicFirst() {
+  const detectorSource = fs.readFileSync(path.join(__dirname, "../src/shared/detector.js"), "utf8");
+  const aiTransformSource = fs.readFileSync(
+    path.join(__dirname, "../src/shared/transformOutboundPromptWithAi.js"),
+    "utf8"
+  );
+  const regexIndex = detectorSource.indexOf("...this.scanProviderRegistry(input)");
+  const entropyIndex = detectorSource.indexOf("...this.scanEntropyFallback(input)");
+  const deterministicIndex = aiTransformSource.indexOf("deterministicFindings");
+  const classifierIndex = aiTransformSource.indexOf("classifier.classify");
+
+  assert.ok(regexIndex >= 0, "deterministic provider registry should be part of Detector.scan");
+  assert.ok(entropyIndex > regexIndex, "regex/provider registry must run before entropy fallback");
+  assert.ok(
+    classifierIndex > deterministicIndex,
+    "Onix/classifier handoff must remain after deterministic findings"
+  );
 }
 
 function testLegacyPlaceholderNormalizationHelper() {
@@ -1157,7 +1392,7 @@ function testAwsSecretAssignmentWithExamplePrefixStillFailsClosedButDocsPlacehol
   assert.ok(/^AWS_ACCESS_KEY_ID=\[PWM_\d+\]$/.test(lines[0]));
   assert.ok(/^AWS_SECRET_ACCESS_KEY=\[PWM_\d+\]$/.test(lines[1]));
   assert.strictEqual(lines[2], `mirror_secret=${lines[1].split("=")[1]}`);
-  assert.strictEqual(lines[3], "private_ip=10.0.0.5");
+  assert.ok(/^private_ip=\[PRIVATE_IP_\d+\]$/.test(lines[3]));
   assert.strictEqual(lines[4], "url=https://example.com");
 
   const docsFindings = detector.scan("AWS_SECRET_ACCESS_KEY=example-secret-placeholder-value");
@@ -1193,6 +1428,63 @@ function testAwsSecretLabelOnPreviousLineRedactsValue() {
   assert.strictEqual(result.redactedText.includes(rawSecret), false);
   assert.ok(/^\[PWM_\d+\]$/.test(lines[1]), "AWS access key value should still be redacted");
   assert.ok(/^\[PWM_\d+\]$/.test(lines[3]), "split AWS secret value should be redacted");
+}
+
+function testAwsSecretOnLineAfterAccessKeyRedactsValue() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const rawAccessKey = "AKIAQ4EXAMPLE7K9M2P1";
+  const rawSecret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+  const text = [rawAccessKey, rawSecret, "AWS_SESSION_TOKEN=FakeSessionTokenValue123456789"].join(
+    "\n"
+  );
+
+  const findings = detector.scan(text);
+  const result = redactor.redact(text, findings);
+  const lines = result.redactedText.split("\n");
+
+  assert.ok(
+    findings.some(
+      (finding) => finding.type === "AWS_SECRET_KEY" && finding.raw === rawSecret
+    ),
+    "AWS secret values directly after AWS access key values should be detected"
+  );
+  assert.strictEqual(result.redactedText.includes(rawSecret), false);
+  assert.ok(/^\[PWM_\d+\]$/.test(lines[0]), "AWS access key should still redact");
+  assert.ok(/^\[PWM_\d+\]$/.test(lines[1]), "adjacent AWS secret should redact");
+  assert.ok(/^AWS_SESSION_TOKEN=\[PWM_\d+\]$/.test(lines[2]), "AWS session token should still redact");
+}
+
+function testAwsSecretAccessKeyJsonFieldRedactsExampleShapedValue() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const rawSecret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+  const text = [
+    "{",
+    '  "aws": {',
+    '    "accessKeyId": [PWM_1],',
+    `    "secretAccessKey": "${rawSecret}"`,
+    "  }",
+    "}"
+  ].join("\n");
+
+  const findings = detector.scan(text);
+  const result = redactor.redact(text, findings);
+
+  assert.ok(
+    findings.some(
+      (finding) => finding.type === "AWS_SECRET_KEY" && finding.raw === rawSecret
+    ),
+    "camelCase JSON secretAccessKey fields should detect AWS secret access key values"
+  );
+  assert.strictEqual(result.redactedText.includes(rawSecret), false);
+  assert.ok(
+    result.redactedText.includes('"accessKeyId": [PWM_1]'),
+    "trusted existing placeholders in neighboring JSON fields should stay visible"
+  );
+  assert.match(result.redactedText, /"secretAccessKey": \[PWM_\d+\]/);
 }
 
 function testConcatenatedPlaceholderAssignmentsDoNotCreateCompositeFalsePositives() {
@@ -1300,7 +1592,7 @@ function testUserStressEdgeCasesRedactSecretsButKeepSafeLiterals() {
     "literal placeholder-looking text should stay unchanged"
   );
   assert.ok(result.redactedText.includes("The region is eu-central-1."), "region text should stay visible");
-  assert.ok(result.redactedText.includes("CIDR=192.168.1.0/24"), "private CIDRs should stay visible");
+  assert.ok(/^CIDR=\[PRIVATE_CIDR_\d+\]$/m.test(result.redactedText), "private CIDRs should redact as typed internal metadata");
   assert.ok(result.redactedText.includes("PUBLIC_URL=https://example.com"), "public URLs should stay visible");
   assert.ok(/\bPASSWORD\b/.test(result.redactedText), "bare PASSWORD labels should stay visible");
   assert.ok(/\bKey\b/.test(result.redactedText), "bare key labels should stay visible");
@@ -2068,6 +2360,99 @@ function testStandaloneSecretKeywordPasswordRedactsHighConfidenceValue() {
   assert.strictEqual(result.redactedText, "[PWM_1]", "secret-prefixed password-like value should redact cleanly");
 }
 
+function testEntropyClassifierRedactsSecretsAndPreservesSafeTokens() {
+  assert.deepStrictEqual(
+    globalThis.PWM.ENTROPY_CONFIG,
+    {
+      contextValueMinEntropy: 2.8,
+      contextValueMinLength: 8,
+      generalMinEntropy: 4.2,
+      generalMinLength: 20,
+      base64MinEntropy: 4.35,
+      base64MinLength: 20,
+      hexMinEntropy: 3.45,
+      hexMinLength: 32,
+      entropyOnlyShortTokenBlock: 20
+    },
+    "entropy thresholds should be centralized and explicit"
+  );
+
+  assert.strictEqual(globalThis.PWM.calculateEntropy(""), 0);
+  assert.strictEqual(globalThis.PWM.calculateEntropy(null), 0);
+  assert.strictEqual(globalThis.PWM.classifyTokenAlphabet("abcdef0123456789"), "hex");
+  assert.strictEqual(globalThis.PWM.classifyTokenAlphabet("QWxhZGRpbjpvcGVu+IHNlc2FtZQ=="), "base64ish");
+  assert.strictEqual(globalThis.PWM.classifyTokenAlphabet("Token.Value!123"), "general");
+  assert.strictEqual(globalThis.PWM.countCharacterClasses("Ab9!"), 4);
+
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const positiveText = [
+    "password=Welcome123!",
+    'api_key="AIzaSyD9xQ7vK3mN8pR2sT5uW1yZ4aB6cD8eF0gH"',
+    "AWS_ACCESS_KEY_ID=AKIAQ4EXAMPLE7K9M2P1",
+    "GITHUB_TOKEN=ghp_AbCdEfGhIjKlMnOpQrStUvWxYz012345678",
+    "postgres://qa_user:SuperSecret123!@db.internal.example:5432/prod",
+    "-----BEGIN PRIVATE KEY-----",
+    "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC",
+    "-----END PRIVATE KEY-----",
+    "QWxhZGRpbjpvcGVuIHNlc2FtZV9zZWNyZXRfdG9rZW5fMTIzNDU2",
+    "client_secret=Ab9fK2LmN8pQ4RsT7uVxY3ZaB6CdE9Fg",
+    "jwt=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyMTIzIn0.signature1234567890"
+  ].join("\n");
+
+  const positiveResult = redactor.redact(positiveText, detector.scan(positiveText));
+
+  for (const raw of [
+    "Welcome123!",
+    "AIzaSyD9xQ7vK3mN8pR2sT5uW1yZ4aB6cD8eF0gH",
+    "AKIAQ4EXAMPLE7K9M2P1",
+    "ghp_AbCdEfGhIjKlMnOpQrStUvWxYz012345678",
+    "SuperSecret123!",
+    "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC",
+    "QWxhZGRpbjpvcGVuIHNlc2FtZV9zZWNyZXRfdG9rZW5fMTIzNDU2",
+    "Ab9fK2LmN8pQ4RsT7uVxY3ZaB6CdE9Fg",
+    "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyMTIzIn0.signature1234567890"
+  ]) {
+    assert.strictEqual(positiveResult.redactedText.includes(raw), false, `${raw} should redact`);
+  }
+
+  assert.ok(/^password=\[PWM_\d+\]$/m.test(positiveResult.redactedText));
+  assert.ok(/^api_key=\[PWM_\d+\]$/m.test(positiveResult.redactedText));
+  assert.ok(/^AWS_ACCESS_KEY_ID=\[PWM_\d+\]$/m.test(positiveResult.redactedText));
+  assert.ok(/^GITHUB_TOKEN=\[PWM_\d+\]$/m.test(positiveResult.redactedText));
+  assert.ok(
+    /^postgres:\/\/qa_user:\[PWM_\d+\]@db\.internal\.example:5432\/prod$/m.test(
+      positiveResult.redactedText
+    )
+  );
+  assert.ok(/\[PWM_\d+\]/.test(positiveResult.redactedText), "private key should become a placeholder");
+  assert.ok(/^client_secret=\[PWM_\d+\]$/m.test(positiveResult.redactedText));
+  assert.ok(/^jwt=\[PWM_\d+\]$/m.test(positiveResult.redactedText));
+
+  const falsePositiveText = [
+    "Normal English paragraph with project notes and no credentials should stay visible.",
+    "[PWM_1] [PWM_22] [PWM_999]",
+    "id=550e8400-e29b-41d4-a716-446655440000",
+    "created_at=2026-06-17T12:34:56Z",
+    "https://example.com/docs/path?item=123",
+    "example.com",
+    "commit=0123456789abcdef0123456789abcdef01234567",
+    "aB7_kL9xQ2mP",
+    "C:\\Users\\bajra\\Documents\\report-2026-06-17.txt",
+    "ticket=SUP-12345-ABC"
+  ].join("\n");
+
+  const falsePositiveFindings = new Detector().scan(falsePositiveText);
+  const falsePositiveResult = new Redactor(new PlaceholderManager()).redact(
+    falsePositiveText,
+    falsePositiveFindings
+  );
+
+  assert.deepStrictEqual(falsePositiveFindings, [], "safe entropy-adjacent text should not detect");
+  assert.strictEqual(falsePositiveResult.redactedText, falsePositiveText);
+}
+
 function testNaturalLanguageSecretRedactsCredentialLikeValue() {
   const detector = new Detector();
   const manager = new PlaceholderManager();
@@ -2168,6 +2553,11 @@ function testShapeGatesStillDetectPositiveCredentialShapes() {
   const findings = detector.scan(text, { manager });
   const redactedText = redactor.redact(text, findings).redactedText;
 
+  assert.strictEqual(globalThis.PWM.DetectionHttpHeaders.isSensitiveHttpHeaderName("Authorization"), true);
+  assert.strictEqual(globalThis.PWM.DetectionHttpHeaders.isSensitiveHttpHeaderName("X-API-Key"), true);
+  assert.strictEqual(globalThis.PWM.DetectionHttpHeaders.isSensitiveHttpHeaderName("Cookie"), true);
+  assert.strictEqual(globalThis.PWM.DetectionHttpHeaders.inferHttpHeaderPlaceholderType("X-API-Key"), "API_KEY");
+  assert.strictEqual(globalThis.PWM.DetectionHttpHeaders.inferHttpHeaderPlaceholderType("Authorization"), "TOKEN");
   assert.ok(/^Authorization: Bearer \[PWM_\d+\]$/m.test(redactedText));
   assert.ok(/^X-API-Key: \[PWM_\d+\]$/m.test(redactedText));
   assert.ok(/^Cookie: sessionid=\[PWM_\d+\]; theme=dark$/m.test(redactedText));
@@ -2229,9 +2619,7 @@ function testEmailRedactionSuppressionAndReuse() {
   const findings = detector.scan(text);
   const result = redactor.redact(text, findings);
   const redactedText = result.redactedText;
-  const emailPlaceholders = (redactedText.match(/\[PWM_\d+\]/g) || []).filter(
-    (placeholder) => placeholder !== "[PWM_7]"
-  );
+  const emailPlaceholders = redactedText.match(/\[EMAIL_\d+\]/g) || [];
 
   assert.ok(
     findings.some((finding) => finding.type === "EMAIL" && finding.raw === workEmail),
@@ -2240,7 +2628,7 @@ function testEmailRedactionSuppressionAndReuse() {
   assert.strictEqual(new Set(emailPlaceholders).size, 1, "duplicate email values should reuse one placeholder");
   assert.strictEqual(redactedText.includes(workEmail), false, "work email should not remain visible");
   assert.ok(
-    /^Please contact \[PWM_\d+\] for account access\.$/m.test(redactedText),
+    /^Please contact \[EMAIL_\d+\] for account access\.$/m.test(redactedText),
     "prose email should redact without changing surrounding words"
   );
   assert.ok(redactedText.includes("docs_email=user@example.com"), "example.com email should stay visible");
@@ -2275,7 +2663,7 @@ function testReleaseQaIdentityAndDatabaseUrlRegressions() {
     findings.some((finding) => finding.type === "EMAIL" && finding.raw === "qa.person@example.com"),
     "EMAIL assignment should produce an email identity finding even for example.com values"
   );
-  assert.ok(/^EMAIL=\[PWM_\d+\]$/m.test(redactedText), "EMAIL assignment value should redact");
+  assert.ok(/^EMAIL=\[EMAIL_\d+\]$/m.test(redactedText), "EMAIL assignment value should redact");
   assert.ok(
     /^MYSQL_URL=mysql:\/\/root:\[PWM_\d+\]@192\.0\.2\.44:3306\/mysql$/m.test(redactedText),
     `MYSQL_URL should preserve URI shape and redact only the password: ${redactedText}`
@@ -2321,6 +2709,132 @@ function testDeveloperDocumentationFalsePositiveControls() {
   }
 }
 
+function testEnterpriseCloudIdentityDetectors() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const text = [
+    "Azure resource group rg-prod-weu-files-001 hosts storage.",
+    "resource group rgrp-shared-identity-prod and resource-group-prod-core are internal.",
+    "Resources: vnet-de-ber-file-prd snet-de-ber-file-prd pep-de-ber-file-prd kv-prod-shared-001 aks-prod-weu-001 vm-jump-prd-weu-01 appgw-prod-weu law-prod-secops.",
+    "storage account name stdeberfileprd1234567 with Azure Files SMB private endpoint.",
+    "AD group AD001-SH070-FILE-G-RBACFSA1234567R grants read access.",
+    "hostname fs-prod-weu-01, fqdn dc01.corp.local, server sql-prod-001.internal and jump-prd-weu-01.",
+    "login CORP\\petrit.bahtiri owns account adm-petrit.bahtiri and svc-backup-prod.",
+    "created by petrit.bahtiri",
+    "email=petrit.bahtiri@company.com",
+    "service email svc-backup@example.com"
+  ].join("\n");
+
+  const findings = detector.scan(text);
+  const redactedText = redactor.redact(text, findings).redactedText;
+  for (const type of ["AZURE_RG", "CLOUD_RESOURCE", "STORAGE_ACCOUNT", "AD_GROUP", "HOSTNAME", "USERNAME", "EMAIL"]) {
+    assert.ok(findings.some((finding) => finding.type === type), `expected ${type} finding`);
+    assert.ok(new RegExp(`\\[${type}_\\d+\\]`).test(redactedText), `expected ${type} placeholder`);
+  }
+  assert.strictEqual(redactedText.includes("rg-prod-weu-files-001"), false);
+  assert.strictEqual(redactedText.includes("AD001-SH070-FILE-G-RBACFSA1234567R"), false);
+}
+
+function testEnterpriseCloudIdentityFalsePositiveControls() {
+  const detector = new Detector();
+  const safeText = [
+    "normal prose about rg values should keep rg-blue and rg-test visible.",
+    "ordinary hyphenated words like blue-green and product-roadmap-item are harmless.",
+    "normal dotted words include package.name and docs.example value.",
+    "filename report.final.docx and harmless GUID 123e4567-e89b-12d3-a456-426614174000.",
+    "hash abcdef1234567890abcdef1234567890 without secret context stays visible.",
+    "public domain example.com and package @scope/name should not become usernames."
+  ].join("\n");
+
+  assert.deepStrictEqual(detector.scan(safeText), [], "enterprise detectors should stay context/scoring gated");
+}
+
+function readDetectionFixture(name) {
+  return fs.readFileSync(path.join(__dirname, "fixtures", "detection", name), "utf8");
+}
+
+function testProviderCloudDetectionFixtures() {
+  const cases = [
+    {
+      file: "cloud_provider_azure_positive.txt",
+      types: ["AZURE_RG", "CLOUD_RESOURCE", "STORAGE_ACCOUNT", "CLOUD_ENDPOINT"]
+    },
+    {
+      file: "cloud_provider_aws_positive.txt",
+      types: ["AWS_ARN", "AWS_ACCOUNT_ID", "AWS_RESOURCE_ID", "S3_BUCKET", "AWS_ENDPOINT"]
+    },
+    {
+      file: "cloud_provider_gcp_positive.txt",
+      types: ["GCP_PROJECT", "GCP_PROJECT_NUMBER", "GCP_SERVICE_ACCOUNT", "GCP_RESOURCE", "GCS_BUCKET"]
+    },
+    {
+      file: "cloud_provider_otc_openstack_positive.txt",
+      types: ["OTC_RESOURCE", "OPENSTACK_PROJECT_ID", "OPENSTACK_TENANT_ID", "OPENSTACK_DOMAIN_ID", "OPENSTACK_RESOURCE_ID", "OTC_ENDPOINT"]
+    },
+    {
+      file: "cloud_provider_kubernetes_positive.txt",
+      types: ["K8S_CLUSTER", "K8S_NAMESPACE", "K8S_RESOURCE", "K8S_SECRET", "KUBECONFIG_SECRET"]
+    }
+  ];
+
+  for (const { file, types } of cases) {
+    const detector = new Detector();
+    const manager = new PlaceholderManager();
+    const redactor = new Redactor(manager);
+    const text = readDetectionFixture(file);
+    const findings = detector.scan(text);
+    const redactedText = redactor.redact(text, findings).redactedText;
+
+    for (const type of types) {
+      assert.ok(findings.some((finding) => finding.type === type), `${file}: expected ${type}`);
+      assert.ok(new RegExp(`\\[${type}_\\d+\\]`).test(redactedText), `${file}: expected ${type} placeholder`);
+    }
+  }
+}
+
+function testProviderCloudRepeatedValuesReusePlaceholders() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const text = [
+    "AWS arn arn:aws:iam::123456789012:role/AdminRole",
+    "Again arn:aws:iam::123456789012:role/AdminRole",
+    "GCP project_id: my-prod-project",
+    "Again project_id: my-prod-project"
+  ].join("\n");
+  const redactedText = redactor.redact(text, detector.scan(text)).redactedText;
+  const arnPlaceholders = redactedText.match(/\[AWS_ARN_\d+\]/g) || [];
+  const projectPlaceholders = redactedText.match(/\[GCP_PROJECT_\d+\]/g) || [];
+
+  assert.deepStrictEqual([...new Set(arnPlaceholders)].length, 1, "repeated ARNs should reuse one placeholder");
+  assert.deepStrictEqual([...new Set(projectPlaceholders)].length, 1, "repeated GCP projects should reuse one placeholder");
+}
+
+function testProviderCloudNegativeFixtureStaysVisible() {
+  const detector = new Detector();
+  const text = readDetectionFixture("cloud_provider_negative.txt");
+  const findings = detector.scan(text);
+
+  assert.deepStrictEqual(findings, [], "cloud negative fixture should not produce metadata findings");
+}
+
+function testMixedMulticloudEnterpriseSample() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const text = readDetectionFixture("mixed_multicloud_enterprise_sample.txt");
+  const findings = detector.scan(text);
+  const redactedText = redactor.redact(text, findings).redactedText;
+
+  for (const type of ["AZURE_RG", "AWS_ARN", "GCP_PROJECT", "OTC_RESOURCE", "OPENSTACK_PROJECT_ID", "K8S_NAMESPACE", "USERNAME", "INTERNAL_ENDPOINT"]) {
+    assert.ok(findings.some((finding) => finding.type === type), `mixed sample expected ${type}`);
+  }
+  assert.ok(redactedText.includes("rg-blue"), "harmless rg-blue should remain visible");
+  assert.ok(redactedText.includes("product-roadmap-item"), "harmless product name should remain visible");
+  assert.ok(redactedText.includes("invoice 123456789012"), "12-digit non-AWS number should remain visible");
+}
+
 function run() {
   testPatternMetadata();
   testPositiveFixtures();
@@ -2329,6 +2843,10 @@ function run() {
   testProviderTokenShortAndTemplateValuesStayVisible();
   testProviderSpecificHexAssignmentsDetectAndRedact();
   testMixedGitlabRedactionKeepsConfigReadable();
+  testDeterministicProviderRegistryMetadata();
+  testProviderRegistryTruePositiveCoverage();
+  testProviderRegistryFalsePositiveCoverage();
+  testDetectionLifecycleOrderStaysDeterministicFirst();
   testLegacyPlaceholderNormalizationHelper();
   testRepeatedSameSecret();
   testRepeatedAwsAccessKeyWithExampleSubstringStillRedactsAndReusesPlaceholder();
@@ -2356,6 +2874,8 @@ function run() {
   testGenericKeyAssignmentAfterProseLabelRedactsShortProjectKey();
   testAwsSecretAssignmentWithExamplePrefixStillFailsClosedButDocsPlaceholderStaysVisible();
   testAwsSecretLabelOnPreviousLineRedactsValue();
+  testAwsSecretOnLineAfterAccessKeyRedactsValue();
+  testAwsSecretAccessKeyJsonFieldRedactsExampleShapedValue();
   testConcatenatedPlaceholderAssignmentsDoNotCreateCompositeFalsePositives();
   testUserStressEdgeCasesRedactSecretsButKeepSafeLiterals();
   testInlineStructuredAssignmentsStillMatchAfterEarlierInlineAssignments();
@@ -2380,6 +2900,7 @@ function run() {
   testExactMixedLegacyPlaceholderInputDoesNotReemitTypedTokens();
   testStandaloneBarePasswordHeuristicRedactsHighConfidenceValue();
   testStandaloneSecretKeywordPasswordRedactsHighConfidenceValue();
+  testEntropyClassifierRedactsSecretsAndPreservesSafeTokens();
   testNaturalLanguageSecretRedactsCredentialLikeValue();
   testPlaceholderSuffixSecretRedactsOnlyAppendedMaterial();
   testShapeImpossibleScansAreSkippedForLargeSafeText();
@@ -2389,6 +2910,12 @@ function run() {
   testEmailRedactionSuppressionAndReuse();
   testReleaseQaIdentityAndDatabaseUrlRegressions();
   testDeveloperDocumentationFalsePositiveControls();
+  testEnterpriseCloudIdentityDetectors();
+  testEnterpriseCloudIdentityFalsePositiveControls();
+  testProviderCloudDetectionFixtures();
+  testProviderCloudRepeatedValuesReusePlaceholders();
+  testProviderCloudNegativeFixtureStaysVisible();
+  testMixedMulticloudEnterpriseSample();
 
   console.log(
     `PASS ${fixtures.length} positive fixtures + metadata, suppression, multiline, and reveal regressions`

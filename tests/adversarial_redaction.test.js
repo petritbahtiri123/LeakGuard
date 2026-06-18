@@ -96,4 +96,23 @@ function redact(text) {
   assert.strictEqual(result.redactedText.includes("UrlCredPass123!"), false);
 })();
 
+(function testHttpHeaderKnownSecretReuseBeatsSuffixRedaction() {
+  const text = [
+    "Authorization: Bearer SharedHeaderSecret1234567890",
+    "X-API-Key: SharedHeaderSecret1234567890",
+    "Cookie: sessionid=SharedHeaderSecret1234567890",
+    "Again: SharedHeaderSecret1234567890"
+  ].join("\n");
+  const result = redact(text);
+  const placeholders = result.redactedText.match(/\[PWM_\d+\]/g) || [];
+
+  assert.strictEqual(placeholders.length, 4);
+  assert.strictEqual(new Set(placeholders).size, 1);
+  assert.ok(/^Authorization: Bearer \[PWM_\d+\]$/m.test(result.redactedText));
+  assert.ok(/^X-API-Key: \[PWM_\d+\]$/m.test(result.redactedText));
+  assert.ok(/^Cookie: sessionid=\[PWM_\d+\]$/m.test(result.redactedText));
+  assert.strictEqual(result.redactedText.includes("SharedHeaderSecret1234567890"), false);
+  assert.strictEqual(result.redactedText.includes("SharedHeader[PWM_"), false);
+})();
+
 console.log("PASS adversarial redaction tests");
