@@ -52,7 +52,7 @@ function normalizeText(value) {
 function recordsMatching(records, textOrPattern) {
   return records.filter((record) => {
     const text = normalizeText(record.text);
-    return typeof textOrPattern === "string" ? text === textOrPattern : textOrPattern.test(text);
+    return typeof textOrPattern === "string" ? text === normalizeText(textOrPattern) : textOrPattern.test(text);
   });
 }
 
@@ -204,6 +204,122 @@ function testMetadataSensitiveSafeContrastExists() {
     action: "keep",
     category: "metadata_safe"
   });
+}
+
+function testCuratedRealSanitizedTrainingVariantsExist() {
+  const records = readJsonl(datasetPath);
+  const variantSource = "synthetic_real_sanitized_variant_seed";
+  const keep = { label: "NOT_SECRET", action: "keep", source: variantSource };
+  const redact = {
+    label: "SECRET",
+    action: "redact",
+    source: variantSource,
+    layer_hint: "onix_gray_zone"
+  };
+  const warn = { label: "UNSURE", action: "warn", source: variantSource };
+
+  for (const text of [
+    "The service is named svc-prod-archive.",
+    "The deployment uses worker-prod-indexer as a component name.",
+    "The Kubernetes deployment is called api-prod-gateway.",
+    "The Terraform module creates svc-analytics.",
+    "The runbook references service name backup-prod-worker.",
+    "The job name is nightly-report-worker.",
+    "The service account concept is documented here but no value is provided.",
+    "The component svc-reporting-ui is part of the analytics stack."
+  ]) {
+    requireRecord(records, text, keep);
+  }
+
+  for (const text of [
+    "username=svc-prod-archive",
+    "login=worker-prod-indexer",
+    "service_account=api-prod-gateway",
+    "principal=svc-analytics",
+    "account_name=backup-prod-worker",
+    "break-glass account: svc-prod-archive",
+    "privileged service principal: api-prod-gateway",
+    "domain admin account: svc-domain-admin"
+  ]) {
+    requireRecord(records, text, { ...redact, category: "identity" });
+  }
+
+  for (const text of [
+    "kind: ConfigMap\nmetadata:\n  name: app-config\ndata:\n  LOG_LEVEL: info\n  FEATURE_FLAG: enabled",
+    "The Kubernetes deployment api-prod-gateway uses a ConfigMap for non-secret settings.",
+    "The pod name web-api-7d9f is visible in kubectl output.",
+    "The namespace payments-prod contains normal workload metadata.",
+    "The Terraform module creates an aws_iam_role resource.",
+    "Variable client_id is documented but no value is shown.",
+    "The tfvars example uses placeholder values only.",
+    'resource "azurerm_resource_group" "main" {}',
+    "Public SSH key ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDexAmplePublicKeyOnly appears in authorized_keys docs.",
+    "Public SSH key ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC7SyntheticPublicKeyOnly is public key material, not a private key.",
+    "Commit 9fceb02a6b3e8f7a1c2d3e4f5a6b7c8d9e0f1234 fixed the deployment.",
+    "Ticket INC-2026-1042 tracks the rollout.",
+    "Ticket ID INC-2026-1042 is assigned to CLOUDOPS-42.",
+    "Reference CHG0042187 was approved.",
+    "Build ID build-2026-06-17-001 completed.",
+    "The Azure tenant_id field identifies a directory.",
+    "The subscription_id is documented in the migration checklist.",
+    "AWS account IDs are 12-digit identifiers.",
+    "The ARN format is arn:aws:iam::123456789012:role/example.",
+    "The object_id field maps to an Entra object.",
+    "2026-06-17T09:00:00Z INFO req_id=req-demo route=/health status=200 latency_ms=31",
+    "$ deployctl status --profile stage\ncomponent=worker-prod-indexer status=healthy request_id=req-demo-002",
+    '{"oauth":{"client":{"id":"11111111-2222-3333-4444-555555555555","purpose":"example app registration id"}}}',
+    "{ service: api-prod-gateway, replicas: 3, image: internal.example/app:2026.07 }"
+  ]) {
+    requireRecord(records, text, keep);
+  }
+
+  for (const text of [
+    "kind: Secret\ndata:\n  password: synthetic-secret-value",
+    "kind: Secret\nmetadata:\n  name: training-api\nstringData:\n  api_key: dev-test-key",
+    "User: can you invite sam.reader@corp.example to the workspace?",
+    'client_secret = "synthetic-token-blue-prod"',
+    'password = "Welcome2026"',
+    'access_key = "synthetic-access-key"',
+    'Traceback sanitized\n  File "config.py", line 17\nRuntimeError: client_secret=manual-rotation-needed',
+    "deploy token ghp_syntheticDeployTokenValueForTraining123456",
+    "deploy token ghs_syntheticDeployTokenValueForTraining777777",
+    "deploy token gho_syntheticDeployTokenValueForTraining888888",
+    "github deploy token: ghu_syntheticDeployTokenValueForTraining654321",
+    "github deploy token: ghs_syntheticDeployTokenValueForTraining999999",
+    "private_key:\n-----BEGIN SYNTHETIC PRIVATE KEY-----\nSYNTHETICPRIVATEKEYBODYONLY\n-----END SYNTHETIC PRIVATE KEY-----",
+    "break-glass tenant_id: 72f988bf-86f1-41af-91ab-2d7cd011db47",
+    "production admin object_id: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+    "root AWS account id: 123456789012",
+    'provider "examplecloud" {\n  token = "synthetic-token-green-prod"\n}',
+    'provider "internalcloud" {\n  access_token = "synthetic-access-token-prod"\n}',
+    '{\n  "provider": "examplecloud",\n  "token": "synthetic-token-blue-prod"\n}'
+  ]) {
+    requireRecord(records, text, redact);
+  }
+
+  for (const text of [
+    '{ token: "prod****blue", note: "masked before export" }',
+    "internal path observed in screenshot: secret/data/stage/database"
+  ]) {
+    requireRecord(records, text, warn);
+  }
+}
+
+function testGeneratedTrainingDoesNotCopyRealSanitizedHoldout() {
+  const records = readJsonl(datasetPath);
+  const holdoutTexts = new Set(readJsonl(realSanitizedEvalPath).map((record) => normalizeText(record.text)));
+  const curatedRecords = records.filter((record) =>
+    String(record.source || "").startsWith("synthetic_real_sanitized_variant")
+  );
+  const exactCopies = records.filter((record) => holdoutTexts.has(normalizeText(record.text)));
+  const copiedTexts = [...new Set(exactCopies.map((record) => record.text))].sort();
+
+  assert.ok(curatedRecords.length >= 40, "expected curated real-sanitized training variants");
+  assert.deepStrictEqual(
+    copiedTexts,
+    [],
+    "generated training data must not copy exact real-sanitized holdout text"
+  );
 }
 
 function testGeneratorIsDeterministic() {
@@ -406,6 +522,8 @@ testGrayZoneRedactExamples();
 testEmailRedactExamplesAreGlobal();
 testSafeContrastExamples();
 testMetadataSensitiveSafeContrastExists();
+testCuratedRealSanitizedTrainingVariantsExist();
+testGeneratedTrainingDoesNotCopyRealSanitizedHoldout();
 testGeneratorIsDeterministic();
 testTrainingEvaluationSeparationAndMetrics();
 testRealSanitizedEvalPackExistsAndIsSafe();

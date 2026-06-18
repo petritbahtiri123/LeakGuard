@@ -16,6 +16,8 @@ OUTPUT = ROOT / "dataset" / "generated" / "initial_dataset.jsonl"
 RANDOM_SEED = 20260424
 DEFAULT_RECORD_COUNT = 50000
 RANDOM = random.Random(RANDOM_SEED)
+REAL_SANITIZED_VARIANT_SEED_SOURCE = "synthetic_real_sanitized_variant_seed"
+REAL_SANITIZED_VARIANT_RANDOM_SOURCE = "synthetic_real_sanitized_variant_random"
 
 LABEL_ACTIONS = {
     "SECRET": "redact",
@@ -62,6 +64,11 @@ def aws_secret_access_key() -> str:
 
 def github_pat() -> str:
     return f"ghp-synthetic-{token(string.ascii_letters + string.digits, 30)}"
+
+
+def github_pat_underscore() -> str:
+    prefix = RANDOM.choice(["ghp", "gho", "ghu", "ghs"])
+    return f"{prefix}_synthetic{token(string.ascii_letters + string.digits, 30)}"
 
 
 def stripe_secret_key() -> str:
@@ -189,6 +196,19 @@ def append_generated(records: list[dict], entry: dict | tuple[str, str]) -> None
 
     text, label = entry
     add(records, text, label)
+
+
+def variant_record(
+    text: str,
+    label: str,
+    category: str,
+    *,
+    layer_hint: str | None = None,
+    provider: str | None = None,
+) -> dict:
+    record = generated_record(text, label, category, layer_hint=layer_hint, provider=provider)
+    record["source"] = REAL_SANITIZED_VARIANT_RANDOM_SOURCE
+    return record
 
 
 def random_secret_record() -> tuple[str, str]:
@@ -479,6 +499,331 @@ def random_metadata_contrast_record() -> dict:
     return generated_record(RANDOM.choice(safe), "NOT_SECRET", "metadata_safe")
 
 
+def random_real_sanitized_variant_record() -> dict:
+    service_names = [
+        "svc-prod-archive",
+        "svc-prod-ledger",
+        "svc-stage-audit",
+        "worker-prod-indexer",
+        "worker-stage-sync",
+        "api-prod-gateway",
+        "api-stage-router",
+        "svc-analytics",
+        "svc-reporting-ui",
+        "backup-prod-worker",
+    ]
+    cloud_guids = [
+        "72f988bf-86f1-41af-91ab-2d7cd011db47",
+        "11111111-2222-3333-4444-555555555555",
+        "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        "00000000-1111-2222-3333-444444444444",
+    ]
+    public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDexAmplePublicKeyOnly"
+    service = RANDOM.choice(service_names)
+    second_service = RANDOM.choice(service_names)
+    guid = RANDOM.choice(cloud_guids)
+
+    keep_examples = [
+        lambda: variant_record(f"The service is named {service}.", "NOT_SECRET", "normal_text_safe"),
+        lambda: variant_record(
+            f"The deployment uses {service} as a component name.",
+            "NOT_SECRET",
+            "normal_text_safe",
+        ),
+        lambda: variant_record(
+            f"The Kubernetes deployment {service} uses a ConfigMap for non-secret settings.",
+            "NOT_SECRET",
+            "normal_text_safe",
+            provider="kubernetes",
+        ),
+        lambda: variant_record(
+            "kind: ConfigMap\nmetadata:\n"
+            f"  name: {service}-settings\n"
+            "data:\n"
+            f"  LOG_LEVEL: {RANDOM.choice(['info', 'debug', 'warn'])}\n"
+            f"  FEATURE_FLAG: {RANDOM.choice(['enabled', 'disabled'])}",
+            "NOT_SECRET",
+            "normal_text_safe",
+            provider="kubernetes",
+        ),
+        lambda: variant_record(
+            f"The namespace {RANDOM.choice(['payments-prod', 'analytics-stage', 'platform-dev'])} "
+            "contains normal workload metadata.",
+            "NOT_SECRET",
+            "metadata_safe",
+            provider="kubernetes",
+        ),
+        lambda: variant_record(
+            f"The Terraform module creates {service}.",
+            "NOT_SECRET",
+            "normal_text_safe",
+            provider="terraform",
+        ),
+        lambda: variant_record(
+            "Variable client_id is documented but no value is shown.",
+            "NOT_SECRET",
+            "metadata_safe",
+            provider="terraform",
+        ),
+        lambda: variant_record(
+            'variable "client_secret" { description = "Injected from CI secrets; value omitted" }',
+            "NOT_SECRET",
+            "metadata_safe",
+            provider="terraform",
+        ),
+        lambda: variant_record(
+            'resource "azurerm_resource_group" "main" {}',
+            "NOT_SECRET",
+            "normal_text_safe",
+            provider="terraform",
+        ),
+        lambda: variant_record(
+            f"Public SSH key {public_key} appears in authorized_keys docs.",
+            "NOT_SECRET",
+            "adversarial_safe",
+        ),
+        lambda: variant_record(
+            f"Public SSH key: {public_key} is documented as public key material.",
+            "NOT_SECRET",
+            "adversarial_safe",
+        ),
+        lambda: variant_record(
+            f"Commit {token('0123456789abcdef', 40)} fixed the deployment.",
+            "NOT_SECRET",
+            "adversarial_safe",
+        ),
+        lambda: variant_record(
+            f"Ticket INC-2026-{RANDOM.randint(1000, 9999)} tracks the rollout.",
+            "NOT_SECRET",
+            "adversarial_safe",
+        ),
+        lambda: variant_record(
+            f"Reference CHG{RANDOM.randint(1000000, 9999999)} was approved.",
+            "NOT_SECRET",
+            "adversarial_safe",
+        ),
+        lambda: variant_record(
+            f"Build ID build-2026-06-{RANDOM.randint(10, 28):02d}-{RANDOM.randint(1, 999):03d} completed.",
+            "NOT_SECRET",
+            "adversarial_safe",
+        ),
+        lambda: variant_record("The Azure tenant_id field identifies a directory.", "NOT_SECRET", "metadata_safe"),
+        lambda: variant_record(
+            "The subscription_id is documented in the migration checklist.",
+            "NOT_SECRET",
+            "metadata_safe",
+        ),
+        lambda: variant_record(
+            "The ARN format is arn:aws:iam::123456789012:role/example.",
+            "NOT_SECRET",
+            "metadata_safe",
+            provider="aws",
+        ),
+        lambda: variant_record("The object_id field maps to an Entra object.", "NOT_SECRET", "metadata_safe"),
+        lambda: variant_record(
+            f"2026-06-17T09:{RANDOM.randint(10, 59):02d}:00Z INFO "
+            f"req_id=req-demo-{RANDOM.randint(100, 999)} route=/health status=200 latency_ms={RANDOM.randint(20, 80)}",
+            "NOT_SECRET",
+            "normal_text_safe",
+        ),
+        lambda: variant_record(
+            f"$ deployctl status --profile stage\ncomponent={service} status=healthy request_id=req-demo-{RANDOM.randint(100, 999)}",
+            "NOT_SECRET",
+            "metadata_safe",
+        ),
+        lambda: variant_record(
+            '{"oauth":{"client":{"id":"'
+            f'{guid}","purpose":"example app registration id"}}}}',
+            "NOT_SECRET",
+            "metadata_safe",
+            provider="azure",
+        ),
+        lambda: variant_record(
+            f"{{ service: {service}, replicas: {RANDOM.randint(2, 5)}, "
+            f"image: internal.example/app:2026.{RANDOM.randint(7, 12):02d} }}",
+            "NOT_SECRET",
+            "normal_text_safe",
+        ),
+    ]
+
+    redact_examples = [
+        lambda: variant_record(f"username={service}", "SECRET", "identity", layer_hint="onix_gray_zone"),
+        lambda: variant_record(f"login={service}", "SECRET", "identity", layer_hint="onix_gray_zone"),
+        lambda: variant_record(
+            f"service_account={service}",
+            "SECRET",
+            "identity",
+            layer_hint="onix_gray_zone",
+            provider="kubernetes",
+        ),
+        lambda: variant_record(f"principal={service}", "SECRET", "identity", layer_hint="onix_gray_zone"),
+        lambda: variant_record(f"break-glass account: {service}", "SECRET", "identity", layer_hint="onix_gray_zone"),
+        lambda: variant_record(
+            f"privileged service principal: {second_service}",
+            "SECRET",
+            "identity",
+            layer_hint="onix_gray_zone",
+        ),
+        lambda: variant_record(
+            "kind: Secret\ndata:\n  password: synthetic-secret-value",
+            "SECRET",
+            "credential_context",
+            layer_hint="onix_gray_zone",
+            provider="kubernetes",
+        ),
+        lambda: variant_record(
+            f'client_secret = "synthetic-token-{RANDOM.choice(["blue", "green", "amber"])}-prod"',
+            "SECRET",
+            "credential_context",
+            layer_hint="onix_gray_zone",
+            provider="terraform",
+        ),
+        lambda: variant_record(
+            f'password = "{RANDOM.choice(WEAK_PASSWORD_VALUES)}"',
+            "SECRET",
+            "credential_context",
+            layer_hint="onix_gray_zone",
+            provider="terraform",
+        ),
+        lambda: variant_record(
+            'access_key = "synthetic-access-key"',
+            "SECRET",
+            "credential_context",
+            layer_hint="onix_gray_zone",
+            provider="terraform",
+        ),
+        lambda: variant_record(
+            f"deploy token {github_pat_underscore()}",
+            "SECRET",
+            "credential_context",
+            layer_hint="onix_gray_zone",
+        ),
+        lambda: variant_record(
+            f"github deploy token: {github_pat_underscore()}",
+            "SECRET",
+            "credential_context",
+            layer_hint="onix_gray_zone",
+        ),
+        lambda: variant_record(
+            '{ token: blue-team-prod, retry: false, request_id: "req-variant" }',
+            "SECRET",
+            "credential_context",
+            layer_hint="onix_gray_zone",
+        ),
+        lambda: variant_record(
+            "User: please add alex.reader@corp.example to the demo workspace.",
+            "SECRET",
+            "email",
+            layer_hint="onix_gray_zone",
+            provider="identity",
+        ),
+        lambda: variant_record(
+            f"break-glass tenant_id: {guid}",
+            "SECRET",
+            "metadata_sensitive",
+            layer_hint="onix_gray_zone",
+            provider="azure",
+        ),
+        lambda: variant_record(
+            f"production admin object_id: {guid}",
+            "SECRET",
+            "metadata_sensitive",
+            layer_hint="onix_gray_zone",
+            provider="azure",
+        ),
+        lambda: variant_record(
+            "root AWS account id: 123456789012",
+            "SECRET",
+            "metadata_sensitive",
+            layer_hint="onix_gray_zone",
+            provider="aws",
+        ),
+        lambda: variant_record(
+            f'provider "{RANDOM.choice(["examplecloud", "internalcloud"])}" {{\n'
+            f'  {RANDOM.choice(["token", "access_token"])} = "synthetic-token-{RANDOM.choice(["green", "amber"])}-prod"\n'
+            "}",
+            "SECRET",
+            "credential_context",
+            layer_hint="onix_gray_zone",
+            provider="terraform",
+        ),
+        lambda: variant_record(
+            '{\n'
+            f'  "provider": "{RANDOM.choice(["examplecloud", "internalcloud"])}",\n'
+            f'  "{RANDOM.choice(["token", "access_token"])}": "synthetic-access-token-prod"\n'
+            "}",
+            "SECRET",
+            "credential_context",
+            layer_hint="onix_gray_zone",
+        ),
+    ]
+
+    warn_examples = [
+        lambda: variant_record(
+            f'{{ token: "{RANDOM.choice(["prod****blue", "blue****prod", "stage****green"])}", '
+            '"note": "masked before export" }',
+            "UNSURE",
+            "unknown_or_ambiguous",
+        ),
+        lambda: variant_record(
+            f"internal path observed in screenshot: secret/data/{RANDOM.choice(['stage', 'dev'])}/database",
+            "UNSURE",
+            "unknown_or_ambiguous",
+        ),
+    ]
+
+    roll = RANDOM.random()
+    if roll < 0.50:
+        return RANDOM.choice(keep_examples)()
+    if roll < 0.95:
+        return RANDOM.choice(redact_examples)()
+    return RANDOM.choice(warn_examples)()
+
+
+def random_deploy_token_secret_record() -> dict:
+    text = RANDOM.choice(
+        [
+            f"deploy token {github_pat_underscore()}",
+            f"github deploy token: {github_pat_underscore()}",
+            f"GitHub Actions deploy token {github_pat_underscore()}",
+            f"release deploy token={github_pat_underscore()}",
+        ]
+    )
+    return variant_record(text, "SECRET", "credential_context", layer_hint="onix_gray_zone")
+
+
+def random_kubernetes_secret_record() -> dict:
+    key = RANDOM.choice(["api_key", "token", "password"])
+    value = RANDOM.choice(["dev-test-key", "blue-team-prod", "synthetic-secret-value", "Welcome2026"])
+    text = (
+        "kind: Secret\n"
+        "metadata:\n"
+        f"  name: {RANDOM.choice(['fake-api', 'demo-db', 'training-secret'])}\n"
+        "stringData:\n"
+        f"  {key}: {value}"
+    )
+    return variant_record(
+        text,
+        "SECRET",
+        "credential_context",
+        layer_hint="onix_gray_zone",
+        provider="kubernetes",
+    )
+
+
+def random_corp_example_email_record() -> dict:
+    local = RANDOM.choice(["sam.reader", "case.owner", "workspace.admin", "access.reviewer", "demo.user"])
+    text = RANDOM.choice(
+        [
+            f"User: can you invite {local}@corp.example to the workspace?",
+            f"User: please add {local}@corp.example to the demo workspace.",
+            f"Workspace invite requested for {local}@corp.example.",
+            f"Access approval email: {local}@corp.example",
+        ]
+    )
+    return variant_record(text, "SECRET", "email", layer_hint="onix_gray_zone", provider="identity")
+
+
 def random_normal_safe_record() -> dict:
     return generated_record(RANDOM.choice(NORMAL_SAFE_TEXTS), "NOT_SECRET", "normal_text_safe")
 
@@ -505,6 +850,10 @@ def extend_records(records: list[dict], count: int) -> None:
     factories = (
         [random_onix_gray_zone_secret] * 30
         + [random_normal_safe_record] * 30
+        + [random_real_sanitized_variant_record] * 8
+        + [random_deploy_token_secret_record] * 10
+        + [random_kubernetes_secret_record] * 4
+        + [random_corp_example_email_record] * 4
         + [random_identity_email_record] * 15
         + [random_metadata_contrast_record] * 15
         + [random_adversarial_record] * 10
@@ -512,8 +861,10 @@ def extend_records(records: list[dict], count: int) -> None:
         + [random_not_secret_record] * 8
         + [random_unsure_record] * 4
     )
+    factory_index = 0
     while len(records) < count:
-        append_generated(records, factories[len(records) % len(factories)]())
+        append_generated(records, factories[factory_index % len(factories)]())
+        factory_index += 1
 
 
 def add_onix_gray_zone_seed_records(records: list[dict]) -> None:
@@ -660,6 +1011,183 @@ def add_onix_gray_zone_seed_records(records: list[dict]) -> None:
     )
 
 
+def add_real_sanitized_variant_seed_records(records: list[dict]) -> None:
+    keep_examples = [
+        ("The service is named svc-prod-archive.", "normal_text_safe", None),
+        ("The deployment uses worker-prod-indexer as a component name.", "normal_text_safe", None),
+        ("The Kubernetes deployment is called api-prod-gateway.", "normal_text_safe", "kubernetes"),
+        ("The Terraform module creates svc-analytics.", "normal_text_safe", "terraform"),
+        ("The runbook references service name backup-prod-worker.", "normal_text_safe", None),
+        ("The job name is nightly-report-worker.", "normal_text_safe", None),
+        (
+            "The service account concept is documented here but no value is provided.",
+            "metadata_safe",
+            "identity",
+        ),
+        ("The component svc-reporting-ui is part of the analytics stack.", "normal_text_safe", None),
+        (
+            "kind: ConfigMap\nmetadata:\n  name: app-config\n"
+            "data:\n  LOG_LEVEL: info\n  FEATURE_FLAG: enabled",
+            "normal_text_safe",
+            "kubernetes",
+        ),
+        (
+            "The Kubernetes deployment api-prod-gateway uses a ConfigMap for non-secret settings.",
+            "normal_text_safe",
+            "kubernetes",
+        ),
+        ("The pod name web-api-7d9f is visible in kubectl output.", "metadata_safe", "kubernetes"),
+        ("The namespace payments-prod contains normal workload metadata.", "metadata_safe", "kubernetes"),
+        ("The Terraform module creates an aws_iam_role resource.", "normal_text_safe", "terraform"),
+        ("Variable client_id is documented but no value is shown.", "metadata_safe", "terraform"),
+        ("The tfvars example uses placeholder values only.", "normal_text_safe", "terraform"),
+        ('resource "azurerm_resource_group" "main" {}', "normal_text_safe", "terraform"),
+        (
+            "Public SSH key ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDexAmplePublicKeyOnly "
+            "appears in authorized_keys docs.",
+            "adversarial_safe",
+            None,
+        ),
+        (
+            "Public SSH key ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC7SyntheticPublicKeyOnly "
+            "is public key material, not a private key.",
+            "adversarial_safe",
+            None,
+        ),
+        (
+            "Commit 9fceb02a6b3e8f7a1c2d3e4f5a6b7c8d9e0f1234 fixed the deployment.",
+            "adversarial_safe",
+            None,
+        ),
+        ("Ticket INC-2026-1042 tracks the rollout.", "adversarial_safe", None),
+        ("Ticket ID INC-2026-1042 is assigned to CLOUDOPS-42.", "adversarial_safe", None),
+        ("Reference CHG0042187 was approved.", "adversarial_safe", None),
+        ("Build ID build-2026-06-17-001 completed.", "adversarial_safe", None),
+        ("The Azure tenant_id field identifies a directory.", "metadata_safe", "azure"),
+        ("The subscription_id is documented in the migration checklist.", "metadata_safe", "azure"),
+        ("AWS account IDs are 12-digit identifiers.", "metadata_safe", "aws"),
+        ("The ARN format is arn:aws:iam::123456789012:role/example.", "metadata_safe", "aws"),
+        ("The object_id field maps to an Entra object.", "metadata_safe", "azure"),
+        (
+            "2026-06-17T09:00:00Z INFO req_id=req-demo route=/health status=200 latency_ms=31",
+            "normal_text_safe",
+            None,
+        ),
+        (
+            "$ deployctl status --profile stage\n"
+            "component=worker-prod-indexer status=healthy request_id=req-demo-002",
+            "metadata_safe",
+            None,
+        ),
+        (
+            '{"oauth":{"client":{"id":"11111111-2222-3333-4444-555555555555",'
+            '"purpose":"example app registration id"}}}',
+            "metadata_safe",
+            "azure",
+        ),
+        ("{ service: api-prod-gateway, replicas: 3, image: internal.example/app:2026.07 }", "normal_text_safe", None),
+    ]
+    for text, category, provider in keep_examples:
+        add(
+            records,
+            text,
+            "NOT_SECRET",
+            source=REAL_SANITIZED_VARIANT_SEED_SOURCE,
+            category=category,
+            layer_hint="adversarial_safe",
+            provider=provider,
+        )
+
+    identity_examples = [
+        "username=svc-prod-archive",
+        "login=worker-prod-indexer",
+        "service_account=api-prod-gateway",
+        "principal=svc-analytics",
+        "account_name=backup-prod-worker",
+        "break-glass account: svc-prod-archive",
+        "privileged service principal: api-prod-gateway",
+        "domain admin account: svc-domain-admin",
+    ]
+    for text in identity_examples:
+        add(
+            records,
+            text,
+            "SECRET",
+            source=REAL_SANITIZED_VARIANT_SEED_SOURCE,
+            category="identity",
+            layer_hint="onix_gray_zone",
+        )
+
+    redact_examples = [
+        ("kind: Secret\ndata:\n  password: synthetic-secret-value", "credential_context", "kubernetes"),
+        (
+            "kind: Secret\nmetadata:\n  name: training-api\nstringData:\n  api_key: dev-test-key",
+            "credential_context",
+            "kubernetes",
+        ),
+        ("User: can you invite sam.reader@corp.example to the workspace?", "email", "identity"),
+        ('client_secret = "synthetic-token-blue-prod"', "credential_context", "terraform"),
+        ('password = "Welcome2026"', "credential_context", "terraform"),
+        ('access_key = "synthetic-access-key"', "credential_context", "terraform"),
+        (
+            'Traceback sanitized\n  File "config.py", line 17\nRuntimeError: client_secret=manual-rotation-needed',
+            "credential_context",
+            None,
+        ),
+        ("deploy token ghp_syntheticDeployTokenValueForTraining123456", "credential_context", None),
+        ("deploy token ghs_syntheticDeployTokenValueForTraining777777", "credential_context", None),
+        ("deploy token gho_syntheticDeployTokenValueForTraining888888", "credential_context", None),
+        ("github deploy token: ghu_syntheticDeployTokenValueForTraining654321", "credential_context", None),
+        ("github deploy token: ghs_syntheticDeployTokenValueForTraining999999", "credential_context", None),
+        (
+            "private_key:\n-----BEGIN SYNTHETIC PRIVATE KEY-----\n"
+            "SYNTHETICPRIVATEKEYBODYONLY\n-----END SYNTHETIC PRIVATE KEY-----",
+            "credential_context",
+            None,
+        ),
+        ("break-glass tenant_id: 72f988bf-86f1-41af-91ab-2d7cd011db47", "metadata_sensitive", "azure"),
+        (
+            "production admin object_id: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "metadata_sensitive",
+            "azure",
+        ),
+        ("root AWS account id: 123456789012", "metadata_sensitive", "aws"),
+        ('provider "examplecloud" {\n  token = "synthetic-token-green-prod"\n}', "credential_context", "terraform"),
+        (
+            'provider "internalcloud" {\n  access_token = "synthetic-access-token-prod"\n}',
+            "credential_context",
+            "terraform",
+        ),
+        (
+            '{\n  "provider": "examplecloud",\n  "token": "synthetic-token-blue-prod"\n}',
+            "credential_context",
+            None,
+        ),
+    ]
+    for text, category, provider in redact_examples:
+        add(
+            records,
+            text,
+            "SECRET",
+            source=REAL_SANITIZED_VARIANT_SEED_SOURCE,
+            category=category,
+            layer_hint="onix_gray_zone",
+            provider=provider,
+        )
+
+    for text in [
+        '{ token: "prod****blue", note: "masked before export" }',
+        "internal path observed in screenshot: secret/data/stage/database",
+    ]:
+        add(
+            records,
+            text,
+            "UNSURE",
+            source=REAL_SANITIZED_VARIANT_SEED_SOURCE,
+            category="unknown_or_ambiguous",
+        )
+
+
 def build_records(count: int = DEFAULT_RECORD_COUNT) -> list[dict]:
     RANDOM.seed(RANDOM_SEED)
     records: list[dict] = []
@@ -668,6 +1196,7 @@ def build_records(count: int = DEFAULT_RECORD_COUNT) -> list[dict]:
     secret_suffixes = ("prod", "stage", "dev", "backup", "ci", "local")
 
     add_onix_gray_zone_seed_records(records)
+    add_real_sanitized_variant_seed_records(records)
 
     for suffix in secret_suffixes:
         add(records, f"password=Summer2026!{suffix}", "SECRET")
