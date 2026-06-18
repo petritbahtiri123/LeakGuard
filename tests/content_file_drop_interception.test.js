@@ -299,6 +299,7 @@ function contentDebugEventsHarnessSource() {
 function fileAttachDebugMetadataHarnessSource() {
   return [
     extractFunctionSource(fileDebugMetadataSource, "normalizeFileDebugString"),
+    extractFunctionSource(fileDebugMetadataSource, "normalizeSafeFileDebugEvent"),
     extractFunctionSource(fileDebugMetadataSource, "isSafeFileDebugToken"),
     extractFunctionSource(fileDebugMetadataSource, "isSafeFileDebugErrorCode"),
     extractFunctionSource(fileDebugMetadataSource, "getFileDebugExtension"),

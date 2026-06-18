@@ -313,6 +313,22 @@
     },
     {
       provider: "terraform",
+      name: "registry_terraform_token_assignment",
+      type: "TOKEN",
+      category: "credential",
+      severity: "high",
+      reason: "terraform-secret-context",
+      requiresContext: true,
+      action: "redact",
+      baseScore: 95,
+      suppressionNotes:
+        "Terraform Cloud token environment variables are explicit IaC credentials.",
+      regex:
+        /\b(?:TFE_TOKEN|TF_TOKEN_app_terraform_io)\b\s*[:=]\s*(?:"([^"\r\n]{8,256})"|'([^'\r\n]{8,256})'|([A-Za-z0-9/+=._~!@#$%^&*-]{8,256}))/g,
+      captureGroups: [1, 2, 3]
+    },
+    {
+      provider: "terraform",
       name: "registry_terraform_secret_context",
       type: "SECRET",
       category: "credential",
@@ -710,6 +726,17 @@
       captureGroups: [1]
     },
     {
+      name: "xml_credential_field",
+      type: "SECRET",
+      category: "credential",
+      baseScore: 78,
+      suppressionNotes:
+        "Catch XML-style credential tags while safe examples and placeholders are still suppressed centrally.",
+      regex:
+        /<([A-Za-z0-9_.:-]*(?:api[_-]?key|apikey|password|passwd|pwd|token|secret|client[_-]?secret)[A-Za-z0-9_.:-]*)\b[^>]*>\s*([^<\r\n]{8,256})\s*<\/\1>/gi,
+      captureGroups: [2]
+    },
+    {
       name: "natural_language_api_key",
       type: "API_KEY",
       category: "credential",
@@ -1072,6 +1099,7 @@
     json_password_field: "PASSWORD",
     json_token_field: "TOKEN",
     json_client_secret_field: "SECRET",
+    xml_credential_field: "SECRET",
     github_token: "TOKEN",
     github_pat: "TOKEN",
     slack_token: "TOKEN",

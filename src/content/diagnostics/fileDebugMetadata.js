@@ -9,6 +9,20 @@
       .slice(0, 96);
   }
 
+  function normalizeSafeFileDebugEvent(value) {
+    const text = String(value || "");
+    if (/(?:authorization|bearer|cookie|credential|key|password|raw|secret|token|value|sk-[a-z0-9_-]{12,})/i.test(text)) {
+      return "sensitive-event";
+    }
+    if (/[A-Za-z0-9+/=_-]{24,}/.test(text)) {
+      return "sensitive-event";
+    }
+    if (/[\\/]/.test(text) || /\b[^\s\\/]+\.[A-Za-z0-9]{1,12}\b/.test(text)) {
+      return "file-event";
+    }
+    return normalizeFileDebugString(text);
+  }
+
   function isSafeFileDebugToken(value) {
     const text = String(value || "");
     return Boolean(text) && text.length <= 96 && !/[\\/]/.test(text) && !/[?#@]/.test(text);
@@ -182,7 +196,7 @@
       output.files = source.files.map(describeSafeFileDebugMetadata).filter(Boolean);
     }
     if (Array.isArray(source.events)) {
-      output.events = source.events.map(normalizeFileDebugString).filter(Boolean).slice(0, 8);
+      output.events = source.events.map(normalizeSafeFileDebugEvent).filter(Boolean).slice(0, 8);
       output.eventCount = output.events.length;
     }
 
@@ -201,6 +215,7 @@
     describeSafeFileAttachErrorMetadata,
     assignSafeFileAttachErrorMetadata,
     copySafeFileDebugScalar,
+    normalizeSafeFileDebugEvent,
     createSafeFileAttachDebugPayload
   });
 

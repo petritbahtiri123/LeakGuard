@@ -136,6 +136,24 @@ function testContentRuntimeScriptOrder() {
     "content/adapters/index.js",
     "content/diagnostics/safeSnapshots.js"
   ], "content scripts");
+  assertAfterAll(contentScripts, "shared/transformOutboundPromptWithAi.js", [
+    "shared/detector.js",
+    "shared/transformOutboundPrompt.js",
+    "shared/aiCandidateGate.js"
+  ], "content scripts");
+  assertAfterAll(contentScripts, "content/files/fileAttachPipeline.js", [
+    "content/diagnostics/fileDebugMetadata.js",
+    "content/diagnostics/safeSnapshots.js"
+  ], "content scripts");
+  assertAfterAll(contentScripts, "content/diagnostics/contentDebugFacade.js", [
+    "content/diagnostics/debugLogger.js",
+    "content/diagnostics/fileDebugMetadata.js"
+  ], "content scripts");
+  assertAfterAll(contentScripts, "content/bootstrap/eventBindings.js", [
+    "content/diagnostics/contentDebugFacade.js",
+    "content/files/fileAttachPipeline.js",
+    "content/files/pendingSanitizedFileHandoff.js"
+  ], "content scripts");
 }
 
 function testScannerPageScriptOrder() {

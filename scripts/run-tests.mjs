@@ -63,6 +63,7 @@ const testFiles = [
   "tests/runtime_script_order.test.js",
   "tests/synthetic_pack.test.js",
   "tests/adversarial_redaction.test.js",
+  "tests/extreme_redaction_matrix.test.js",
   "tests/performance/redaction-benchmark-flake.test.mjs",
   "tests/performance/redaction-benchmark.mjs",
   "tests/browser/extension_qa_harness_cleanup.test.mjs",

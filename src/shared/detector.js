@@ -179,6 +179,7 @@
     json_password_field: ['"password"', '"dbpassword"', '"db_password"'],
     json_token_field: ['"token"', '"accesstoken"', '"access_token"', '"sessiontoken"', '"session_token"', '"refreshtoken"', '"refresh_token"', '"idtoken"', '"id_token"'],
     json_client_secret_field: ['"clientsecret"', '"client_secret"', '"secret"'],
+    xml_credential_field: ["<"],
     natural_language_api_key: ["api key", "apikey"],
     natural_language_openai_key: ["openai"],
     natural_language_password: ["password"],
@@ -534,6 +535,7 @@
       "json_password_field",
       "json_token_field",
       "json_client_secret_field",
+      "xml_credential_field",
       "labelled_openai_key_value",
       "labelled_password_value",
       "real_value_label",
@@ -816,6 +818,23 @@
       }
 
       prefixRegex.lastIndex = Math.max(prefixRegex.lastIndex, tokenEnd);
+    }
+
+    const attributeRegex =
+      /\b(?:Server|Data Source|Address|Addr|Network Address)\s*=[^;\r\n]+;(?=[^\r\n]{0,512}\b(?:User\s+Id|UID|User)\s*=)(?=[^\r\n]{0,512}\b(?:Database|Initial Catalog)\s*=)[^\r\n]*?(?:^|;)\s*(?:password|pwd)\s*=\s*([^;\r\n'"`<>{}\[\]]+)/gi;
+    let attributeMatch;
+
+    while ((attributeMatch = attributeRegex.exec(input)) !== null) {
+      const raw = attributeMatch[1] || "";
+      const rawOffset = attributeMatch[0].lastIndexOf(raw);
+      if (!raw || rawOffset < 0) continue;
+
+      const start = attributeMatch.index + rawOffset;
+      candidates.push({
+        raw,
+        start,
+        end: start + raw.length
+      });
     }
 
     return candidates;
@@ -3862,7 +3881,10 @@
           }
         } catch (error) {
           if (root.console?.warn) {
-            root.console.warn("LeakGuard AI assist failed; deterministic finding retained.", error);
+            root.console.warn("LeakGuard AI assist failed; deterministic finding retained.", {
+              errorName: typeof error?.name === "string" ? error.name.slice(0, 48) : "Error",
+              messageLength: typeof error?.message === "string" ? error.message.length : 0
+            });
           }
           upgraded.push(finding);
         }

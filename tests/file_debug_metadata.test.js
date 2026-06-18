@@ -101,7 +101,7 @@ assert.deepStrictEqual(payload.progress, {
   totalBytes: 200,
   chunks: 2
 });
-assert.deepStrictEqual(payload.events, ["drop-start", "paste-raw-secret-true", "..-unsafe"]);
+assert.deepStrictEqual(payload.events, ["drop-start", "sensitive-event", "file-event"]);
 assert.strictEqual(JSON.stringify(payload).includes("sk-test-should-not-appear"), false);
 assert.strictEqual(JSON.stringify(payload).includes("customer-secret.env"), false);
 
