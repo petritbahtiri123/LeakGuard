@@ -4,6 +4,8 @@ Use this index as the entry point for repository documentation. The root [README
 
 For the full documentation inventory, quality status, and cleanup backlog, see [DOCUMENTATION_ROADMAP.md](DOCUMENTATION_ROADMAP.md).
 
+For current agent routing and architecture ownership, prefer [CODEX_FAST_CONTEXT.md](CODEX_FAST_CONTEXT.md), [CODEX_CONTEXT_ROUTER.md](CODEX_CONTEXT_ROUTER.md), [REPO_MAP.md](REPO_MAP.md), and [codex-playbooks/INDEX.md](codex-playbooks/INDEX.md). Older `phase-*`, audit, and PR checkpoint docs are historical unless they explicitly say otherwise.
+
 ## Product Overview
 
 - [Root README](../README.md) - high-level product overview, current release snapshot, supported sites, build/load basics, and links into detailed docs.
@@ -19,6 +21,7 @@ For the full documentation inventory, quality status, and cleanup backlog, see [
 - [PROTECTED_SITES_GUIDE.md](PROTECTED_SITES_GUIDE.md) - built-in sites, user-managed exact-origin rules, and permission behavior.
 - [PLACEHOLDERS_AND_REVEAL.md](PLACEHOLDERS_AND_REVEAL.md) - placeholder stability, session scope, trusted placeholder pass-through, and popup-only secure reveal.
 - [FILE_UPLOAD_SCANNING_GUIDE.md](FILE_UPLOAD_SCANNING_GUIDE.md) - File Scanner and protected composer file upload behavior, supported text files, limits, and unsupported formats.
+- [FILE_CAPABILITY_MATRIX.md](FILE_CAPABILITY_MATRIX.md) - authoritative current file capability, output, fail-closed, and raw-data safety matrix.
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - common popup, protected-site, reveal, upload, Firefox, and enterprise-policy issues.
 
 ## Privacy And Security Model

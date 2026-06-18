@@ -40,7 +40,7 @@ Supported UTF-8 text-file scanning and protected composer file handling should b
 - drag/drop on Gemini and ChatGPT
 - synthetic file handoff from real file inputs
 - large text files above 4 MiB and up to 50 MB
-- unsupported file warnings and pass-through behavior
+- unsupported file warnings, safe pass-through boundaries, and fail-closed blocking when LeakGuard cannot safely continue
 - popup secure reveal after extension reload or background restart
 
 Firefox can have different behavior for hidden upload controls and trusted user activation. Keep Firefox release notes explicit about tested sites and any known limitations.

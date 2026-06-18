@@ -1,6 +1,17 @@
 # LeakGuard Local AI Assist
 
-The `ai/` folder contains the offline data, training, evaluation, and ONNX export workflow for LeakGuard's optional local AI assist layer. The classifier is a helper for uncertain heuristic spans only. It does not replace the deterministic detector and it cannot downgrade a high-confidence deterministic match.
+The `ai/` folder contains the offline data, training, evaluation, and ONNX export workflow for LeakGuard's optional local AI assist layer, referred to in tests and agent docs as Onix. The classifier is a helper for gray-zone spans only. It does not replace the deterministic detector and it cannot downgrade a high-confidence deterministic match.
+
+Current lifecycle:
+
+```text
+regex/provider deterministic rules
+  -> entropy/context fallback
+  -> Onix gray-zone classifier
+  -> final redaction policy
+```
+
+Regex/provider rules are first authority. Entropy is fallback. Onix runs after deterministic findings and candidate gating.
 
 ## Layout
 
@@ -35,7 +46,7 @@ The generated dataset is written to:
 dataset/generated/initial_dataset.jsonl
 ```
 
-`npm run build:*` commands run `scripts/prepare-build.mjs` first. `npm run build:all` runs that setup once and then packages every browser target. The setup step installs missing npm dependencies, creates `ai/.venv` when needed, installs Python training dependencies, generates 10,000 synthetic examples, trains the classifier, runs an independent held-out evaluation, and exports the ONNX model before packaging the extension.
+`npm run build:*` commands run `scripts/prepare-build.mjs` first. `npm run build:all` runs that setup once and then packages every browser target. The setup step installs missing npm dependencies, creates `ai/.venv` when needed, installs Python training dependencies, generates 50,000 synthetic examples by default, trains the classifier, runs an independent held-out evaluation, and exports the ONNX model before packaging the extension. Set `LEAKGUARD_TRAINING_EXAMPLES` to change the generated training count locally.
 
 ## Enterprise Training Proof
 
@@ -64,6 +75,16 @@ models/leakguard_secret_classifier.training.json
 
 Real-sanitized eval packs live in `dataset/test/` with `source_type: "real_sanitized"` and `sanitized: true`. They are included in standalone evaluation and reported separately as an improvement loop, but they are report-only for gate thresholds until a deliberate training promotion is made. Eval-only changes under `dataset/test/` or `scripts/evaluate_model.py` should not retrain the model during `npm run prepare:build`.
 
+Safety rules for data changes:
+
+- Use synthetic/fake or real-sanitized text only.
+- Do not commit real secrets, real customer text, private file paths, phone numbers, or non-example email domains.
+- Keep `dataset/test/` as held-out evaluation data.
+- Do not copy exact held-out real-sanitized text into generated or labeled training data.
+- Retrain only after curated failure patterns justify it.
+- Report synthetic and real-sanitized metrics when changing Onix behavior.
+- Preserve regex/provider -> entropy/context -> Onix -> redaction policy.
+
 Training merges `dataset/generated/*.jsonl` and `dataset/labeled/*.jsonl`, trains a small scikit-learn logistic regression model, and writes:
 
 ```text
@@ -84,3 +105,5 @@ models/leakguard_secret_classifier.onnx
 The AI classifier can only upgrade a match's risk. It must never override or downgrade a high-confidence deterministic match. Browser integration and policy behavior are documented in [docs/AI_ASSIST.md](../docs/AI_ASSIST.md).
 
 All processing stays local. The ONNX model is loaded in the extension with packaged `onnxruntime-web` browser assets.
+
+See [docs/codex-playbooks/onix-training-eval.md](../docs/codex-playbooks/onix-training-eval.md) before changing dataset generation, features, training, evaluation, or model export behavior.

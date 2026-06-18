@@ -1,53 +1,79 @@
 # Bug Playbook
 
+Use the narrowest relevant playbook and test first. Preserve the lifecycle:
+
+```text
+regex/provider deterministic rules
+  -> entropy/context fallback
+  -> Onix gray-zone classifier
+  -> final redaction policy
+```
+
+Regex/provider rules are first authority. Entropy is fallback. Onix handles gray-zone leftover candidates only.
+
+## Dedicated Codex Playbooks
+- Secret missed: `docs/codex-playbooks/detector-bug.md`
+- Safe text over-redacted: `docs/codex-playbooks/false-positive.md`
+- File handoff/fail-closed issue: `docs/codex-playbooks/file-handoff-fail-closed.md`
+- Debug/diagnostics change: `docs/codex-playbooks/debug-safety.md`
+- Onix dataset/training/eval improvement: `docs/codex-playbooks/onix-training-eval.md`
+- Browser QA failure: `docs/codex-playbooks/browser-qa.md`
+- Allow Once popup loop: `docs/codex-playbooks/allow-once-popup-loop.md`
+- Gemini drag/drop ingestion: `docs/codex-playbooks/gemini-drag-drop-file-ingestion.md`
+- Firefox Add-ons submission: `docs/codex-playbooks/firefox-addon-submission.md`
+
 ## Common Bugs
-- Secret not detected: check `src/shared/patterns.js`, `src/shared/detector.js`, then `tests/detector.test.js`.
-- False positive safe value: check detector suppression helpers and safe keys in `patterns.js`, `detector.js`, `aiCandidateGate.js`.
-- Partial sensitive header redaction: check `scanSensitiveHttpHeaders()` in `src/shared/detector.js`, overlap resolution, then `tests/break_pack.test.js`.
-- Labelled repeated secret leaks such as `ApiKey[PWM_N]`: check natural-language label ranges in `detector.js`, known-secret reuse in `redactor.js` and `transformOutboundPrompt.js`, then `tests/break_pack.test.js`.
-- URL credential leak or broken URI shape: check URL helpers in `detector.js`, overlap resolution, `tests/break_pack.test.js`.
-- Placeholder changed, reused wrongly, or remapped: check `src/shared/placeholders.js`, `redactor.js`, `transformOutboundPrompt.js`, `tests/placeholder_trust.test.js`.
-- Raw secret survives after redaction: check finding ranges, overlap resolution, and right-to-left replacement in `redactor.js`.
-- Repeated secret gets different placeholders: check `PlaceholderManager.getPlaceholder()` and known-secret reuse.
-- Network/IP placeholder wrong: check `ipClassification.js`, `ipDetection.js`, `networkHierarchy.js`, `placeholderAllocator.js`, `tests/ip_transform.test.js`.
-- Composer rewrite fails or loses text: check `content.js`, `composer_helpers.js`, `tests/composer_helpers.test.js`, `tests/typed_interception.test.js`.
-- Protected site cannot be added/removed: check `protected_sites.js`, `background/core.js`, `popup.js`, `options.js`.
-- Enterprise allow/block/redact wrong: check `policy.js`, `background/core.js`, `tests/enterprise_policy.test.js`.
-- File scan issue: check `fileScanner.js`, `scanner.js`, `tests/file_scanner.test.js`.
-- Build target missing asset/manifest issue: check `scripts/build-extension.mjs`, `manifests/*.json`, `tests/build_targets.test.js`.
-- Chrome/Firefox mismatch: check `src/compat/browser_api.js`, `src/compat/platform.js`, `manifests/*.json`, then `tests/build_targets.test.js`.
-- CSP or inline-script regression: check `src/popup/*.html`, `src/options/*.html`, `src/scanner/*.html`, `src/ui/reveal_panel.html`, then `tests/security.test.js`.
-- Local-only/privacy regression: check touched code for network calls, telemetry, raw-secret storage, logs, exports, and reveal paths; validate with `tests/security.test.js` plus the narrow feature test.
+- Secret not detected: add a failing detector/unit test first, then check `src/shared/patterns.js`, relevant `src/shared/detection/*`, `src/shared/detector.js`, then Onix only for gray-zone leftovers.
+- False positive safe value: add a safe-control regression test first, then check allowlists/context in `patterns.js`, `detector.js`, `aiCandidateGate.js`, and relevant detection helpers.
+- Partial sensitive header redaction: check `src/shared/detection/httpHeaders.js`, `scanSensitiveHttpHeaders()` in `src/shared/detector.js`, overlap resolution, then `tests/break_pack.test.js`.
+- URL credential leak or broken URI shape: check `src/shared/detection/urlUserinfo.js`, URL helpers in `detector.js`, overlap resolution, and `tests/break_pack.test.js`.
+- Labelled repeated secret leaks such as `ApiKey[PWM_N]`: check natural-language label ranges in `detector.js`, known-secret reuse in `knownSecretReuse.js`, `redactor.js`, and `transformOutboundPrompt.js`.
+- Placeholder changed, reused wrongly, or remapped: check `src/shared/placeholders.js`, `src/shared/knownSecretReuse.js`, `redactor.js`, `transformOutboundPrompt.js`, and `tests/placeholder_trust.test.js`.
+- Clean `[PWM_N]` placeholder re-redacted: check trusted placeholder context in `detector.js`, candidate skipping in `aiCandidateGate.js`, and placeholder trust tests.
+- Network/IP placeholder wrong: check `ipClassification.js`, `ipDetection.js`, `networkHierarchy.js`, `placeholderAllocator.js`, and `tests/ip_transform.test.js`.
+- Composer rewrite fails or loses text: check `src/content/content.js` as orchestration, then `composer_helpers.js`, `input/rewriteVerificationText.js`, and site adapter helpers.
+- File upload/scanner issue: check `src/content/files/*`, `src/content/file_handoff_*.js`, `src/shared/fileScanner.js`, `src/shared/fileExtractors.js`, and `src/shared/streamingFileRedactor.js`.
+- Protected site cannot be added/removed: check `src/shared/protected_sites.js`, `src/background/protectedSiteRegistry.js`, `src/background/core.js`, popup/options callers, and `tests/protected_sites.test.js`.
+- Enterprise allow/block/redact wrong: check `src/shared/policy.js`, `src/background/core.js`, and `tests/enterprise_policy.test.js`.
+- Runtime loading issue: check `src/shared/runtime_scripts.js`, `manifests/base.json`, `manifests/firefox.json`, `src/background/service_worker.js`, and runtime order tests.
+- CSP or inline-script regression: check extension HTML files, `tests/security.test.js`, and build target tests.
+- Debug/logging leak: check `src/content/diagnostics/*`, `src/background/auditLog.js`, `tests/debug_logger.test.js`, `tests/file_debug_metadata.test.js`, and `tests/security.test.js`.
+- Local-only/privacy regression: check touched code for network calls, telemetry, raw-secret storage, raw debug output, raw exports, and reveal paths.
 
 ## Debugging Hints
 - Start with the narrowest test: `node tests/<area>.test.js`.
-- For detector bugs, print findings with `{ raw, start, end, type, method, score }`.
+- For detector bugs, inspect findings as metadata only: `{ start, end, type, method, score, severity, length }`. Do not print raw values.
 - Always verify output excludes raw secret tails, not only full original values.
 - For repeated raw secrets, verify the same placeholder appears across all contexts and no raw prefix/suffix remains beside a new placeholder.
-- Preserve safe literals: versions, regions, token limits, `secret_santa`, `password_hint`.
-- Test already-redacted inputs with clean `[PWM_n]` placeholders.
-- If changing URL parsing, assert host and path remain visible.
+- Preserve safe literals: versions, regions, token limits, `secret_santa`, `password_hint`, docs/examples, and trusted placeholders.
+- Emails globally redact. Usernames stay context-aware.
+- If changing URL parsing, assert host and path remain visible where safe.
 - If touching content scripts, test textarea and contenteditable behavior.
+- If touching file handling, verify unsupported/unsafe protected flows fail closed and sanitized handoff failure blocks raw upload.
 - If touching policy, test consumer and enterprise defaults.
-- Finish with `npm test` unless the task is docs-only.
+- Finish with `npm test` unless the task is docs-only or the user asks for narrower validation.
 
 ## Narrow Test Guide
-- Pattern or suppression rule: `node tests/detector.test.js`
-- Redaction output, headers, URLs, repeated secrets: `node tests/break_pack.test.js`
+- Pattern/provider/suppression rule: `node tests/detector.test.js`
+- Header, URL, repeated secret redaction: `node tests/break_pack.test.js`
 - Placeholder trust or reuse: `node tests/placeholder_trust.test.js`
 - Natural-language context: `node tests/natural_language_context.test.js`
 - Prompt transform or network placeholders: `node tests/ip_transform.test.js`
-- Local AI candidate/assist: `node tests/ai_candidate_gate.test.js`, `node tests/transform_with_ai.test.js`, `node tests/ai_assist.test.js`
+- Local Onix candidate/assist: `node tests/ai_candidate_gate.test.js`, `node tests/transform_with_ai.test.js`, `node tests/ai_assist.test.js`
+- Onix dataset/eval safety: `node tests/onix_dataset.test.js`
 - Composer/input interception: `node tests/composer_helpers.test.js`, `node tests/typed_interception.test.js`
+- Content file handoff: `node tests/content_file_drop_interception.test.js`
+- File scanner/extractors: `node tests/file_scanner.test.js`, `node tests/file_extractors.test.js`
+- Debug safety: `node tests/debug_logger.test.js`, `node tests/file_debug_metadata.test.js`, `node tests/security.test.js`
 - Protected sites or enterprise policy: `node tests/protected_sites.test.js`, `node tests/enterprise_policy.test.js`
-- File scanner: `node tests/file_scanner.test.js`
-- Security/static/package checks: `node tests/security.test.js`, `node tests/productization.test.js`, `node tests/build_targets.test.js`
+- Runtime order/build/security: `node tests/runtime_script_order.test.js`, `node tests/runtime_script_order_contract.test.js`, `node tests/build_targets.test.js`, `node tests/security.test.js`
 - Full suite: `npm test`
 
 ## Fix Rules
 - Keep the diff local to the failing surface unless shared behavior is the cause.
 - Add or update a regression test for every bug fix that changes behavior.
 - Do not weaken safe/example/template suppression to make a positive case pass.
+- Do not lower safety globally to clean up one false positive.
 - Preserve right-to-left replacement safety and full intended value ranges.
 - Verify raw secrets are absent after redaction, including prefixes/suffixes next to placeholders.
-- Keep generated `dist/`, `node_modules/`, and `ai/models/` out of patches unless the task explicitly targets those outputs.
+- Keep generated `dist/`, `node_modules/`, `ai/models/`, and generated datasets out of patches unless explicitly required.

@@ -1,6 +1,6 @@
 # Local AI Assist
 
-LeakGuard includes an optional local AI assist layer for suspicious text that remains after deterministic detection. It is a helper only:
+LeakGuard includes an optional local AI assist layer, currently referred to in tests and agent docs as Onix. Onix evaluates suspicious gray-zone text that remains after deterministic detection. It is a helper only:
 
 - deterministic high-confidence matches stay authoritative
 - deterministic findings are not classified again by AI
@@ -9,8 +9,23 @@ LeakGuard includes an optional local AI assist layer for suspicious text that re
 - AI can add a finding for suspicious leftover text
 - AI cannot downgrade deterministic findings
 - no network calls are made by the classifier
+- emails globally redact
+- trusted `[PWM_N]` placeholders are skipped and must not be re-redacted
 
 The browser loads the packaged ONNX model from `ai/models/leakguard_secret_classifier.onnx` and uses local ONNX Runtime files packaged from the installed `onnxruntime-web` dependency.
+
+## Lifecycle Position
+
+Onix runs after deterministic detection and entropy/context fallback:
+
+```text
+regex/provider deterministic rules
+  -> entropy/context fallback
+  -> Onix gray-zone classifier
+  -> final redaction policy
+```
+
+Regex/provider rules are the first authority. Entropy is fallback, not a global aggressive detector. Onix handles gray-zone leftover cases only, after deterministic ranges have been reserved.
 
 ## AI Candidate Gate
 
@@ -18,10 +33,11 @@ The AI assist pipeline runs after deterministic detection.
 
 ```text
 prompt text
-  -> deterministic detector
+  -> regex/provider deterministic detector
+  -> entropy/context fallback inside deterministic detector
   -> deterministic finding ranges are reserved
   -> AI candidate gate extracts suspicious leftover chunks only
-  -> local ONNX classifier evaluates candidate.contextText only
+  -> local Onix/ONNX classifier evaluates candidate.contextText only
   -> AI findings are merged with deterministic findings
   -> transformOutboundPrompt() performs the normal placeholder replacement
 ```
@@ -38,7 +54,7 @@ This keeps the synchronous redaction path stable. `transformOutboundPrompt()` re
 - bare suspicious token-like values with length `>= 12`
 - URL credential password segments such as `scheme://user:password@host`
 
-Candidates that overlap deterministic finding ranges are skipped. Clean placeholders such as `[PWM_1]` are skipped.
+Candidates that overlap deterministic finding ranges are skipped. Clean placeholders such as `[PWM_1]` are skipped and must not be re-redacted.
 
 ### Safe Values
 
@@ -144,24 +160,7 @@ note=abc123def456
 
 The shared files attach themselves to `globalThis.PWM`, so Node debug scripts must load the same dependencies used by the tests before calling the transformer. The transform path needs a `PlaceholderManager`.
 
-A minimal local debug load order is:
-
-```js
-import "../src/shared/placeholders.js";
-import "../src/shared/entropy.js";
-import "../src/shared/patterns.js";
-import "../src/shared/detector.js";
-import "../src/shared/ipClassification.js";
-import "../src/shared/ipDetection.js";
-import "../src/shared/networkHierarchy.js";
-import "../src/shared/placeholderAllocator.js";
-import "../src/shared/sessionMapStore.js";
-import "../src/shared/redactor.js";
-import "../src/shared/ai/classifier.js";
-import "../src/shared/aiCandidateGate.js";
-import "../src/shared/transformOutboundPrompt.js";
-import "../src/shared/transformOutboundPromptWithAi.js";
-```
+Do not copy old hand-written import lists. Runtime order is canonical in `src/shared/runtime_scripts.js`, and Node unit helpers mirror the current shared detection order in `tests/helpers/load_core.js`. If an ad-hoc script needs the shared detector/transform path, start from that helper or from `PWM.RuntimeScripts.contentScripts` and keep detection helper modules before `src/shared/detector.js`, `src/shared/knownSecretReuse.js` before transform/redactor consumers, and `src/shared/transformOutboundPromptWithAi.js` after `src/shared/aiCandidateGate.js`.
 
 For Node-only testing, mock `PWM.LeakGuardAiClassifier.classify()` because the real ONNX runtime and browser-relative model URLs are expected in the extension runtime.
 
@@ -195,7 +194,7 @@ Enterprise managed policy can set:
 }
 ```
 
-When disabled, LeakGuard uses only the deterministic regex, entropy, context, and public IP/CIDR detection pipeline.
+When disabled, LeakGuard uses only the deterministic regex/provider, entropy/context fallback, and public IP/CIDR detection pipeline.
 
 ## Train The Model
 
@@ -252,4 +251,28 @@ cd ..
 npm run build:all
 ```
 
-The normal build commands run this preparation automatically. `npm run build:chrome`, `npm run build:firefox`, and `npm run build:all` install missing npm dependencies, prepare `ai/.venv`, generate 10,000 synthetic examples by default, train the local classifier, run independent evaluation, export ONNX, and then package the extension. Set `LEAKGUARD_TRAINING_EXAMPLES` to change the generated training count locally.
+The normal build commands run this preparation automatically. `npm run build:chrome`, `npm run build:firefox`, and `npm run build:all` install missing npm dependencies, prepare `ai/.venv`, generate 50,000 synthetic examples by default, train the local classifier, run independent evaluation, export ONNX, and then package the extension. Set `LEAKGUARD_TRAINING_EXAMPLES` to change the generated training count locally.
+
+## Onix Evaluation Safety
+
+Use `docs/codex-playbooks/onix-training-eval.md` before changing the dataset, feature code, training script, evaluation script, or classifier behavior.
+
+Rules:
+
+- Use fake/synthetic or real-sanitized examples only.
+- Keep `ai/dataset/test/*` as held-out evaluation data.
+- Do not copy exact holdout text into generated or labeled training data.
+- Retrain only after curated failure patterns justify it.
+- Report both synthetic and real-sanitized metrics from `ai/scripts/evaluate_model.py`.
+- Preserve regex/provider -> entropy/context -> Onix -> redaction policy.
+
+Current default generation count is 50,000 records. `npm run prepare:build` uses `LEAKGUARD_TRAINING_EXAMPLES` when set and otherwise generates 50,000 records before training/evaluation/export if the generated dataset or model is stale.
+
+Windows validation commands:
+
+```powershell
+npm run prepare:build
+ai\.venv\Scripts\python.exe ai\scripts\evaluate_model.py
+ai\.venv\Scripts\python.exe -m py_compile ai\scripts\generate_dataset.py ai\scripts\evaluate_model.py ai\scripts\features.py
+node tests/onix_dataset.test.js
+```

@@ -12,6 +12,12 @@ Use this file as a short handoff log for AI-made changes. Add newest entries fir
 ```
 
 ## Entries
+### 2026-06-18 - Codex context and playbook refresh
+- Goal: Updated agent-facing context, architecture lifecycle, modularized file map, runtime script-order rules, Onix training/eval guidance, fail-closed/debug safety guidance, and reusable Codex playbooks after recent modularization and QA changes.
+- Files: `AGENTS.md`, `docs/CODEX_FAST_CONTEXT.md`, `docs/CODEX_CONTEXT_ROUTER.md`, `docs/REPO_MAP.md`, `docs/BUG_PLAYBOOK.md`, `docs/AI_ASSIST.md`, `ai/README.md`, `docs/codex-playbooks/*`, `docs/FILE_UPLOAD_SCANNING_GUIDE.md`, `docs/file-handoff-architecture.md`, `docs/RELEASE_QA_CHECKLIST.md`, `docs/DOCUMENTATION_ROADMAP.md`, `docs/README.md`
+- Tests: `npm run docs:check-links` -> pass; `node tests/runtime_script_order.test.js` -> pass; `node tests/runtime_script_order_contract.test.js` -> pass; `node tests/onix_dataset.test.js` -> pass; `git diff --check` -> pass with CRLF normalization warnings for touched Markdown files
+- Notes: Documentation-only change. No runtime behavior, detector thresholds, tests, model artifacts, generated outputs, package lock, telemetry posture, or local-only behavior changed.
+
 ### 2026-06-10 - Phase 11G synthetic OCR recognition proof
 - Goal: Prove local OCR recognition against a tiny packaged synthetic PNG through an explicit worker probe while keeping scanner UI, protected-site uploads, and user image processing disabled.
 - Files: `src/shared/ocr/ocrWorker.js`, `src/shared/ocr/ocrRuntime.js`, `src/shared/ocr/fixtures/synthetic-test-ocr.png`, `tests/build_targets.test.js`, `tests/security.test.js`, `tests/browser/chrome_smoke.test.mjs`, `tests/browser/firefox_smoke.test.mjs`, `docs/CODEX_CHANGELOG.md`
