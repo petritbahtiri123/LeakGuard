@@ -17,6 +17,8 @@ require(path.join(repoRoot, "src/shared/knownSecretReuse.js"));
 require(path.join(repoRoot, "src/shared/transformOutboundPrompt.js"));
 require(path.join(repoRoot, "src/content/composer_helpers.js"));
 require(path.join(repoRoot, "src/content/input/rewriteVerificationText.js"));
+require(path.join(repoRoot, "src/content/diagnostics/debugLogger.js"));
+const ContentDebugFacade = require(path.join(repoRoot, "src/content/diagnostics/contentDebugFacade.js"));
 
 const {
   Detector,
@@ -1115,6 +1117,30 @@ async function testSubmitTransactionalHelperFailsClosedOnRawRestore() {
   assert.strictEqual(calls.failureDetails.actualText, rawText, "failure details should preserve the unsafe actual text summary input");
 }
 
+function testTypedDebugDiagnosticsSummarizeOnly() {
+  const rawSecret = "password=TypedDebugSecretValue1234567890";
+  const redactedText = "password=[PWM_1]";
+  const facade = ContentDebugFacade.createContentDebugFacade({
+    DebugLogger: globalThis.PWM.DebugLogger,
+    normalizeText: (value) => String(value || ""),
+    normalizeEditorInnerText: (value) => String(value || ""),
+    normalizeVisiblePlaceholders,
+    placeholderTokenRegex: PLACEHOLDER_TOKEN_REGEX,
+    getInputText: (input) => input.text
+  });
+  const snapshot = facade.collectComposerDebugSnapshot(
+    { text: redactedText, innerText: rawSecret, textContent: rawSecret },
+    rawSecret,
+    redactedText
+  );
+  const serialized = JSON.stringify(snapshot);
+
+  assert.strictEqual(serialized.includes(rawSecret), false, "typed diagnostics must not expose raw typed secrets");
+  assert.strictEqual(snapshot.expected.length, rawSecret.length);
+  assert.strictEqual(snapshot.writeText.placeholderCount, 1);
+  assert.strictEqual(snapshot.innerText.length, rawSecret.length);
+}
+
 function run() {
   testBeforeInputGuardStaysConservative();
   testTypedAssignmentSecretIsCaughtBeforeCommit();
@@ -1137,6 +1163,7 @@ function run() {
   testPauseBypassGatesPasteAndSendAfterPolicy();
   testContentScriptBindsBeforeInputAndKeepsFallbackGuard();
   testPerplexityStyleRewriteVerificationToleratesWhitespaceNormalization();
+  testTypedDebugDiagnosticsSummarizeOnly();
   return Promise.resolve()
     .then(() => testGenericRewriteVerificationSafeCases())
     .then(() => testMultilineCollapseRetryAndFailures())

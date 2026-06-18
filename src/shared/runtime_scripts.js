@@ -93,6 +93,7 @@
     "content/rehydration/responseObserver.js",
     "content/rehydration/revealController.js",
     "content/diagnostics/debugLogger.js",
+    "content/diagnostics/contentDebugFacade.js",
     "content/bootstrap/eventBindings.js",
     "shared/runtime_scripts.js",
     "content/content.js"

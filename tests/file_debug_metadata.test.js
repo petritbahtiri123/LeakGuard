@@ -4,6 +4,8 @@ const path = require("path");
 const repoRoot = path.join(__dirname, "..");
 
 require(path.join(repoRoot, "src/content/diagnostics/fileDebugMetadata.js"));
+require(path.join(repoRoot, "src/content/diagnostics/debugLogger.js"));
+const ContentDebugFacade = require(path.join(repoRoot, "src/content/diagnostics/contentDebugFacade.js"));
 
 const { FileDebugMetadata } = globalThis.PWM;
 
@@ -102,5 +104,39 @@ assert.deepStrictEqual(payload.progress, {
 assert.deepStrictEqual(payload.events, ["drop-start", "paste-raw-secret-true", "..-unsafe"]);
 assert.strictEqual(JSON.stringify(payload).includes("sk-test-should-not-appear"), false);
 assert.strictEqual(JSON.stringify(payload).includes("customer-secret.env"), false);
+
+{
+  const rawSecret = "sk-file-debug-secret-value-123456789";
+  const facade = ContentDebugFacade.createContentDebugFacade({
+    DebugLogger: globalThis.PWM.DebugLogger,
+    FileDebugMetadata,
+    createSafeFileAttachDebugPayload: FileDebugMetadata.createSafeFileAttachDebugPayload
+  });
+  const fileDescription = facade.describeFileForDebug({
+    name: `customer-${rawSecret}.env`,
+    type: "text/plain;token=raw-secret",
+    size: 42,
+    lastModified: 123
+  });
+  const elementDescription = facade.describeElementForDebug(
+    {
+      tagName: "BUTTON",
+      id: `upload-${rawSecret}`,
+      className: `button-${rawSecret}`,
+      hidden: false,
+      disabled: false,
+      getAttribute(name) {
+        return name === "aria-label" ? `Attach ${rawSecret}` : "";
+      }
+    },
+    "file-debug"
+  );
+  const serialized = JSON.stringify({ fileDescription, elementDescription });
+  assert.strictEqual(serialized.includes(rawSecret), false, "facade debug descriptions must not expose raw strings");
+  assert.strictEqual(fileDescription.nameLength, `customer-${rawSecret}.env`.length);
+  assert.strictEqual(fileDescription.size, 42);
+  assert.strictEqual(elementDescription.idLength, `upload-${rawSecret}`.length);
+  assert.strictEqual(elementDescription.ariaLabelLength, `Attach ${rawSecret}`.length);
+}
 
 console.log("PASS file debug metadata");
