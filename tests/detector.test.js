@@ -1456,6 +1456,37 @@ function testAwsSecretOnLineAfterAccessKeyRedactsValue() {
   assert.ok(/^AWS_SESSION_TOKEN=\[PWM_\d+\]$/.test(lines[2]), "AWS session token should still redact");
 }
 
+function testAwsSecretAccessKeyJsonFieldRedactsExampleShapedValue() {
+  const detector = new Detector();
+  const manager = new PlaceholderManager();
+  const redactor = new Redactor(manager);
+  const rawSecret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+  const text = [
+    "{",
+    '  "aws": {',
+    '    "accessKeyId": [PWM_1],',
+    `    "secretAccessKey": "${rawSecret}"`,
+    "  }",
+    "}"
+  ].join("\n");
+
+  const findings = detector.scan(text);
+  const result = redactor.redact(text, findings);
+
+  assert.ok(
+    findings.some(
+      (finding) => finding.type === "AWS_SECRET_KEY" && finding.raw === rawSecret
+    ),
+    "camelCase JSON secretAccessKey fields should detect AWS secret access key values"
+  );
+  assert.strictEqual(result.redactedText.includes(rawSecret), false);
+  assert.ok(
+    result.redactedText.includes('"accessKeyId": [PWM_1]'),
+    "trusted existing placeholders in neighboring JSON fields should stay visible"
+  );
+  assert.match(result.redactedText, /"secretAccessKey": \[PWM_\d+\]/);
+}
+
 function testConcatenatedPlaceholderAssignmentsDoNotCreateCompositeFalsePositives() {
   const detector = new Detector();
   const text = [
@@ -2844,6 +2875,7 @@ function run() {
   testAwsSecretAssignmentWithExamplePrefixStillFailsClosedButDocsPlaceholderStaysVisible();
   testAwsSecretLabelOnPreviousLineRedactsValue();
   testAwsSecretOnLineAfterAccessKeyRedactsValue();
+  testAwsSecretAccessKeyJsonFieldRedactsExampleShapedValue();
   testConcatenatedPlaceholderAssignmentsDoNotCreateCompositeFalsePositives();
   testUserStressEdgeCasesRedactSecretsButKeepSafeLiterals();
   testInlineStructuredAssignmentsStillMatchAfterEarlierInlineAssignments();

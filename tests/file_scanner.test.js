@@ -324,6 +324,22 @@ function testJsonCredentialRedacted() {
   assert.ok(result.redactedText.includes('"safe":true'), "surrounding JSON should remain readable");
 }
 
+function testJsonAwsSecretAccessKeyRedacted() {
+  const accessKeyId = "AKIAQ4EXAMPLE7K9M2P1";
+  const rawSecret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+  const result = scanSample(
+    `{"aws":{"accessKeyId":"${accessKeyId}","secretAccessKey":"${rawSecret}"}}`,
+    "aws-config.json"
+  );
+  const report = buildSanitizedReport(result);
+
+  assert.strictEqual(result.redactedText.includes(accessKeyId), false);
+  assert.strictEqual(result.redactedText.includes(rawSecret), false);
+  assert.strictEqual(JSON.stringify(report).includes(accessKeyId), false);
+  assert.strictEqual(JSON.stringify(report).includes(rawSecret), false);
+  assert.ok(result.redactedText.includes('"secretAccessKey"'), "JSON key should remain readable");
+}
+
 function testSanitizedScannerReportExcludesRawSecretBoundaries() {
   const repeatedSecret = "ScannerBoundaryApiKey1234567890";
   const urlPassword = "ScannerUrlPass!2026";
@@ -623,6 +639,7 @@ testNullHeavyContentRejected();
 testOversizedFileRejectedBeforeScanning();
 testEnvSecretsRedacted();
 testJsonCredentialRedacted();
+testJsonAwsSecretAccessKeyRedacted();
 testSanitizedScannerReportExcludesRawSecretBoundaries();
 testSupportedTextFormatFixturesRedactSecrets();
 testPublicIpAndPrivateIpRedactedWithTypedPlaceholders();

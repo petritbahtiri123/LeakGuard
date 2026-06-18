@@ -44,9 +44,9 @@
       action: "redact",
       baseScore: 98,
       suppressionNotes:
-        "AWS secret access keys are only caught behind explicit secret-access-key labels.",
+        "AWS secret access keys are only caught behind explicit secret-access-key labels, including quoted JSON keys.",
       regex:
-        /\b(?:aws[_-]?secret[_-]?access[_-]?key|secret[_-]?access[_-]?key)\b\s*[:=]\s*(?:"([^"\r\n]{20,128})"|'([^'\r\n]{20,128})'|([A-Za-z0-9/+=._-]{20,128}))/gi,
+        /(?:"(?:aws[_-]?secret[_-]?access[_-]?key|secret[_-]?access[_-]?key)"|\b(?:aws[_-]?secret[_-]?access[_-]?key|secret[_-]?access[_-]?key)\b)\s*[:=]\s*(?:"([^"\r\n]{20,128})"|'([^'\r\n]{20,128})'|([A-Za-z0-9/+=._-]{20,128}))/gi,
       captureGroups: [1, 2, 3]
     },
     {
