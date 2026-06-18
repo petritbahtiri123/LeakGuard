@@ -17,10 +17,10 @@ const scannerHtml = fs.readFileSync(path.join(repoRoot, "src/scanner/scanner.htm
 const scannerJs = fs.readFileSync(path.join(repoRoot, "src/scanner/scanner.js"), "utf8");
 const optionsHtml = fs.readFileSync(path.join(repoRoot, "src/options/options.html"), "utf8");
 const optionsJs = fs.readFileSync(path.join(repoRoot, "src/options/options.js"), "utf8");
-const backgroundSource = fs.readFileSync(
-  path.join(repoRoot, "src/background/core.js"),
-  "utf8"
-);
+const backgroundSource = [
+  fs.readFileSync(path.join(repoRoot, "src/background/protectedSiteRegistry.js"), "utf8"),
+  fs.readFileSync(path.join(repoRoot, "src/background/core.js"), "utf8")
+].join("\n");
 const storeListing = fs.readFileSync(
   path.join(repoRoot, "docs/CHROME_WEB_STORE_LISTING.md"),
   "utf8"
@@ -208,6 +208,55 @@ function testLeakGuardBrandingShowsUpInUiAndDocs() {
   assert.ok(storeListing.includes("LeakGuard"), "store listing should use LeakGuard branding");
   assert.ok(privacyPolicy.includes("LeakGuard"), "privacy policy should use LeakGuard branding");
   assert.ok(releaseChecklist.includes("LeakGuard"), "QA checklist should use LeakGuard branding");
+}
+
+function testScannerLoadsTypedDetectionRuntimeBeforeDetector() {
+  const scripts = [...scannerHtml.matchAll(/<script src="([^"]+)"/g)].map((match) => match[1]);
+  const placeholderFamiliesIndex = scripts.indexOf("../shared/placeholders/families.js");
+  const placeholdersIndex = scripts.indexOf("../shared/placeholders.js");
+  const detectorIndex = scripts.indexOf("../shared/detector.js");
+  const detectionModuleScripts = [
+    "../shared/detection/constants/enterpriseTokens.js",
+    "../shared/detection/constants/providerTokens.js",
+    "../shared/detection/constants/contextRegexes.js",
+    "../shared/detection/contextWindow.js",
+    "../shared/detection/cloudScoring.js",
+    "../shared/detection/enterprise/shared.js",
+    "../shared/detection/enterprise/uncPaths.js",
+    "../shared/detection/enterprise/directoryMetadata.js",
+    "../shared/detection/enterprise/internalNetwork.js",
+    "../shared/detection/enterprise/fileShares.js",
+    "../shared/detection/enterprise/adGroups.js",
+    "../shared/detection/enterprise/hostnames.js",
+    "../shared/detection/enterprise/identity.js",
+    "../shared/detection/enterprise/storageAccounts.js",
+    "../shared/detection/enterprise/azureResourceGroups.js",
+    "../shared/detection/enterprise/cloudResourceNames.js",
+    "../shared/detection/enterprise/index.js",
+    "../shared/detection/providers/azure.js",
+    "../shared/detection/providers/azureIds.js",
+    "../shared/detection/providers/aws.js",
+    "../shared/detection/providers/gcp.js",
+    "../shared/detection/providers/otcOpenStack.js",
+    "../shared/detection/providers/kubernetes.js",
+    "../shared/detection/providers/genericEndpoints.js",
+    "../shared/detection/providers/index.js",
+    "../shared/detection/urlUserinfo.js"
+  ];
+  const detectionModuleIndexes = detectionModuleScripts.map((script) => scripts.indexOf(script));
+
+  assert.ok(placeholderFamiliesIndex > -1, "scanner should load placeholder family registry");
+  assert.ok(placeholdersIndex > -1, "scanner should load placeholder manager");
+  assert.ok(detectorIndex > -1, "scanner should load detector");
+  assert.ok(
+    detectionModuleIndexes.every((index) => index > -1),
+    "scanner should load modular enterprise/cloud detection helpers"
+  );
+  assert.ok(
+    placeholderFamiliesIndex < placeholdersIndex &&
+      detectionModuleIndexes.every((index) => index < detectorIndex),
+    "scanner should load typed placeholder families before placeholders.js and detection modules before detector.js"
+  );
 }
 
 function testBuiltInProtectedSitesRemainStaticAndAligned(manifest) {
@@ -1266,6 +1315,7 @@ async function run() {
 
   testManifestBrandingAndProductPagesExist(manifest);
   testLeakGuardBrandingShowsUpInUiAndDocs();
+  testScannerLoadsTypedDetectionRuntimeBeforeDetector();
   testBuiltInProtectedSitesRemainStaticAndAligned(manifest);
   testPanelAndManagementUiAreWired();
   testHydratedPlaceholdersStayVisibleAcrossThemes();

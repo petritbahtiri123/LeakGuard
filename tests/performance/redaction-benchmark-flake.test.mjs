@@ -84,6 +84,41 @@ function testProfileModeReportsEnvironmentContext() {
   assert.ok(Object.prototype.hasOwnProperty.call(profile, "cpu_count"));
 }
 
+function testDefaultBenchmarkTimingIsAdvisory() {
+  const sample = {
+    name: "env_file_2kb",
+    maxP95Ms: 35,
+    maxMsPerKb: 18
+  };
+  const result = {
+    p95_wall_ms: 59.373,
+    avg_ms_per_kib: 13.2
+  };
+
+  assert.equal(
+    benchmark.getPerformanceFailure(sample, result, { profileEnabled: false }),
+    null,
+    "default benchmark smoke runs should not fail on advisory timing rows"
+  );
+}
+
+function testProfileBenchmarkTimingIsEnforced() {
+  const sample = {
+    name: "env_file_2kb",
+    maxP95Ms: 35,
+    maxMsPerKb: 18
+  };
+  const result = {
+    p95_wall_ms: 59.373,
+    avg_ms_per_kib: 13.2
+  };
+
+  assert.equal(
+    benchmark.getPerformanceFailure(sample, result, { profileEnabled: true }),
+    "env_file_2kb: p95 59.373ms exceeded 35ms"
+  );
+}
+
 function testProfileCliOptionSetsProfileDefaults() {
   const env = {};
   const result = benchmark.applyBenchmarkCliOptions(["--profile"], env);
@@ -249,6 +284,8 @@ testProfileNpmWrapperUsesDirectBenchmarkInvocation();
 testBenchmarkImportDoesNotRequireCliScriptArgv();
 testSummaryRowsKeepRequiredReportingFields();
 testProfileModeReportsEnvironmentContext();
+testDefaultBenchmarkTimingIsAdvisory();
+testProfileBenchmarkTimingIsEnforced();
 testProfileCliOptionSetsProfileDefaults();
 testProfileCliOptionPreservesConfiguredIterations();
 testBenchmarkSamplesKeepDetectorOptimizationCoverage();

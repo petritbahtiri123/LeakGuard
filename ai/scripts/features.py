@@ -15,6 +15,8 @@ from sklearn.feature_extraction.text import CountVectorizer
 
 
 SECRET_KEYWORDS = (
+    "account_name",
+    "admin",
     "api_key",
     "apikey",
     "authorization",
@@ -23,12 +25,23 @@ SECRET_KEYWORDS = (
     "connection_string",
     "database_url",
     "db_password",
+    "login",
     "jwt",
+    "object_id",
     "password",
+    "principal",
+    "principal_id",
     "private_key",
     "secret",
     "session",
+    "service_account",
+    "subscription_id",
+    "tenant_id",
     "token",
+    "upn",
+    "user_name",
+    "username",
+    "vault",
 )
 
 NUMERIC_FEATURES = (
@@ -54,7 +67,6 @@ SAFE_KEYWORDS = (
     "region",
     "secret_santa",
     "token_limit",
-    "username",
     "version",
 )
 

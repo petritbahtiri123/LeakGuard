@@ -4,6 +4,7 @@ import { createHash, createSign, generateKeyPairSync, randomBytes } from "node:c
 import fs from "node:fs";
 import http from "node:http";
 import https from "node:https";
+import { createRequire } from "node:module";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -11,10 +12,24 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "../..");
+const require = createRequire(import.meta.url);
+const { sanitizeBrowserQaText } = require(path.join(repoRoot, "tests/helpers/browserQaAssertions.js"));
 const extensionDir = path.join(repoRoot, "dist", "chrome");
 const smokeTimeoutMs = Number(process.env.LEAKGUARD_CHROME_SMOKE_TIMEOUT_MS || 60000);
 const cdpCommandTimeoutMs = Number(process.env.LEAKGUARD_CHROME_SMOKE_CDP_TIMEOUT_MS || 60000);
 const smokeTimingWarningMs = Number(process.env.LEAKGUARD_SMOKE_TIMING_WARN_MS || 5000);
+const chromeSmokeSecretCanaries = Object.freeze([
+  {
+    id: "LGQA_CHROME_SMOKE_STRIPE_001",
+    value: "sk_live_7Qm2Lp9Xv4Nc8Tr6Yh1Zw5Kd3Bj0Pf",
+    expectedPlaceholder: "[PWM_N]"
+  }
+]);
+const chromeSmokeRawSecret = chromeSmokeSecretCanaries[0].value;
+
+function sanitizeChromeSmokeDiagnostic(value) {
+  return sanitizeBrowserQaText(value, chromeSmokeSecretCanaries);
+}
 
 function assertBuiltExtensionExists(sourceExtensionDir = extensionDir, buildCommand = "npm run build:chrome") {
   const manifestPath = path.join(sourceExtensionDir, "manifest.json");
@@ -1123,46 +1138,46 @@ async function runBuiltInContentSmoke(connection, chatGptOrigin, browserName = "
 }
 
 async function runComposerRedactionSmoke(connection, page) {
-  const rawSecret = "sk_live_7Qm2Lp9Xv4Nc8Tr6Yh1Zw5Kd3Bj0Pf";
+  const rawSecret = chromeSmokeRawSecret;
   const redacted = await evaluate(connection, page.sessionId, `new Promise((resolve, reject) => {
     const textarea = document.querySelector('#prompt-textarea');
     textarea.focus();
-    let prevented = false;
-    const transfer = new DataTransfer();
-    transfer.setData('text/plain', 'API_KEY=${rawSecret}');
-    const event = new ClipboardEvent('paste', {
+    const event = new InputEvent('beforeinput', {
       bubbles: true,
       cancelable: true,
-      clipboardData: transfer
+      inputType: 'insertText',
+      data: 'API_KEY=${rawSecret}'
     });
     textarea.dispatchEvent(event);
-    prevented = event.defaultPrevented;
     const started = Date.now();
     const timer = setInterval(() => {
       if (/\\[PWM_\\d+\\]/.test(textarea.value)) {
+        const placeholder = textarea.value.match(/\\[PWM_\\d+\\]/)?.[0] || '';
         clearInterval(timer);
         resolve({
-          value: textarea.value,
+          expectedRedaction: /^API_KEY=\\[PWM_\\d+\\]$/.test(textarea.value),
+          rawVisible: textarea.value.includes(${JSON.stringify(rawSecret)}),
+          placeholder,
           badge: document.querySelector('.pwm-badge')?.textContent || '',
-          prevented
+          prevented: event.defaultPrevented
         });
         return;
       }
-      const redactButton = Array.from(document.querySelectorAll('.pwm-modal-backdrop button, .pwm-modal button'))
-        .find((button) => /Redact/i.test(button.textContent || ''));
-      if (redactButton) {
-        redactButton.click();
-      } else if (Date.now() - started > 10000) {
+      if (Date.now() - started > 10000) {
         clearInterval(timer);
-        reject(new Error('Timed out waiting for composer redaction: ' + textarea.value));
+        reject(new Error('Timed out waiting for composer redaction: ' + JSON.stringify({
+          valueLength: textarea.value.length,
+          placeholderVisible: /\\[PWM_\\d+\\]/.test(textarea.value),
+          rawCanaryVisible: textarea.value.includes(${JSON.stringify(rawSecret)})
+        })));
       }
     }, 50);
   })`);
 
-  assert.match(redacted.value, /API_KEY=\[PWM_\d+\]/);
-  assert.equal(redacted.value.includes(rawSecret), false);
+  assert.equal(redacted.expectedRedaction, true, "Chrome composer should rewrite API_KEY to [PWM_N]");
+  assert.equal(redacted.rawVisible, false, "Chrome composer should not retain LGQA_CHROME_SMOKE_STRIPE_001");
 
-  return { rawSecret, placeholder: redacted.value.match(/\[PWM_\d+\]/)?.[0] || "[PWM_1]" };
+  return { rawSecret, placeholder: redacted.placeholder || "[PWM_1]" };
 }
 
 async function runSecureRevealSmoke(connection, page, extensionId, rawSecret, placeholder) {
@@ -1197,22 +1212,22 @@ async function runSecureRevealSmoke(connection, page, extensionId, rawSecret, pl
   const beforeShow = await evaluate(connection, popup.sessionId, `({
     placeholder: document.querySelector('#reveal-placeholder')?.textContent || '',
     secretHidden: document.querySelector('#secret-value')?.hidden,
-    secretText: document.querySelector('#secret-value')?.textContent || ''
+    secretTextMatchesRaw: (document.querySelector('#secret-value')?.textContent || '') === ${JSON.stringify(rawSecret)}
   })`);
   assert.equal(beforeShow.placeholder, placeholder);
   assert.equal(beforeShow.secretHidden, true);
-  assert.equal(beforeShow.secretText.includes(rawSecret), false);
+  assert.equal(beforeShow.secretTextMatchesRaw, false, "Chrome secure reveal should keep the raw canary hidden before Show");
 
   const afterShow = await evaluate(connection, popup.sessionId, `new Promise((resolve) => {
     document.querySelector('#show-btn').click();
     setTimeout(() => resolve({
       hidden: document.querySelector('#secret-value')?.hidden,
-      raw: document.querySelector('#secret-value')?.textContent || '',
+      rawMatchesExpectedCanary: (document.querySelector('#secret-value')?.textContent || '') === ${JSON.stringify(rawSecret)},
       status: document.querySelector('#reveal-status')?.textContent || ''
     }), 250);
   })`);
   assert.equal(afterShow.hidden, false);
-  assert.equal(afterShow.raw, rawSecret);
+  assert.equal(afterShow.rawMatchesExpectedCanary, true, "Chrome secure reveal should show the expected canary only inside the popup");
   assert.match(afterShow.status, /Visible only inside this LeakGuard popup/);
 }
 
@@ -1316,7 +1331,7 @@ async function runScannerSmoke(connection, extensionId, tempDir) {
   );
 
   const supportedPath = path.join(tempDir, "smoke.env");
-  fs.writeFileSync(supportedPath, "API_KEY=sk_live_7Qm2Lp9Xv4Nc8Tr6Yh1Zw5Kd3Bj0Pf\n");
+  fs.writeFileSync(supportedPath, `API_KEY=${chromeSmokeRawSecret}\n`);
   await setFileInputFiles(connection, scanner.sessionId, "#file-input", [supportedPath]);
 
   const supported = await evaluate(connection, scanner.sessionId, `new Promise((resolve, reject) => {
@@ -1332,7 +1347,12 @@ async function runScannerSmoke(connection, extensionId, tempDir) {
       }
       if (/\\[PWM_\\d+\\]/.test(preview)) {
         clearInterval(timer);
-        resolve({ preview, status });
+        resolve({
+          expectedRedaction: /^API_KEY=\\[PWM_\\d+\\]$/m.test(preview),
+          rawVisible: preview.includes(${JSON.stringify(chromeSmokeRawSecret)}),
+          status,
+          statusComplete: /Scan complete/i.test(status)
+        });
       } else if (Date.now() - started > 15000) {
         clearInterval(timer);
         reject(new Error('Timed out waiting for scanner result: ' + JSON.stringify({
@@ -1345,14 +1365,16 @@ async function runScannerSmoke(connection, extensionId, tempDir) {
             type: file.type,
             size: file.size
           })),
-          preview
+          previewLength: preview.length,
+          placeholderVisible: /\\[PWM_\\d+\\]/.test(preview),
+          rawCanaryVisible: preview.includes(${JSON.stringify(chromeSmokeRawSecret)})
         })));
       }
     }, 50);
   })`);
-  assert.match(supported.preview, /API_KEY=\[PWM_\d+\]/);
-  assert.equal(supported.preview.includes("sk_live_"), false);
-  assert.match(supported.status, /Scan complete/);
+  assert.equal(supported.expectedRedaction, true, "Chrome scanner preview should rewrite API_KEY to [PWM_N]");
+  assert.equal(supported.rawVisible, false, "Chrome scanner preview should not retain LGQA_CHROME_SMOKE_STRIPE_001");
+  assert.equal(supported.statusComplete, true, `Chrome scanner status did not complete: ${sanitizeChromeSmokeDiagnostic(supported.status)}`);
 
   await evaluate(connection, scanner.sessionId, "document.querySelector('#clear-btn').click()");
   await waitForEval(

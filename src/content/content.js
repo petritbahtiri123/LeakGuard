@@ -10,6 +10,7 @@
   const {
     Detector,
     PLACEHOLDER_TOKEN_REGEX,
+    ANY_PLACEHOLDER_TOKEN_REGEX,
     normalizeVisiblePlaceholders,
     buildNetworkUiFindings,
     evaluateDestinationPolicy,
@@ -17,10 +18,14 @@
     FilePasteHelpers,
     createFileHandoffState,
     createFileHandoffPending,
+    createPendingSanitizedFileHandoffManager,
     createFileHandoffFlow,
     PlaceholderRehydrator,
     ResponseObserver,
-    RevealController
+    RevealController,
+    FileDebugMetadata,
+    ChatGptComposerSync,
+    PlaceholderFamilies = {}
   } = globalThis.PWM;
   const {
     normalizeComposerText,
@@ -43,7 +48,8 @@
   const {
     dataTransferHasFiles,
     readLocalTextFileFromDataTransfer,
-    createSanitizedTextFile
+    createSanitizedTextFile,
+    redactSensitiveFileName
   } = FilePasteHelpers || {};
   const FileScanner = globalThis.PWM?.FileScanner || {};
   const {
@@ -56,6 +62,10 @@
     placeholderSessionIndex,
     tokenizePlaceholderText: tokenizeRehydrationPlaceholderText
   } = PlaceholderRehydrator;
+  const {
+    createSafeFileAttachDebugPayload,
+    assignSafeFileAttachErrorMetadata
+  } = FileDebugMetadata;
 
   const CHATGPT_COMPOSER_SELECTORS = [
     "#prompt-textarea",
@@ -152,11 +162,13 @@
   let lastBadgeText = "";
   let badgeHideTimer = 0;
   let bypassNextSubmit = false;
+  let bypassNextSendButtonClick = false;
   let inputScanTimer = 0;
   let rehydrateObserver = null;
   let modalOpen = false;
   let lastTypedPromptText = "";
   let typedScanGeneration = 0;
+  let typedRewriteGeneration = 0;
   let activeRiskEditor = null;
   let suppressInputScanUntil = 0;
   const rewriteFailureModalSuppressions = new Map();
@@ -185,8 +197,6 @@
   const PROGRAMMATIC_INPUT_SUPPRESS_MS = 500;
   const CHATGPT_LARGE_PASTE_FILE_THRESHOLD = 16 * 1024;
   const CHATGPT_SANITIZED_PASTE_FILE_NAME = "leakguard-redacted-paste.txt";
-  const CHATGPT_SYNC_EVENT_DATA_MAX_CHARS = 256 * 1024;
-  const CHATGPT_SYNC_VERIFY_DELAY_MS = 80;
   const GEMINI_DIRECT_TEXT_INSERT_THRESHOLD = 8 * 1024;
   const GEMINI_AUTO_INSERT_TEXT_LIMIT = 256 * 1024;
   const GEMINI_LARGE_TEXT_SUPPRESS_MS = 2500;
@@ -261,6 +271,21 @@
   const GROK_PENDING_SANITIZED_FILE_HANDOFF_MESSAGE =
     "Large file sanitized. Click Attach sanitized file or Grok Upload/Attach.";
   const REWRITE_FAILURE_SUPPRESS_MS = 6000;
+  const contentDebug = globalThis.PWM.ContentDebugFacade.createContentDebugFacade({
+    root: window,
+    DebugLogger: globalThis.PWM?.DebugLogger,
+    FileDebugMetadata,
+    createSafeFileAttachDebugPayload,
+    normalizeText: normalizeComposerText,
+    normalizeEditorInnerText,
+    normalizeVisiblePlaceholders,
+    placeholderTokenRegex: PLACEHOLDER_TOKEN_REGEX,
+    getInputText,
+    getSelectionOffsets,
+    findSendButton,
+    getHost: () => location?.hostname || "",
+    isChatGptHost: () => isChatGptHost()
+  });
   let lastDiscoveredFileInput = null;
   let fileDragDiscoveryCompleted = false;
   let fileDragDiscoveryScheduled = false;
@@ -270,17 +295,7 @@
   let fileDragDetectedLogged = false;
   let lastGeminiDropSessionHash = "";
   const geminiSanitizedDownloadFallbacks = new WeakSet();
-  let pendingGeminiSanitizedFileHandoff = null;
-  let pendingGeminiSanitizedFileObserver = null;
-  let pendingGeminiSanitizedFileTimer = 0;
-  let pendingGeminiSanitizedFileClickHandler = null;
   let pendingGeminiGhostIngressClickCleanup = null;
-  let pendingGrokSanitizedFileHandoff = null;
-  let pendingGrokSanitizedFileObserver = null;
-  let pendingGrokSanitizedFileTimer = 0;
-  let pendingGrokSanitizedFileClickHandler = null;
-  let pendingGenericSanitizedFileHandoff = null;
-  let pendingGenericSanitizedFileTimer = 0;
   const FILE_HANDOFF_PENDING_ATTACH_ENABLED = Object.freeze({
     gemini: true,
     grok: true,
@@ -302,6 +317,7 @@
   let pendingAttachPromptSite = "";
   let syntheticFileListCapabilityCache = null;
   let inputFileAssignmentCapabilityCache = null;
+  const fileInputProcessingSignatures = new WeakMap();
   const fileHandoffState = createFileHandoffState({
     emitDebug: debugReveal,
     describeFileForDebug,
@@ -337,6 +353,93 @@
     shouldSuppressFirefoxFileInputEvent,
     clearLocalFileInputSelection
   } = fileHandoffState;
+  const pendingSanitizedFileHandoff = createPendingSanitizedFileHandoffManager({
+    clearPendingGeminiGhostIngressClickInterceptor,
+    clearPendingSanitizedAttachPrompt,
+    createPendingAttachEvent: (event, type) => createPendingAttachEvent(event, type),
+    createSanitizedDataTransferForHandoff,
+    createSanitizedFileHandoffDetails,
+    debugReveal,
+    describeElementForDebug,
+    describeFileForDebug,
+    describeFileHandoffAdapter,
+    describeFileInputForDebug,
+    describeGeminiHandoffDiscovery,
+    describeGeminiOverlayExposure,
+    describeGrokPendingInputDiscovery,
+    discoverGeminiFileHandoffElements,
+    discoverGrokPendingFileInput,
+    documentRef: document,
+    geminiTtlMs: GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MS,
+    genericTtlMs: GROK_PENDING_SANITIZED_FILE_HANDOFF_MS,
+    getFileHandoffAdapterById,
+    getGeminiSessionHash: () => lastGeminiDropSessionHash || "",
+    getPendingSanitizedAttachPromptMessage,
+    grokTtlMs: GROK_PENDING_SANITIZED_FILE_HANDOFF_MS,
+    handOffSanitizedFileInput,
+    handleContentError,
+    hideBadgeSoon,
+    hideDmzOverlay,
+    isFileHandoffAdapterPendingAttachEnabled,
+    isGeminiHost,
+    isGrokHost,
+    isLikelyGeminiUploadClickTarget,
+    isLikelyGrokUploadClickTarget,
+    logSanitizedFileHandoffFailure,
+    normalizeFileHandoffAdapter,
+    normalizeTarget,
+    refreshBadgeFromCurrentInput,
+    setBadge,
+    showFileProcessingSuccess,
+    showPendingSanitizedAttachPrompt
+  });
+  function attemptPendingGeminiSanitizedFileHandoff(reason = "") {
+    return pendingSanitizedFileHandoff.attemptPendingGeminiSanitizedFileHandoff(reason);
+  }
+
+  function attemptPendingGrokSanitizedFileHandoff(reason = "") {
+    return pendingSanitizedFileHandoff.attemptPendingGrokSanitizedFileHandoff(reason);
+  }
+
+  function clearPendingGeminiSanitizedFileHandoff(reason = "") {
+    return pendingSanitizedFileHandoff.clearPendingGeminiSanitizedFileHandoff(reason);
+  }
+
+  function clearPendingGrokSanitizedFileHandoff(reason = "") {
+    return pendingSanitizedFileHandoff.clearPendingGrokSanitizedFileHandoff(reason);
+  }
+
+  function clearPendingGenericSanitizedFileHandoff(reason = "") {
+    return pendingSanitizedFileHandoff.clearPendingGenericSanitizedFileHandoff(reason);
+  }
+
+  function queuePendingGeminiSanitizedFileHandoff(event, input, sanitizedFile, details = null) {
+    return pendingSanitizedFileHandoff.queuePendingGeminiSanitizedFileHandoff(event, input, sanitizedFile, details);
+  }
+
+  function queuePendingGrokSanitizedFileHandoff(event, input, sanitizedFile, details = null) {
+    return pendingSanitizedFileHandoff.queuePendingGrokSanitizedFileHandoff(event, input, sanitizedFile, details);
+  }
+
+  function queuePendingGenericSanitizedFileHandoff(adapter, event, input, sanitizedFile, details = null) {
+    return pendingSanitizedFileHandoff.queuePendingGenericSanitizedFileHandoff(adapter, event, input, sanitizedFile, details);
+  }
+
+  function hasPendingGeminiSanitizedFileHandoff(sanitizedFile) {
+    return pendingSanitizedFileHandoff.hasPendingGeminiSanitizedFileHandoff(sanitizedFile);
+  }
+
+  function hasPendingGrokSanitizedFileHandoff(sanitizedFile) {
+    return pendingSanitizedFileHandoff.hasPendingGrokSanitizedFileHandoff(sanitizedFile);
+  }
+
+  function getPendingGeminiSanitizedFileHandoffDebug() {
+    return pendingSanitizedFileHandoff.getPendingGeminiSanitizedFileHandoffDebug();
+  }
+
+  function getPendingGrokSanitizedFileHandoffDebug() {
+    return pendingSanitizedFileHandoff.getPendingGrokSanitizedFileHandoffDebug();
+  }
   const fileHandoffPending = createFileHandoffPending({
     attemptPendingGeminiSanitizedFileHandoff,
     attemptPendingGrokSanitizedFileHandoff,
@@ -498,14 +601,16 @@
       return;
     }
 
-    console.error(error);
+    debugReveal("content:error", { error });
   }
 
   function isDebugEnabled() {
+    if (typeof contentDebug !== "undefined") return contentDebug.isDebugEnabled();
     return Boolean(globalThis.PWM?.DebugLogger?.isDebugEnabled?.({ root: window }));
   }
 
   function summarizeDebugText(text) {
+    if (typeof contentDebug !== "undefined") return contentDebug.summarizeDebugText(text);
     return globalThis.PWM.DebugLogger.summarizeDebugText(text, {
       normalizeText: normalizeComposerText,
       normalizeVisiblePlaceholders,
@@ -513,25 +618,28 @@
     });
   }
 
-  function collectComposerDebugSnapshot(input, expected, writeText) {
-    return globalThis.PWM.DebugLogger.collectComposerDebugSnapshot(input, expected, writeText, {
-      getInputText,
-      normalizeText: normalizeComposerText,
-      normalizeEditorInnerText,
-      normalizeVisiblePlaceholders,
-      placeholderTokenRegex: PLACEHOLDER_TOKEN_REGEX
-    });
-  }
-
   function debugLogSnapshot(label, input, expected, writeText) {
+    if (typeof contentDebug !== "undefined") {
+      contentDebug.debugLogSnapshot(label, input, expected, writeText);
+      return;
+    }
     if (!isDebugEnabled()) return;
-
-    const snapshot = collectComposerDebugSnapshot(input, expected, writeText);
-    globalThis.PWM?.DebugLogger?.debugSnapshot?.(label, snapshot, { root: window });
+    globalThis.PWM?.DebugLogger?.debugSnapshot?.(label, {
+      expected: summarizeDebugText(expected),
+      writeText: summarizeDebugText(writeText),
+      getInputText: summarizeDebugText(getInputText(input)),
+      innerText: summarizeDebugText(input?.innerText || ""),
+      normalizedInnerText: summarizeDebugText(normalizeEditorInnerText(input?.innerText || "")),
+      textContent: summarizeDebugText(input?.textContent || "")
+    }, { root: window });
   }
 
   function debugReveal(label, payload) {
-    globalThis.PWM?.DebugLogger?.debugEvent?.(label, payload, { root: window });
+    if (typeof contentDebug !== "undefined") {
+      contentDebug.debugReveal(label, payload);
+      return;
+    }
+    globalThis.PWM?.DebugLogger?.debugEvent?.(label, payload || {}, { root: window });
   }
 
   function getGeminiDiagnosticsAdapter() {
@@ -561,211 +669,30 @@
     }
   }
 
-  function normalizeFileDebugString(value) {
-    return String(value || "")
-      .toLowerCase()
-      .replace(/[^a-z0-9_.:-]+/g, "-")
-      .slice(0, 96);
-  }
-
-  function isSafeFileDebugToken(value) {
-    const text = String(value || "");
-    return Boolean(text) && text.length <= 96 && !/[\\/]/.test(text) && !/[?#@]/.test(text);
-  }
-
-  function isSafeFileDebugErrorCode(value) {
-    const text = String(value || "");
-    return Boolean(text) && text.length <= 48 && /^[A-Z0-9_:-]+$/i.test(text);
-  }
-
-  function getFileDebugExtension(fileMeta) {
-    const rawName = String(fileMeta?.name || "");
-    if (!isSafeFileDebugToken(rawName) || rawName.includes("..")) return "";
-    const match = /\.([a-z0-9]{1,12})$/i.exec(rawName);
-    return match ? match[1].toLowerCase() : "";
-  }
-
-  function getFileDebugMimeCategory(fileMeta) {
-    const type = String(fileMeta?.type || "").toLowerCase();
-    if (!type || /[\\/?#@]/.test(type)) return "";
-    return type.split("/")[0].replace(/[^a-z0-9.+-]/g, "").slice(0, 32);
-  }
-
-  function describeSafeFileDebugMetadata(fileMeta) {
-    if (!fileMeta || typeof fileMeta !== "object") return null;
-    const extension = getFileDebugExtension(fileMeta);
-    const mimeCategory = getFileDebugMimeCategory(fileMeta);
-    const sizeBytes = Number(fileMeta.size ?? fileMeta.sizeBytes ?? 0) || 0;
-    return {
-      sizeBytes,
-      extension,
-      category: extension || mimeCategory || "unknown",
-      mimeCategory,
-      supportedText: Boolean(fileMeta.supportedText),
-      sanitized: Boolean(fileMeta.sanitized)
-    };
-  }
-
-  function describeSafeFileInputDebugMetadata(inputMeta) {
-    if (!inputMeta || typeof inputMeta !== "object") return null;
-    return {
-      tag: normalizeFileDebugString(inputMeta.tag || "input"),
-      source: normalizeFileDebugString(inputMeta.source),
-      disabled: Boolean(inputMeta.disabled),
-      hidden: Boolean(inputMeta.hidden),
-      multiple: Boolean(inputMeta.multiple),
-      filesLength: Number(inputMeta.filesLength || 0) || 0
-    };
-  }
-
-  function describeSafeFileHandoffAdapterDebugMetadata(adapter) {
-    if (!adapter || typeof adapter !== "object") return null;
-    return {
-      id: normalizeFileDebugString(adapter.id),
-      siteLabel: normalizeFileDebugString(adapter.siteLabel || adapter.id),
-      hostCount: Array.isArray(adapter.hosts) ? adapter.hosts.length : 0,
-      supportsDirectDropReplay: Boolean(adapter.supportsDirectDropReplay),
-      supportsPendingAttach: Boolean(adapter.supportsPendingAttach),
-      supportsTrustedAttachButton: Boolean(adapter.supportsTrustedAttachButton),
-      pendingAttachEnabled: Boolean(adapter.pendingAttachEnabled)
-    };
-  }
-
-  function describeSafeFileAttachErrorMetadata(errorLike) {
-    if (!errorLike) return null;
-    const errorName = isSafeFileDebugToken(errorLike?.name) ? String(errorLike.name).slice(0, 48) : "Error";
-    const rawMessage =
-      typeof errorLike?.message === "string"
-        ? errorLike.message
-        : typeof errorLike === "string"
-          ? errorLike
-          : "";
-    const code = errorLike?.code;
-    const metadata = {
-      errorName,
-      messageLength: rawMessage.length
-    };
-    if (isSafeFileDebugErrorCode(code)) {
-      metadata.codeIfSafe = String(code).slice(0, 48);
-    }
-    return metadata;
-  }
-
-  function assignSafeFileAttachErrorMetadata(target, errorLike) {
-    if (!target || typeof target !== "object") return;
-    const metadata = describeSafeFileAttachErrorMetadata(errorLike);
-    if (!metadata) return;
-    target.errorName = metadata.errorName;
-    target.messageLength = metadata.messageLength;
-    if (metadata.codeIfSafe) {
-      target.codeIfSafe = metadata.codeIfSafe;
-    }
-  }
-
-  function copySafeFileDebugScalar(output, key, value) {
-    if (value === null || typeof value === "boolean") {
-      output[key] = value;
-      return;
-    }
-    if (typeof value === "number") {
-      output[key] = Number.isFinite(value) ? value : 0;
-      return;
-    }
-    if (typeof value !== "string") return;
-    const normalized = normalizeFileDebugString(value);
-    if (normalized) output[key] = normalized;
-  }
-
-  function createSafeFileAttachDebugPayload(payload = {}) {
-    const source = payload && typeof payload === "object" ? payload : {};
-    const output = {};
-    const scalarKeys = new Set([
-      "action",
-      "blocking",
-      "bytes",
-      "bytesProcessed",
-      "changeEventDispatched",
-      "chipCountAfter",
-      "chipCountBefore",
-      "chunks",
-      "context",
-      "codeIfSafe",
-      "driver",
-      "errorName",
-      "fastMaxBytes",
-      "failureReason",
-      "findingsCount",
-      "hardBlockBytes",
-      "handoffStage",
-      "host",
-      "hostname",
-      "inputEventDispatched",
-      "inputFilesAccepted",
-      "inputFilesCleared",
-      "maxBytes",
-      "messageLength",
-      "outcome",
-      "provider",
-      "reason",
-      "rendered",
-      "site",
-      "stage",
-      "strategy",
-      "totalBytes"
-    ]);
-
-    for (const key of scalarKeys) {
-      if (Object.prototype.hasOwnProperty.call(source, key)) {
-        copySafeFileDebugScalar(output, key, source[key]);
-      }
-    }
-
-    if (source.progress && typeof source.progress === "object") {
-      output.progress = {
-        bytesProcessed: Number(source.progress.bytesProcessed || 0) || 0,
-        totalBytes: Number(source.progress.totalBytes || 0) || 0,
-        chunks: Number(source.progress.chunks || 0) || 0
-      };
-    }
-    if (source.file) output.file = describeSafeFileDebugMetadata(source.file);
-    if (source.sanitizedFile) output.sanitizedFile = describeSafeFileDebugMetadata(source.sanitizedFile);
-    if (source.originalFile) output.originalFile = describeSafeFileDebugMetadata(source.originalFile);
-    if (source.input) output.input = describeSafeFileInputDebugMetadata(source.input);
-    if (source.adapter) output.adapter = describeSafeFileHandoffAdapterDebugMetadata(source.adapter);
-    if (source.error) {
-      const errorMetadata = describeSafeFileAttachErrorMetadata(source.error);
-      if (errorMetadata) Object.assign(output, errorMetadata);
-    }
-    if (Array.isArray(source.files)) {
-      output.fileCount = source.files.length;
-      output.files = source.files.map(describeSafeFileDebugMetadata).filter(Boolean);
-    }
-    if (Array.isArray(source.events)) {
-      output.events = source.events.map(normalizeFileDebugString).filter(Boolean).slice(0, 8);
-      output.eventCount = output.events.length;
-    }
-
-    return output;
-  }
-
   function debugFileAttachMetadata(label, payload) {
+    if (typeof contentDebug !== "undefined") {
+      contentDebug.debugFileAttachMetadata(label, payload);
+      return;
+    }
     debugReveal(label, createSafeFileAttachDebugPayload(payload));
   }
 
   function debugResponseRehydration(label, payload) {
-    globalThis.PWM?.DebugLogger?.debugEvent?.(label, payload || {}, { root: window });
+    debugReveal(label, payload || {});
+  }
+
+  function countDebugPlaceholders(text) {
+    if (typeof contentDebug !== "undefined") return contentDebug.countDebugPlaceholders(text);
+    return (String(text || "").match(/\[[A-Z_]+_\d+\]/g) || []).length;
   }
 
   function getSafeElementAttribute(el, name) {
+    if (typeof contentDebug !== "undefined") return contentDebug.getSafeElementAttribute(el, name);
     try {
       return String(el?.getAttribute?.(name) || "");
     } catch {
       return "";
     }
-  }
-
-  function countDebugPlaceholders(text) {
-    return (String(text || "").match(/\[[A-Z_]+_\d+\]/g) || []).length;
   }
 
   function getDebugTextLength(value) {
@@ -797,49 +724,37 @@
   }
 
   function getChatGptComposerSyncDebug(input, expectedText = "", actualText = null) {
-    const actual = actualText == null ? getInputText(input) : normalizeComposerText(actualText);
-    const innerText = normalizeComposerText(input?.innerText || "");
-    const textContent = normalizeComposerText(input?.textContent || "");
-    let selection = null;
-    try {
-      selection = getSelectionOffsets(input);
-    } catch {
-      selection = null;
+    if (typeof contentDebug === "undefined") {
+      const actual = actualText == null ? getInputText(input) : normalizeComposerText(actualText);
+      return {
+        host: location?.hostname || "",
+        input: {
+          tag: input?.tagName || "",
+          role: getSafeElementAttribute(input, "role") || input?.role || "",
+          contenteditable: getSafeElementAttribute(input, "contenteditable"),
+          dataTestIdLength: getSafeElementAttribute(input, "data-testid").length,
+          idLength: String(input?.id || getSafeElementAttribute(input, "id")).length,
+          classLength: String(typeof input?.className === "string" ? input.className : getSafeElementAttribute(input, "class")).length
+        },
+        expectedLength: getDebugTextLength(expectedText),
+        actualLength: getDebugTextLength(actual),
+        innerTextLength: getDebugTextLength(input?.innerText || ""),
+        textContentLength: getDebugTextLength(input?.textContent || ""),
+        placeholderCount: countDebugPlaceholders(actual || expectedText),
+        expectedPlaceholderCount: countDebugPlaceholders(expectedText),
+        actualPlaceholderCount: countDebugPlaceholders(actual),
+        sendButton: getChatGptSendButtonDebugState(input)
+      };
     }
-    let className = "";
-    try {
-      className =
-        typeof input?.className === "string"
-          ? input.className
-          : getSafeElementAttribute(input, "class");
-    } catch {
-      className = "";
-    }
-
+    const debugState = contentDebug.getChatGptComposerSyncDebug(input, expectedText, actualText);
     return {
-      host: location?.hostname || "",
-      input: {
-        tag: input?.tagName || "",
-        role: getSafeElementAttribute(input, "role") || input?.role || "",
-        contenteditable: getSafeElementAttribute(input, "contenteditable"),
-        dataTestId: getSafeElementAttribute(input, "data-testid"),
-        id: input?.id || getSafeElementAttribute(input, "id"),
-        classSnippet: className.slice(0, 96)
-      },
+      ...debugState,
       expectedLength: getDebugTextLength(expectedText),
-      actualLength: getDebugTextLength(actual),
-      innerTextLength: getDebugTextLength(innerText),
-      textContentLength: getDebugTextLength(textContent),
-      placeholderCount: countDebugPlaceholders(actual || expectedText),
-      expectedPlaceholderCount: countDebugPlaceholders(expectedText),
-      actualPlaceholderCount: countDebugPlaceholders(actual),
-      selection:
-        selection && Number.isFinite(Number(selection.start)) && Number.isFinite(Number(selection.end))
-          ? {
-              start: Number(selection.start),
-              end: Number(selection.end)
-            }
-          : null,
+      input: {
+        ...(debugState.input || {}),
+        role: getSafeElementAttribute(input, "role") || input?.role || "",
+        contenteditable: getSafeElementAttribute(input, "contenteditable")
+      },
       sendButton: getChatGptSendButtonDebugState(input)
     };
   }
@@ -864,9 +779,11 @@
   }
 
   function logFailureDetails(details) {
-    console.group("[PWM] rewrite verification failure");
-    console.log(details);
-    console.groupEnd();
+    if (typeof contentDebug !== "undefined") {
+      contentDebug.logFailureDetails(details);
+      return;
+    }
+    debugReveal("rewrite:verification-failure", details || {});
   }
 
   function consumeInterceptionEvent(event) {
@@ -878,12 +795,11 @@
   }
 
   function logFileInterception(label, details) {
-    details = details || {};
-    try {
-      console.log(`[LeakGuard] ${label}`, details);
-    } catch {
-      // Console diagnostics are best-effort and must not affect protection.
+    if (typeof contentDebug !== "undefined") {
+      contentDebug.logFileInterception(label, details);
+      return;
     }
+    debugFileAttachMetadata(`file-interception:${label}`, details || {});
   }
 
   function isFirefoxRuntime() {
@@ -1687,6 +1603,7 @@
         try {
           clickEvent.preventDefault?.();
           clickEvent.stopPropagation?.();
+          clickEvent.stopImmediatePropagation?.();
         } catch {
           // Host events can be partial.
         }
@@ -2191,7 +2108,10 @@
     const toggle = document.createElement("button");
     toggle.className = "pwm-panel-toggle";
     toggle.type = "button";
-    toggle.addEventListener("click", () => {
+    toggle.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
       setStatusPanelCollapsed(!statusPanelCollapsed);
     });
 
@@ -2229,7 +2149,10 @@
     manageBtn.className = "pwm-btn pwm-panel-manage";
     manageBtn.type = "button";
     manageBtn.textContent = "Manage Sites";
-    manageBtn.addEventListener("click", () => {
+    manageBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
       openProtectedSitesUi()
         .then((response) => {
           if (!response?.opened) {
@@ -2248,7 +2171,10 @@
     statusPanelPauseBtn = document.createElement("button");
     statusPanelPauseBtn.className = "pwm-btn pwm-panel-pause";
     statusPanelPauseBtn.type = "button";
-    statusPanelPauseBtn.addEventListener("click", () => {
+    statusPanelPauseBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
       const protection = getActiveProtection();
       setProtectionPaused(!protection.paused).catch((error) => {
         setBadge(error?.message || "Protection pause unavailable");
@@ -2575,6 +2501,10 @@
       return state.pendingDecisionPromise;
     }
 
+    if (policy?.defaultAction === "redact" || policy?.defaultAction === "block") {
+      return resolveDecisionAction(policy.defaultAction, policy);
+    }
+
     const decisionPromise = showDecisionModal(findings, mode, {
       policy
     }).then((decision) => {
@@ -2799,6 +2729,30 @@
     };
   }
 
+  function analysisNeedsEventOwnership(analysis) {
+    return Boolean((analysis?.findings || []).length || analysis?.placeholderNormalized);
+  }
+
+  function isKnownSanitizedPlaceholderToken(raw) {
+    const token = normalizeVisiblePlaceholders(String(raw || "").trim());
+    if (!token) return false;
+
+    const corePlaceholderRegex = new RegExp(`^(?:${PLACEHOLDER_TOKEN_REGEX.source})$`);
+    if (corePlaceholderRegex.test(token)) return true;
+
+    const typedMatch = /^\[([A-Z][A-Z0-9_]*)_\d+\]$/.exec(token);
+    return Boolean(
+      typedMatch &&
+        typeof PlaceholderFamilies.isTypedPlaceholderFamily === "function" &&
+        PlaceholderFamilies.isTypedPlaceholderFamily(typedMatch[1])
+    );
+  }
+
+  function analysisHasOnlySanitizedPlaceholderFindings(analysis) {
+    const findings = analysis?.findings || [];
+    return findings.length > 0 && findings.every((finding) => isKnownSanitizedPlaceholderToken(finding?.raw));
+  }
+
   async function analyzeTextWithAiAssist(text, policy = getActivePolicy()) {
     const originalText = String(text || "");
     const normalizedText = normalizeVisiblePlaceholders(originalText);
@@ -3007,7 +2961,7 @@
         return null;
       };
 
-      const consumeModalKeyEvent = (event) => {
+      const consumeModalEvent = (event) => {
         event.preventDefault();
         event.stopPropagation();
         if (typeof event.stopImmediatePropagation === "function") {
@@ -3017,28 +2971,35 @@
 
       const onKeyDown = (event) => {
         if (event.key === "Escape") {
-          consumeModalKeyEvent(event);
+          consumeModalEvent(event);
           finish({ action: "cancel" });
           return;
         }
 
         if (event.key === "Enter" || event.key === " ") {
-          consumeModalKeyEvent(event);
+          consumeModalEvent(event);
           finish({ action: getFocusedAction() || "redact" });
         }
       };
 
       const onKeyPassthrough = (event) => {
         if (event.key === "Escape" || event.key === "Enter" || event.key === " ") {
-          consumeModalKeyEvent(event);
+          consumeModalEvent(event);
         }
       };
 
-      cancelBtn.addEventListener("click", () => finish({ action: "cancel" }));
-      redactBtn.addEventListener("click", () => finish({ action: "redact" }));
+      cancelBtn.addEventListener("click", (event) => {
+        consumeModalEvent(event);
+        finish({ action: "cancel" });
+      });
+      redactBtn.addEventListener("click", (event) => {
+        consumeModalEvent(event);
+        finish({ action: "redact" });
+      });
 
       backdrop.addEventListener("click", (event) => {
         if (event.target === backdrop) {
+          consumeModalEvent(event);
           finish({ action: "cancel" });
         }
       });
@@ -3120,9 +3081,13 @@
         consumeModalEvent(event);
       };
 
-      closeBtn.addEventListener("click", finish);
+      closeBtn.addEventListener("click", (event) => {
+        consumeModalEvent(event);
+        finish();
+      });
       backdrop.addEventListener("click", (event) => {
         if (event.target === backdrop) {
+          consumeModalEvent(event);
           finish();
         }
       });
@@ -3219,10 +3184,17 @@
         consumeModalEvent(event);
       };
 
-      cancelBtn.addEventListener("click", () => finish("cancel"));
-      insertBtn.addEventListener("click", () => finish("insert"));
+      cancelBtn.addEventListener("click", (event) => {
+        consumeModalEvent(event);
+        finish("cancel");
+      });
+      insertBtn.addEventListener("click", (event) => {
+        consumeModalEvent(event);
+        finish("insert");
+      });
       backdrop.addEventListener("click", (event) => {
         if (event.target === backdrop) {
+          consumeModalEvent(event);
           finish("cancel");
         }
       });
@@ -3352,285 +3324,23 @@
     );
   }
 
-  function focusChatGptComposer(input) {
-    if (!input || typeof input.focus !== "function") return;
-    try {
-      input.focus({ preventScroll: true });
-    } catch {
-      try {
-        input.focus();
-      } catch {
-        // Focus is a sync hint only.
-      }
-    }
-  }
-
-  function placeChatGptCaretAtEnd(input) {
-    if (!input) return;
-    try {
-      if (isTextArea(input) && typeof input.setSelectionRange === "function") {
-        const textLength = getInputText(input).length;
-        input.setSelectionRange(textLength, textLength);
-        return;
-      }
-    } catch {
-      // Best-effort only.
-    }
-
-    if (!isContentEditable(input) || typeof window?.getSelection !== "function") return;
-    try {
-      const selection = window.getSelection();
-      const range = document.createRange?.();
-      if (!selection || !range) return;
-      range.selectNodeContents(input);
-      range.collapse(false);
-      selection.removeAllRanges();
-      selection.addRange(range);
-    } catch {
-      // Selection APIs can be blocked by host-controlled DOM.
-    }
-  }
-
-  function dispatchChatGptComposerInputEvent(input, inputType, data) {
-    if (!input?.dispatchEvent) return false;
-    const safeData =
-      typeof data === "string" && data.length <= CHATGPT_SYNC_EVENT_DATA_MAX_CHARS
-        ? data
-        : null;
-    let event = null;
-    try {
-      event = new InputEvent("input", {
-        bubbles: true,
-        composed: true,
-        inputType,
-        data: safeData
-      });
-    } catch {
-      event = new Event("input", { bubbles: true, composed: true });
-    }
-    try {
-      input.dispatchEvent(event);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  function dispatchChatGptComposerBeforeInput(input, inputType, data) {
-    if (!input?.dispatchEvent) return false;
-    const safeData =
-      typeof data === "string" && data.length <= CHATGPT_SYNC_EVENT_DATA_MAX_CHARS
-        ? data
-        : null;
-    let event = null;
-    try {
-      event = new InputEvent("beforeinput", {
-        bubbles: true,
-        cancelable: true,
-        composed: true,
-        inputType,
-        data: safeData
-      });
-    } catch {
-      event = new Event("beforeinput", { bubbles: true, cancelable: true, composed: true });
-    }
-    try {
-      input.dispatchEvent(event);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  function dispatchChatGptComposerChange(input) {
-    if (!input?.dispatchEvent) return false;
-    try {
-      input.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  function nudgeChatGptComposerState(input, expectedText, strategy) {
-    focusChatGptComposer(input);
-    placeChatGptCaretAtEnd(input);
-    try {
-      document.dispatchEvent?.(new Event("selectionchange", { bubbles: true }));
-    } catch {
-      // Host may not expose document-level dispatch.
-    }
-    debugChatGptSync("chatgpt-sync:react-state-nudge", input, expectedText, null, {
-      strategy
-    });
-  }
-
-  async function waitForChatGptComposerVerification() {
-    await new Promise((resolve) => window.setTimeout(resolve, CHATGPT_SYNC_VERIFY_DELAY_MS));
-  }
-
-  function tryChatGptExecCommandWrite(input, writeText, options = {}) {
-    if (!isContentEditable(input)) return false;
-    if (writeText.length > CHATGPT_SYNC_EVENT_DATA_MAX_CHARS) return false;
-    if (typeof document?.execCommand !== "function") return false;
-
-    focusChatGptComposer(input);
-    dispatchChatGptComposerBeforeInput(input, "insertReplacementText", writeText);
-
-    let selected = false;
-    try {
-      selected = Boolean(document.execCommand("selectAll", false, null));
-    } catch {
-      selected = false;
-    }
-    if (!selected) return false;
-
-    let inserted = false;
-    try {
-      inserted = Boolean(document.execCommand("insertText", false, writeText));
-    } catch {
-      inserted = false;
-    }
-    if (!inserted) return false;
-
-    if (Number.isFinite(options.caretOffset)) {
-      placeChatGptCaretAtEnd(input);
-    } else {
-      placeChatGptCaretAtEnd(input);
-    }
-    dispatchChatGptComposerInputEvent(input, "insertReplacementText", writeText);
-    dispatchChatGptComposerChange(input);
-    return true;
-  }
-
-  function tryChatGptDirectWrite(input, writeText, options = {}) {
-    suppressFollowupInputScan(options.suppressMs || PROGRAMMATIC_INPUT_SUPPRESS_MS);
-    focusChatGptComposer(input);
-    const written = setInputTextDirect(input, writeText, {
-      caretOffset: options.caretOffset
-    });
-    if (!written) return false;
-    dispatchChatGptComposerInputEvent(input, "insertReplacementText", null);
-    dispatchChatGptComposerChange(input);
-    return true;
-  }
-
-  function tryChatGptComposerHelperWrite(input, writeText, options = {}) {
-    suppressFollowupInputScan(options.suppressMs || PROGRAMMATIC_INPUT_SUPPRESS_MS);
-    focusChatGptComposer(input);
-    setInputText(input, writeText, {
-      caretOffset: options.caretOffset
-    });
-    return true;
-  }
-
-  async function runChatGptSyncedWriteAttempt(input, plan, options, strategy) {
-    const expected = plan.canonical;
-    const writeText = plan.writeText;
-    debugChatGptSync("chatgpt-sync:write-plan", input, expected, null, {
-      strategy,
-      eventData: writeText.length <= CHATGPT_SYNC_EVENT_DATA_MAX_CHARS ? "included" : "omitted"
-    });
-
-    suppressFollowupInputScan(options.suppressMs || PROGRAMMATIC_INPUT_SUPPRESS_MS);
-    let writeAccepted = false;
-    if (strategy === "exec-command") {
-      writeAccepted = tryChatGptExecCommandWrite(input, writeText, options);
-    } else if (strategy === "composer-helper") {
-      writeAccepted = tryChatGptComposerHelperWrite(input, writeText, options);
-    } else {
-      writeAccepted = tryChatGptDirectWrite(input, writeText, options);
-    }
-
-    const actualAfterWrite = getInputText(input);
-    debugChatGptSync("chatgpt-sync:after-write", input, expected, actualAfterWrite, {
-      strategy,
-      writeAccepted
-    });
-    nudgeChatGptComposerState(input, expected, strategy);
-    await waitForChatGptComposerVerification();
-    const actual = await readStableComposerText(input, 2);
-    const verification = writeAccepted
-      ? await verifyComposerRewriteSafe({
-          input,
-          expectedText: expected,
-          originalText: options.rawInsertedText || options.restoreText || "",
-          redactedText: expected,
-          findings: options.findings,
-          context: options.context || "chatgpt-sync",
-          caretOffset: options.caretOffset,
-          actualText: actual
-        })
-      : { ok: false, actual };
-    if (writeAccepted && verification.ok) {
-      debugChatGptSync("chatgpt-sync:verification-pass", input, expected, actual, {
-        strategy,
-        verificationStrategy: verification.strategy
-      });
-      return {
-        ok: true,
-        actual: verification.actual || actual,
-        strategy: `chatgpt-${strategy}`
-      };
-    }
-
-    debugChatGptSync("chatgpt-sync:verification-failed", input, expected, actual, {
-      strategy,
-      writeAccepted
-    });
+  function getChatGptComposerSyncDependencies() {
     return {
-      ok: false,
-      actual,
-      strategy: `chatgpt-${strategy}`
+      debugChatGptSync,
+      isChatGptHost,
+      readStableComposerText,
+      suppressFollowupInputScan,
+      verifyComposerRewriteSafe
     };
-  }
-
-  async function applyChatGptSyncedComposerText(input, expectedText, options = {}) {
-    if (!isChatGptHost()) {
-      return { ok: false, actual: getInputText(input), strategy: "not-chatgpt" };
-    }
-    const plan = buildComposerWritePlan(input, expectedText);
-    debugChatGptSync("chatgpt-sync:before-write", input, plan.canonical, null, {
-      context: options.context || ""
-    });
-
-    const writeText = plan.writeText;
-    const attempts =
-      isContentEditable(input) && writeText.length <= CHATGPT_SYNC_EVENT_DATA_MAX_CHARS
-        ? ["exec-command", "direct-dom"]
-        : writeText.length <= CHATGPT_SYNC_EVENT_DATA_MAX_CHARS
-          ? ["direct-dom", "composer-helper"]
-          : ["direct-dom"];
-
-    let lastResult = {
-      ok: false,
-      actual: getInputText(input),
-      strategy: "not-attempted"
-    };
-    for (const strategy of attempts) {
-      lastResult = await runChatGptSyncedWriteAttempt(input, plan, options, strategy);
-      if (lastResult.ok) {
-        return lastResult;
-      }
-    }
-
-    if (typeof options.restoreText === "string") {
-      tryChatGptDirectWrite(input, normalizeComposerText(options.restoreText), {
-        caretOffset: options.restoreCaretOffset,
-        suppressMs: options.suppressMs
-      });
-      await readStableComposerText(input, 2);
-    }
-
-    return lastResult;
   }
 
   async function applyComposerText(input, expectedText, options) {
     options = options || {};
     if (typeof isChatGptHost === "function" && isChatGptHost()) {
-      return applyChatGptSyncedComposerText(input, expectedText, {
+      return ChatGptComposerSync.applyChatGptSyncedComposerText(input, expectedText, {
         ...options,
-        context: options.context || "composer-rewrite"
+        context: options.context || "composer-rewrite",
+        dependencies: getChatGptComposerSyncDependencies()
       });
     }
 
@@ -3823,6 +3533,59 @@
     return verification.ok;
   }
 
+  async function applySubmitRedactionTransactionally(input, originalText, redactedText, context, findings) {
+    const applied = await rewriteComposerTransactionally(input, originalText, redactedText, context, {
+      caretOffset: String(redactedText || "").length,
+      restoreText: originalText,
+      restoreCaretOffset: String(originalText || "").length,
+      findings
+    });
+
+    if (!applied.ok) {
+      await showRewriteFailure(
+        context,
+        collectFailureDetails(input, redactedText, applied.actual, context)
+      );
+      refreshBadgeFromCurrentInput();
+      return false;
+    }
+
+    if (!(await ensureExactComposerState(input, redactedText, {
+      originalText,
+      findings,
+      context
+    }))) {
+      await showRewriteFailure(
+        context,
+        collectFailureDetails(input, redactedText, getInputText(input), context)
+      );
+      refreshBadgeFromCurrentInput();
+      return false;
+    }
+
+    return true;
+  }
+
+  function queueVerifiedComposerSend(input, expectedText, context, send) {
+    queueMicrotask(() => {
+      ensureExactComposerState(input, expectedText, { context })
+        .then((isExact) => {
+          if (!isExact) {
+            return showRewriteFailure(
+              context,
+              collectFailureDetails(input, expectedText, getInputText(input), context)
+            ).then(() => {
+              refreshBadgeFromCurrentInput();
+            });
+          }
+
+          send();
+          return null;
+        })
+        .catch(handleContentError);
+    });
+  }
+
   function findSendButton(contextEl) {
     const searchRoot = contextEl?.closest("form") || document;
 
@@ -3846,7 +3609,11 @@
 
     const button = findSendButton(input);
     if (button) {
+      bypassNextSendButtonClick = true;
       button.click();
+      queueMicrotask(() => {
+        bypassNextSendButtonClick = false;
+      });
     }
   }
 
@@ -3893,6 +3660,34 @@
     return true;
   }
 
+  function containsVisiblePlaceholderToken(text) {
+    const regex = ANY_PLACEHOLDER_TOKEN_REGEX || PLACEHOLDER_TOKEN_REGEX;
+    if (!regex?.test) return false;
+    regex.lastIndex = 0;
+    const hasPlaceholder = regex.test(String(text || ""));
+    regex.lastIndex = 0;
+    return hasPlaceholder;
+  }
+
+  function hasUnsafeVisibleSecret(text) {
+    const analysis = analyzeText(text);
+    return (analysis.secretFindings || []).some((finding) => {
+      const { raw = "" } = finding || {};
+      return isHighConfidenceRewriteFinding(finding) && !containsVisiblePlaceholderToken(raw);
+    });
+  }
+
+  function shouldSuppressStaleTypedRewriteFailure(rewriteGeneration, input, actualText = null) {
+    if (rewriteGeneration === typedRewriteGeneration) return false;
+
+    const actual = normalizeComposerText(actualText == null ? getInputText(input) : actualText);
+    return Boolean(
+      actual.trim() &&
+        containsVisiblePlaceholderToken(actual) &&
+        !hasUnsafeVisibleSecret(actual)
+    );
+  }
+
   async function applyTypedInterceptionRewrite(
     input,
     expectedText,
@@ -3900,6 +3695,7 @@
     selection,
     context
   ) {
+    const rewriteGeneration = ++typedRewriteGeneration;
     const restoreCaretOffset = Math.max(0, Number(selection?.end) || 0);
     const caretOffset = deriveRewriteCaretOffset(
       expectedText,
@@ -3912,6 +3708,10 @@
     });
 
     if (!applied.ok) {
+      if (shouldSuppressStaleTypedRewriteFailure(rewriteGeneration, input, applied.actual)) {
+        refreshBadgeFromCurrentInput();
+        return false;
+      }
       await showRewriteFailure(
         context,
         collectFailureDetails(input, expectedText, applied.actual, context)
@@ -3921,9 +3721,14 @@
     }
 
     if (!(await ensureExactComposerState(input, expectedText))) {
+      const actual = getInputText(input);
+      if (shouldSuppressStaleTypedRewriteFailure(rewriteGeneration, input, actual)) {
+        refreshBadgeFromCurrentInput();
+        return false;
+      }
       await showRewriteFailure(
         context,
-        collectFailureDetails(input, expectedText, getInputText(input), context)
+        collectFailureDetails(input, expectedText, actual, context)
       );
       refreshBadgeFromCurrentInput();
       return false;
@@ -3971,6 +3776,27 @@
         consumeInterceptionEvent(event);
       }
     }
+    const quickCurrentAnalysis = analyzeText(originalText);
+    const quickNextAnalysis = analyzeText(next.text);
+    const quickRelevantFindings = selectFindingsOverlappingInsertion(
+      quickNextAnalysis.findings,
+      selection,
+      insertedText
+    );
+    const quickPlaceholderNormalizationChanged =
+      quickNextAnalysis.placeholderNormalized &&
+      quickNextAnalysis.normalizedText !== next.text &&
+      (normalizeVisiblePlaceholders(insertedText) !== insertedText ||
+        quickNextAnalysis.normalizedText !== quickCurrentAnalysis.normalizedText);
+
+    if (!quickRelevantFindings.length && !quickPlaceholderNormalizationChanged) {
+      return;
+    }
+
+    if (!event.defaultPrevented) {
+      consumeInterceptionEvent(event);
+    }
+
     const currentAnalysis = await analyzeTextWithAiAssist(originalText);
     const nextAnalysis = await analyzeTextWithAiAssist(next.text);
     const relevantFindings = selectFindingsOverlappingInsertion(
@@ -3989,18 +3815,12 @@
       (normalizeVisiblePlaceholders(insertedText) !== insertedText ||
         nextAnalysis.normalizedText !== currentAnalysis.normalizedText);
 
-    if (!relevantFindings.length && !placeholderNormalizationChanged) {
-      return;
-    }
+    if (!relevantFindings.length && !placeholderNormalizationChanged) return;
 
     const typedShouldAutoRedact = shouldAutoRedactTypedSecrets(
       relevantSecretFindings,
       relevantFindings
     );
-
-    if (!event.defaultPrevented) {
-      consumeInterceptionEvent(event);
-    }
 
     const policy = await getPolicyForAction();
     const destinationPolicy = await handleDestinationPolicy(relevantFindings, policy);
@@ -4603,12 +4423,13 @@
         end: Number(selection?.end ?? 0)
       }
     });
-    const applied = await applyChatGptSyncedComposerText(input, next.text, {
+    const applied = await ChatGptComposerSync.applyChatGptSyncedComposerText(input, next.text, {
       context: "large-paste-text-fallback",
       caretOffset: next.caretOffset,
       restoreText: originalText,
       restoreCaretOffset: selection?.end,
-      suppressMs: GEMINI_LARGE_TEXT_SUPPRESS_MS
+      suppressMs: GEMINI_LARGE_TEXT_SUPPRESS_MS,
+      dependencies: getChatGptComposerSyncDependencies()
     });
 
     if (applied.ok) {
@@ -5316,53 +5137,94 @@
   }
 
   function describeFileForDebug(file) {
-    return globalThis.PWM.SafeSnapshots.describeFileForDebug(file);
+    return globalThis.PWM.SafeSnapshots?.describeFileForDebug?.(file) ||
+      (typeof contentDebug !== "undefined" ? contentDebug.describeFileForDebug(file) : {
+        nameLength: String(file?.name || "").length,
+        size: Number(file?.size || 0),
+        type: String(file?.type || "").split(";")[0].slice(0, 80),
+        lastModified: Number(file?.lastModified || 0) || 0
+      });
   }
 
   function describeFileInputForDebug(fileInput, source = "") {
     if (!isFileInputElement(fileInput)) return null;
+    if (typeof contentDebug !== "undefined") return contentDebug.describeFileInputForDebug(fileInput, source);
     return {
       tag: fileInput.tagName || "",
       source,
       disabled: Boolean(fileInput.disabled),
       hidden: Boolean(fileInput.hidden),
-      className: typeof fileInput.className === "string" ? fileInput.className : fileInput.getAttribute?.("class") || "",
-      accept: fileInput.accept || "",
+      classLength: String(typeof fileInput.className === "string" ? fileInput.className : fileInput.getAttribute?.("class") || "").length,
+      acceptLength: String(fileInput.accept || "").length,
       multiple: Boolean(fileInput.multiple),
       filesLength: Number(fileInput.files?.length || 0)
     };
   }
 
   function getSafeTextSnippet(el) {
-    if (!el) return "";
     let text = "";
     try {
-      text = String(el.innerText || el.textContent || "");
+      const normalize = typeof normalizeComposerText === "function" ? normalizeComposerText : (value) => String(value || "");
+      text = normalize(el?.innerText || el?.textContent || "").replace(/\s+/g, " ").trim();
     } catch {
       text = "";
     }
-    return text.replace(/\s+/g, " ").trim().slice(0, 80);
+    if (!text) return "";
+    const snippet = text.slice(0, 80);
+    if (/(?:bearer|cookie|credential|key|password|raw|reveal|secret|token|sk-[a-z0-9_-]{12,}|AKIA[0-9A-Z]{16})/i.test(snippet)) {
+      return `[text length=${text.length}]`;
+    }
+    if (/[A-Za-z0-9+/=_-]{24,}/.test(snippet)) return `[text length=${text.length}]`;
+    return snippet;
   }
 
   function describeElementForDebug(el, source = "") {
     if (!el) return null;
-    let className = "";
-    try {
-      className =
-        typeof el.className === "string"
-          ? el.className
-          : el.getAttribute?.("class") || "";
-    } catch {
-      className = "";
+    if (typeof contentDebug === "undefined") {
+      const safeAttribute = (name) => {
+        try {
+          return String(el?.getAttribute?.(name) || "");
+        } catch {
+          return "";
+        }
+      };
+      const safeDebugString = (value) => {
+        const text = String(value || "");
+        if (!text || text.length > 120) return "";
+        if (/(?:bearer|cookie|credential|key|password|raw|reveal|secret|token|sk-[a-z0-9_-]{12,}|AKIA[0-9A-Z]{16})/i.test(text)) {
+          return "";
+        }
+        if (/[A-Za-z0-9+/=_-]{24,}/.test(text)) return "";
+        if (/(?:[A-Za-z]:[\\/]|\.{1,2}[\\/]|[\\/][^\\/]+[\\/])/.test(text)) return "";
+        return text;
+      };
+      const safeDebugClassName = (value) => {
+        const text = String(value || "");
+        if (!text || text.length > 256) return "";
+        if (/[^A-Za-z0-9 _:-]/.test(text)) return "";
+        if (/(?:bearer|cookie|key|password|secret|token|sk-[a-z0-9_-]{12,}|AKIA[0-9A-Z]{16})/i.test(text)) return "";
+        if (/[A-Za-z0-9+/=_-]{24,}/.test(text)) return "";
+        return text;
+      };
+      const ariaLabel = safeAttribute("aria-label") || el.ariaLabel || "";
+      const title = safeAttribute("title") || el.title || "";
+      const className = typeof el.className === "string" ? el.className : safeAttribute("class");
+      return {
+        tag: el.tagName || "",
+        role: safeAttribute("role") || el.role || "",
+        ariaLabel: safeDebugString(ariaLabel),
+        ariaLabelLength: String(ariaLabel).length,
+        title: safeDebugString(title),
+        titleLength: String(title).length,
+        className: safeDebugClassName(className),
+        classLength: String(className).length,
+        textSnippet: getSafeTextSnippet(el),
+        source
+      };
     }
     return {
-      tag: el.tagName || "",
-      role: el.getAttribute?.("role") || el.role || "",
-      ariaLabel: el.getAttribute?.("aria-label") || el.ariaLabel || "",
-      title: el.getAttribute?.("title") || el.title || "",
-      className,
-      textSnippet: getSafeTextSnippet(el),
-      source
+      ...contentDebug.describeElementForDebug(el, source),
+      textSnippet: getSafeTextSnippet(el)
     };
   }
 
@@ -5403,7 +5265,9 @@
   }
 
   function formatSanitizedFileFallbackText(payload) {
-    const fileName = payload?.originalFile?.name || payload?.sanitizedFile?.name || "sanitized-file.txt";
+    const fileName = typeof redactSensitiveFileName === "function"
+      ? redactSensitiveFileName(payload?.sanitizedFile?.name || payload?.originalFile?.name || "sanitized-file.txt")
+      : sanitizeDownloadFileNameSegment(payload?.sanitizedFile?.name || payload?.originalFile?.name || "sanitized-file.txt");
     const language = fallbackLanguageFromFileName(fileName);
     return `LeakGuard sanitized file: ${fileName}\n\n\`\`\`${language}\n${String(
       payload?.redactedText || ""
@@ -5513,8 +5377,15 @@
   function isGeminiSourceUploadIcon(candidate, meta = null) {
     if (!candidate || String(candidate.tagName || "").toUpperCase() !== "MAT-ICON") return false;
     const details = meta || describeElementForDebug(candidate);
-    const className = details?.className || "";
-    const text = (details?.textSnippet || "").trim().toLowerCase();
+    const className =
+      details?.className ||
+      (typeof candidate.className === "string" ? candidate.className : candidate.getAttribute?.("class") || "");
+    const text = (
+      details?.textSnippet ||
+      candidate.innerText ||
+      candidate.textContent ||
+      ""
+    ).trim().toLowerCase();
     return /\bupload-icon\b/.test(className) && (text === "add_2" || text === "add");
   }
 
@@ -6508,7 +6379,11 @@
   }
 
   function buildSanitizedDownloadFileName(sanitizedFile) {
-    const originalName = sanitizeDownloadFileNameSegment(sanitizedFile?.name || "sanitized-file.txt");
+    const originalName = sanitizeDownloadFileNameSegment(
+      typeof redactSensitiveFileName === "function"
+        ? redactSensitiveFileName(sanitizedFile?.name || "sanitized-file.txt")
+        : sanitizedFile?.name || "sanitized-file.txt"
+    );
     const timestamp = new Date().toISOString().replace(/[:.]/g, "").replace(/\d{3}Z$/, "Z");
     return `LeakGuard/redacted/${timestamp}-${originalName}`;
   }
@@ -6550,7 +6425,11 @@
   }
 
   function buildGeminiSanitizedDownloadFileName(sanitizedFile) {
-    const originalName = sanitizeDownloadFileNameSegment(sanitizedFile?.name || "sanitized-file.txt");
+    const originalName = sanitizeDownloadFileNameSegment(
+      typeof redactSensitiveFileName === "function"
+        ? redactSensitiveFileName(sanitizedFile?.name || "sanitized-file.txt")
+        : sanitizedFile?.name || "sanitized-file.txt"
+    );
     const timestamp = new Date().toISOString().replace(/[:.]/g, "").replace(/\d{3}Z$/, "Z");
     return `LeakGuard/redacted/${timestamp}-${originalName}`;
   }
@@ -6936,63 +6815,6 @@
     return true;
   }
 
-  function clearPendingGeminiSanitizedFileHandoff(reason = "") {
-    clearPendingGeminiGhostIngressClickInterceptor(reason || "pending-cleared");
-    if (!pendingGeminiSanitizedFileHandoff) {
-      clearPendingSanitizedAttachPrompt(reason || "gemini-pending-cleared");
-      return;
-    }
-
-    const pending = pendingGeminiSanitizedFileHandoff;
-    pendingGeminiSanitizedFileHandoff = null;
-    clearPendingSanitizedAttachPrompt(reason || "gemini-pending-cleared");
-
-    if (pendingGeminiSanitizedFileObserver) {
-      try {
-        pendingGeminiSanitizedFileObserver.disconnect();
-      } catch {
-        debugReveal("file-handoff:pending-cleanup-failed", {
-          site: "gemini",
-          phase: "observer-disconnect",
-          reason,
-          hadPending: true
-        });
-      }
-      pendingGeminiSanitizedFileObserver = null;
-    }
-
-    if (pendingGeminiSanitizedFileTimer) {
-      clearTimeout(pendingGeminiSanitizedFileTimer);
-      pendingGeminiSanitizedFileTimer = 0;
-    }
-
-    if (pendingGeminiSanitizedFileClickHandler) {
-      try {
-        document.removeEventListener("click", pendingGeminiSanitizedFileClickHandler, true);
-      } catch {
-        debugReveal("file-handoff:pending-cleanup-failed", {
-          site: "gemini",
-          phase: "click-listener-remove",
-          reason,
-          hadPending: true
-        });
-      }
-      pendingGeminiSanitizedFileClickHandler = null;
-    }
-
-    debugReveal("file-handoff:gemini-pending-cleared", {
-      reason,
-      ageMs: Math.max(0, Date.now() - Number(pending.createdAt || 0)),
-      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
-    });
-    debugReveal("file-handoff:pending-cleared", {
-      site: "gemini",
-      reason,
-      ageMs: Math.max(0, Date.now() - Number(pending.createdAt || 0)),
-      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
-    });
-  }
-
   function isLikelyGeminiUploadClickTarget(target) {
     const candidate = normalizeTarget(target);
     const explicitSelectors = [
@@ -7029,21 +6851,6 @@
 
     const haystack = `${meta?.ariaLabel || ""} ${meta?.title || ""} ${meta?.textSnippet || ""} ${meta?.className || ""}`.toLowerCase();
     return /\b(upload|file|files|attach)\b/.test(haystack);
-  }
-
-  function schedulePendingGeminiSanitizedFileAttempt(reason = "") {
-    if (!pendingGeminiSanitizedFileHandoff) return;
-    const attempt = () => {
-      try {
-        attemptPendingGeminiSanitizedFileHandoff(reason);
-      } catch (error) {
-        handleContentError(error);
-      }
-    };
-
-    setTimeout(attempt, 0);
-    setTimeout(attempt, 250);
-    setTimeout(attempt, 1000);
   }
 
   function describeGeminiHandoffDiscovery(discovery) {
@@ -7086,256 +6893,6 @@
       selectedOverlayItem: details.selectedOverlayItem,
       overlayCandidates: details.overlayCandidates
     };
-  }
-
-  function attemptPendingGeminiSanitizedFileHandoff(reason = "") {
-    const pending = pendingGeminiSanitizedFileHandoff;
-    if (!pending || !isGeminiHost()) return false;
-
-    if (Date.now() > pending.expiresAt) {
-      clearPendingGeminiSanitizedFileHandoff("expired");
-      return false;
-    }
-
-    const event = {
-      type: "pending-gemini-sanitized-file",
-      target: null
-    };
-    const discovery = discoverGeminiFileHandoffElements(event, null);
-    const fileInput = discovery.fileInput;
-    if (!fileInput) {
-      debugReveal("file-handoff:gemini-pending-input-not-found", {
-        reason,
-        ...describeGeminiHandoffDiscovery(discovery),
-        overlay: describeGeminiOverlayExposure(),
-        sanitizedFile: describeFileForDebug(pending.sanitizedFile)
-      });
-      return false;
-    }
-    debugReveal("file-handoff:pending-input-captured", {
-      site: "gemini",
-      reason,
-      input: describeFileInputForDebug(fileInput, "pending-gemini-file-input"),
-      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
-    });
-
-    const details = createSanitizedFileHandoffDetails(
-      event,
-      pending.sanitizedFile,
-      "gemini:pending-file-input-assignment"
-    );
-    details.fileInputCountBeforeClick = discovery.fileInputCount;
-    details.fileInputCountAfterTopTriggerClick = discovery.fileInputCount;
-    details.fileInputCountAfterOverlayItemClick = discovery.fileInputCount;
-    details.openShadowRootCount = discovery.openShadowRootCount;
-    details.failureReason = reason || "pending_file_input_assignment";
-
-    const transfer = createSanitizedDataTransferForHandoff(pending.sanitizedFile, details);
-    if (!transfer) {
-      details.failureReason = "data_transfer_failed";
-      logSanitizedFileHandoffFailure(details);
-      return false;
-    }
-
-    const assigned = handOffSanitizedFileInput(fileInput, transfer, {
-      dispatchInput: true,
-      details
-    });
-    if (!assigned) {
-      logSanitizedFileHandoffFailure(details);
-      return false;
-    }
-
-    debugReveal("file-handoff:gemini-pending-assigned", {
-      reason,
-      input: describeFileInputForDebug(fileInput, "pending-gemini-file-input"),
-      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
-    });
-    debugReveal("file-handoff:pending-assigned", {
-      site: "gemini",
-      reason,
-      input: describeFileInputForDebug(fileInput, "pending-gemini-file-input"),
-      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
-    });
-    clearPendingGeminiSanitizedFileHandoff("assigned");
-    showFileProcessingSuccess("Sanitized file attached.", {
-      site: "gemini",
-      reason: "pending-attached"
-    });
-    setBadge("LeakGuard attached the sanitized file.");
-    hideBadgeSoon(3200);
-    refreshBadgeFromCurrentInput();
-    return true;
-  }
-
-  function queuePendingGeminiSanitizedFileHandoff(event, input, sanitizedFile, details = null) {
-    if (!isGeminiHost() || event?.type !== "drop" || !sanitizedFile) return false;
-
-    const requestedHandoffStage = String(details?.handoffStage || "");
-    const isStreamingPending = requestedHandoffStage.includes("streaming");
-    clearPendingGeminiSanitizedFileHandoff("replaced");
-    pendingGeminiSanitizedFileHandoff = {
-      sanitizedFile,
-      createdAt: Date.now(),
-      expiresAt: Date.now() + GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MS,
-      sessionHash: lastGeminiDropSessionHash || ""
-    };
-
-    if (details) {
-      details.handoffStage = isStreamingPending
-        ? requestedHandoffStage
-        : "gemini:pending-user-upload-input";
-      details.failureReason = "pending_until_user_exposes_file_input";
-    }
-
-    if (typeof MutationObserver === "function") {
-      try {
-        pendingGeminiSanitizedFileObserver = new MutationObserver(() => {
-          attemptPendingGeminiSanitizedFileHandoff("mutation");
-        });
-        pendingGeminiSanitizedFileObserver.observe(document.documentElement || document, {
-          childList: true,
-          subtree: true
-        });
-      } catch {
-        pendingGeminiSanitizedFileObserver = null;
-      }
-    }
-
-    pendingGeminiSanitizedFileClickHandler = (clickEvent) => {
-      if (!pendingGeminiSanitizedFileHandoff) return;
-      if (isLikelyGeminiUploadClickTarget(clickEvent?.target)) {
-        debugReveal("file-handoff:gemini-upload-click-observed", {
-          target: describeElementForDebug(normalizeTarget(clickEvent?.target), "pending-upload-click"),
-          pendingAgeMs: Math.max(
-            0,
-            Date.now() - Number(pendingGeminiSanitizedFileHandoff.createdAt || 0)
-          )
-        });
-        debugReveal("file-handoff:pending-site-upload-click-observed", {
-          site: "gemini",
-          target: describeElementForDebug(normalizeTarget(clickEvent?.target), "pending-upload-click"),
-          pendingAgeMs: Math.max(
-            0,
-            Date.now() - Number(pendingGeminiSanitizedFileHandoff.createdAt || 0)
-          )
-        });
-        schedulePendingGeminiSanitizedFileAttempt("upload-click");
-      }
-    };
-    try {
-      document.addEventListener("click", pendingGeminiSanitizedFileClickHandler, true);
-    } catch {
-      pendingGeminiSanitizedFileClickHandler = null;
-    }
-
-    pendingGeminiSanitizedFileTimer = setTimeout(() => {
-      clearPendingGeminiSanitizedFileHandoff("expired");
-    }, GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MS);
-
-    debugReveal("file-handoff:gemini-pending-queued", {
-      ttlMs: GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MS,
-      sanitizedFile: describeFileForDebug(sanitizedFile),
-      sessionHash: lastGeminiDropSessionHash || ""
-    });
-    if (isStreamingPending) {
-      debugReveal("file-handoff:gemini-streaming-pending-queued", {
-        ttlMs: GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MS,
-        sanitizedFile: describeFileForDebug(sanitizedFile),
-        sessionHash: lastGeminiDropSessionHash || ""
-      });
-    }
-    debugReveal("pending-attach-synthetic-loop-suppressed", {
-      site: "gemini",
-      streaming: isStreamingPending,
-      sanitizedFile: describeFileForDebug(sanitizedFile)
-    });
-    hideDmzOverlay();
-    const pendingEvent = createPendingAttachEvent(event, "pending-gemini-sanitized-file-attach");
-    showPendingSanitizedAttachPrompt(getFileHandoffAdapterById("gemini"), {
-      site: "gemini",
-      event: pendingEvent,
-      input,
-      sanitizedFile,
-      message: getPendingSanitizedAttachPromptMessage("gemini")
-    });
-    setBadge(getPendingSanitizedAttachPromptMessage("gemini"));
-    hideBadgeSoon(6500);
-    return true;
-  }
-
-  function hasPendingGeminiSanitizedFileHandoff(sanitizedFile) {
-    return Boolean(
-      pendingGeminiSanitizedFileHandoff &&
-        (!sanitizedFile || pendingGeminiSanitizedFileHandoff.sanitizedFile === sanitizedFile)
-    );
-  }
-
-  function getPendingGeminiSanitizedFileHandoffDebug() {
-    if (!pendingGeminiSanitizedFileHandoff) return null;
-    return {
-      keys: Object.keys(pendingGeminiSanitizedFileHandoff),
-      sanitizedFile: pendingGeminiSanitizedFileHandoff.sanitizedFile,
-      sanitizedFileDebug: describeFileForDebug(pendingGeminiSanitizedFileHandoff.sanitizedFile),
-      expiresAt: pendingGeminiSanitizedFileHandoff.expiresAt,
-      sessionHash: pendingGeminiSanitizedFileHandoff.sessionHash || ""
-    };
-  }
-
-  function clearPendingGrokSanitizedFileHandoff(reason = "") {
-    if (!pendingGrokSanitizedFileHandoff) {
-      clearPendingSanitizedAttachPrompt(reason || "grok-pending-cleared");
-      return;
-    }
-
-    const pending = pendingGrokSanitizedFileHandoff;
-    pendingGrokSanitizedFileHandoff = null;
-    clearPendingSanitizedAttachPrompt(reason || "grok-pending-cleared");
-
-    if (pendingGrokSanitizedFileObserver) {
-      try {
-        pendingGrokSanitizedFileObserver.disconnect();
-      } catch {
-        debugReveal("file-handoff:pending-cleanup-failed", {
-          site: "grok",
-          phase: "observer-disconnect",
-          reason,
-          hadPending: true
-        });
-      }
-      pendingGrokSanitizedFileObserver = null;
-    }
-
-    if (pendingGrokSanitizedFileTimer) {
-      clearTimeout(pendingGrokSanitizedFileTimer);
-      pendingGrokSanitizedFileTimer = 0;
-    }
-
-    if (pendingGrokSanitizedFileClickHandler) {
-      try {
-        document.removeEventListener("click", pendingGrokSanitizedFileClickHandler, true);
-      } catch {
-        debugReveal("file-handoff:pending-cleanup-failed", {
-          site: "grok",
-          phase: "click-listener-remove",
-          reason,
-          hadPending: true
-        });
-      }
-      pendingGrokSanitizedFileClickHandler = null;
-    }
-
-    debugReveal("file-handoff:grok-pending-cleared", {
-      reason,
-      ageMs: Math.max(0, Date.now() - Number(pending.createdAt || 0)),
-      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
-    });
-    debugReveal("file-handoff:pending-cleared", {
-      site: "grok",
-      reason,
-      ageMs: Math.max(0, Date.now() - Number(pending.createdAt || 0)),
-      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
-    });
   }
 
   function getGrokUploadClickCandidates(clickEventOrTarget) {
@@ -7459,296 +7016,6 @@
           score: scoreGrokFileInput(input, source)
         }))
     };
-  }
-
-  function schedulePendingGrokSanitizedFileAttempt(reason = "") {
-    if (!pendingGrokSanitizedFileHandoff) return;
-    const attempt = () => {
-      try {
-        attemptPendingGrokSanitizedFileHandoff(reason);
-      } catch (error) {
-        handleContentError(error);
-      }
-    };
-
-    setTimeout(attempt, 0);
-    setTimeout(attempt, 250);
-    setTimeout(attempt, 1000);
-  }
-
-  function attemptPendingGrokSanitizedFileHandoff(reason = "") {
-    const pending = pendingGrokSanitizedFileHandoff;
-    if (!pending || !isGrokHost()) return false;
-
-    if (Date.now() > pending.expiresAt) {
-      clearPendingGrokSanitizedFileHandoff("expired");
-      return false;
-    }
-
-    const event = {
-      type: "pending-grok-sanitized-file",
-      target: pending.target || null
-    };
-    const discovery = discoverGrokPendingFileInput(event, pending.input || null);
-    const fileInput = discovery.fileInput;
-    if (!fileInput) {
-      debugReveal("file-handoff:grok-pending-input-not-found", {
-        reason,
-        ...describeGrokPendingInputDiscovery(discovery),
-        sanitizedFile: describeFileForDebug(pending.sanitizedFile)
-      });
-      return false;
-    }
-    debugReveal("file-handoff:pending-input-captured", {
-      site: "grok",
-      reason,
-      input: describeFileInputForDebug(fileInput, "pending-grok-file-input"),
-      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
-    });
-
-    const details = createSanitizedFileHandoffDetails(
-      event,
-      pending.sanitizedFile,
-      "grok:pending-file-input-assignment"
-    );
-    details.fileInputCountBeforeClick = discovery.fileInputCount;
-    details.fileInputCountAfterTopTriggerClick = discovery.fileInputCount;
-    details.fileInputCountAfterOverlayItemClick = discovery.fileInputCount;
-    details.openShadowRootCount = discovery.openShadowRootCount;
-    details.failureReason = reason || "pending_file_input_assignment";
-
-    const transfer = createSanitizedDataTransferForHandoff(pending.sanitizedFile, details);
-    if (!transfer) {
-      details.failureReason = "data_transfer_failed";
-      logSanitizedFileHandoffFailure(details);
-      return false;
-    }
-
-    const assigned = handOffSanitizedFileInput(fileInput, transfer, {
-      dispatchInput: true,
-      details
-    });
-    if (!assigned) {
-      logSanitizedFileHandoffFailure(details);
-      return false;
-    }
-
-    debugReveal("file-handoff:grok-pending-assigned", {
-      reason,
-      input: describeFileInputForDebug(fileInput, "pending-grok-file-input"),
-      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
-    });
-    debugReveal("file-handoff:pending-assigned", {
-      site: "grok",
-      reason,
-      input: describeFileInputForDebug(fileInput, "pending-grok-file-input"),
-      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
-    });
-    clearPendingGrokSanitizedFileHandoff("assigned");
-    showFileProcessingSuccess("Sanitized file attached.", {
-      site: "grok",
-      reason: "pending-attached"
-    });
-    setBadge("LeakGuard attached the sanitized file.");
-    hideBadgeSoon(3200);
-    refreshBadgeFromCurrentInput();
-    return true;
-  }
-
-  function queuePendingGrokSanitizedFileHandoff(event, input, sanitizedFile, details = null) {
-    if (!isGrokHost() || event?.type !== "drop" || !sanitizedFile) return false;
-
-    const requestedHandoffStage = String(details?.handoffStage || "");
-    const isStreamingPending = requestedHandoffStage.includes("streaming");
-    clearPendingGrokSanitizedFileHandoff("replaced");
-    pendingGrokSanitizedFileHandoff = {
-      sanitizedFile,
-      input: input || null,
-      target: normalizeTarget(event?.target),
-      createdAt: Date.now(),
-      expiresAt: Date.now() + GROK_PENDING_SANITIZED_FILE_HANDOFF_MS
-    };
-
-    if (details) {
-      details.handoffStage = isStreamingPending
-        ? requestedHandoffStage
-        : "grok:pending-user-upload-input";
-      details.failureReason = "pending_until_user_exposes_file_input";
-    }
-
-    if (typeof MutationObserver === "function") {
-      try {
-        pendingGrokSanitizedFileObserver = new MutationObserver(() => {
-          attemptPendingGrokSanitizedFileHandoff("mutation");
-        });
-        pendingGrokSanitizedFileObserver.observe(document.documentElement || document, {
-          childList: true,
-          subtree: true
-        });
-      } catch {
-        pendingGrokSanitizedFileObserver = null;
-      }
-    }
-
-    pendingGrokSanitizedFileClickHandler = (clickEvent) => {
-      if (!pendingGrokSanitizedFileHandoff) return;
-      if (isLikelyGrokUploadClickTarget(clickEvent)) {
-        debugReveal("file-handoff:grok-upload-click-observed", {
-          target: describeElementForDebug(normalizeTarget(clickEvent?.target), "pending-grok-upload-click"),
-          pendingAgeMs: Math.max(
-            0,
-            Date.now() - Number(pendingGrokSanitizedFileHandoff.createdAt || 0)
-          )
-        });
-        debugReveal("file-handoff:pending-site-upload-click-observed", {
-          site: "grok",
-          target: describeElementForDebug(normalizeTarget(clickEvent?.target), "pending-grok-upload-click"),
-          pendingAgeMs: Math.max(
-            0,
-            Date.now() - Number(pendingGrokSanitizedFileHandoff.createdAt || 0)
-          )
-        });
-        schedulePendingGrokSanitizedFileAttempt("upload-click");
-      }
-    };
-    try {
-      document.addEventListener("click", pendingGrokSanitizedFileClickHandler, true);
-    } catch {
-      pendingGrokSanitizedFileClickHandler = null;
-    }
-
-    pendingGrokSanitizedFileTimer = setTimeout(() => {
-      clearPendingGrokSanitizedFileHandoff("expired");
-    }, GROK_PENDING_SANITIZED_FILE_HANDOFF_MS);
-
-    debugReveal("file-handoff:grok-pending-queued", {
-      ttlMs: GROK_PENDING_SANITIZED_FILE_HANDOFF_MS,
-      sanitizedFile: describeFileForDebug(sanitizedFile)
-    });
-    if (isStreamingPending) {
-      debugReveal("file-handoff:grok-streaming-pending-queued", {
-        ttlMs: GROK_PENDING_SANITIZED_FILE_HANDOFF_MS,
-        sanitizedFile: describeFileForDebug(sanitizedFile)
-      });
-    }
-    debugReveal("pending-attach-synthetic-loop-suppressed", {
-      site: "grok",
-      streaming: isStreamingPending,
-      sanitizedFile: describeFileForDebug(sanitizedFile)
-    });
-    hideDmzOverlay();
-    const pendingEvent = createPendingAttachEvent(event, "pending-grok-sanitized-file-attach");
-    showPendingSanitizedAttachPrompt(getFileHandoffAdapterById("grok"), {
-      site: "grok",
-      event: pendingEvent,
-      input,
-      sanitizedFile,
-      message: getPendingSanitizedAttachPromptMessage("grok")
-    });
-    setBadge(getPendingSanitizedAttachPromptMessage("grok"));
-    hideBadgeSoon(6500);
-    return true;
-  }
-
-  function hasPendingGrokSanitizedFileHandoff(sanitizedFile) {
-    return Boolean(
-      pendingGrokSanitizedFileHandoff &&
-        (!sanitizedFile || pendingGrokSanitizedFileHandoff.sanitizedFile === sanitizedFile)
-    );
-  }
-
-  function getPendingGrokSanitizedFileHandoffDebug() {
-    if (!pendingGrokSanitizedFileHandoff) return null;
-    return {
-      keys: Object.keys(pendingGrokSanitizedFileHandoff),
-      sanitizedFile: pendingGrokSanitizedFileHandoff.sanitizedFile,
-      sanitizedFileDebug: describeFileForDebug(pendingGrokSanitizedFileHandoff.sanitizedFile),
-      expiresAt: pendingGrokSanitizedFileHandoff.expiresAt
-    };
-  }
-
-  function clearPendingGenericSanitizedFileHandoff(reason = "") {
-    if (!pendingGenericSanitizedFileHandoff) {
-      clearPendingSanitizedAttachPrompt(reason || "generic-pending-cleared");
-      return;
-    }
-
-    const pending = pendingGenericSanitizedFileHandoff;
-    pendingGenericSanitizedFileHandoff = null;
-    clearPendingSanitizedAttachPrompt(reason || "generic-pending-cleared");
-
-    if (pendingGenericSanitizedFileTimer) {
-      clearTimeout(pendingGenericSanitizedFileTimer);
-      pendingGenericSanitizedFileTimer = 0;
-    }
-
-    debugReveal("file-handoff:generic-pending-cleared", {
-      site: pending.site || "",
-      reason,
-      ageMs: Math.max(0, Date.now() - Number(pending.createdAt || 0)),
-      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
-    });
-    debugReveal("file-handoff:pending-cleared", {
-      site: pending.site || "",
-      reason,
-      ageMs: Math.max(0, Date.now() - Number(pending.createdAt || 0)),
-      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
-    });
-  }
-
-  function queuePendingGenericSanitizedFileHandoff(adapter, event, input, sanitizedFile, details = null) {
-    const selectedAdapter = normalizeFileHandoffAdapter(adapter);
-    if (!selectedAdapter || !sanitizedFile) return false;
-    if (selectedAdapter.id === "gemini" || selectedAdapter.id === "grok" || selectedAdapter.id === "generic") {
-      return false;
-    }
-    if (!isFileHandoffAdapterPendingAttachEnabled(selectedAdapter)) return false;
-
-    const requestedHandoffStage = String(details?.handoffStage || "");
-    clearPendingGenericSanitizedFileHandoff("replaced");
-    pendingGenericSanitizedFileHandoff = {
-      site: selectedAdapter.id,
-      sanitizedFile,
-      input: input || null,
-      target: normalizeTarget(event?.target),
-      createdAt: Date.now(),
-      expiresAt: Date.now() + GROK_PENDING_SANITIZED_FILE_HANDOFF_MS
-    };
-
-    if (details) {
-      details.handoffStage = requestedHandoffStage || `${selectedAdapter.id}:pending-user-upload-input`;
-      details.failureReason = "pending_until_user_exposes_file_input";
-    }
-
-    pendingGenericSanitizedFileTimer = setTimeout(() => {
-      clearPendingGenericSanitizedFileHandoff("expired");
-    }, GROK_PENDING_SANITIZED_FILE_HANDOFF_MS);
-
-    debugReveal("file-handoff:generic-pending-queued", {
-      site: selectedAdapter.id,
-      ttlMs: GROK_PENDING_SANITIZED_FILE_HANDOFF_MS,
-      sanitizedFile: describeFileForDebug(sanitizedFile)
-    });
-    debugReveal("pending-attach-synthetic-loop-suppressed", {
-      site: selectedAdapter.id,
-      streaming: requestedHandoffStage.includes("streaming"),
-      sanitizedFile: describeFileForDebug(sanitizedFile)
-    });
-    hideDmzOverlay();
-    const pendingEvent = createPendingAttachEvent(
-      event,
-      `pending-${selectedAdapter.id}-sanitized-file-attach`
-    );
-    showPendingSanitizedAttachPrompt(selectedAdapter, {
-      site: selectedAdapter.id,
-      event: pendingEvent,
-      input,
-      sanitizedFile,
-      message: getPendingSanitizedAttachPromptMessage(selectedAdapter.id)
-    });
-    setBadge(getPendingSanitizedAttachPromptMessage(selectedAdapter.id));
-    hideBadgeSoon(6500);
-    return true;
   }
 
   function clearFileDragSession(options = {}) {
@@ -9309,6 +8576,12 @@
     return /\.(?:doc|docm|xls|xlsm)$/i.test(String(file?.name || "").toLowerCase());
   }
 
+  function isUnsupportedBinaryFileForProtectedUpload(file) {
+    const extension = getLocalFileExtension(file);
+    const mimeType = getLocalFileMimeType(file);
+    return extension === ".bin" || (extension === "" && mimeType === "application/octet-stream");
+  }
+
   function getLocalFileExtension(file) {
     if (typeof FileScanner.getFileExtension === "function") {
       return String(FileScanner.getFileExtension(file?.name || "") || "").toLowerCase();
@@ -9351,7 +8624,9 @@
     const files = Array.from(policy.files || []);
     return (
       files.length === 1 &&
-      (isUnsupportedLegacyOfficeFile(files[0]) || isUnsupportedImageFileForProtectedUpload(files[0]))
+      (isUnsupportedLegacyOfficeFile(files[0]) ||
+        isUnsupportedImageFileForProtectedUpload(files[0]) ||
+        isUnsupportedBinaryFileForProtectedUpload(files[0]))
     );
   }
 
@@ -10170,11 +9445,27 @@
       return;
     }
 
+    const selectedSignature = getFileListMetadataSignature(selectedFiles);
+    const processingSignature = fileInputProcessingSignatures.get(event.target) || "";
+    if (selectedSignature && processingSignature === selectedSignature) {
+      consumeInterceptionEvent(event);
+      debugReveal("file-input:duplicate-raw-event-suppressed", {
+        eventType: event.type || "",
+        input: describeFileInputForDebug(event.target, "processing"),
+        fileCount: selectedFiles.length
+      });
+      return {
+        handled: true,
+        ok: true,
+        strategy: "duplicate-file-input-event-suppressed"
+      };
+    }
+
     let transaction = null;
     if (isFirefoxProtectedInput) {
       transaction = setFirefoxFileInputTransaction(event.target, {
         state: "processing",
-        rawSignature: getFileListMetadataSignature(selectedFiles),
+        rawSignature: selectedSignature,
         startedAt: Date.now(),
         suppressUntil: Date.now() + PROGRAMMATIC_INPUT_SUPPRESS_MS,
         replacementDispatched: false
@@ -10198,12 +9489,20 @@
       if (!(isFirefoxRuntime() && isProtectedFileDropDriver(getCurrentHandoffDriverId()))) return;
     }
 
-    const result = await maybeHandleLocalFileInsert(
-      event,
-      input,
-      selectedTransfer,
-      "file-input"
-    );
+    fileInputProcessingSignatures.set(event.target, selectedSignature);
+    let result;
+    try {
+      result = await maybeHandleLocalFileInsert(
+        event,
+        input,
+        selectedTransfer,
+        "file-input"
+      );
+    } finally {
+      if (fileInputProcessingSignatures.get(event.target) === selectedSignature) {
+        fileInputProcessingSignatures.delete(event.target);
+      }
+    }
     if (isFirefoxProtectedInput && transaction) {
       const latest = getFirefoxFileInputTransaction(event.target);
       if (result?.ok) {
@@ -10252,10 +9551,24 @@
     const text = getInputText(input);
     if (!text || !text.trim()) return;
 
+    const quickAnalysis = analyzeText(text);
+    if (!analysisNeedsEventOwnership(quickAnalysis)) return;
+
+    consumeInterceptionEvent(event);
+
     const analysis = await analyzeTextWithAiAssist(text);
     if (!analysis.findings.length && !analysis.placeholderNormalized) return;
 
-    consumeInterceptionEvent(event);
+    if (analysisHasOnlySanitizedPlaceholderFindings(analysis)) {
+      const normalized = await applyNormalizedComposerRewrite(input, text, "submit");
+      if (!normalized.ok) return;
+
+      queueVerifiedComposerSend(input, normalized.text, "submit", () => {
+        bypassNextSubmit = true;
+        submitComposer(form, input);
+      });
+      return;
+    }
 
     const policy = analysis.findings.length ? await getPolicyForAction() : getActivePolicy();
     const destinationPolicy = analysis.findings.length
@@ -10268,36 +9581,23 @@
 
     const httpPolicyHandled = await handleHttpSecretPolicy(policy, analysis.secretFindings, async () => {
       const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
-      const applied = await applyComposerText(input, result.redactedText, {
-        caretOffset: result.redactedText.length,
-        restoreText: analysis.normalizedText,
-        restoreCaretOffset: analysis.normalizedText.length
-      });
-
-      if (!applied.ok) {
-        await showRewriteFailure(
-          "submit",
-          collectFailureDetails(input, result.redactedText, applied.actual, "submit")
-        );
-        refreshBadgeFromCurrentInput();
-        return;
-      }
+      const rewritten = await applySubmitRedactionTransactionally(
+        input,
+        analysis.normalizedText,
+        result.redactedText,
+        "submit",
+        analysis.secretFindings
+      );
+      if (!rewritten) return;
 
       setBadge("Content redacted");
       hideBadgeSoon();
       refreshBadgeFromCurrentInput();
 
-      if (!(await ensureExactComposerState(input, result.redactedText))) {
-        await showRewriteFailure(
-          "submit",
-          collectFailureDetails(input, result.redactedText, getInputText(input), "submit")
-        );
-        refreshBadgeFromCurrentInput();
-        return;
-      }
-
-      bypassNextSubmit = true;
-      queueMicrotask(() => submitComposer(form, input));
+      queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
+        bypassNextSubmit = true;
+        submitComposer(form, input);
+      });
     });
 
     if (httpPolicyHandled) {
@@ -10308,36 +9608,23 @@
       const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings, {
         auditReason: destinationPolicy.reason
       });
-      const applied = await applyComposerText(input, result.redactedText, {
-        caretOffset: result.redactedText.length,
-        restoreText: analysis.normalizedText,
-        restoreCaretOffset: analysis.normalizedText.length
-      });
-
-      if (!applied.ok) {
-        await showRewriteFailure(
-          "submit",
-          collectFailureDetails(input, result.redactedText, applied.actual, "submit")
-        );
-        refreshBadgeFromCurrentInput();
-        return;
-      }
+      const rewritten = await applySubmitRedactionTransactionally(
+        input,
+        analysis.normalizedText,
+        result.redactedText,
+        "submit",
+        analysis.secretFindings
+      );
+      if (!rewritten) return;
 
       setBadge("Destination policy required redaction");
       hideBadgeSoon();
       refreshBadgeFromCurrentInput();
 
-      if (!(await ensureExactComposerState(input, result.redactedText))) {
-        await showRewriteFailure(
-          "submit",
-          collectFailureDetails(input, result.redactedText, getInputText(input), "submit")
-        );
-        refreshBadgeFromCurrentInput();
-        return;
-      }
-
-      bypassNextSubmit = true;
-      queueMicrotask(() => submitComposer(form, input));
+      queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
+        bypassNextSubmit = true;
+        submitComposer(form, input);
+      });
       return;
     }
 
@@ -10361,8 +9648,10 @@
         return;
       }
 
-      bypassNextSubmit = true;
-      queueMicrotask(() => submitComposer(form, input));
+      queueVerifiedComposerSend(input, normalized.text, "submit", () => {
+        bypassNextSubmit = true;
+        submitComposer(form, input);
+      });
       return;
     }
 
@@ -10377,36 +9666,93 @@
 
     const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
 
-    const applied = await applyComposerText(input, result.redactedText, {
-      caretOffset: result.redactedText.length,
-      restoreText: analysis.normalizedText,
-      restoreCaretOffset: analysis.normalizedText.length
-    });
-
-    if (!applied.ok) {
-      await showRewriteFailure(
-        "submit",
-        collectFailureDetails(input, result.redactedText, applied.actual, "submit")
-      );
-      refreshBadgeFromCurrentInput();
-      return;
-    }
+    const rewritten = await applySubmitRedactionTransactionally(
+      input,
+      analysis.normalizedText,
+      result.redactedText,
+      "submit",
+      analysis.secretFindings
+    );
+    if (!rewritten) return;
 
     setBadge("Content redacted");
     hideBadgeSoon();
     refreshBadgeFromCurrentInput();
 
-    if (!(await ensureExactComposerState(input, result.redactedText))) {
-      await showRewriteFailure(
-        "submit",
-        collectFailureDetails(input, result.redactedText, getInputText(input), "submit")
-      );
-      refreshBadgeFromCurrentInput();
+    queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
+      bypassNextSubmit = true;
+      submitComposer(form, input);
+    });
+  }
+
+  function findSendButtonClickTarget(event) {
+    const candidates = [];
+    if (typeof event?.composedPath === "function") {
+      candidates.push(...event.composedPath());
+    }
+    candidates.push(event?.target);
+
+    for (const candidate of candidates) {
+      if (!candidate || candidate === window || candidate === document) continue;
+      const element = candidate.nodeType === Node.ELEMENT_NODE ? candidate : candidate.parentElement;
+      if (!element) continue;
+
+      for (const selector of SEND_BUTTON_SELECTORS) {
+        const button = element.matches?.(selector) ? element : element.closest?.(selector);
+        if (button && isVisible(button)) {
+          return button;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  function createSyntheticSubmitInterceptionEvent(target) {
+    return {
+      target,
+      preventDefault() {},
+      stopPropagation() {},
+      stopImmediatePropagation() {}
+    };
+  }
+
+  async function maybeHandleSendButtonClick(event) {
+    if (!extensionRuntimeAvailable) {
       return;
     }
 
-    bypassNextSubmit = true;
-    queueMicrotask(() => submitComposer(form, input));
+    const clickTarget = normalizeTarget(event.target);
+    if (clickTarget?.closest?.(".pwm-modal-backdrop")) {
+      return;
+    }
+
+    if (modalOpen) {
+      consumeInterceptionEvent(event);
+      return;
+    }
+
+    if (bypassNextSendButtonClick) {
+      bypassNextSendButtonClick = false;
+      return;
+    }
+
+    const button = findSendButtonClickTarget(event);
+    if (!button) return;
+
+    const input = findComposer(button);
+    if (!input) return;
+    noteActiveRiskEditor(input);
+
+    const text = getInputText(input);
+    if (!text || !text.trim()) return;
+
+    const quickAnalysis = analyzeText(text);
+    if (!analysisNeedsEventOwnership(quickAnalysis)) return;
+
+    consumeInterceptionEvent(event);
+    const form = button.closest?.("form") || input.closest?.("form") || null;
+    await maybeHandleSubmit(createSyntheticSubmitInterceptionEvent(form || input));
   }
 
   async function maybeHandleFallbackSendKey(event) {
@@ -10431,10 +9777,27 @@
     const text = getInputText(input);
     if (!text || !text.trim()) return;
 
+    const quickAnalysis = analyzeText(text);
+    if (!analysisNeedsEventOwnership(quickAnalysis)) return;
+
+    consumeInterceptionEvent(event);
+
     const analysis = await analyzeTextWithAiAssist(text);
     if (!analysis.findings.length && !analysis.placeholderNormalized) return;
 
-    consumeInterceptionEvent(event);
+    if (analysisHasOnlySanitizedPlaceholderFindings(analysis)) {
+      const normalized = await applyNormalizedComposerRewrite(input, text, "submit");
+      if (!normalized.ok) return;
+
+      queueVerifiedComposerSend(input, normalized.text, "submit", () => {
+        const button = findSendButton(input);
+        if (button) {
+          clearAllRiskSessionState();
+          button.click();
+        }
+      });
+      return;
+    }
 
     const policy = analysis.findings.length ? await getPolicyForAction() : getActivePolicy();
     const destinationPolicy = analysis.findings.length
@@ -10447,45 +9810,25 @@
 
     const httpPolicyHandled = await handleHttpSecretPolicy(policy, analysis.secretFindings, async () => {
       const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
-      const applied = await applyComposerText(input, result.redactedText, {
-        caretOffset: result.redactedText.length,
-        restoreText: analysis.normalizedText,
-        restoreCaretOffset: analysis.normalizedText.length
-      });
-
-      if (!applied.ok) {
-        await showRewriteFailure(
-          "submit",
-          collectFailureDetails(input, result.redactedText, applied.actual, "submit")
-        );
-        refreshBadgeFromCurrentInput();
-        return;
-      }
+      const rewritten = await applySubmitRedactionTransactionally(
+        input,
+        analysis.normalizedText,
+        result.redactedText,
+        "submit",
+        analysis.secretFindings
+      );
+      if (!rewritten) return;
 
       setBadge("Content redacted");
       hideBadgeSoon();
       refreshBadgeFromCurrentInput();
 
-      queueMicrotask(() => {
-        ensureExactComposerState(input, result.redactedText)
-          .then((isExact) => {
-            if (!isExact) {
-              return showRewriteFailure(
-                "submit",
-                collectFailureDetails(input, result.redactedText, getInputText(input), "submit")
-              ).then(() => {
-                refreshBadgeFromCurrentInput();
-              });
-            }
-
-            const button = findSendButton(input);
-            if (button) {
-              clearAllRiskSessionState();
-              button.click();
-            }
-            return null;
-          })
-          .catch(handleContentError);
+      queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
+        const button = findSendButton(input);
+        if (button) {
+          clearAllRiskSessionState();
+          button.click();
+        }
       });
     });
 
@@ -10497,45 +9840,25 @@
       const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings, {
         auditReason: destinationPolicy.reason
       });
-      const applied = await applyComposerText(input, result.redactedText, {
-        caretOffset: result.redactedText.length,
-        restoreText: analysis.normalizedText,
-        restoreCaretOffset: analysis.normalizedText.length
-      });
-
-      if (!applied.ok) {
-        await showRewriteFailure(
-          "submit",
-          collectFailureDetails(input, result.redactedText, applied.actual, "submit")
-        );
-        refreshBadgeFromCurrentInput();
-        return;
-      }
+      const rewritten = await applySubmitRedactionTransactionally(
+        input,
+        analysis.normalizedText,
+        result.redactedText,
+        "submit",
+        analysis.secretFindings
+      );
+      if (!rewritten) return;
 
       setBadge("Destination policy required redaction");
       hideBadgeSoon();
       refreshBadgeFromCurrentInput();
 
-      queueMicrotask(() => {
-        ensureExactComposerState(input, result.redactedText)
-          .then((isExact) => {
-            if (!isExact) {
-              return showRewriteFailure(
-                "submit",
-                collectFailureDetails(input, result.redactedText, getInputText(input), "submit")
-              ).then(() => {
-                refreshBadgeFromCurrentInput();
-              });
-            }
-
-            const button = findSendButton(input);
-            if (button) {
-              clearAllRiskSessionState();
-              button.click();
-            }
-            return null;
-          })
-          .catch(handleContentError);
+      queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
+        const button = findSendButton(input);
+        if (button) {
+          clearAllRiskSessionState();
+          button.click();
+        }
       });
       return;
     }
@@ -10586,45 +9909,25 @@
 
     const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
 
-    const applied = await applyComposerText(input, result.redactedText, {
-      caretOffset: result.redactedText.length,
-      restoreText: analysis.normalizedText,
-      restoreCaretOffset: analysis.normalizedText.length
-    });
-
-    if (!applied.ok) {
-      await showRewriteFailure(
-        "submit",
-        collectFailureDetails(input, result.redactedText, applied.actual, "submit")
-      );
-      refreshBadgeFromCurrentInput();
-      return;
-    }
+    const rewritten = await applySubmitRedactionTransactionally(
+      input,
+      analysis.normalizedText,
+      result.redactedText,
+      "submit",
+      analysis.secretFindings
+    );
+    if (!rewritten) return;
 
     setBadge("Content redacted");
     hideBadgeSoon();
     refreshBadgeFromCurrentInput();
 
-    queueMicrotask(() => {
-      ensureExactComposerState(input, result.redactedText)
-        .then((isExact) => {
-          if (!isExact) {
-            return showRewriteFailure(
-              "submit",
-              collectFailureDetails(input, result.redactedText, getInputText(input), "submit")
-            ).then(() => {
-              refreshBadgeFromCurrentInput();
-            });
-          }
-
-          const button = findSendButton(input);
-          if (button) {
-            clearAllRiskSessionState();
-            button.click();
-          }
-          return null;
-        })
-        .catch(handleContentError);
+    queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
+      const button = findSendButton(input);
+      if (button) {
+        clearAllRiskSessionState();
+        button.click();
+      }
     });
   }
 
@@ -10970,18 +10273,25 @@
   }
 
   function getResponseObserverOptions() {
+    const placeholderTokenRegex = ANY_PLACEHOLDER_TOKEN_REGEX || PLACEHOLDER_TOKEN_REGEX;
     return {
       document,
       MutationObserver,
       Node,
       NodeFilter,
       normalizeVisiblePlaceholders,
-      placeholderTokenRegex: PLACEHOLDER_TOKEN_REGEX,
+      placeholderTokenRegex,
       placeholderCount: currentPublicState.placeholderCount,
+      trustedPlaceholders: currentPublicState.trustedPlaceholders,
+      knownPlaceholders: currentPublicState.trustedPlaceholders,
+      canonicalizePlaceholderToken: globalThis.PWM?.canonicalizePlaceholderToken,
       tokenizePlaceholderText: (text, options) =>
         tokenizeRehydrationPlaceholderText(text, {
           ...options,
-          placeholderCount: currentPublicState.placeholderCount
+          placeholderCount: currentPublicState.placeholderCount,
+          trustedPlaceholders: currentPublicState.trustedPlaceholders,
+          knownPlaceholders: currentPublicState.trustedPlaceholders,
+          canonicalizePlaceholderToken: globalThis.PWM?.canonicalizePlaceholderToken
         }),
       createSecretSpan: (placeholder) => RevealController.createSecretSpan(placeholder, getRevealControllerOptions()),
       debug: debugResponseRehydration,
@@ -11104,6 +10414,14 @@
       "input",
       (event) => {
         maybeHandleFileInputChange(event).catch(handleContentError);
+      },
+      true
+    );
+
+    document.addEventListener(
+      "click",
+      (event) => {
+        maybeHandleSendButtonClick(event).catch(handleContentError);
       },
       true
     );

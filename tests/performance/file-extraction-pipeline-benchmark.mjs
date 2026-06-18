@@ -12,6 +12,7 @@ const repoRoot = path.join(__dirname, "..", "..");
 [
   "src/shared/entropy.js",
   "src/shared/patterns.js",
+  "src/shared/detection/urlUserinfo.js",
   "src/shared/detector.js",
   "src/shared/placeholders.js",
   "src/shared/sessionMapStore.js",

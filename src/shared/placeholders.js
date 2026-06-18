@@ -10,6 +10,8 @@
   const PWM_PLACEHOLDER_EXACT_REGEX = /^\[PWM_(\d+)\]$/;
   const NETWORK_PLACEHOLDER_EXACT_REGEX =
     /^\[(NET_\d+(?:_SUB_\d+)*(?:_(?:HOST_\d+|GW|VIP|DNS))?|PUB_HOST_\d+(?:_(?:GW|VIP|DNS))?)\]$/;
+  const { PlaceholderFamilies = {} } = root.PWM;
+  const ENTERPRISE_PLACEHOLDER_EXACT_REGEX = PlaceholderFamilies.ENTERPRISE_PLACEHOLDER_EXACT_REGEX || /^$/;
   const LEGACY_TYPED_PLACEHOLDER_REGEX = /\[(?!PWM_)[A-Z][A-Z0-9_]*_\d+\]/g;
   const LEGACY_TYPED_PLACEHOLDER_EXACT_REGEX = /^\[(?!PWM_)[A-Z][A-Z0-9_]*_\d+\]$/;
   const ANY_PLACEHOLDER_TOKEN_REGEX =
@@ -97,7 +99,7 @@
   function canonicalizePlaceholderToken(token) {
     const normalized = String(token || "");
 
-    if (isPwmPlaceholder(normalized) || isSemanticPlaceholder(normalized)) {
+    if (isPwmPlaceholder(normalized) || isSemanticPlaceholder(normalized) || ENTERPRISE_PLACEHOLDER_EXACT_REGEX.test(normalized)) {
       return normalized;
     }
 
@@ -188,6 +190,15 @@
     return `${hashA.toString(16).padStart(8, "0")}${hashB.toString(16).padStart(8, "0")}`;
   }
 
+  function placeholderFamilyFromToken(placeholder) {
+    const match = /^\[([A-Z][A-Z0-9_]*)_\d+\]$/.exec(canonicalizePlaceholderToken(placeholder));
+    return match ? match[1] : null;
+  }
+
+  function placeholderFingerprintValue(raw, family) {
+    return family === "PWM" ? raw : `family:${family}\u0000${raw}`;
+  }
+
   class PlaceholderManager {
     constructor() {
       this.reset();
@@ -220,7 +231,11 @@
 
     trackKnownPlaceholder(placeholder) {
       const canonical = canonicalizePlaceholderToken(placeholder);
-      if (!isPwmPlaceholder(canonical) && !isSemanticPlaceholder(canonical)) {
+      if (
+        !isPwmPlaceholder(canonical) &&
+        !isSemanticPlaceholder(canonical) &&
+        !ENTERPRISE_PLACEHOLDER_EXACT_REGEX.test(canonical)
+      ) {
         return canonical;
       }
 
@@ -408,17 +423,33 @@
       this.reserveVisiblePlaceholdersFromText(text);
     }
 
-    getPlaceholder(rawValue) {
+    getPlaceholder(rawValue, placeholderType = "SECRET") {
       const raw = String(rawValue);
-      const fingerprint = sessionFingerprint(this.ensureSessionId(), raw);
+      const normalizePlaceholderFamily = PlaceholderFamilies.normalizePlaceholderFamily || ((familyName) => String(familyName || "").trim().toUpperCase());
+      const isTypedPlaceholderFamily = PlaceholderFamilies.isTypedPlaceholderFamily || (() => false);
+      const normalizedFamily = normalizePlaceholderFamily(placeholderType);
+      const family = isTypedPlaceholderFamily(normalizedFamily) ? normalizedFamily : "PWM";
+      const sessionId = this.ensureSessionId();
+      const fingerprint = sessionFingerprint(sessionId, placeholderFingerprintValue(raw, family));
 
       if (this.placeholderByFingerprint.has(fingerprint)) {
         return this.placeholderByFingerprint.get(fingerprint);
       }
 
-      let placeholder = `[PWM_${this.incrementCounter("PWM")}]`;
+      if (family !== "PWM") {
+        const legacyFingerprint = sessionFingerprint(sessionId, raw);
+        const legacyPlaceholder = this.placeholderByFingerprint.get(legacyFingerprint);
+        if (placeholderFamilyFromToken(legacyPlaceholder) === family) {
+          this.placeholderByFingerprint.set(fingerprint, legacyPlaceholder);
+          this.fingerprintByPlaceholder.set(legacyPlaceholder, fingerprint);
+          this.secretByFingerprint.set(fingerprint, raw);
+          return legacyPlaceholder;
+        }
+      }
+
+      let placeholder = `[${family}_${this.incrementCounter(family)}]`;
       while (this.knownPlaceholders.has(placeholder) || this.fingerprintByPlaceholder.has(placeholder)) {
-        placeholder = `[PWM_${this.incrementCounter("PWM")}]`;
+        placeholder = `[${family}_${this.incrementCounter(family)}]`;
       }
 
       this.placeholderByFingerprint.set(fingerprint, placeholder);

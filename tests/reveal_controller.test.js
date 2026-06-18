@@ -77,6 +77,19 @@ function createSpan(options = {}) {
   return { span, calls, errors };
 }
 
+function createTypedSpan(placeholder = "[PRIVATE_IP_4]", overrides = {}) {
+  const calls = [];
+  const span = RevealController.createSecretSpan(placeholder, {
+    document: new FakeDocument(),
+    openReveal: (clickedPlaceholder) => {
+      calls.push(clickedPlaceholder);
+      return Promise.resolve();
+    },
+    ...overrides
+  });
+  return { span, calls };
+}
+
 async function flushPromises() {
   await Promise.resolve();
   await Promise.resolve();
@@ -106,6 +119,39 @@ function testStableAttributesAndClasses() {
     span.getAttribute("aria-label"),
     "LeakGuard redacted sensitive content. Open secure reveal in LeakGuard."
   );
+}
+
+function testTypedPlaceholderUsesTrailingIndexForTone() {
+  const { span } = createTypedSpan("[PRIVATE_IP_4]");
+
+  assert.strictEqual(span.textContent, "[PRIVATE_IP_4]");
+  assert.strictEqual(span.dataset.pwmTone, "rose");
+}
+
+function testEnterpriseTypedPlaceholderActivatesWithOriginalPlaceholder() {
+  const { span, calls } = createTypedSpan("[AZURE_RG_1]");
+  const click = createEvent();
+  const enter = createEvent({ key: "Enter" });
+
+  assert.strictEqual(span.className, "pwm-secret");
+  assert.strictEqual(span.textContent, "[AZURE_RG_1]");
+  assert.strictEqual(span.dataset.pwmTone, "aqua");
+
+  span.dispatch("click", click);
+  span.dispatch("keydown", enter);
+
+  assert.deepStrictEqual(calls, ["[AZURE_RG_1]", "[AZURE_RG_1]"]);
+  assert.strictEqual(click.defaultPrevented, true);
+  assert.strictEqual(click.propagationStopped, true);
+  assert.strictEqual(enter.defaultPrevented, true);
+  assert.strictEqual(enter.propagationStopped, true);
+}
+
+function testTypedPlaceholderWithoutIndexUsesFallbackTone() {
+  const { span } = createTypedSpan("[PRIVATE_IP_X]");
+
+  assert.strictEqual(span.textContent, "[PRIVATE_IP_X]");
+  assert.strictEqual(span.dataset.pwmTone, "aqua");
 }
 
 function testClickActivationCallsInjectedRevealAndStopsEvent() {
@@ -157,6 +203,9 @@ async function testRevealErrorsDelegateToInjectedHandler() {
 async function run() {
   testRendersPlaceholderTextOnly();
   testStableAttributesAndClasses();
+  testTypedPlaceholderUsesTrailingIndexForTone();
+  testEnterpriseTypedPlaceholderActivatesWithOriginalPlaceholder();
+  testTypedPlaceholderWithoutIndexUsesFallbackTone();
   testClickActivationCallsInjectedRevealAndStopsEvent();
   testKeyboardActivationCallsInjectedRevealForEnterAndSpace();
   testNonActivationKeysDoNotCallReveal();

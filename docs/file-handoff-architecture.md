@@ -1,6 +1,8 @@
 # LeakGuard File Handoff Architecture
 
-LeakGuard protects supported local text-file uploads by blocking the raw ingress first, redacting locally, and handing only a sanitized in-memory `File` or `Blob` back to the site when a safe path exists. Release v1.7.0 keeps this surface intentionally narrow: direct handoff remains the first choice where already proven, while pending trusted attach is enabled for built-in adapters as a sanitized-only recovery path.
+LeakGuard protects supported local file uploads by blocking the raw ingress first, redacting locally, and handing only a sanitized in-memory `File` or `Blob` back to the site when a safe path exists. Direct handoff remains the first choice where already proven, while pending trusted attach is enabled for built-in adapters as a sanitized-only recovery path.
+
+After LeakGuard consumes, scans, streams, redacts, or sanitizes a file, failed sanitized handoff must block raw upload. Unsupported or unsafe protected file flows fail closed when LeakGuard cannot safely pass them through without claiming protection.
 
 ## Direct Handoff
 
@@ -73,4 +75,4 @@ Fallback order:
 5. Explicit sanitized download fallback.
 6. Block raw upload if no safe path exists.
 
-Adapters must not click Send, Mic, Voice, Settings, Close, Remove, Drive, Photos, or cloud-import options unless that specific control is explicitly supported and tested. Unsupported binary, document, image, archive, executable, and unavailable-file behavior is unchanged. All processing stays local, and pending files are memory-only.
+Adapters must not click Send, Mic, Voice, Settings, Close, Remove, Drive, Photos, or cloud-import options unless that specific control is explicitly supported and tested. Unsupported binary, document, image, archive, executable, and unavailable-file handling must never claim the file was scanned, sanitized, or protected. If a protected path cannot safely continue or LeakGuard has already consumed/attempted sanitization, block raw upload. All processing stays local, and pending files are memory-only.

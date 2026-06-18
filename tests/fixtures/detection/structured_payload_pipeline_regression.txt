@@ -1,0 +1,38 @@
+{ "Type": "tenantId", "Value": "99999999-8888-7777-6666-555555555555", "Notes": "synthetic" }
+{ "Type": "subscriptionId", "Value": "11111111-2222-3333-4444-555555555555", "Notes": "synthetic" }
+{ "Type": "LDAP DN", "Value": "CN=svc-api,OU=Apps,OU=SH070,DC=corp,DC=local", "Notes": "contains commas" }
+{ "Type": "email", "Value": "test.user@example.com", "Notes": "synthetic" }
+{ "Type": "username", "Value": "CORP\adm-test.user", "Notes": "synthetic" }
+
+Type,Value,Notes
+tenantId,99999999-8888-7777-6666-555555555555,synthetic
+subscriptionId,11111111-2222-3333-4444-555555555555,synthetic
+AWS account,123456789012,synthetic
+GCP project_id,my-prod-project,synthetic
+OpenStack project_id,11111111111111111111111111111111,synthetic
+OpenStack tenant_id,22222222-2222-2222-2222-222222222222,synthetic
+Kubernetes namespace,prod-payments,synthetic
+Kubernetes resource,secret/db-password,synthetic
+file share,FSA1234567,synthetic
+username,CORP\adm-test.user,synthetic
+email,test.user@example.com,synthetic
+"LDAP DN","CN=svc-api,OU=Apps,OU=SH070,DC=corp,DC=local","quoted value contains commas"
+
+| Type | Value | Notes |
+| tenantId | 99999999-8888-7777-6666-555555555555 | synthetic |
+| LDAP DN | CN=svc-api,OU=Apps,OU=SH070,DC=corp,DC=local | comma value |
+| email | test.user@example.com | synthetic |
+
+rg-blue
+rg-test
+product-roadmap-item
+invoice 123456789012
+8.8.8.8
+192.0.2.44
+192.0.2.0/24
+docs/page
+service/name
+random GUID 123e4567-e89b-12d3-a456-426614174000
+random FSA7654321 without context
+report.final.docx
+package.name

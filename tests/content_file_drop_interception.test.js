@@ -4,6 +4,14 @@ const path = require("path");
 
 const repoRoot = path.join(__dirname, "..");
 const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
+const chatGptComposerSyncSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/composer/chatgptComposerSync.js"),
+  "utf8"
+);
+const fileDebugMetadataSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/diagnostics/fileDebugMetadata.js"),
+  "utf8"
+);
 const adapterSourceFiles = [
   "src/content/adapters/chatgptAdapter.js",
   "src/content/adapters/openaiAdapter.js",
@@ -25,6 +33,10 @@ const fileHandoffPendingSource = fs.readFileSync(
   path.join(repoRoot, "src/content/file_handoff_pending.js"),
   "utf8"
 );
+const pendingSanitizedFileHandoffSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/files/pendingSanitizedFileHandoff.js"),
+  "utf8"
+);
 const fileHandoffFlowSource = fs.readFileSync(
   path.join(repoRoot, "src/content/file_handoff_flow.js"),
   "utf8"
@@ -40,6 +52,7 @@ require(path.join(repoRoot, "src/shared/fileLimits.js"));
 require(path.join(repoRoot, "src/content/file_paste_helpers.js"));
 require(path.join(repoRoot, "src/content/composer_helpers.js"));
 require(path.join(repoRoot, "src/content/input/rewriteVerificationText.js"));
+require(path.join(repoRoot, "src/content/composer/chatgptComposerSync.js"));
 require(path.join(repoRoot, "src/content/files/fileTransferPolicy.js"));
 require(path.join(repoRoot, "src/shared/entropy.js"));
 require(path.join(repoRoot, "src/shared/patterns.js"));
@@ -65,6 +78,7 @@ require(path.join(repoRoot, "src/content/adapters/xAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/index.js"));
 require(path.join(repoRoot, "src/content/adapters/geminiFallbackWriter.js"));
 require(path.join(repoRoot, "src/content/diagnostics/safeSnapshots.js"));
+require(path.join(repoRoot, "src/content/diagnostics/fileDebugMetadata.js"));
 require(path.join(repoRoot, "src/content/diagnostics/debugLogger.js"));
 require(path.join(repoRoot, "src/content/files/fileAttachPipeline.js"));
 require(path.join(repoRoot, "src/content/file_handoff_flow.js"));
@@ -284,18 +298,19 @@ function contentDebugEventsHarnessSource() {
 
 function fileAttachDebugMetadataHarnessSource() {
   return [
-    extractFunctionSource(contentSource, "normalizeFileDebugString"),
-    extractFunctionSource(contentSource, "isSafeFileDebugToken"),
-    extractFunctionSource(contentSource, "isSafeFileDebugErrorCode"),
-    extractFunctionSource(contentSource, "getFileDebugExtension"),
-    extractFunctionSource(contentSource, "getFileDebugMimeCategory"),
-    extractFunctionSource(contentSource, "describeSafeFileDebugMetadata"),
-    extractFunctionSource(contentSource, "describeSafeFileInputDebugMetadata"),
-    extractFunctionSource(contentSource, "describeSafeFileHandoffAdapterDebugMetadata"),
-    extractFunctionSource(contentSource, "describeSafeFileAttachErrorMetadata"),
-    extractFunctionSource(contentSource, "assignSafeFileAttachErrorMetadata"),
-    extractFunctionSource(contentSource, "copySafeFileDebugScalar"),
-    extractFunctionSource(contentSource, "createSafeFileAttachDebugPayload"),
+    extractFunctionSource(fileDebugMetadataSource, "normalizeFileDebugString"),
+    extractFunctionSource(fileDebugMetadataSource, "normalizeSafeFileDebugEvent"),
+    extractFunctionSource(fileDebugMetadataSource, "isSafeFileDebugToken"),
+    extractFunctionSource(fileDebugMetadataSource, "isSafeFileDebugErrorCode"),
+    extractFunctionSource(fileDebugMetadataSource, "getFileDebugExtension"),
+    extractFunctionSource(fileDebugMetadataSource, "getFileDebugMimeCategory"),
+    extractFunctionSource(fileDebugMetadataSource, "describeSafeFileDebugMetadata"),
+    extractFunctionSource(fileDebugMetadataSource, "describeSafeFileInputDebugMetadata"),
+    extractFunctionSource(fileDebugMetadataSource, "describeSafeFileHandoffAdapterDebugMetadata"),
+    extractFunctionSource(fileDebugMetadataSource, "describeSafeFileAttachErrorMetadata"),
+    extractFunctionSource(fileDebugMetadataSource, "assignSafeFileAttachErrorMetadata"),
+    extractFunctionSource(fileDebugMetadataSource, "copySafeFileDebugScalar"),
+    extractFunctionSource(fileDebugMetadataSource, "createSafeFileAttachDebugPayload"),
     extractFunctionSource(contentSource, "debugFileAttachMetadata")
   ];
 }
@@ -329,6 +344,37 @@ function createAdapterRegistryForTest() {
   });
 }
 
+function createSanitizedFallbackFormatterHarness() {
+  const factory = new Function(
+    [
+      "const redactSensitiveFileName = (value) => String(value || '');",
+      "const sanitizeDownloadFileNameSegment = (value) => String(value || 'sanitized-file.txt');",
+      extractFunctionSource(contentSource, "fallbackLanguageFromFileName"),
+      extractFunctionSource(contentSource, "formatSanitizedFileFallbackText"),
+      "return { formatSanitizedFileFallbackText };"
+    ].join("\n\n")
+  );
+  return factory();
+}
+
+function testSanitizedFileFallbackTextPrefersRedactedSanitizedFileName() {
+  const rawSecret = "sk-proj-FallbackFileNameSecret1234567890abcdef";
+  const redactedText = "API_KEY=[PWM_1]\nSERVICE=orders";
+  const { formatSanitizedFileFallbackText } = createSanitizedFallbackFormatterHarness();
+  const fallbackText = formatSanitizedFileFallbackText({
+    originalFile: {
+      name: `customer-${rawSecret}.env`
+    },
+    sanitizedFile: {
+      name: "customer-[PWM_1].env"
+    },
+    redactedText
+  });
+
+  assert.strictEqual(fallbackText.includes(rawSecret), false);
+  assert.ok(fallbackText.includes(`LeakGuard sanitized file: customer-[PWM_1].env\n\n\`\`\`env\n${redactedText}`));
+}
+
 function fileHandoffStateHarnessSource() {
   return [
     extractFunctionSource(fileHandoffStateSource, "createFileHandoffState"),
@@ -338,6 +384,8 @@ function fileHandoffStateHarnessSource() {
       getFileListMetadataSignature,
       markSanitizedFileHandoff,
       deleteSanitizedFileHandoffMark,
+      getSanitizedFileInputHandoffSuppression,
+      suppressSanitizedFileInputHandoffEvent,
       shouldSuppressSanitizedFileReprocessing,
       isFileUnavailableLocalFileResult,
       getFileUnavailableAfterHandoffSuppression,
@@ -372,6 +420,47 @@ function fileHandoffStateHarnessSource() {
 
 function fileHandoffPendingHarnessSource() {
   return [
+    extractFunctionSource(pendingSanitizedFileHandoffSource, "createPendingSanitizedFileHandoffManager"),
+    `const pendingSanitizedFileHandoff = createPendingSanitizedFileHandoffManager({
+      clearPendingGeminiGhostIngressClickInterceptor,
+      clearPendingSanitizedAttachPrompt,
+      createPendingAttachEvent: (event, type) => createPendingAttachEvent(event, type),
+      createSanitizedDataTransferForHandoff,
+      createSanitizedFileHandoffDetails,
+      debugReveal,
+      describeElementForDebug,
+      describeFileForDebug,
+      describeFileHandoffAdapter,
+      describeFileInputForDebug,
+      describeGeminiHandoffDiscovery,
+      describeGeminiOverlayExposure: typeof describeGeminiOverlayExposure === "function" ? describeGeminiOverlayExposure : () => ({}),
+      describeGrokPendingInputDiscovery,
+      discoverGeminiFileHandoffElements,
+      discoverGrokPendingFileInput,
+      documentRef: document,
+      geminiTtlMs: GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MS,
+      genericTtlMs: GROK_PENDING_SANITIZED_FILE_HANDOFF_MS,
+      getFileHandoffAdapterById,
+      getGeminiSessionHash: () => lastGeminiDropSessionHash || "",
+      getPendingSanitizedAttachPromptMessage,
+      grokTtlMs: GROK_PENDING_SANITIZED_FILE_HANDOFF_MS,
+      handOffSanitizedFileInput,
+      handleContentError,
+      hideBadgeSoon,
+      hideDmzOverlay,
+      isFileHandoffAdapterPendingAttachEnabled,
+      isGeminiHost,
+      isGrokHost,
+      isLikelyGeminiUploadClickTarget,
+      isLikelyGrokUploadClickTarget,
+      logSanitizedFileHandoffFailure,
+      normalizeFileHandoffAdapter,
+      normalizeTarget,
+      refreshBadgeFromCurrentInput,
+      setBadge,
+      showFileProcessingSuccess,
+      showPendingSanitizedAttachPrompt
+    });`,
     extractFunctionSource(fileHandoffPendingSource, "createFileHandoffPending"),
     `const {
       createPendingAttachEvent,
@@ -1197,6 +1286,7 @@ function createHarness(overrides = {}) {
       "let fileProcessingHideTimer = 0;",
       "let pendingAttachPromptEl = null;",
       "let pendingAttachPromptSite = \"\";",
+      "let fileInputProcessingSignatures = new WeakMap();",
       ...contentDebugEventsHarnessSource(),
       ...fileHandoffAdapterHarnessSource(),
       "function setDmzOverlayState(message, state = \"\") { calls.dmzStates.push({ message, state }); }",
@@ -1280,18 +1370,18 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "getChatGptSendButtonDebugState"),
       extractFunctionSource(contentSource, "getChatGptComposerSyncDebug"),
       extractFunctionSource(contentSource, "debugChatGptSync"),
-      extractFunctionSource(contentSource, "focusChatGptComposer"),
-      extractFunctionSource(contentSource, "placeChatGptCaretAtEnd"),
-      extractFunctionSource(contentSource, "dispatchChatGptComposerInputEvent"),
-      extractFunctionSource(contentSource, "dispatchChatGptComposerBeforeInput"),
-      extractFunctionSource(contentSource, "dispatchChatGptComposerChange"),
-      extractFunctionSource(contentSource, "nudgeChatGptComposerState"),
-      extractFunctionSource(contentSource, "waitForChatGptComposerVerification"),
-      extractFunctionSource(contentSource, "tryChatGptExecCommandWrite"),
-      extractFunctionSource(contentSource, "tryChatGptDirectWrite"),
-      extractFunctionSource(contentSource, "tryChatGptComposerHelperWrite"),
-      extractFunctionSource(contentSource, "runChatGptSyncedWriteAttempt"),
-      extractFunctionSource(contentSource, "applyChatGptSyncedComposerText"),
+      extractFunctionSource(chatGptComposerSyncSource, "focusChatGptComposer"),
+      extractFunctionSource(chatGptComposerSyncSource, "placeChatGptCaretAtEnd"),
+      extractFunctionSource(chatGptComposerSyncSource, "dispatchChatGptComposerInputEvent"),
+      extractFunctionSource(chatGptComposerSyncSource, "dispatchChatGptComposerBeforeInput"),
+      extractFunctionSource(chatGptComposerSyncSource, "dispatchChatGptComposerChange"),
+      extractFunctionSource(chatGptComposerSyncSource, "nudgeChatGptComposerState"),
+      extractFunctionSource(chatGptComposerSyncSource, "waitForChatGptComposerVerification"),
+      extractFunctionSource(chatGptComposerSyncSource, "tryChatGptExecCommandWrite"),
+      extractFunctionSource(chatGptComposerSyncSource, "tryChatGptDirectWrite"),
+      extractFunctionSource(chatGptComposerSyncSource, "tryChatGptComposerHelperWrite"),
+      extractFunctionSource(chatGptComposerSyncSource, "runChatGptSyncedWriteAttempt"),
+      extractFunctionSource(chatGptComposerSyncSource, "applyChatGptSyncedComposerText"),
       extractFunctionSource(contentSource, "applyChatGptLargePasteTextFallback"),
       extractFunctionSource(contentSource, "maybeHandleChatGptLargeTextPaste"),
       extractFunctionSource(contentSource, "resolveGeminiEditorTarget"),
@@ -1341,7 +1431,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "clearPendingGeminiGhostIngressClickInterceptor"),
       extractFunctionSource(contentSource, "clearPendingGeminiSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "isLikelyGeminiUploadClickTarget"),
-      extractFunctionSource(contentSource, "schedulePendingGeminiSanitizedFileAttempt"),
+      extractFunctionSource(pendingSanitizedFileHandoffSource, "schedulePendingGeminiSanitizedFileAttempt"),
       extractFunctionSource(contentSource, "describeGeminiHandoffDiscovery"),
       extractFunctionSource(contentSource, "attemptPendingGeminiSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "queuePendingGeminiSanitizedFileHandoff"),
@@ -1351,7 +1441,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "scoreGrokFileInput"),
       extractFunctionSource(contentSource, "discoverGrokPendingFileInput"),
       extractFunctionSource(contentSource, "describeGrokPendingInputDiscovery"),
-      extractFunctionSource(contentSource, "schedulePendingGrokSanitizedFileAttempt"),
+      extractFunctionSource(pendingSanitizedFileHandoffSource, "schedulePendingGrokSanitizedFileAttempt"),
       extractFunctionSource(contentSource, "attemptPendingGrokSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "queuePendingGrokSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "clearPendingGenericSanitizedFileHandoff"),
@@ -1446,6 +1536,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "getContentExtractionBlockedMessage"),
       extractFunctionSource(contentSource, "localFileFromContentExtractionResult"),
       extractFunctionSource(contentSource, "isUnsupportedLegacyOfficeFile"),
+      extractFunctionSource(contentSource, "isUnsupportedBinaryFileForProtectedUpload"),
       extractFunctionSource(contentSource, "getLocalFileExtension"),
       extractFunctionSource(contentSource, "getLocalFileMimeType"),
       extractFunctionSource(contentSource, "isUnsupportedImageFileForProtectedUpload"),
@@ -2155,7 +2246,7 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "performPendingGrokUserAttach"),
       extractFunctionSource(contentSource, "clearPendingGeminiSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "isLikelyGeminiUploadClickTarget"),
-      extractFunctionSource(contentSource, "schedulePendingGeminiSanitizedFileAttempt"),
+      extractFunctionSource(pendingSanitizedFileHandoffSource, "schedulePendingGeminiSanitizedFileAttempt"),
       extractFunctionSource(contentSource, "describeGeminiHandoffDiscovery"),
       extractFunctionSource(contentSource, "describeGeminiOverlayExposure"),
       extractFunctionSource(contentSource, "attemptPendingGeminiSanitizedFileHandoff"),
@@ -2168,7 +2259,7 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "scoreGrokFileInput"),
       extractFunctionSource(contentSource, "discoverGrokPendingFileInput"),
       extractFunctionSource(contentSource, "describeGrokPendingInputDiscovery"),
-      extractFunctionSource(contentSource, "schedulePendingGrokSanitizedFileAttempt"),
+      extractFunctionSource(pendingSanitizedFileHandoffSource, "schedulePendingGrokSanitizedFileAttempt"),
       extractFunctionSource(contentSource, "attemptPendingGrokSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "queuePendingGrokSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "clearPendingGenericSanitizedFileHandoff"),
@@ -3884,7 +3975,16 @@ async function testGeminiPendingHandoffStoresSanitizedFileOnly() {
     pending.keys.sort(),
     ["createdAt", "expiresAt", "sanitizedFile", "sessionHash"].sort()
   );
-  assert.strictEqual(pending.sanitizedFile, sanitizedFile);
+  assert.strictEqual(
+    Object.prototype.hasOwnProperty.call(pending, "sanitizedFile"),
+    false,
+    "pending handoff debug must expose metadata, not the File object"
+  );
+  assert.deepStrictEqual(pending.sanitizedFileDebug, {
+    name: sanitizedFile.name,
+    type: sanitizedFile.type,
+    size: sanitizedFile.size
+  });
   assert.strictEqual(JSON.stringify(pending.sanitizedFileDebug).includes(rawSecret), false);
   assert.strictEqual(harness.fallbackDrops.length, 0);
   assert.strictEqual(harness.consoleErrors.length, 0);
@@ -4030,7 +4130,16 @@ async function testGeminiPendingHandoffReplacementClearsOldState() {
   const pending = harness.getPendingGeminiSanitizedFileHandoffDebug();
   assert.strictEqual(harness.hasPendingGeminiSanitizedFileHandoff(firstSanitizedFile), false);
   assert.strictEqual(harness.hasPendingGeminiSanitizedFileHandoff(secondSanitizedFile), true);
-  assert.strictEqual(pending.sanitizedFile, secondSanitizedFile);
+  assert.strictEqual(
+    Object.prototype.hasOwnProperty.call(pending, "sanitizedFile"),
+    false,
+    "replacement debug must not expose the pending File object"
+  );
+  assert.deepStrictEqual(pending.sanitizedFileDebug, {
+    name: secondSanitizedFile.name,
+    type: secondSanitizedFile.type,
+    size: secondSanitizedFile.size
+  });
   assert.strictEqual(harness.clickHandlers.length, 1);
   assert.ok(harness.observers.some((observer) => observer.disconnected));
   assert.ok(
@@ -6558,6 +6667,54 @@ async function testProtectedLegacyOfficeFileInputBlocksRawUpload() {
     assert.ok(calls.modals.some(([title]) => title === "Raw file upload blocked"), `${testCase.label} should show block modal`);
     assert.strictEqual(JSON.stringify(calls).includes(rawSecret), false, `${testCase.label} debug state leaked raw marker`);
   }
+}
+
+async function testProtectedUnknownBinaryFileInputBlocksRawUpload() {
+  const rawSecret = "sk-proj-ProtectedUnknownBinaryUnitQa1234567890abcdef";
+  const rawFile = createTextFile({
+    name: "payload.bin",
+    type: "application/octet-stream",
+    text: `BIN_API_KEY=${rawSecret}`
+  });
+  const fileInput = createFileInput();
+  fileInput.files = [rawFile];
+  fileInput.value = "C:\\fakepath\\payload.bin";
+  const { maybeHandleFileInputChange, resolveFileDragGuardPolicy, calls } = createHarness({
+    location: { hostname: "local.example" },
+    currentPublicState: {
+      protection: { paused: false }
+    },
+    findComposer: () => null,
+    readLocalTextFileFromDataTransfer: async () => {
+      throw new Error("protected unknown binary should be blocked before the raw reader");
+    },
+    handOffSanitizedLocalFile() {
+      throw new Error("protected unknown binary must not hand off a raw file");
+    }
+  });
+  const dragPolicy = resolveFileDragGuardPolicy({
+    types: ["Files"],
+    files: [rawFile],
+    items: []
+  });
+  const { event, calls: eventCalls } = createEvent({
+    type: "change",
+    target: fileInput
+  });
+
+  await maybeHandleFileInputChange(event);
+
+  assert.strictEqual(dragPolicy.action, "block");
+  assert.strictEqual(dragPolicy.reason, "unsupported_protected_file_blocked");
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(eventCalls.stopImmediatePropagation, 1);
+  assert.strictEqual(fileInput.value, "");
+  assert.strictEqual(calls.reads.length, 0);
+  assert.strictEqual(calls.redactions.length, 0);
+  assert.strictEqual(calls.createdFiles.length, 0);
+  assert.strictEqual(calls.handoffs.length, 0);
+  assert.ok(calls.modals.some(([title]) => title === "Raw file upload blocked"));
+  assert.strictEqual(JSON.stringify(calls).includes(rawSecret), false);
 }
 
 async function testUnsupportedFileReadFailureHidesProcessingUi() {
@@ -9509,6 +9666,10 @@ function testProtectedUnsupportedImageDropBranchBlocksBeforeOriginalReplay() {
     failClosedSource.includes("isUnsupportedImageFileForProtectedUpload"),
     "protected unsupported fail-closed helper should include unsupported image files"
   );
+  assert.ok(
+    failClosedSource.includes("isUnsupportedBinaryFileForProtectedUpload"),
+    "protected unsupported fail-closed helper should include unknown binary files"
+  );
 
   const dropSource = extractFunctionSource(contentSource, "maybeHandleDrop");
   const protectedBlockIndex = dropSource.indexOf("shouldFailClosedProtectedUnsupportedFileTransfer(transferPolicy)");
@@ -9883,8 +10044,7 @@ async function testProtectedUnsupportedImageDropsFailClosedWithoutOriginalReplay
 async function testUnsupportedDocumentAndImageFilesPassThroughByDefault() {
   for (const name of [
     "archive.zip",
-    "installer.exe",
-    "archive.bin"
+    "installer.exe"
   ]) {
     const { editor, child } = createGeminiEditor("");
     const { maybeHandleDrop, calls } = createHarness({
@@ -10002,10 +10162,12 @@ async function testUnsupportedBinaryIsBlockedBeforeGeminiPolicyPassThrough() {
   assert.strictEqual(event.defaultPrevented, true);
   assert.strictEqual(calls.redactions.length, 0);
   assert.strictEqual(calls.handoffs.length, 0);
-  assert.ok(
-    calls.badges.some(([message]) => String(message || "").includes("normal upload may continue"))
+  assert.strictEqual(
+    calls.badges.some(([message]) => String(message || "").includes("normal upload may continue")),
+    false
   );
-  assert.strictEqual(calls.modals.length, 0);
+  assert.ok(calls.badges.some(([message]) => String(message || "").includes("Raw file upload blocked")));
+  assert.ok(calls.modals.some(([title]) => title === "Raw file upload blocked"));
 }
 
 async function testInvalidUtf8DropBlocksWithoutOriginalHandoff() {
@@ -12970,6 +13132,73 @@ async function testFirefoxChatGptFileInputReplacesBasicSecretsFixture() {
   assert.deepStrictEqual(fileInput.events, ["input", "change"]);
 }
 
+async function testChromeFileInputDuplicateEventsShareOneProcessingRun() {
+  const rawSecret = "LeakGuardFileApiKey1234567890";
+  const rawFile = createTextFile({
+    name: "duplicate-chrome.env",
+    type: "text/plain",
+    text: `API_KEY=${rawSecret}`
+  });
+  const fileInput = createFileInput();
+  fileInput.files = [rawFile];
+  const composer = {
+    tagName: "TEXTAREA",
+    text: "",
+    selection: { start: 0, end: 0 }
+  };
+  let releaseRead;
+  const readStarted = [];
+  const readGate = new Promise((resolve) => {
+    releaseRead = resolve;
+  });
+  const { maybeHandleFileInputChange, calls } = createHarness({
+    location: { hostname: "chatgpt.com" },
+    findComposer: () => composer,
+    readLocalTextFileFromDataTransfer: async (transfer) => {
+      calls.reads.push(transfer);
+      readStarted.push(true);
+      await readGate;
+      return {
+        handled: true,
+        ok: true,
+        text: `API_KEY=${rawSecret}`,
+        file: {
+          name: rawFile.name,
+          type: rawFile.type,
+          sizeBytes: rawFile.size,
+          lastModified: rawFile.lastModified
+        }
+      };
+    },
+    handOffSanitizedLocalFile: (event, input, sanitizedFile, context) => {
+      calls.handoffs.push({ event, input, sanitizedFile, context });
+      fileInput.files = [sanitizedFile];
+      fileInput.dispatchEvent({ type: "input", bubbles: true, composed: true });
+      fileInput.dispatchEvent({ type: "change", bubbles: true, composed: true });
+      return true;
+    }
+  });
+  const first = createEvent({ type: "input", target: fileInput });
+  const second = createEvent({ type: "change", target: fileInput });
+
+  const firstPromise = maybeHandleFileInputChange(first.event);
+  await Promise.resolve();
+  assert.strictEqual(readStarted.length, 1);
+  const secondResult = await maybeHandleFileInputChange(second.event);
+  releaseRead();
+  await firstPromise;
+
+  assert.strictEqual(first.event.defaultPrevented, true);
+  assert.strictEqual(second.event.defaultPrevented, true);
+  assert.strictEqual(secondResult?.strategy, "duplicate-file-input-event-suppressed");
+  assert.strictEqual(calls.reads.length, 1);
+  assert.strictEqual(calls.redactions.length, 1);
+  assert.strictEqual(calls.handoffs.length, 1);
+  assert.strictEqual(calls.handoffs[0].sanitizedFile.text.includes(rawSecret), false);
+  assert.deepStrictEqual(fileInput.events, ["input", "change"]);
+  assert.ok(calls.debugEvents.some((entry) => entry.label === "file-input:duplicate-raw-event-suppressed"));
+}
+
 async function testFirefoxFileInputDuplicateEventsShareOneTransaction() {
   const rawSecret = "LeakGuardFileApiKey1234567890";
   const rawFile = createTextFile({
@@ -13539,6 +13768,7 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
 }
 
 (async () => {
+  testSanitizedFileFallbackTextPrefersRedactedSanitizedFileName();
   await testFileDragoverIsAcceptedWithoutComposerTarget();
   await testFileDragoverIsAcceptedWithoutHelperLoaded();
   await testFileDropIsHandledWithoutComposerTarget();
@@ -13657,6 +13887,7 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testSupportedDocumentDropUsesContentExtractionPipelineBeforeUnsupportedNotice();
   await testScannedPdfFileInputExplainsFailClosedReason();
   await testProtectedLegacyOfficeFileInputBlocksRawUpload();
+  await testProtectedUnknownBinaryFileInputBlocksRawUpload();
   await testUnsupportedFileReadFailureHidesProcessingUi();
   await testFileProcessingUiClearsAfterException();
   await testLocalFileDropProcessingUiClearsAfterException();
@@ -13750,6 +13981,7 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
   await testUserManagedProtectedSiteDropFallsBackToSanitizedTextWhenHandoffRejected();
   await testFirefoxChatGptFileInputReplacesSelectedFile();
   await testFirefoxChatGptFileInputReplacesBasicSecretsFixture();
+  await testChromeFileInputDuplicateEventsShareOneProcessingRun();
   await testFirefoxFileInputDuplicateEventsShareOneTransaction();
   await testFirefoxGeminiUploadInputReplacesSelectedFile();
   await testFirefoxGeminiUploadReplacementFailureDoesNotTextFallback();
