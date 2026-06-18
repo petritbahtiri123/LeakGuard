@@ -267,6 +267,21 @@
   const GROK_PENDING_SANITIZED_FILE_HANDOFF_MESSAGE =
     "Large file sanitized. Click Attach sanitized file or Grok Upload/Attach.";
   const REWRITE_FAILURE_SUPPRESS_MS = 6000;
+  const contentDebug = globalThis.PWM.ContentDebugFacade.createContentDebugFacade({
+    root: window,
+    DebugLogger: globalThis.PWM?.DebugLogger,
+    FileDebugMetadata,
+    createSafeFileAttachDebugPayload,
+    normalizeText: normalizeComposerText,
+    normalizeEditorInnerText,
+    normalizeVisiblePlaceholders,
+    placeholderTokenRegex: PLACEHOLDER_TOKEN_REGEX,
+    getInputText,
+    getSelectionOffsets,
+    findSendButton,
+    getHost: () => location?.hostname || "",
+    isChatGptHost: () => isChatGptHost()
+  });
   let lastDiscoveredFileInput = null;
   let fileDragDiscoveryCompleted = false;
   let fileDragDiscoveryScheduled = false;
@@ -582,14 +597,16 @@
       return;
     }
 
-    console.error(error);
+    debugReveal("content:error", { error });
   }
 
   function isDebugEnabled() {
+    if (typeof contentDebug !== "undefined") return contentDebug.isDebugEnabled();
     return Boolean(globalThis.PWM?.DebugLogger?.isDebugEnabled?.({ root: window }));
   }
 
   function summarizeDebugText(text) {
+    if (typeof contentDebug !== "undefined") return contentDebug.summarizeDebugText(text);
     return globalThis.PWM.DebugLogger.summarizeDebugText(text, {
       normalizeText: normalizeComposerText,
       normalizeVisiblePlaceholders,
@@ -597,25 +614,28 @@
     });
   }
 
-  function collectComposerDebugSnapshot(input, expected, writeText) {
-    return globalThis.PWM.DebugLogger.collectComposerDebugSnapshot(input, expected, writeText, {
-      getInputText,
-      normalizeText: normalizeComposerText,
-      normalizeEditorInnerText,
-      normalizeVisiblePlaceholders,
-      placeholderTokenRegex: PLACEHOLDER_TOKEN_REGEX
-    });
-  }
-
   function debugLogSnapshot(label, input, expected, writeText) {
+    if (typeof contentDebug !== "undefined") {
+      contentDebug.debugLogSnapshot(label, input, expected, writeText);
+      return;
+    }
     if (!isDebugEnabled()) return;
-
-    const snapshot = collectComposerDebugSnapshot(input, expected, writeText);
-    globalThis.PWM?.DebugLogger?.debugSnapshot?.(label, snapshot, { root: window });
+    globalThis.PWM?.DebugLogger?.debugSnapshot?.(label, {
+      expected: summarizeDebugText(expected),
+      writeText: summarizeDebugText(writeText),
+      getInputText: summarizeDebugText(getInputText(input)),
+      innerText: summarizeDebugText(input?.innerText || ""),
+      normalizedInnerText: summarizeDebugText(normalizeEditorInnerText(input?.innerText || "")),
+      textContent: summarizeDebugText(input?.textContent || "")
+    }, { root: window });
   }
 
   function debugReveal(label, payload) {
-    globalThis.PWM?.DebugLogger?.debugEvent?.(label, payload, { root: window });
+    if (typeof contentDebug !== "undefined") {
+      contentDebug.debugReveal(label, payload);
+      return;
+    }
+    globalThis.PWM?.DebugLogger?.debugEvent?.(label, payload || {}, { root: window });
   }
 
   function getGeminiDiagnosticsAdapter() {
@@ -646,23 +666,29 @@
   }
 
   function debugFileAttachMetadata(label, payload) {
+    if (typeof contentDebug !== "undefined") {
+      contentDebug.debugFileAttachMetadata(label, payload);
+      return;
+    }
     debugReveal(label, createSafeFileAttachDebugPayload(payload));
   }
 
   function debugResponseRehydration(label, payload) {
-    globalThis.PWM?.DebugLogger?.debugEvent?.(label, payload || {}, { root: window });
+    debugReveal(label, payload || {});
+  }
+
+  function countDebugPlaceholders(text) {
+    if (typeof contentDebug !== "undefined") return contentDebug.countDebugPlaceholders(text);
+    return (String(text || "").match(/\[[A-Z_]+_\d+\]/g) || []).length;
   }
 
   function getSafeElementAttribute(el, name) {
+    if (typeof contentDebug !== "undefined") return contentDebug.getSafeElementAttribute(el, name);
     try {
       return String(el?.getAttribute?.(name) || "");
     } catch {
       return "";
     }
-  }
-
-  function countDebugPlaceholders(text) {
-    return (String(text || "").match(/\[[A-Z_]+_\d+\]/g) || []).length;
   }
 
   function getDebugTextLength(value) {
@@ -694,49 +720,37 @@
   }
 
   function getChatGptComposerSyncDebug(input, expectedText = "", actualText = null) {
-    const actual = actualText == null ? getInputText(input) : normalizeComposerText(actualText);
-    const innerText = normalizeComposerText(input?.innerText || "");
-    const textContent = normalizeComposerText(input?.textContent || "");
-    let selection = null;
-    try {
-      selection = getSelectionOffsets(input);
-    } catch {
-      selection = null;
+    if (typeof contentDebug === "undefined") {
+      const actual = actualText == null ? getInputText(input) : normalizeComposerText(actualText);
+      return {
+        host: location?.hostname || "",
+        input: {
+          tag: input?.tagName || "",
+          role: getSafeElementAttribute(input, "role") || input?.role || "",
+          contenteditable: getSafeElementAttribute(input, "contenteditable"),
+          dataTestIdLength: getSafeElementAttribute(input, "data-testid").length,
+          idLength: String(input?.id || getSafeElementAttribute(input, "id")).length,
+          classLength: String(typeof input?.className === "string" ? input.className : getSafeElementAttribute(input, "class")).length
+        },
+        expectedLength: getDebugTextLength(expectedText),
+        actualLength: getDebugTextLength(actual),
+        innerTextLength: getDebugTextLength(input?.innerText || ""),
+        textContentLength: getDebugTextLength(input?.textContent || ""),
+        placeholderCount: countDebugPlaceholders(actual || expectedText),
+        expectedPlaceholderCount: countDebugPlaceholders(expectedText),
+        actualPlaceholderCount: countDebugPlaceholders(actual),
+        sendButton: getChatGptSendButtonDebugState(input)
+      };
     }
-    let className = "";
-    try {
-      className =
-        typeof input?.className === "string"
-          ? input.className
-          : getSafeElementAttribute(input, "class");
-    } catch {
-      className = "";
-    }
-
+    const debugState = contentDebug.getChatGptComposerSyncDebug(input, expectedText, actualText);
     return {
-      host: location?.hostname || "",
-      input: {
-        tag: input?.tagName || "",
-        role: getSafeElementAttribute(input, "role") || input?.role || "",
-        contenteditable: getSafeElementAttribute(input, "contenteditable"),
-        dataTestId: getSafeElementAttribute(input, "data-testid"),
-        id: input?.id || getSafeElementAttribute(input, "id"),
-        classSnippet: className.slice(0, 96)
-      },
+      ...debugState,
       expectedLength: getDebugTextLength(expectedText),
-      actualLength: getDebugTextLength(actual),
-      innerTextLength: getDebugTextLength(innerText),
-      textContentLength: getDebugTextLength(textContent),
-      placeholderCount: countDebugPlaceholders(actual || expectedText),
-      expectedPlaceholderCount: countDebugPlaceholders(expectedText),
-      actualPlaceholderCount: countDebugPlaceholders(actual),
-      selection:
-        selection && Number.isFinite(Number(selection.start)) && Number.isFinite(Number(selection.end))
-          ? {
-              start: Number(selection.start),
-              end: Number(selection.end)
-            }
-          : null,
+      input: {
+        ...(debugState.input || {}),
+        role: getSafeElementAttribute(input, "role") || input?.role || "",
+        contenteditable: getSafeElementAttribute(input, "contenteditable")
+      },
       sendButton: getChatGptSendButtonDebugState(input)
     };
   }
@@ -761,9 +775,11 @@
   }
 
   function logFailureDetails(details) {
-    console.group("[PWM] rewrite verification failure");
-    console.log(details);
-    console.groupEnd();
+    if (typeof contentDebug !== "undefined") {
+      contentDebug.logFailureDetails(details);
+      return;
+    }
+    debugReveal("rewrite:verification-failure", details || {});
   }
 
   function consumeInterceptionEvent(event) {
@@ -775,12 +791,11 @@
   }
 
   function logFileInterception(label, details) {
-    details = details || {};
-    try {
-      console.log(`[LeakGuard] ${label}`, details);
-    } catch {
-      // Console diagnostics are best-effort and must not affect protection.
+    if (typeof contentDebug !== "undefined") {
+      contentDebug.logFileInterception(label, details);
+      return;
     }
+    debugFileAttachMetadata(`file-interception:${label}`, details || {});
   }
 
   function isFirefoxRuntime() {
@@ -5024,53 +5039,94 @@
   }
 
   function describeFileForDebug(file) {
-    return globalThis.PWM.SafeSnapshots.describeFileForDebug(file);
+    return globalThis.PWM.SafeSnapshots?.describeFileForDebug?.(file) ||
+      (typeof contentDebug !== "undefined" ? contentDebug.describeFileForDebug(file) : {
+        nameLength: String(file?.name || "").length,
+        size: Number(file?.size || 0),
+        type: String(file?.type || "").split(";")[0].slice(0, 80),
+        lastModified: Number(file?.lastModified || 0) || 0
+      });
   }
 
   function describeFileInputForDebug(fileInput, source = "") {
     if (!isFileInputElement(fileInput)) return null;
+    if (typeof contentDebug !== "undefined") return contentDebug.describeFileInputForDebug(fileInput, source);
     return {
       tag: fileInput.tagName || "",
       source,
       disabled: Boolean(fileInput.disabled),
       hidden: Boolean(fileInput.hidden),
-      className: typeof fileInput.className === "string" ? fileInput.className : fileInput.getAttribute?.("class") || "",
-      accept: fileInput.accept || "",
+      classLength: String(typeof fileInput.className === "string" ? fileInput.className : fileInput.getAttribute?.("class") || "").length,
+      acceptLength: String(fileInput.accept || "").length,
       multiple: Boolean(fileInput.multiple),
       filesLength: Number(fileInput.files?.length || 0)
     };
   }
 
   function getSafeTextSnippet(el) {
-    if (!el) return "";
     let text = "";
     try {
-      text = String(el.innerText || el.textContent || "");
+      const normalize = typeof normalizeComposerText === "function" ? normalizeComposerText : (value) => String(value || "");
+      text = normalize(el?.innerText || el?.textContent || "").replace(/\s+/g, " ").trim();
     } catch {
       text = "";
     }
-    return text.replace(/\s+/g, " ").trim().slice(0, 80);
+    if (!text) return "";
+    const snippet = text.slice(0, 80);
+    if (/(?:bearer|cookie|credential|key|password|raw|reveal|secret|token|sk-[a-z0-9_-]{12,}|AKIA[0-9A-Z]{16})/i.test(snippet)) {
+      return `[text length=${text.length}]`;
+    }
+    if (/[A-Za-z0-9+/=_-]{24,}/.test(snippet)) return `[text length=${text.length}]`;
+    return snippet;
   }
 
   function describeElementForDebug(el, source = "") {
     if (!el) return null;
-    let className = "";
-    try {
-      className =
-        typeof el.className === "string"
-          ? el.className
-          : el.getAttribute?.("class") || "";
-    } catch {
-      className = "";
+    if (typeof contentDebug === "undefined") {
+      const safeAttribute = (name) => {
+        try {
+          return String(el?.getAttribute?.(name) || "");
+        } catch {
+          return "";
+        }
+      };
+      const safeDebugString = (value) => {
+        const text = String(value || "");
+        if (!text || text.length > 120) return "";
+        if (/(?:bearer|cookie|credential|key|password|raw|reveal|secret|token|sk-[a-z0-9_-]{12,}|AKIA[0-9A-Z]{16})/i.test(text)) {
+          return "";
+        }
+        if (/[A-Za-z0-9+/=_-]{24,}/.test(text)) return "";
+        if (/(?:[A-Za-z]:[\\/]|\.{1,2}[\\/]|[\\/][^\\/]+[\\/])/.test(text)) return "";
+        return text;
+      };
+      const safeDebugClassName = (value) => {
+        const text = String(value || "");
+        if (!text || text.length > 256) return "";
+        if (/[^A-Za-z0-9 _:-]/.test(text)) return "";
+        if (/(?:bearer|cookie|key|password|secret|token|sk-[a-z0-9_-]{12,}|AKIA[0-9A-Z]{16})/i.test(text)) return "";
+        if (/[A-Za-z0-9+/=_-]{24,}/.test(text)) return "";
+        return text;
+      };
+      const ariaLabel = safeAttribute("aria-label") || el.ariaLabel || "";
+      const title = safeAttribute("title") || el.title || "";
+      const className = typeof el.className === "string" ? el.className : safeAttribute("class");
+      return {
+        tag: el.tagName || "",
+        role: safeAttribute("role") || el.role || "",
+        ariaLabel: safeDebugString(ariaLabel),
+        ariaLabelLength: String(ariaLabel).length,
+        title: safeDebugString(title),
+        titleLength: String(title).length,
+        className: safeDebugClassName(className),
+        classLength: String(className).length,
+        textSnippet: getSafeTextSnippet(el),
+        source
+      };
     }
     return {
-      tag: el.tagName || "",
-      role: el.getAttribute?.("role") || el.role || "",
-      ariaLabel: el.getAttribute?.("aria-label") || el.ariaLabel || "",
-      title: el.getAttribute?.("title") || el.title || "",
-      className,
-      textSnippet: getSafeTextSnippet(el),
-      source
+      ...contentDebug.describeElementForDebug(el, source),
+      textSnippet: getSafeTextSnippet(el)
     };
   }
 
@@ -5221,8 +5277,15 @@
   function isGeminiSourceUploadIcon(candidate, meta = null) {
     if (!candidate || String(candidate.tagName || "").toUpperCase() !== "MAT-ICON") return false;
     const details = meta || describeElementForDebug(candidate);
-    const className = details?.className || "";
-    const text = (details?.textSnippet || "").trim().toLowerCase();
+    const className =
+      details?.className ||
+      (typeof candidate.className === "string" ? candidate.className : candidate.getAttribute?.("class") || "");
+    const text = (
+      details?.textSnippet ||
+      candidate.innerText ||
+      candidate.textContent ||
+      ""
+    ).trim().toLowerCase();
     return /\bupload-icon\b/.test(className) && (text === "add_2" || text === "add");
   }
 
