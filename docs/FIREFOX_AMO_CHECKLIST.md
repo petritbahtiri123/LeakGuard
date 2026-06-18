@@ -62,7 +62,7 @@ Avoid unnecessary generated or vendored duplication if AMO requirements allow it
 - Scanner and protected-site text PDFs can export regenerated `.redacted.pdf` from sanitized text only; protected-site PDFs fall back to `.redacted.txt` when regeneration would truncate. Scanner and protected-site DOCX outputs can export regenerated `.redacted.docx` from sanitized text only; protected-site DOCX falls back to `.redacted.txt` when regeneration would truncate. Scanner and protected-site XLSX outputs can export regenerated `.redacted.xlsx` from sanitized text only; protected-site XLSX falls back to `.redacted.txt` when regeneration would truncate. Image metadata and OCR text outputs export `.redacted.txt`.
 - Scanner visual image redaction exports flattened `.redacted.png`; protected-site image OCR is settings-controlled, enabled by default for supported image uploads, can be turned off, and uploads `.redacted.png` only when OCR boxes are eligible.
 - Unsupported scanned PDFs, non-English OCR, remote OCR/backend flows, archives, executables, legacy/macro Office files, and binary files are not scanned or redacted in this release.
-- Unsupported files are not represented as scanned, sanitized, or protected; behavior can be warning-only pass-through or blocking when the browser/site path cannot be safely continued.
+- Unsupported files are not represented as scanned, sanitized, or protected; normal upload may continue only where the path is explicitly safe, and protected flows block raw upload when LeakGuard cannot safely continue.
 - Secure reveal is restricted to extension-owned UI.
 - Raw secrets are not intentionally persisted in long-term extension storage.
 - Optional host access is requested only when a user adds a protected site.

@@ -1,0 +1,42 @@
+LeakGuard synthetic enterprise metadata file-upload QA payload.
+Use this as source text for generated local upload files. All values are fake examples.
+
+AZURE_RG=rg-prod-weu-files-001
+AZURE_STORAGE_ACCOUNT=stdeberfileprd1234567
+tenantId=99999999-8888-7777-6666-555555555555
+subscriptionId=11111111-2222-3333-4444-555555555555
+
+AWS_ARN=arn:aws:iam::123456789012:role/LeakGuardQaRole
+AWS account id: 210987654321
+
+GCP project_id: lg-prod-project-123
+OTC resource otc-prod-de-ecs-001
+OpenStack project_id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+Kubernetes namespace: prod-payments
+Kubernetes resource secret/db-password
+
+Private IP 10.10.20.30
+Private CIDR 10.10.20.0/24
+UNC \\fs-prod-weu-01\FSA1234567
+SPN cifs/stdeberfileprd1234567.file.core.windows.net
+LDAP CN=svc-backup-prod,OU=Service Accounts,OU=SH070,DC=corp,DC=local
+Azure Files share FSA1234567
+AD group AD123-SH070-FILE-L-STFSA1234567R
+host fs-prod-weu-01.corp.local
+user CORP\adm-test.user
+EMAIL=test.user@example.com
+
+Harmless values:
+rg-blue
+rg-test
+product-roadmap-item
+invoice 123456789012
+8.8.8.8
+192.0.2.44
+192.0.2.0/24
+docs/page
+service/name
+random GUID 123e4567-e89b-12d3-a456-426614174000
+report.final.docx
+package.name

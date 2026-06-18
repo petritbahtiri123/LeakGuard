@@ -2,6 +2,8 @@
 
 Date: 2026-05-20
 
+> Historical status note, 2026-06-18: this audit is retained for context, not current module ownership. Major modularization has since landed: protected-site registry, content diagnostics, adapters, file extraction/handoff, response rehydration, shared detection helpers, runtime script order tests, and Onix dataset/eval safeguards are now documented in `docs/REPO_MAP.md` and `docs/CODEX_FAST_CONTEXT.md`. Treat line counts, pending PR suggestions, and older pending-attach assumptions below as historical unless revalidated against source.
+
 ## Executive Summary
 
 This audit found no obvious safe deletion or behavior bug that should be fixed inside the audit pass. The biggest cleanup opportunity is not a single bad helper; it is the accumulated complexity around `src/content/content.js`, especially local file ingestion, Gemini/Grok pending attach, and fallback sequencing. Those paths are also heavily tested and behavior-critical, so the right approach is staged cleanup: strengthen tests around overlap and cancellation first, then extract shared helpers without changing gates, placeholder formats, provider names, permissions, or fail-closed behavior.

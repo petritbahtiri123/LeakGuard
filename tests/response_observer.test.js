@@ -15,7 +15,8 @@ const NodeConstants = {
 const NodeFilterConstants = {
   SHOW_TEXT: 4
 };
-const placeholderTokenRegex = /\[(?:PWM|NET|PUB_HOST)_\d+(?:_SUB_\d+)*(?:_(?:HOST_\d+|GW|VIP|DNS))?\]/g;
+const placeholderTokenRegex =
+  /\[(?:PWM|NET|PUB_HOST|PRIVATE_IP|AZURE_RG|EMAIL)_\d+(?:_SUB_\d+)*(?:_(?:HOST_\d+|GW|VIP|DNS))?\]/g;
 
 class FakeTextNode {
   constructor(value) {
@@ -162,7 +163,7 @@ function element(tagName, attrs, children) {
   return new FakeElement(tagName, attrs, children);
 }
 
-function createOptions({ document, placeholderCount = 1, createdSpans = [] } = {}) {
+function createOptions({ document, placeholderCount = 1, trustedPlaceholders = [], createdSpans = [] } = {}) {
   return {
     document,
     Node: NodeConstants,
@@ -171,6 +172,8 @@ function createOptions({ document, placeholderCount = 1, createdSpans = [] } = {
     normalizeVisiblePlaceholders: (value) => String(value || ""),
     placeholderTokenRegex,
     placeholderCount,
+    trustedPlaceholders,
+    canonicalizePlaceholderToken: (value) => String(value || ""),
     tokenizePlaceholderText: PlaceholderRehydrator.tokenizePlaceholderText,
     createSecretSpan: (placeholder) => {
       const span = element("span", { class: "pwm-secret" }, [text(placeholder)]);
@@ -240,6 +243,83 @@ function testHydrateTextNodeLeavesUnknownPlaceholdersPlain() {
 
   assert.strictEqual(createdSpans.length, 0);
   assert.strictEqual(parent.textContent, "before [PWM_3] after");
+}
+
+function testHydrateTextNodeCreatesInjectedSpansForTrustedTypedPlaceholders() {
+  const node = text("LeakGuard saw [EMAIL_1] and [PRIVATE_IP_1]");
+  const parent = element("p", {}, [node]);
+  const doc = new FakeDocument(parent);
+  const createdSpans = [];
+
+  ResponseObserver.hydrateTextNode(
+    node,
+    createOptions({
+      document: doc,
+      placeholderCount: 0,
+      trustedPlaceholders: ["[EMAIL_1]", "[PRIVATE_IP_1]"],
+      createdSpans
+    })
+  );
+
+  assert.strictEqual(createdSpans.length, 2);
+  assert.strictEqual(createdSpans[0].textContent, "[EMAIL_1]");
+  assert.strictEqual(createdSpans[1].textContent, "[PRIVATE_IP_1]");
+  assert.deepStrictEqual(
+    parent.childNodes.map((child) => child.textContent),
+    ["LeakGuard saw ", "[EMAIL_1]", " and ", "[PRIVATE_IP_1]"]
+  );
+}
+
+function testHydrateTextNodeLeavesUntrustedTypedPlaceholdersPlain() {
+  const node = text("Fake [EMAIL_999]");
+  const parent = element("p", {}, [node]);
+  const doc = new FakeDocument(parent);
+  const createdSpans = [];
+
+  ResponseObserver.hydrateTextNode(
+    node,
+    createOptions({ document: doc, placeholderCount: 0, trustedPlaceholders: [], createdSpans })
+  );
+
+  assert.strictEqual(createdSpans.length, 0);
+  assert.strictEqual(parent.textContent, "Fake [EMAIL_999]");
+}
+
+function testTrustedTypedPlaceholdersInComposerNodesRemainSkipped() {
+  for (const [label, parent] of [
+    ["textarea", element("textarea", {}, [])],
+    ["contenteditable", element("div", { contenteditable: "true" }, [])],
+    ["textbox", element("div", { role: "textbox" }, [])]
+  ]) {
+    const node = text("[EMAIL_1]");
+    const doc = new FakeDocument(parent);
+    const createdSpans = [];
+    parent.appendChild(node);
+
+    ResponseObserver.hydrateTextNode(
+      node,
+      createOptions({ document: doc, placeholderCount: 0, trustedPlaceholders: ["[EMAIL_1]"], createdSpans })
+    );
+
+    assert.strictEqual(createdSpans.length, 0, `${label} should not be hydrated`);
+    assert.strictEqual(parent.textContent, "[EMAIL_1]", `${label} text should remain untouched`);
+  }
+}
+
+function testTrustedTypedPlaceholderInNonEditableResponseHydrates() {
+  const node = text("response [AZURE_RG_1]");
+  const parent = element("div", { role: "article" }, [node]);
+  const doc = new FakeDocument(parent);
+  const createdSpans = [];
+
+  ResponseObserver.hydrateTextNode(
+    node,
+    createOptions({ document: doc, placeholderCount: 0, trustedPlaceholders: ["[AZURE_RG_1]"], createdSpans })
+  );
+
+  assert.strictEqual(createdSpans.length, 1);
+  assert.strictEqual(createdSpans[0].textContent, "[AZURE_RG_1]");
+  assert.strictEqual(parent.textContent, "response [AZURE_RG_1]");
 }
 
 function testRehydrateTreeDoesNothingWithoutPlaceholders() {
@@ -340,6 +420,10 @@ function testRehydrationDebugPayloadsStayMetadataOnly() {
 testShouldSkipHydration();
 testHydrateTextNodeCreatesInjectedSpansForTrustedPlaceholders();
 testHydrateTextNodeLeavesUnknownPlaceholdersPlain();
+testHydrateTextNodeCreatesInjectedSpansForTrustedTypedPlaceholders();
+testHydrateTextNodeLeavesUntrustedTypedPlaceholdersPlain();
+testTrustedTypedPlaceholdersInComposerNodesRemainSkipped();
+testTrustedTypedPlaceholderInNonEditableResponseHydrates();
 testRehydrateTreeDoesNothingWithoutPlaceholders();
 testRehydrateTreeHydratesOnlyEligibleTextNodes();
 testStartRehydrationObserverKeepsBoundedAddedElementScan();

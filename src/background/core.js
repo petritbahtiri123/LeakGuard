@@ -18,6 +18,9 @@ const {
   setProtectedSiteOcrEnabled,
   evaluateDestinationPolicy,
   invalidatePolicyCache,
+  RuntimeScripts,
+  createProtectedSiteRegistry,
+  BackgroundAuditLog,
   ext,
   supportsDynamicContentScripts,
   getSessionStorageArea
@@ -26,77 +29,14 @@ const {
 const STORAGE_PREFIX = "pwm:tab:";
 const REVEAL_PREFIX = "pwm:reveal:";
 const POPUP_STATE_KEY = "pwm:popupState";
-const USER_SITE_SCRIPT_ID_PREFIX = "pwm_user_site_";
 const SESSION_STORAGE_AREA = getSessionStorageArea();
-let syncDynamicContentScriptsPromise = Promise.resolve();
-const CONTENT_SCRIPT_FILES = [
-  "content/file_drag_guard.js",
-  "compat/browser_api.js",
-  "compat/platform.js",
-  "vendor/onnxruntime/ort.wasm.min.js",
-  "shared/entropy.js",
-  "shared/patterns.js",
-  "shared/ai/classifier.js",
-  "shared/aiCandidateGate.js",
-  "shared/detector.js",
-  "shared/placeholders.js",
-  "shared/ipClassification.js",
-  "shared/ipDetection.js",
-  "shared/networkHierarchy.js",
-  "shared/placeholderAllocator.js",
-  "shared/sessionMapStore.js",
-  "shared/knownSecretReuse.js",
-  "shared/transformOutboundPrompt.js",
-  "shared/transformOutboundPromptWithAi.js",
-  "shared/redactor.js",
-  "shared/fileLimits.js",
-  "shared/fileTypeRegistry.js",
-  "shared/fileExtractors.js",
-  "shared/fileScanner.js",
-  "shared/pdfRedactor.js",
-  "shared/docxRedactor.js",
-  "shared/xlsxRedactor.js",
-  "shared/ocr/ocrRuntime.js",
-  "shared/scannerOcr.js",
-  "shared/imageRedactor.js",
-  "shared/streamingFileRedactor.js",
-  "shared/protected_sites.js",
-  "shared/policy.js",
-  "content/composer_helpers.js",
-  "content/file_paste_helpers.js",
-  "content/file_handoff_state.js",
-  "content/file_handoff_pending.js",
-  "content/file_handoff_flow.js",
-  "content/input/rewriteVerificationText.js",
-  "content/files/fileTransferPolicy.js",
-  "content/files/fileExtractionSessionCache.js",
-  "content/files/protectedSiteOcrBroker.js",
-  "content/files/contentFileExtractionPipeline.js",
-  "content/adapters/hostMatching.js",
-  "content/adapters/chatgptAdapter.js",
-  "content/adapters/openaiAdapter.js",
-  "content/adapters/geminiDiagnosticsAdapter.js",
-  "content/adapters/geminiAdapter.js",
-  "content/adapters/claudeAdapter.js",
-  "content/adapters/grokAdapter.js",
-  "content/adapters/xAdapter.js",
-  "content/adapters/index.js",
-  "content/adapters/geminiFallbackWriter.js",
-  "content/diagnostics/safeSnapshots.js",
-  "content/files/fileAttachPipeline.js",
-  "content/rehydration/placeholderRehydrator.js",
-  "content/rehydration/responseObserver.js",
-  "content/rehydration/revealController.js",
-  "content/diagnostics/debugLogger.js",
-  "content/bootstrap/eventBindings.js",
-  "content/content.js"
-];
+const CONTENT_SCRIPT_FILES = RuntimeScripts.contentScripts;
 const CONTENT_STYLE_FILES = ["content/overlay.css"];
-const AUDIT_EVENTS_STORAGE_KEY = "pwm:auditEvents";
-const MAX_AUDIT_EVENTS = 250;
-const DEFAULT_AUDIT_RETENTION_DAYS = 30;
-const MIN_AUDIT_RETENTION_DAYS = 1;
-const MAX_AUDIT_RETENTION_DAYS = 365;
+const {
+  AUDIT_EVENTS_STORAGE_KEY,
+  trimAuditEvents,
+  buildAuditEventEntry
+} = BackgroundAuditLog;
 const DESTINATION_POLICY_BLOCK_MESSAGE =
   "LeakGuard blocked this action because this destination is not approved by enterprise policy.";
 const PROTECTED_SITE_REMOVAL_BLOCK_MESSAGE =
@@ -107,77 +47,6 @@ function createPolicyDecisionError(decision) {
   const error = new Error(decision?.message || DESTINATION_POLICY_BLOCK_MESSAGE);
   error.reason = decision?.reason || "destination_blocked";
   return error;
-}
-
-function normalizeAuditFindingType(type) {
-  const normalized = String(type || "secret")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "");
-
-  return normalized || "secret";
-}
-
-function summarizeAuditFindings(findings) {
-  const normalizedFindings = Array.isArray(findings) ? findings : [];
-  const findingTypes = [...new Set(
-    normalizedFindings.map((finding) => normalizeAuditFindingType(finding?.type || finding?.placeholderType))
-  )];
-
-  return {
-    findingCount: normalizedFindings.length,
-    findingTypes
-  };
-}
-
-function parseAuditUrl(url) {
-  try {
-    const parsed = new URL(url);
-    return {
-      urlOrigin: parsed.origin,
-      siteHost: parsed.hostname
-    };
-  } catch {
-    return {
-      urlOrigin: "",
-      siteHost: ""
-    };
-  }
-}
-
-function normalizeAuditRetentionDays(policySummary) {
-  const rawDays = Number(policySummary?.auditRetentionDays || DEFAULT_AUDIT_RETENTION_DAYS);
-  const finiteDays = Number.isFinite(rawDays) ? rawDays : DEFAULT_AUDIT_RETENTION_DAYS;
-  return Math.max(MIN_AUDIT_RETENTION_DAYS, Math.min(MAX_AUDIT_RETENTION_DAYS, finiteDays));
-}
-
-function trimAuditEvents(events, policySummary) {
-  const normalizedEvents = Array.isArray(events) ? events.filter(Boolean) : [];
-  const retentionMs = normalizeAuditRetentionDays(policySummary) * 24 * 60 * 60 * 1000;
-  const cutoff = Date.now() - retentionMs;
-  return normalizedEvents
-    .filter((event) => {
-      const timestamp = Date.parse(event?.timestamp || "");
-      return Number.isFinite(timestamp) && timestamp >= cutoff;
-    })
-    .slice(-MAX_AUDIT_EVENTS);
-}
-
-function buildAuditEventEntry({ action, reason, url, findings, policySummary }) {
-  const { urlOrigin, siteHost } = parseAuditUrl(url);
-  const findingSummary = summarizeAuditFindings(findings);
-
-  return {
-    timestamp: new Date().toISOString(),
-    action,
-    reason,
-    urlOrigin,
-    siteHost,
-    findingCount: findingSummary.findingCount,
-    findingTypes: findingSummary.findingTypes,
-    policyMode: policySummary?.enterpriseMode ? "enterprise" : "consumer"
-  };
 }
 
 async function recordAuditEvent({ action, reason, url, findings, policySummary }) {
@@ -360,79 +229,27 @@ function requestMatchesState(request, state) {
   return Boolean(request?.sessionId && state?.sessionId && request.sessionId === state.sessionId);
 }
 
-function stableRuleHash(value) {
-  const input = String(value || "");
-  let hash = 2166136261;
+const protectedSiteRegistry = createProtectedSiteRegistry({
+  ext,
+  loadPolicy,
+  normalizeProtectedSiteInput,
+  normalizeProtectedSiteList,
+  contentScripts: RuntimeScripts.contentScripts,
+  storageKey: USER_PROTECTED_SITES_STORAGE_KEY,
+  isBuiltinProtectedSiteRule,
+  supportsDynamicContentScripts
+});
+const {
+  getManagedProtectedSites,
+  siteRuleMatchesUrl,
+  getStoredProtectedSites,
+  setStoredProtectedSites,
+  enrichProtectedSites,
+  syncDynamicContentScripts,
+  ensureProtectedSitePermission
+} = protectedSiteRegistry;
+Object.assign(globalThis, protectedSiteRegistry);
 
-  for (let index = 0; index < input.length; index += 1) {
-    hash ^= input.charCodeAt(index);
-    hash = Math.imul(hash, 16777619) >>> 0;
-  }
-
-  return hash.toString(16);
-}
-
-function userSiteScriptId(rule) {
-  return `${USER_SITE_SCRIPT_ID_PREFIX}${stableRuleHash(rule?.id)}`;
-}
-
-async function getManagedProtectedSites(policy = null) {
-  const loadedPolicy = policy || (await loadPolicy());
-  const managedInputs = Array.isArray(loadedPolicy?.policy?.managedProtectedSites)
-    ? loadedPolicy.policy.managedProtectedSites
-    : [];
-
-  return normalizeProtectedSiteList(
-    managedInputs
-      .map((input) => normalizeProtectedSiteInput(input))
-      .filter((normalized) => normalized.ok)
-      .map((normalized) => ({
-        ...normalized.rule,
-        enabled: true,
-        managed: true
-      }))
-  );
-}
-
-function siteRuleMatchesUrl(rule, url) {
-  const normalized = normalizeProtectedSiteInput(url);
-  return Boolean(normalized.ok && rule?.id && normalized.rule.id === rule.id);
-}
-
-async function getStoredProtectedSites() {
-  const result = await ext.storage.local.get(USER_PROTECTED_SITES_STORAGE_KEY);
-  return normalizeProtectedSiteList(result[USER_PROTECTED_SITES_STORAGE_KEY]);
-}
-
-async function setStoredProtectedSites(rules) {
-  const normalizedRules = normalizeProtectedSiteList(rules);
-
-  await ext.storage.local.set({
-    [USER_PROTECTED_SITES_STORAGE_KEY]: normalizedRules
-  });
-
-  return normalizedRules;
-}
-
-async function enrichProtectedSites(rules, policySummary) {
-  return Promise.all(
-    (rules || []).map(async (rule) => {
-      const hasPermission = await ext.permissions.contains({
-        origins: [rule.matchPattern]
-      });
-      const managed = Boolean(rule.managed);
-      const activeByPolicy = managed ? true : Boolean(policySummary?.allowUserAddedSites);
-
-      return {
-        ...rule,
-        hasPermission,
-        active: Boolean(activeByPolicy && rule.enabled && hasPermission),
-        policyLocked: managed ? true : !policySummary?.allowUserAddedSites,
-        removalLocked: managed ? true : !policySummary?.allowSiteRemoval
-      };
-    })
-  );
-}
 
 async function getProtectedSiteOverview(url, tabId = null) {
   const loadedPolicy = await loadPolicy();
@@ -614,78 +431,6 @@ async function getProtectedSiteOverview(url, tabId = null) {
   };
 }
 
-async function buildUserSiteRegistrations() {
-  const loadedPolicy = await loadPolicy();
-  const managedSites = await getManagedProtectedSites(loadedPolicy);
-  const userSites = loadedPolicy.policy.allowUserAddedSites ? await getStoredProtectedSites() : [];
-  const siteRules = normalizeProtectedSiteList([...managedSites, ...userSites]);
-  const registrations = [];
-
-  for (const rule of siteRules) {
-    if (!rule.enabled) continue;
-
-    const hasPermission = await ext.permissions.contains({
-      origins: [rule.matchPattern]
-    });
-    if (!hasPermission) continue;
-
-    registrations.push({
-      id: userSiteScriptId(rule),
-      matches: [rule.matchPattern],
-      js: CONTENT_SCRIPT_FILES,
-      css: CONTENT_STYLE_FILES,
-      runAt: "document_start",
-      allFrames: true,
-      matchOriginAsFallback: true,
-      persistAcrossSessions: true
-    });
-  }
-
-  return registrations;
-}
-
-async function performDynamicContentScriptSync() {
-  if (!supportsDynamicContentScripts) {
-    throw new Error("LeakGuard requires dynamic MV3 content script support on this browser.");
-  }
-
-  const existing = await ext.scripting.getRegisteredContentScripts();
-  const managedIds = existing
-    .filter((script) => script.id.startsWith(USER_SITE_SCRIPT_ID_PREFIX))
-    .map((script) => script.id);
-
-  if (managedIds.length) {
-    await ext.scripting.unregisterContentScripts({ ids: managedIds });
-  }
-
-  const registrations = await buildUserSiteRegistrations();
-  if (!registrations.length) return;
-
-  await ext.scripting.registerContentScripts(registrations);
-}
-
-function syncDynamicContentScripts() {
-  syncDynamicContentScriptsPromise = syncDynamicContentScriptsPromise
-    .catch(() => {})
-    .then(() => performDynamicContentScriptSync());
-
-  return syncDynamicContentScriptsPromise;
-}
-
-async function ensureProtectedSitePermission(rule) {
-  if (isBuiltinProtectedSiteRule(rule)) {
-    return true;
-  }
-
-  const hasPermission = await ext.permissions.contains({
-    origins: [rule.matchPattern]
-  });
-  if (!hasPermission) {
-    throw new Error("LeakGuard needs site access before it can protect this site.");
-  }
-
-  return true;
-}
 
 async function upsertProtectedSite(input) {
   const loadedPolicy = await loadPolicy();
@@ -1160,6 +905,9 @@ async function revealSecret(requestId) {
 
   const manager = new PlaceholderManager();
   manager.setPrivateState(state || {});
+  if (!manager.knowsPlaceholder(request.placeholder)) {
+    return null;
+  }
 
   return manager.getRaw(request.placeholder);
 }

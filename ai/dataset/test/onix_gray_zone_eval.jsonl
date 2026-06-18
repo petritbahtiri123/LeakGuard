@@ -1,0 +1,32 @@
+{"action":"redact","category":"credential_context","label":"SECRET","layer_hint":"onix_gray_zone","source":"heldout_onix_gray_zone","text":"password=Welcome123"}
+{"action":"redact","category":"credential_context","label":"SECRET","layer_hint":"onix_gray_zone","source":"heldout_onix_gray_zone","text":"pwd=Qwerty123"}
+{"action":"redact","category":"credential_context","label":"SECRET","layer_hint":"onix_gray_zone","source":"heldout_onix_gray_zone","text":"temporary password is Welcome2026"}
+{"action":"redact","category":"credential_context","label":"SECRET","layer_hint":"onix_gray_zone","source":"heldout_onix_gray_zone","text":"token=blue-team-prod"}
+{"action":"redact","category":"credential_context","label":"SECRET","layer_hint":"onix_gray_zone","source":"heldout_onix_gray_zone","text":"client_secret=manual-rotation-needed"}
+{"action":"redact","category":"credential_context","label":"SECRET","layer_hint":"onix_gray_zone","source":"heldout_onix_gray_zone","text":"The shared secret is backup-prod for now."}
+{"action":"redact","category":"identity","label":"SECRET","layer_hint":"onix_gray_zone","source":"heldout_onix_gray_zone","text":"username=svc-backup"}
+{"action":"redact","category":"identity","label":"SECRET","layer_hint":"onix_gray_zone","source":"heldout_onix_gray_zone","text":"login=svc-prod-deploy"}
+{"action":"redact","category":"identity","label":"SECRET","layer_hint":"onix_gray_zone","source":"heldout_onix_gray_zone","text":"service_account=svc-cloud-runner"}
+{"action":"redact","category":"identity","label":"SECRET","layer_hint":"onix_gray_zone","source":"heldout_onix_gray_zone","text":"DOMAIN\\svc-backup in username field"}
+{"action":"redact","category":"email","label":"SECRET","layer_hint":"onix_gray_zone","source":"heldout_onix_gray_zone","text":"Contact user@example.com for access."}
+{"action":"redact","category":"email","label":"SECRET","layer_hint":"onix_gray_zone","source":"heldout_onix_gray_zone","text":"admin@company.com"}
+{"action":"redact","category":"email","label":"SECRET","layer_hint":"onix_gray_zone","source":"heldout_onix_gray_zone","text":"service-account@project.iam.gserviceaccount.com"}
+{"action":"redact","category":"metadata_sensitive","label":"SECRET","layer_hint":"onix_gray_zone","source":"heldout_onix_gray_zone","text":"tenant_id used for production admin login: 72f988bf-86f1-41af-91ab-2d7cd011db47"}
+{"action":"redact","category":"metadata_sensitive","label":"SECRET","layer_hint":"onix_gray_zone","source":"heldout_onix_gray_zone","text":"aws_account_id for production root account: 123456789012"}
+{"action":"redact","category":"metadata_sensitive","label":"SECRET","layer_hint":"onix_gray_zone","source":"heldout_onix_gray_zone","text":"vault path for prod secrets: secret/data/prod/database"}
+{"action":"redact","category":"metadata_sensitive","label":"SECRET","layer_hint":"onix_gray_zone","source":"heldout_onix_gray_zone","text":"admin portal: https://internal-admin.corp.local"}
+{"action":"keep","category":"metadata_safe","label":"NOT_SECRET","source":"heldout_onix_gray_zone","text":"Azure tenant_id is a UUID used to identify a directory."}
+{"action":"keep","category":"metadata_safe","label":"NOT_SECRET","source":"heldout_onix_gray_zone","text":"The architecture document references a subscription_id field."}
+{"action":"keep","category":"metadata_safe","label":"NOT_SECRET","source":"heldout_onix_gray_zone","text":"AWS account IDs are 12-digit identifiers."}
+{"action":"keep","category":"metadata_safe","label":"NOT_SECRET","source":"heldout_onix_gray_zone","text":"The example path is /docs/examples/config."}
+{"action":"keep","category":"normal_text_safe","label":"NOT_SECRET","source":"heldout_onix_gray_zone","text":"A password should be rotated regularly."}
+{"action":"keep","category":"normal_text_safe","label":"NOT_SECRET","source":"heldout_onix_gray_zone","text":"Never share tokens in chat."}
+{"action":"keep","category":"normal_text_safe","label":"NOT_SECRET","source":"heldout_onix_gray_zone","text":"The database password field should be stored in Key Vault."}
+{"action":"keep","category":"normal_text_safe","label":"NOT_SECRET","source":"heldout_onix_gray_zone","text":"Jane Doe and Sam Patel reviewed the deployment plan."}
+{"action":"keep","category":"normal_text_safe","label":"NOT_SECRET","source":"heldout_onix_gray_zone","text":"Clean placeholder [PWM_7] should remain trusted."}
+{"action":"keep","category":"adversarial_safe","label":"NOT_SECRET","source":"heldout_onix_gray_zone","text":"Normal GitHub URL: https://github.com/example/project"}
+{"action":"keep","category":"adversarial_safe","label":"NOT_SECRET","source":"heldout_onix_gray_zone","text":"Normal UUID: 123e4567-e89b-12d3-a456-426614174000"}
+{"action":"keep","category":"adversarial_safe","label":"NOT_SECRET","source":"heldout_onix_gray_zone","text":"Normal AWS ARN: arn:aws:iam::123456789012:role/AdminRole"}
+{"action":"warn","category":"unknown_or_ambiguous","label":"UNSURE","source":"heldout_onix_gray_zone","text":"candidate auth_code=asdfgh1234 may need manual review."}
+{"action":"warn","category":"unknown_or_ambiguous","label":"UNSURE","source":"heldout_onix_gray_zone","text":"masked credential candidate blue****prod"}
+{"action":"warn","category":"unknown_or_ambiguous","label":"UNSURE","source":"heldout_onix_gray_zone","text":"possible token in screenshot; verify manually"}

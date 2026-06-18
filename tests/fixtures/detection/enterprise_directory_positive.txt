@@ -1,0 +1,5 @@
+UNC paths \\server01\share and \\fs-prod-weu-01\FSA1234567 and \\dc01.corp.local\netlogon.
+Escaped UNC "\\\\fs-prod-weu-01\\FSA1234567" and Azure UNC \\stdeberfileprd1234567.file.core.windows.net\FSA1234567.
+SPNs cifs/stdeberfileprd1234567.file.core.windows.net host/fs-prod-weu-01.corp.local HTTP/app-prod-weu.internal MSSQLSvc/sql-prod-001.internal:1433.
+Command setspn -S cifs/stdeberfileprd1234567.file.core.windows.net DOMAIN\svc-kerberos.
+LDAP CN=John Doe,OU=Users,OU=SH070,DC=corp,DC=local and CN=svc-backup-prod,OU=Service Accounts,DC=corp,DC=local and OU=SH070,DC=corp,DC=local and DC=corp,DC=local.

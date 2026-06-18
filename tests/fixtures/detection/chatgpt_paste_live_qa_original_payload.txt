@@ -1,0 +1,184 @@
+{
+    "product": "LeakGuard",
+    "purpose": "synthetic enterprise metadata live-site QA",
+    "localOnly": true,
+    "sensitiveSyntheticValues": [
+        {
+            "Group": "Azure",
+            "Name": "Azure resource group",
+            "Value": "rg-prod-weu-files-001",
+            "Expected": "[AZURE_RG_N]"
+        },
+        {
+            "Group": "Azure",
+            "Name": "Azure storage account",
+            "Value": "stdeberfileprd1234567",
+            "Expected": "[STORAGE_ACCOUNT_N]"
+        },
+        {
+            "Group": "Azure",
+            "Name": "tenantId",
+            "Value": "99999999-8888-7777-6666-555555555555",
+            "Expected": "[AZURE_TENANT_ID_N]"
+        },
+        {
+            "Group": "Azure",
+            "Name": "subscriptionId",
+            "Value": "11111111-2222-3333-4444-555555555555",
+            "Expected": "[AZURE_SUBSCRIPTION_ID_N]"
+        },
+        {
+            "Group": "AWS",
+            "Name": "AWS ARN",
+            "Value": "arn:aws:iam::123456789012:role/LeakGuardQaRole",
+            "Expected": "[AWS_ARN_N]"
+        },
+        {
+            "Group": "AWS",
+            "Name": "AWS account id",
+            "Value": "210987654321",
+            "Expected": "[AWS_ACCOUNT_ID_N]"
+        },
+        {
+            "Group": "GCP",
+            "Name": "project_id",
+            "Value": "lg-prod-project-123",
+            "Expected": "[GCP_PROJECT_N]"
+        },
+        {
+            "Group": "GCP",
+            "Name": "project_number",
+            "Value": "987654321098",
+            "Expected": "[GCP_PROJECT_NUMBER_N]"
+        },
+        {
+            "Group": "OTC/OpenStack",
+            "Name": "OTC resource",
+            "Value": "otc-prod-de-ecs-001",
+            "Expected": "[OTC_RESOURCE_N]"
+        },
+        {
+            "Group": "OTC/OpenStack",
+            "Name": "OpenStack project_id",
+            "Value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "Expected": "[OPENSTACK_PROJECT_ID_N]"
+        },
+        {
+            "Group": "OTC/OpenStack",
+            "Name": "OpenStack tenant_id",
+            "Value": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "Expected": "[OPENSTACK_TENANT_ID_N]"
+        },
+        {
+            "Group": "OTC/OpenStack",
+            "Name": "OpenStack domain_id",
+            "Value": "cccccccccccccccccccccccccccccccc",
+            "Expected": "[OPENSTACK_DOMAIN_ID_N]"
+        },
+        {
+            "Group": "OTC/OpenStack",
+            "Name": "OpenStack server_id",
+            "Value": "dddddddddddddddddddddddddddddddd",
+            "Expected": "[OPENSTACK_RESOURCE_ID_N]"
+        },
+        {
+            "Group": "Kubernetes",
+            "Name": "Kubernetes namespace",
+            "Value": "prod-payments",
+            "Expected": "[K8S_NAMESPACE_N]"
+        },
+        {
+            "Group": "Kubernetes",
+            "Name": "Kubernetes resource",
+            "Value": "secret/db-password",
+            "Expected": "[K8S_SECRET_N]"
+        },
+        {
+            "Group": "Internal",
+            "Name": "PRIVATE_IP",
+            "Value": "10.10.20.30",
+            "Expected": "[PRIVATE_IP_N]"
+        },
+        {
+            "Group": "Internal",
+            "Name": "PRIVATE_CIDR",
+            "Value": "10.10.20.0/24",
+            "Expected": "[PRIVATE_CIDR_N]"
+        },
+        {
+            "Group": "Internal",
+            "Name": "UNC_PATH",
+            "Value": "\\\\fs-prod-weu-01\\FSA1234567",
+            "Expected": "[UNC_PATH_N]"
+        },
+        {
+            "Group": "Internal",
+            "Name": "SPN",
+            "Value": "cifs/stdeberfileprd1234567.file.core.windows.net",
+            "Expected": "[SPN_N]"
+        },
+        {
+            "Group": "Internal",
+            "Name": "LDAP_DN",
+            "Value": "CN=svc-backup-prod,OU=Service Accounts,OU=SH070,DC=corp,DC=local",
+            "Expected": "[LDAP_DN_N]"
+        },
+        {
+            "Group": "Internal",
+            "Name": "FILE_SHARE",
+            "Value": "FSA1234567",
+            "Expected": "[FILE_SHARE_N]"
+        },
+        {
+            "Group": "Internal",
+            "Name": "AD_GROUP",
+            "Value": "AD123-SH070-FILE-L-STFSA1234567R",
+            "Expected": "[AD_GROUP_N]"
+        },
+        {
+            "Group": "Internal",
+            "Name": "HOSTNAME",
+            "Value": "fs-prod-weu-01.corp.local",
+            "Expected": "[HOSTNAME_N]"
+        },
+        {
+            "Group": "Internal",
+            "Name": "USERNAME",
+            "Value": "CORP\\adm-test.user",
+            "Expected": "[USERNAME_N]"
+        },
+        {
+            "Group": "Internal",
+            "Name": "service account username",
+            "Value": "svc-backup-prod",
+            "Expected": "[USERNAME_N]"
+        },
+        {
+            "Group": "Internal",
+            "Name": "identity owner username",
+            "Value": "jane.doe",
+            "Expected": "[USERNAME_N]"
+        },
+        {
+            "Group": "Internal",
+            "Name": "EMAIL",
+            "Value": "test.user@example.com",
+            "Expected": "[EMAIL_N]"
+        }
+    ],
+    "harmlessControls": [
+        "rg-blue",
+        "rg-test",
+        "product-roadmap-item",
+        "invoice 123456789012",
+        "8.8.8.8",
+        "192.0.2.44",
+        "192.0.2.0/24",
+        "docs/page",
+        "service/name",
+        "random GUID 123e4567-e89b-12d3-a456-426614174000",
+        "random FSA1234567 without context",
+        "report.final.docx",
+        "package.name"
+    ]
+}

@@ -55,8 +55,8 @@ Inventory scope for this pass:
 | [REPO_MAP.md](REPO_MAP.md) | Compact repo map, high-risk regression areas, and test ownership. | Good / keep. |
 | [BUG_PLAYBOOK.md](BUG_PLAYBOOK.md) | Common bug routing, debugging hints, and focused test commands. | Good / keep. |
 | [AI_ASSIST.md](AI_ASSIST.md) | Browser-facing local AI assist design, smoke tests, and training flow. | Good / keep after this cleanup aligned the training command/count. |
-| [ai/README.md](../ai/README.md) | Local AI training, evaluation, and ONNX export workflow. | Needs update. This cleanup corrected the generator command and routed browser threshold details to `docs/AI_ASSIST.md`. |
-| [code-quality-audit.md](code-quality-audit.md) | Internal code quality findings and suggested PR sequence. | Good / keep as an internal planning note. |
+| [ai/README.md](../ai/README.md) | Local AI training, evaluation, and ONNX export workflow. | Good / keep. Current Onix lifecycle, 50,000-record default, held-out eval, and safety rules are documented. |
+| [code-quality-audit.md](code-quality-audit.md) | Historical internal code quality findings and suggested PR sequence. | Historical / keep for context. Current ownership lives in `REPO_MAP.md`. |
 | [IMPLEMENTATION_ROADMAP.md](IMPLEMENTATION_ROADMAP.md) | Ordered implementation roadmap for deep-research, documentation, release, and code-quality hardening work. | Good / keep. Added after refreshing `deep-research-report.md`. |
 
 ### Testing and QA docs
@@ -93,6 +93,12 @@ Inventory scope for this pass:
 | [CODEX_CHANGELOG.md](CODEX_CHANGELOG.md) | AI-agent handoff log. | Good / keep, but periodically prune or archive old entries if it becomes noisy. |
 | [codex-playbooks/INDEX.md](codex-playbooks/INDEX.md) | Playbook router. | Good / keep. |
 | [codex-playbooks/allow-once-popup-loop.md](codex-playbooks/allow-once-popup-loop.md) | Allow-once popup loop remediation playbook. | Good / keep. |
+| [codex-playbooks/detector-bug.md](codex-playbooks/detector-bug.md) | Detector miss remediation playbook. | Good / keep. |
+| [codex-playbooks/false-positive.md](codex-playbooks/false-positive.md) | False-positive remediation playbook. | Good / keep. |
+| [codex-playbooks/file-handoff-fail-closed.md](codex-playbooks/file-handoff-fail-closed.md) | File handoff and fail-closed remediation playbook. | Good / keep. |
+| [codex-playbooks/debug-safety.md](codex-playbooks/debug-safety.md) | Metadata-only diagnostics playbook. | Good / keep. |
+| [codex-playbooks/onix-training-eval.md](codex-playbooks/onix-training-eval.md) | Onix dataset/training/eval playbook. | Good / keep. |
+| [codex-playbooks/browser-qa.md](codex-playbooks/browser-qa.md) | Browser QA failure playbook. | Good / keep. |
 | [codex-playbooks/gemini-drag-drop-file-ingestion.md](codex-playbooks/gemini-drag-drop-file-ingestion.md) | Gemini drag/drop remediation playbook. | Good / keep. |
 | [codex-playbooks/firefox-addon-submission.md](codex-playbooks/firefox-addon-submission.md) | Firefox Add-ons submission remediation playbook. | Good / keep. |
 | [.github/copilot-instructions.md](../.github/copilot-instructions.md) | Short GitHub Copilot review focus. | Good / keep. |
