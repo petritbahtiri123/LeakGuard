@@ -1,4 +1,5 @@
 const assert = require("assert");
+const fs = require("fs");
 const path = require("path");
 
 const repoRoot = path.join(__dirname, "..");
@@ -63,6 +64,13 @@ function assertDetectorModulesBeforeDetector(scripts, label) {
   });
 }
 
+function getScannerPageScripts() {
+  const source = fs.readFileSync(path.join(repoRoot, "src/scanner/scanner.html"), "utf8");
+  return [...source.matchAll(/<script\s+src="([^"]+)"><\/script>/g)].map(([, src]) =>
+    src.replace(/^\.\.\//, "")
+  );
+}
+
 function testContentRuntimeScriptOrder() {
   assert.strictEqual(
     contentScripts.at(-1),
@@ -123,6 +131,25 @@ function testContentRuntimeScriptOrder() {
   ], "content scripts");
 }
 
+function testScannerPageScriptOrder() {
+  const scannerScripts = getScannerPageScripts();
+  assertAfterAll(scannerScripts, "shared/detector.js", [
+    "shared/entropy.js",
+    "shared/patterns.js"
+  ], "scanner page scripts");
+  assertDetectorModulesBeforeDetector(scannerScripts, "scanner page scripts");
+  assertAfterAll(scannerScripts, "shared/fileScanner.js", [
+    "shared/detector.js",
+    "shared/placeholders.js",
+    "shared/transformOutboundPrompt.js"
+  ], "scanner page scripts");
+  assert.strictEqual(
+    scannerScripts.at(-1),
+    "scanner.js",
+    "scanner.js should remain the final scanner page orchestration script"
+  );
+}
+
 function testBackgroundRuntimeScriptOrder() {
   assert.strictEqual(
     backgroundScripts.at(-1),
@@ -156,6 +183,7 @@ function testBackgroundRuntimeScriptOrder() {
 }
 
 testContentRuntimeScriptOrder();
+testScannerPageScriptOrder();
 testBackgroundRuntimeScriptOrder();
 
 console.log("PASS runtime script order");
