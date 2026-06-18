@@ -28,6 +28,19 @@
     isDatabaseUrlUserinfoScheme
   } = root.PWM.DetectionUrlUserinfo;
 
+  if (!root.PWM.DetectionHttpHeaders && typeof require === "function") {
+    require("./detection/httpHeaders.js");
+  }
+  const {
+    normalizeHttpHeaderName,
+    isSensitiveHttpHeaderName,
+    hasSensitiveHttpHeaderShape,
+    inferHttpHeaderPlaceholderType,
+    isSensitiveCookieName,
+    isRedactableHttpHeaderValue,
+    isRedactableCookieValue
+  } = root.PWM.DetectionHttpHeaders;
+
   const VISIBLE_PLACEHOLDER_TOKEN_SOURCE =
     "\\[(?:PWM_\\d+|NET_\\d+(?:_SUB_\\d+)*(?:_(?:HOST_\\d+|GW|VIP|DNS))?|PUB_HOST_\\d+(?:_(?:GW|VIP|DNS))?|[A-Z][A-Z0-9_]*_\\d+)\\]";
   const VISIBLE_PLACEHOLDER_EXACT_REGEX = new RegExp(`^${VISIBLE_PLACEHOLDER_TOKEN_SOURCE}$`);
@@ -628,87 +641,6 @@
     return /^sk-(?:proj|live|test|org|svcacct|admin)-[A-Za-z0-9_-]{6,}$/.test(raw);
   }
 
-  const SENSITIVE_HTTP_HEADERS = new Set([
-    "authorization",
-    "x-api-key",
-    "api-key",
-    "x-auth-token",
-    "x-access-token",
-    "x-session-token",
-    "ocp-apim-subscription-key",
-    "cookie",
-    "set-cookie"
-  ]);
-
-  function normalizeHttpHeaderName(name) {
-    return String(name || "").trim().toLowerCase();
-  }
-
-  function isSensitiveHttpHeaderName(name) {
-    return SENSITIVE_HTTP_HEADERS.has(normalizeHttpHeaderName(name));
-  }
-
-  function hasSensitiveHttpHeaderShape(text) {
-    const input = String(text || "");
-    if (!input.includes(":")) return false;
-
-    const regex = /(?:^|\n)\s*([A-Za-z][A-Za-z0-9-]{0,80})\s*:/g;
-    let match;
-    while ((match = regex.exec(input)) !== null) {
-      if (isSensitiveHttpHeaderName(match[1])) return true;
-    }
-
-    return false;
-  }
-
-  function inferHttpHeaderPlaceholderType(name) {
-    const normalized = normalizeHttpHeaderName(name);
-    if (normalized === "authorization" || normalized.endsWith("-token") || normalized.includes("auth")) {
-      return "TOKEN";
-    }
-    if (normalized === "cookie" || normalized === "set-cookie") {
-      return "TOKEN";
-    }
-    return "API_KEY";
-  }
-
-  function isSensitiveCookieName(name) {
-    const compact = String(name || "").toLowerCase().replace(/[._-]+/g, "");
-    return (
-      compact === "sid" ||
-      compact.includes("session") ||
-      compact.includes("auth") ||
-      compact.includes("token") ||
-      compact.includes("jwt")
-    );
-  }
-
-  function isRedactableHttpHeaderValue(value) {
-    const raw = normalizeCandidate(value);
-    if (!raw || raw.length < 8) return false;
-    if (isCleanPlaceholder(raw) || likelyTemplateValue(raw)) return false;
-    if (containsPlaceholder(raw) && isBenignPlaceholderComposite(raw)) return false;
-
-    return (
-      looksCredentialLikeAssignmentValue(raw) ||
-      looksStructuredLikeSecret(raw) ||
-      (/[A-Za-z]/.test(raw) && /\d/.test(raw) && calculateEntropy(raw) >= 2.6)
-    );
-  }
-
-  function isRedactableCookieValue(value) {
-    const raw = normalizeCandidate(value);
-    if (!raw || raw.length < 8) return false;
-    if (isCleanPlaceholder(raw) || likelyTemplateValue(raw)) return false;
-    if (containsPlaceholder(raw) && isBenignPlaceholderComposite(raw)) return false;
-
-    return (
-      looksCredentialLikeAssignmentValue(raw) ||
-      looksStructuredLikeSecret(raw) ||
-      /^[A-Za-z0-9%._~-]{16,}$/.test(raw)
-    );
-  }
-
   function assignmentKeyScoreBoost(key, value) {
     const normalizedKey = String(key || "").toLowerCase();
     const normalizedValue = String(value || "");
@@ -991,6 +923,17 @@
       return false;
     });
   }
+
+  root.PWM.DetectionHttpHeadersDependencies = {
+    normalizeCandidate,
+    isCleanPlaceholder,
+    likelyTemplateValue,
+    containsPlaceholder,
+    isBenignPlaceholderComposite,
+    looksCredentialLikeAssignmentValue,
+    looksStructuredLikeSecret,
+    calculateEntropy
+  };
 
   function getSinglePlaceholderSuffix(value) {
     const input = String(value || "");
