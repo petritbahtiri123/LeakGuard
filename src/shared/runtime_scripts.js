@@ -86,6 +86,7 @@
     "content/diagnostics/safeSnapshots.js",
     "content/diagnostics/fileDebugMetadata.js",
     "content/files/fileAttachPipeline.js",
+    "content/files/pendingSanitizedFileHandoff.js",
     "content/rehydration/placeholderRehydrator.js",
     "content/rehydration/responseObserver.js",
     "content/rehydration/revealController.js",
