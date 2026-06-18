@@ -14,6 +14,7 @@
     // loads the overlay script list from manifests/firefox*.json.
     "src/background/service_worker.js",
     "src/background/auditLog.js",
+    "src/background/protectedSiteRegistry.js",
     "src/background/core.js",
 
     // Manifest-declared content scripts. These are classic scripts loaded in
