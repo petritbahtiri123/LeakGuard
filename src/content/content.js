@@ -166,6 +166,7 @@
   let modalOpen = false;
   let lastTypedPromptText = "";
   let typedScanGeneration = 0;
+  let typedRewriteGeneration = 0;
   let activeRiskEditor = null;
   let suppressInputScanUntil = 0;
   const rewriteFailureModalSuppressions = new Map();
@@ -3605,6 +3606,33 @@
     return true;
   }
 
+  function containsVisiblePlaceholderToken(text) {
+    const regex = ANY_PLACEHOLDER_TOKEN_REGEX || PLACEHOLDER_TOKEN_REGEX;
+    if (!regex?.test) return false;
+    regex.lastIndex = 0;
+    const hasPlaceholder = regex.test(String(text || ""));
+    regex.lastIndex = 0;
+    return hasPlaceholder;
+  }
+
+  function hasUnsafeVisibleSecret(text) {
+    const analysis = analyzeText(text);
+    return (analysis.secretFindings || []).some(
+      (finding) => isHighConfidenceRewriteFinding(finding) && !containsVisiblePlaceholderToken(finding.raw)
+    );
+  }
+
+  function shouldSuppressStaleTypedRewriteFailure(rewriteGeneration, input, actualText = null) {
+    if (rewriteGeneration === typedRewriteGeneration) return false;
+
+    const actual = normalizeComposerText(actualText == null ? getInputText(input) : actualText);
+    return Boolean(
+      actual.trim() &&
+        containsVisiblePlaceholderToken(actual) &&
+        !hasUnsafeVisibleSecret(actual)
+    );
+  }
+
   async function applyTypedInterceptionRewrite(
     input,
     expectedText,
@@ -3612,6 +3640,7 @@
     selection,
     context
   ) {
+    const rewriteGeneration = ++typedRewriteGeneration;
     const restoreCaretOffset = Math.max(0, Number(selection?.end) || 0);
     const caretOffset = deriveRewriteCaretOffset(
       expectedText,
@@ -3624,6 +3653,10 @@
     });
 
     if (!applied.ok) {
+      if (shouldSuppressStaleTypedRewriteFailure(rewriteGeneration, input, applied.actual)) {
+        refreshBadgeFromCurrentInput();
+        return false;
+      }
       await showRewriteFailure(
         context,
         collectFailureDetails(input, expectedText, applied.actual, context)
@@ -3633,9 +3666,14 @@
     }
 
     if (!(await ensureExactComposerState(input, expectedText))) {
+      const actual = getInputText(input);
+      if (shouldSuppressStaleTypedRewriteFailure(rewriteGeneration, input, actual)) {
+        refreshBadgeFromCurrentInput();
+        return false;
+      }
       await showRewriteFailure(
         context,
-        collectFailureDetails(input, expectedText, getInputText(input), context)
+        collectFailureDetails(input, expectedText, actual, context)
       );
       refreshBadgeFromCurrentInput();
       return false;

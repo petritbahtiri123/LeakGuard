@@ -528,6 +528,17 @@ async function evaluate(connection, sessionId, expression, options = {}) {
   return result.result?.value;
 }
 
+async function pressEnter(connection, sessionId) {
+  const event = {
+    key: "Enter",
+    code: "Enter",
+    windowsVirtualKeyCode: 13,
+    nativeVirtualKeyCode: 13
+  };
+  await connection.send("Input.dispatchKeyEvent", { ...event, type: "keyDown" }, sessionId);
+  await connection.send("Input.dispatchKeyEvent", { ...event, type: "keyUp" }, sessionId);
+}
+
 async function navigate(connection, sessionId, url) {
   await connection.send("Page.navigate", { url }, sessionId);
   await waitFor(
@@ -940,13 +951,12 @@ function assertPromptRedaction(result) {
 }
 
 async function runPromptRedactionQa(connection, page) {
-  const result = await evaluate(
+  await evaluate(
     connection,
     page.sessionId,
-    `new Promise((resolve, reject) => {
+    `(() => {
       const textarea = document.querySelector('#prompt-textarea');
       const payload = ${JSON.stringify(promptPayload)};
-      const rawValues = ${JSON.stringify(rawValues)};
       textarea.focus();
       const transfer = new DataTransfer();
       transfer.setData('text/plain', payload);
@@ -955,21 +965,23 @@ async function runPromptRedactionQa(connection, page) {
         cancelable: true,
         clipboardData: transfer
       }));
+      return true;
+    })()`
+  );
 
-      const started = Date.now();
-      const timer = setInterval(() => {
-        const redactButton = Array.from(
-          document.querySelectorAll('.pwm-modal-backdrop button, .pwm-modal button')
-        ).find((button) => /Redact/i.test(button.textContent || ''));
-        if (redactButton) redactButton.click();
-
+  const result = await waitFor(async () => {
+    const state = await evaluate(
+      connection,
+      page.sessionId,
+      `(() => {
+        const textarea = document.querySelector('#prompt-textarea');
+        const rawValues = ${JSON.stringify(rawValues)};
         const value = textarea.value || '';
         const first = /^OPENAI_API_KEY=(\\[PWM_\\d+\\])$/m.exec(value)?.[1] || '';
         const repeat = /^OPENAI_API_KEY_REPEAT=(\\[PWM_\\d+\\])$/m.exec(value)?.[1] || '';
         const ready = /\\[PWM_\\d+\\]/.test(value) && /PUBLIC_IP=\\[(PUB_HOST|NET)_\\d+\\]/.test(value);
         if (ready) {
-          clearInterval(timer);
-          resolve({
+          return {
             value,
             firstPlaceholder: first,
             lineCount: value.split('\\n').length,
@@ -987,33 +999,41 @@ async function runPromptRedactionQa(connection, page) {
             existingPlaceholderPreserved: /^PLACEHOLDER_ALREADY=\\[PWM_1\\]$/m.test(value),
             publicIpRedacted: /PUBLIC_IP=\\[(PUB_HOST|NET)_\\d+\\]/.test(value),
             privateIpRedacted: /^PRIVATE_IP=\\[PRIVATE_IP_\\d+\\]$/m.test(value)
-          });
-        } else if (Date.now() - started > 15000) {
-          clearInterval(timer);
-          reject(new Error('Timed out waiting for prompt redaction: ' + value));
+          };
         }
-      }, 50);
-    })`
-  );
+        return {
+          value,
+          hasRedactButton: Boolean(Array.from(
+            document.querySelectorAll('.pwm-modal-backdrop button, .pwm-modal button')
+          ).find((button) => /Redact/i.test(button.textContent || '')))
+        };
+      })()`
+    );
+    if (state?.firstPlaceholder) return state;
+    if (state?.hasRedactButton) {
+      await approveRedactionModalIfPresent(connection, page.sessionId);
+    }
+    return null;
+  }, "prompt redaction", 15000);
   assertPromptRedaction(result);
   return result;
 }
 
 async function approveRedactionModalIfPresent(connection, sessionId) {
-  await evaluate(
+  const hasRedactButton = await evaluate(
     connection,
     sessionId,
     `(() => {
       const redactButton = Array.from(
         document.querySelectorAll('.pwm-modal-backdrop button, .pwm-modal button')
       ).find((button) => /Redact/i.test(button.textContent || ''));
-      if (redactButton) {
-        redactButton.click();
-        return true;
-      }
-      return false;
+      redactButton?.focus();
+      return Boolean(redactButton);
     })()`
   );
+  if (hasRedactButton) {
+    await pressEnter(connection, sessionId);
+  }
 }
 
 async function waitForInputPlaceholder(connection, sessionId, selector, expression, label) {
@@ -1028,12 +1048,13 @@ async function waitForInputPlaceholder(connection, sessionId, selector, expressi
         return {
           value,
           hasPlaceholder: /\\[PWM_\\d+\\]/.test(value),
+          hasModal: Boolean(document.querySelector('.pwm-modal-backdrop, .pwm-modal')),
           pageText: document.body.innerText || '',
           submissions: Array.from(window.__leakguardQaSubmissions || [])
         };
       })()`
     );
-    return state.hasPlaceholder ? state : null;
+    return state.hasPlaceholder && !state.hasModal ? state : null;
   }, label, 15000);
 }
 

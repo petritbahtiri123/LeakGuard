@@ -1127,16 +1127,13 @@ async function runComposerRedactionSmoke(connection, page) {
   const redacted = await evaluate(connection, page.sessionId, `new Promise((resolve, reject) => {
     const textarea = document.querySelector('#prompt-textarea');
     textarea.focus();
-    let prevented = false;
-    const transfer = new DataTransfer();
-    transfer.setData('text/plain', 'API_KEY=${rawSecret}');
-    const event = new ClipboardEvent('paste', {
+    const event = new InputEvent('beforeinput', {
       bubbles: true,
       cancelable: true,
-      clipboardData: transfer
+      inputType: 'insertText',
+      data: 'API_KEY=${rawSecret}'
     });
     textarea.dispatchEvent(event);
-    prevented = event.defaultPrevented;
     const started = Date.now();
     const timer = setInterval(() => {
       if (/\\[PWM_\\d+\\]/.test(textarea.value)) {
@@ -1144,15 +1141,11 @@ async function runComposerRedactionSmoke(connection, page) {
         resolve({
           value: textarea.value,
           badge: document.querySelector('.pwm-badge')?.textContent || '',
-          prevented
+          prevented: event.defaultPrevented
         });
         return;
       }
-      const redactButton = Array.from(document.querySelectorAll('.pwm-modal-backdrop button, .pwm-modal button'))
-        .find((button) => /Redact/i.test(button.textContent || ''));
-      if (redactButton) {
-        redactButton.click();
-      } else if (Date.now() - started > 10000) {
+      if (Date.now() - started > 10000) {
         clearInterval(timer);
         reject(new Error('Timed out waiting for composer redaction: ' + textarea.value));
       }

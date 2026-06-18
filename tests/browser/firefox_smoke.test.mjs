@@ -565,6 +565,15 @@ class WebDriverClient {
     await this.request("POST", `/session/${this.sessionId}/element/${elementId}/click`, {});
   }
 
+  async sendKeys(selector, text) {
+    const elementId = await this.findElement(selector);
+    const value = Array.from(String(text || ""));
+    await this.request("POST", `/session/${this.sessionId}/element/${elementId}/value`, {
+      text: String(text || ""),
+      value
+    });
+  }
+
   async setFileInputFiles(selector, files) {
     const elementId = await this.findElement(selector);
     const normalizedFiles = Array.isArray(files) ? files : [files];
@@ -796,9 +805,7 @@ async function openFirefoxLocalProtectedHarness(webdriver, localOrigin) {
 }
 
 async function runFirefoxPromptRedactionQa(webdriver) {
-  const result = await webdriver.executeAsync(`const payload = arguments[0];
-    const rawValues = arguments[1];
-    const done = arguments[arguments.length - 1];
+  await webdriver.execute(`const payload = arguments[0];
     const textarea = document.querySelector('#prompt-textarea');
     textarea.focus();
 
@@ -808,14 +815,11 @@ async function runFirefoxPromptRedactionQa(webdriver) {
       inputType: 'insertText',
       data: payload
     }));
+    return true;`, [promptPayload]);
 
-    const started = Date.now();
-    const timer = setInterval(() => {
-      const redactButton = Array.from(
-        document.querySelectorAll('.pwm-modal-backdrop button, .pwm-modal button')
-      ).find((button) => /Redact/i.test(button.textContent || ''));
-      if (redactButton) redactButton.click();
-
+  const result = await waitFor(async () => {
+    const state = await webdriver.execute(`const rawValues = arguments[0];
+      const textarea = document.querySelector('#prompt-textarea');
       const value = textarea.value || '';
       const first = /^OPENAI_API_KEY=(\\[PWM_\\d+\\])$/m.exec(value)?.[1] || '';
       const repeat = /^OPENAI_API_KEY_REPEAT=(\\[PWM_\\d+\\])$/m.exec(value)?.[1] || '';
@@ -823,8 +827,7 @@ async function runFirefoxPromptRedactionQa(webdriver) {
         /PUBLIC_IP=\\[(PUB_HOST|NET)_\\d+\\]/.test(value) &&
         /PRIVATE_IP=\\[PRIVATE_IP_\\d+\\]/.test(value);
       if (ready) {
-        clearInterval(timer);
-        done({
+        return {
           value,
           firstPlaceholder: first,
           lineCount: value.split('\\n').length,
@@ -842,12 +845,21 @@ async function runFirefoxPromptRedactionQa(webdriver) {
           existingPlaceholderPreserved: /^PLACEHOLDER_ALREADY=\\[PWM_1\\]$/m.test(value),
           publicIpRedacted: /PUBLIC_IP=\\[(PUB_HOST|NET)_\\d+\\]/.test(value),
           privateIpRedacted: /^PRIVATE_IP=\\[PRIVATE_IP_\\d+\\]$/m.test(value)
-        });
-      } else if (Date.now() - started > 15000) {
-        clearInterval(timer);
-        done({ error: 'Timed out waiting for prompt redaction', value });
+        };
       }
-    }, 50);`, [promptPayload, rawValues]);
+      return {
+        value,
+        hasRedactButton: Boolean(Array.from(
+          document.querySelectorAll('.pwm-modal-backdrop button, .pwm-modal button')
+        ).find((button) => /Redact/i.test(button.textContent || '')))
+      };`, [rawValues]);
+
+    if (state?.firstPlaceholder) return state;
+    if (state?.hasRedactButton) {
+      await webdriver.sendKeys(".pwm-modal-backdrop button.pwm-btn-primary", "\uE007");
+    }
+    return null;
+  }, "Firefox prompt redaction", 15000);
 
   assert.equal(result.error, undefined, result.error || "Firefox prompt redaction failed");
   assert.equal(result.hasAnyRaw, false, "Firefox prompt still contains raw synthetic values");
@@ -866,27 +878,20 @@ async function runFirefoxPromptRedactionQa(webdriver) {
 }
 
 async function runFirefoxSecureRevealQa(webdriver, extensionOrigin, placeholder) {
-  const revealState = await webdriver.executeAsync(`const placeholder = arguments[0];
-    const rawValues = arguments[1];
-    const done = arguments[arguments.length - 1];
+  await webdriver.execute(`const placeholder = arguments[0];
     const echo = document.querySelector('#echo-zone');
     echo.textContent = 'Assistant echoed ' + placeholder + ' after redaction.';
-    const started = Date.now();
-    const timer = setInterval(() => {
-      const chip = document.querySelector('#echo-zone .pwm-secret');
-      if (chip) {
-        clearInterval(timer);
-        chip.click();
-        setTimeout(() => done({
-          chipText: chip.textContent,
-          pageHasRaw: rawValues.some((raw) => document.body.innerText.includes(raw))
-        }), 250);
-      } else if (Date.now() - started > 5000) {
-        clearInterval(timer);
-        done({ error: 'Timed out waiting for hydrated placeholder chip' });
-      }
-    }, 50);`, [placeholder, rawValues]);
-  assert.equal(revealState.error, undefined, revealState.error || "Firefox secure reveal chip failed");
+    return true;`, [placeholder]);
+  const revealState = await waitFor(async () => {
+    const state = await webdriver.execute(`return {
+      hasChip: Boolean(document.querySelector('#echo-zone .pwm-secret')),
+      chipText: document.querySelector('#echo-zone .pwm-secret')?.textContent || '',
+      pageHasRaw: arguments[0].some((raw) => document.body.innerText.includes(raw))
+    };`, [rawValues]);
+    if (!state.hasChip) return null;
+    await webdriver.clickElement("#echo-zone .pwm-secret");
+    return state;
+  }, "Firefox hydrated placeholder chip", 5000);
   assert.equal(revealState.chipText, placeholder);
   assert.equal(revealState.pageHasRaw, false);
 

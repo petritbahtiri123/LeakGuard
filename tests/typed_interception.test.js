@@ -1248,6 +1248,88 @@ async function testSubmitTransactionalHelperFailsClosedOnRawRestore() {
   assert.strictEqual(calls.failureDetails.actualText, rawText, "failure details should preserve the unsafe actual text summary input");
 }
 
+async function testStaleTypedRewriteFailureKeepsSanitizedEditorUsable() {
+  const createHarness = (options = {}) => {
+    const factory = new Function(
+      "deps",
+      [
+        "const calls = { applies: 0, exactChecks: 0, failures: 0, refreshes: 0 };",
+        "let typedRewriteGeneration = 0;",
+        "const ANY_PLACEHOLDER_TOKEN_REGEX = /\\[(?:PWM|NET|PUB_HOST)_\\d+\\]/g;",
+        "const PLACEHOLDER_TOKEN_REGEX = ANY_PLACEHOLDER_TOKEN_REGEX;",
+        "function normalizeComposerText(value) { return deps.normalizeComposerText(value); }",
+        "function getInputText(input) { return normalizeComposerText(input.text || ''); }",
+        "function analyzeText(text) { return deps.analyzeText(text); }",
+        "function isHighConfidenceRewriteFinding(finding) { return finding?.severity === 'high' || Number(finding?.score) >= 80; }",
+        "function deriveRewriteCaretOffset() { return 0; }",
+        "async function applyComposerText(input, expectedText) {",
+        "  calls.applies += 1;",
+        "  input.text = normalizeComposerText(expectedText);",
+        "  if (deps.simulateNewerRewrite) {",
+        "    typedRewriteGeneration += 1;",
+        "    input.text = normalizeComposerText(deps.newerText);",
+        "  }",
+        "  return { ok: true, actual: input.text };",
+        "}",
+        "async function ensureExactComposerState() { calls.exactChecks += 1; return false; }",
+        "async function showRewriteFailure(context, details) { calls.failures += 1; calls.failureContext = context; calls.failureDetails = details; }",
+        "function collectFailureDetails(_input, expectedText, actualText, context) { return { expectedText, actualText, context }; }",
+        "function refreshBadgeFromCurrentInput() { calls.refreshes += 1; }",
+        extractFunctionSource(contentSource, "containsVisiblePlaceholderToken"),
+        extractFunctionSource(contentSource, "hasUnsafeVisibleSecret"),
+        extractFunctionSource(contentSource, "shouldSuppressStaleTypedRewriteFailure"),
+        extractFunctionSource(contentSource, "applyTypedInterceptionRewrite"),
+        "return { applyTypedInterceptionRewrite, calls };"
+      ].join("\n\n")
+    );
+    return factory({
+      normalizeComposerText: ComposerHelpers.normalizeComposerText,
+      analyzeText: options.analyzeText || (() => ({ secretFindings: [], findings: [] })),
+      simulateNewerRewrite: Boolean(options.simulateNewerRewrite),
+      newerText: options.newerText || ""
+    });
+  };
+
+  const sanitizedHarness = createHarness({
+    simulateNewerRewrite: true,
+    newerText: "TYPED_EDITOR_KEY=[PWM_2]"
+  });
+  const sanitizedInput = { text: "" };
+  const sanitizedOk = await sanitizedHarness.applyTypedInterceptionRewrite(
+    sanitizedInput,
+    "TYPED_EDITOR_KEY=[PWM_1]",
+    "",
+    { end: 0 },
+    "input"
+  );
+
+  assert.strictEqual(sanitizedOk, false, "stale typed rewrite should stop its own caller");
+  assert.strictEqual(sanitizedHarness.calls.failures, 0, "newer sanitized text should not trigger a stale fail-closed modal");
+  assert.strictEqual(sanitizedInput.text, "TYPED_EDITOR_KEY=[PWM_2]");
+
+  const unsafeHarness = createHarness({
+    simulateNewerRewrite: true,
+    newerText: "TYPED_EDITOR_KEY=[PWM_2] sk-proj-StillRawSecretValue1234567890abcdef",
+    analyzeText: (text) => {
+      const match = String(text || "").match(/sk-proj-[A-Za-z0-9_-]+/);
+      const secretFindings = match
+        ? [{ raw: match[0], severity: "high", score: 95 }]
+        : [];
+      return { secretFindings, findings: secretFindings };
+    }
+  });
+  const unsafeOk = await unsafeHarness.applyTypedInterceptionRewrite(
+    { text: "" },
+    "TYPED_EDITOR_KEY=[PWM_1]",
+    "",
+    { end: 0 },
+    "input"
+  );
+
+  assert.strictEqual(unsafeOk, false);
+  assert.strictEqual(unsafeHarness.calls.failures, 1, "stale visible raw secret must still fail closed");
+}
+
 function testTypedDebugDiagnosticsSummarizeOnly() {
   const rawSecret = "password=TypedDebugSecretValue1234567890";
   const redactedText = "password=[PWM_1]";
@@ -1302,6 +1384,7 @@ function run() {
     .then(() => testRewriteFailureModalSuppression())
     .then(() => testTransactionalRewriteFallbackRemovesRawDuplicate())
     .then(() => testSubmitTransactionalHelperFailsClosedOnRawRestore())
+    .then(() => testStaleTypedRewriteFailureKeepsSanitizedEditorUsable())
     .then(() => {
       console.log("PASS typed beforeinput interception regressions");
     });
