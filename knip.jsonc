@@ -70,6 +70,7 @@
     "src/shared/streamingFileRedactor.js",
     "src/shared/protected_sites.js",
     "src/shared/policy.js",
+    "src/content/composer/chatgptComposerSync.js",
     "src/shared/runtime_scripts.js",
 
     // Scanner-only OCR classic scripts are loaded from scanner.html, not modules.

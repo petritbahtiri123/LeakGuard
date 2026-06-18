@@ -4,6 +4,10 @@ const path = require("path");
 
 const repoRoot = path.join(__dirname, "..");
 const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
+const chatGptComposerSyncSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/composer/chatgptComposerSync.js"),
+  "utf8"
+);
 const fileDebugMetadataSource = fs.readFileSync(
   path.join(repoRoot, "src/content/diagnostics/fileDebugMetadata.js"),
   "utf8"
@@ -44,6 +48,7 @@ require(path.join(repoRoot, "src/shared/fileLimits.js"));
 require(path.join(repoRoot, "src/content/file_paste_helpers.js"));
 require(path.join(repoRoot, "src/content/composer_helpers.js"));
 require(path.join(repoRoot, "src/content/input/rewriteVerificationText.js"));
+require(path.join(repoRoot, "src/content/composer/chatgptComposerSync.js"));
 require(path.join(repoRoot, "src/content/files/fileTransferPolicy.js"));
 require(path.join(repoRoot, "src/shared/entropy.js"));
 require(path.join(repoRoot, "src/shared/patterns.js"));
@@ -1288,18 +1293,18 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "getChatGptSendButtonDebugState"),
       extractFunctionSource(contentSource, "getChatGptComposerSyncDebug"),
       extractFunctionSource(contentSource, "debugChatGptSync"),
-      extractFunctionSource(contentSource, "focusChatGptComposer"),
-      extractFunctionSource(contentSource, "placeChatGptCaretAtEnd"),
-      extractFunctionSource(contentSource, "dispatchChatGptComposerInputEvent"),
-      extractFunctionSource(contentSource, "dispatchChatGptComposerBeforeInput"),
-      extractFunctionSource(contentSource, "dispatchChatGptComposerChange"),
-      extractFunctionSource(contentSource, "nudgeChatGptComposerState"),
-      extractFunctionSource(contentSource, "waitForChatGptComposerVerification"),
-      extractFunctionSource(contentSource, "tryChatGptExecCommandWrite"),
-      extractFunctionSource(contentSource, "tryChatGptDirectWrite"),
-      extractFunctionSource(contentSource, "tryChatGptComposerHelperWrite"),
-      extractFunctionSource(contentSource, "runChatGptSyncedWriteAttempt"),
-      extractFunctionSource(contentSource, "applyChatGptSyncedComposerText"),
+      extractFunctionSource(chatGptComposerSyncSource, "focusChatGptComposer"),
+      extractFunctionSource(chatGptComposerSyncSource, "placeChatGptCaretAtEnd"),
+      extractFunctionSource(chatGptComposerSyncSource, "dispatchChatGptComposerInputEvent"),
+      extractFunctionSource(chatGptComposerSyncSource, "dispatchChatGptComposerBeforeInput"),
+      extractFunctionSource(chatGptComposerSyncSource, "dispatchChatGptComposerChange"),
+      extractFunctionSource(chatGptComposerSyncSource, "nudgeChatGptComposerState"),
+      extractFunctionSource(chatGptComposerSyncSource, "waitForChatGptComposerVerification"),
+      extractFunctionSource(chatGptComposerSyncSource, "tryChatGptExecCommandWrite"),
+      extractFunctionSource(chatGptComposerSyncSource, "tryChatGptDirectWrite"),
+      extractFunctionSource(chatGptComposerSyncSource, "tryChatGptComposerHelperWrite"),
+      extractFunctionSource(chatGptComposerSyncSource, "runChatGptSyncedWriteAttempt"),
+      extractFunctionSource(chatGptComposerSyncSource, "applyChatGptSyncedComposerText"),
       extractFunctionSource(contentSource, "applyChatGptLargePasteTextFallback"),
       extractFunctionSource(contentSource, "maybeHandleChatGptLargeTextPaste"),
       extractFunctionSource(contentSource, "resolveGeminiEditorTarget"),
