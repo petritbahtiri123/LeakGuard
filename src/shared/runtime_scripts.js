@@ -145,6 +145,7 @@
     "shared/policy.js",
     "shared/runtime_scripts.js",
     "background/auditLog.js",
+    "background/protectedSiteRegistry.js",
     "background/core.js"
   ]);
 

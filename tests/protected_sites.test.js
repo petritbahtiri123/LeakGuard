@@ -5,7 +5,10 @@ const path = require("path");
 const repoRoot = path.join(__dirname, "..");
 const popupSource = fs.readFileSync(path.join(repoRoot, "src/popup/popup.js"), "utf8");
 const optionsSource = fs.readFileSync(path.join(repoRoot, "src/options/options.js"), "utf8");
-const backgroundSource = fs.readFileSync(path.join(repoRoot, "src/background/core.js"), "utf8");
+const backgroundSource = [
+  fs.readFileSync(path.join(repoRoot, "src/background/protectedSiteRegistry.js"), "utf8"),
+  fs.readFileSync(path.join(repoRoot, "src/background/core.js"), "utf8")
+].join("\n");
 require(path.join(repoRoot, "src/shared/runtime_scripts.js"));
 const {
   BUILTIN_PROTECTED_SITES,
@@ -99,6 +102,19 @@ function testBuiltInSitesRemainRecognizedWithoutUserRules() {
   );
 }
 
+function testBackgroundLoadsProtectedSiteRegistryBeforeCore() {
+  const backgroundScripts = globalThis.PWM.RuntimeScripts.backgroundScripts;
+  assert.ok(
+    backgroundScripts.includes("background/protectedSiteRegistry.js"),
+    "background runtime should include the protected-site registry module"
+  );
+  assert.ok(
+    backgroundScripts.indexOf("background/protectedSiteRegistry.js") <
+      backgroundScripts.indexOf("background/core.js"),
+    "protected-site registry should load before background core"
+  );
+}
+
 function testDynamicContentScriptsMatchManifestRuntimeStack() {
   const manifest = JSON.parse(fs.readFileSync(path.join(repoRoot, "manifests/base.json"), "utf8"));
   const manifestScripts = manifest.content_scripts?.[0]?.js || [];
@@ -162,6 +178,7 @@ function run() {
   testPreventsDuplicatesAcrossNormalizedRules();
   testSafeOriginMatchingStaysExactAndDeterministic();
   testBuiltInSitesRemainRecognizedWithoutUserRules();
+  testBackgroundLoadsProtectedSiteRegistryBeforeCore();
   testDynamicContentScriptsMatchManifestRuntimeStack();
   testCustomSitePermissionRequestsUseExactOriginPatterns();
   console.log("PASS protected site normalization and matching regressions");

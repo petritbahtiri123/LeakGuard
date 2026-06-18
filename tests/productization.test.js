@@ -17,10 +17,10 @@ const scannerHtml = fs.readFileSync(path.join(repoRoot, "src/scanner/scanner.htm
 const scannerJs = fs.readFileSync(path.join(repoRoot, "src/scanner/scanner.js"), "utf8");
 const optionsHtml = fs.readFileSync(path.join(repoRoot, "src/options/options.html"), "utf8");
 const optionsJs = fs.readFileSync(path.join(repoRoot, "src/options/options.js"), "utf8");
-const backgroundSource = fs.readFileSync(
-  path.join(repoRoot, "src/background/core.js"),
-  "utf8"
-);
+const backgroundSource = [
+  fs.readFileSync(path.join(repoRoot, "src/background/protectedSiteRegistry.js"), "utf8"),
+  fs.readFileSync(path.join(repoRoot, "src/background/core.js"), "utf8")
+].join("\n");
 const storeListing = fs.readFileSync(
   path.join(repoRoot, "docs/CHROME_WEB_STORE_LISTING.md"),
   "utf8"

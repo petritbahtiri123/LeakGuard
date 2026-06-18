@@ -27,6 +27,10 @@ const geminiFallbackWriterSource = fs.readFileSync(
   path.join(repoRoot, "src/content/adapters/geminiFallbackWriter.js"),
   "utf8"
 );
+const protectedSiteRegistrySource = fs.readFileSync(
+  path.join(repoRoot, "src/background/protectedSiteRegistry.js"),
+  "utf8"
+);
 const backgroundSource = fs.readFileSync(
   path.join(repoRoot, "src/background/core.js"),
   "utf8"
@@ -233,6 +237,9 @@ function createBackgroundSecuritySandbox({ allowReveal = true, auditMode = "meta
     getSessionStorageArea: () => storageArea
   };
 
+  vm.runInNewContext(protectedSiteRegistrySource, sandbox, {
+    filename: "protectedSiteRegistry.js"
+  });
   vm.runInNewContext(backgroundSource, sandbox, {
     filename: "core.js"
   });

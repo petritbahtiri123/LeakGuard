@@ -46,5 +46,6 @@ importScripts(
   "../shared/policy.js",
   "../shared/runtime_scripts.js",
   "./auditLog.js",
+  "./protectedSiteRegistry.js",
   "./core.js"
 );

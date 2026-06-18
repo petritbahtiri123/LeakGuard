@@ -9,6 +9,10 @@ const policyModule = require(policyPath);
 const protectedSitesModule = require(path.join(repoRoot, "src/shared/protected_sites.js"));
 require(path.join(repoRoot, "src/shared/runtime_scripts.js"));
 require(path.join(repoRoot, "src/background/auditLog.js"));
+const protectedSiteRegistrySource = fs.readFileSync(
+  path.join(repoRoot, "src/background/protectedSiteRegistry.js"),
+  "utf8"
+);
 const coreSource = fs.readFileSync(path.join(repoRoot, "src/background/core.js"), "utf8");
 const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
 const popupSource = fs.readFileSync(path.join(repoRoot, "src/popup/popup.js"), "utf8");
@@ -292,6 +296,9 @@ function createBackgroundSandbox({
     getSessionStorageArea: () => localStorageArea
   };
 
+  vm.runInNewContext(protectedSiteRegistrySource, sandbox, {
+    filename: "protectedSiteRegistry.js"
+  });
   vm.runInNewContext(coreSource, sandbox, {
     filename: "core.js"
   });
@@ -332,6 +339,14 @@ async function testAllowSiteRemovalFalseBlocksDeletion() {
   );
 }
 
+async function testProtectedSiteRegistryKeepsStableDynamicScriptIds() {
+  const { sandbox } = createBackgroundSandbox();
+  const rule = protectedSitesModule.normalizeProtectedSiteInput("https://web.whatsapp.com").rule;
+
+  assert.strictEqual(sandbox.stableRuleHash(rule.id), "4cb45733");
+  assert.strictEqual(sandbox.userSiteScriptId(rule), "pwm_user_site_4cb45733");
+}
+
 async function testManagedProtectedSitesRegisterWithoutUserSiteToggle() {
   const { sandbox } = createBackgroundSandbox({
     allowUserAddedSites: false,
@@ -350,6 +365,35 @@ async function testManagedProtectedSitesRegisterWithoutUserSiteToggle() {
   assert.ok(
     !Object.hasOwn(registrations[0], "matchAboutBlank"),
     "dynamic site registration should not use unsupported matchAboutBlank"
+  );
+}
+
+async function testUserProtectedSitesRegisterOnlyWithPermission() {
+  const grantedOrigins = new Set(["https://allowed.example/*"]);
+  const { sandbox, storageState } = createBackgroundSandbox();
+  sandbox.PWM.ext.permissions.contains = async ({ origins }) => origins.every((origin) => grantedOrigins.has(origin));
+  storageState[protectedSitesModule.USER_PROTECTED_SITES_STORAGE_KEY] = [
+    {
+      ...protectedSitesModule.normalizeProtectedSiteInput("https://allowed.example").rule,
+      enabled: true
+    },
+    {
+      ...protectedSitesModule.normalizeProtectedSiteInput("https://missing.example").rule,
+      enabled: true
+    }
+  ];
+
+  const registrations = await sandbox.buildUserSiteRegistrations();
+
+  assert.strictEqual(
+    registrations.map((registration) => registration.matches[0]).join(","),
+    "https://allowed.example/*"
+  );
+  await assert.rejects(
+    () => sandbox.ensureProtectedSitePermission(
+      protectedSitesModule.normalizeProtectedSiteInput("https://missing.example").rule
+    ),
+    /LeakGuard needs site access before it can protect this site\./
   );
 }
 
@@ -609,7 +653,9 @@ async function run() {
   testAuditPolicyIsMetadataOnlyAndRetentionBounded();
   await testAllowSiteRemovalTrueAllowsDeletion();
   await testAllowSiteRemovalFalseBlocksDeletion();
+  await testProtectedSiteRegistryKeepsStableDynamicScriptIds();
   await testManagedProtectedSitesRegisterWithoutUserSiteToggle();
+  await testUserProtectedSitesRegisterOnlyWithPermission();
   await testManagedProtectedSitesCannotBeToggledOrDeleted();
   await testAuditEventsStayMetadataOnlyAndBounded();
   await testAuditRetentionPurgesOldMetadata();
