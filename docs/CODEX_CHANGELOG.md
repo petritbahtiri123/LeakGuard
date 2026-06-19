@@ -12,6 +12,12 @@ Use this file as a short handoff log for AI-made changes. Add newest entries fir
 ```
 
 ## Entries
+### 2026-06-19 - v2.1.0 release prep
+- Goal: Bump LeakGuard release/version metadata to `2.1.0` for Chrome Web Store publishing.
+- Files: `package.json`, `package-lock.json`, `manifests/base.json`, `docs/CODEX_CHANGELOG.md`
+- Tests: `npm test` -> pass after temporarily moving pre-existing untracked manual QA fixtures that made ESLint parse prose `.js` files; `npm run docs:check-links` -> pass; `npm run smoke:chrome` -> pass; `npm run smoke:firefox` -> pass; `npm run qa:browser` -> pass; `npm run release:artifacts` -> pass; `npm run test:release-artifacts` -> pass; `git diff --check` -> pass with existing AI artifact line-ending warnings.
+- Notes: Release packaging only; no runtime behavior, detection threshold, Onix retraining, permission, CSP, or generated manifest changes were made by hand. Release ZIP content audit found no tests, manual QA packs, source maps, reports, screenshots, or synthetic secret-pack markers; the expected packaged OCR proof fixture remains present.
+
 ### 2026-06-10 - Phase 11G synthetic OCR recognition proof
 - Goal: Prove local OCR recognition against a tiny packaged synthetic PNG through an explicit worker probe while keeping scanner UI, protected-site uploads, and user image processing disabled.
 - Files: `src/shared/ocr/ocrWorker.js`, `src/shared/ocr/ocrRuntime.js`, `src/shared/ocr/fixtures/synthetic-test-ocr.png`, `tests/build_targets.test.js`, `tests/security.test.js`, `tests/browser/chrome_smoke.test.mjs`, `tests/browser/firefox_smoke.test.mjs`, `docs/CODEX_CHANGELOG.md`

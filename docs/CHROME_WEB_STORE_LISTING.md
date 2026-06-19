@@ -10,11 +10,21 @@ Protect prompts and local text files by redacting likely secrets, email addresse
 
 ## Short Description
 
-LeakGuard helps reduce accidental leaks by detecting likely secrets, email addresses, and public IPv4 data in supported chat composers and selected local text files.
+LeakGuard helps reduce accidental AI chat leaks by redacting likely secrets, credentials, public IPv4 details, and supported local text files locally in your browser.
 
 ## Detailed Description
 
-LeakGuard is a local-only Chrome extension for people who work with prompts, credentials, infrastructure data, and AI chat tools.
+LeakGuard helps reduce accidental data leaks when working with AI chat tools.
+
+It runs locally in your browser and detects likely sensitive values before they are submitted, pasted, dropped, or uploaded to protected AI chat websites.
+
+LeakGuard can redact API keys, passwords, access tokens, client secrets, webhook secrets, database credentials, public IPv4 addresses, CIDR ranges, and supported local text files such as `.env`, `.json`, `.log`, `.md`, source files, and config files.
+
+Sensitive values are replaced with stable placeholders such as `[PWM_1]`, `[NET_1]`, and `[PUB_HOST_1]`, while secure reveal stays inside extension-owned UI.
+
+LeakGuard does not use a backend service, telemetry, analytics, cloud scanning, remote secret verification, or remote model calls.
+
+LeakGuard is a risk-reduction tool, not a guarantee of complete secret protection. You should still review content before sending it to any AI chat service.
 
 Before text is sent from a protected site, LeakGuard can:
 
