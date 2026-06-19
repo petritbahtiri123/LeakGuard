@@ -124,8 +124,8 @@ function hasSyntheticTokenLikeValue(value) {
 function sanitizeBrowserQaText(value, canaries = []) {
   let text = stringifyForScan(value);
   text = text
-    .replace(/"byteValues"\s*:\s*\[(?:\s*\d+\s*,?)*\]/g, '"byteValues":"[ByteArray omitted]"')
-    .replace(/"data"\s*:\s*\[(?:\s*\d+\s*,?)*\]/g, '"data":"[ByteArray omitted]"');
+    .replace(/"byteValues"\s*:\s*\[\s*(?:\d+\s*(?:,\s*\d+\s*)*,?)?\]/g, '"byteValues":"[ByteArray omitted]"')
+    .replace(/"data"\s*:\s*\[\s*(?:\d+\s*(?:,\s*\d+\s*)*,?)?\]/g, '"data":"[ByteArray omitted]"');
   const sortedCanaries = normalizeCanaries(canaries).sort((left, right) => right.value.length - left.value.length);
   for (const canary of sortedCanaries) {
     text = text.split(canary.value).join(`[${canary.id}]`);

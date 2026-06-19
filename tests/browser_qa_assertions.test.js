@@ -105,6 +105,21 @@ function testByteDiagnosticsAreSummarized() {
   assertNoRawCanaries(message, "byte diagnostic text");
   assert.match(message, /"byteValues":"\[ByteArray omitted\]"/);
   assert.equal(message.includes(byteValues.join(",")), false);
+
+  const dataMessage = sanitizeBrowserQaText(
+    `Diagnostic: {"data":[  ${byteValues.slice(0, 3).join(", ")} ,],"safe":true}`,
+    canaries
+  );
+  assert.match(dataMessage, /"data":"\[ByteArray omitted\]"/);
+}
+
+function testByteDiagnosticRegexesAvoidAmbiguousRepeatedOptionalSeparators() {
+  const source = fs.readFileSync(path.join(__dirname, "helpers", "browserQaAssertions.js"), "utf8");
+  assert.equal(
+    source.includes(String.raw`(?:\s*\d+\s*,?)*`),
+    false,
+    "byte diagnostic sanitizers should avoid ambiguous repeated optional separators"
+  );
 }
 
 function testNoRawSecretAssertionIsSanitized() {
@@ -329,6 +344,7 @@ async function run() {
   testFailureCodesAreStable();
   testSanitizesRawCanariesButKeepsIds();
   testByteDiagnosticsAreSummarized();
+  testByteDiagnosticRegexesAvoidAmbiguousRepeatedOptionalSeparators();
   testNoRawSecretAssertionIsSanitized();
   testPlaceholderAndSafeControlAssertionsExplainRisk();
   testFileAndDebugAssertionsStayMetadataOnly();
