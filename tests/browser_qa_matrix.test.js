@@ -115,11 +115,33 @@ async function assertFullCoverageMatrix() {
     "paste text",
     "file input upload",
     "drag/drop file upload",
+    "paste file attachment",
     "debug mode",
     "sanitized handoff",
+    "Gemini/Grok sanitized pending queue",
     "unsupported-file fail-closed"
   ]) {
     assert.ok(matrix.inputPaths.includes(inputPath), `full matrix should include input path ${inputPath}`);
+  }
+  assert.deepStrictEqual(matrix.multiFilePolicy.small, { maxFiles: 20, maxBytes: 4 * 1024 * 1024 });
+  assert.deepStrictEqual(matrix.multiFilePolicy.large, { maxFiles: 5, maxBytes: 50 * 1024 * 1024 });
+  for (const inputPath of [
+    "drag/drop file upload",
+    "file input upload",
+    "paste file attachment",
+    "sanitized handoff",
+    "Gemini/Grok sanitized pending queue"
+  ]) {
+    assert.ok(matrix.multiFilePolicy.entryPaths.includes(inputPath), `multi-file policy should include ${inputPath}`);
+  }
+  for (const requiredCase of [
+    "5 large supported files",
+    "20 small supported files",
+    "10 small + 3 large supported files",
+    "10 small + 6 large blocked before processing",
+    "unsupported mixed file excluded from sanitized handoff"
+  ]) {
+    assert.ok(matrix.multiFilePolicy.requiredCases.includes(requiredCase), `multi-file policy should include ${requiredCase}`);
   }
   assert.ok(matrix.followUpInputPaths.includes("drag/drop text"), "text drag/drop should be documented as follow-up");
 

@@ -252,8 +252,14 @@
   const SUPPORTED_IMAGE_REDACTION_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
   const UNSUPPORTED_PROTECTED_IMAGE_EXTENSIONS = new Set([".gif", ".bmp", ".ico", ".svg"]);
   const FILE_DRAG_SESSION_RESET_MS = 5000;
-  const MAX_MULTI_FILE_ATTACHMENTS =
-    globalThis.PWM?.FileAttachPipeline?.MAX_MULTI_FILE_ATTACHMENTS || 5;
+  const MAX_MULTI_FILE_SMALL_ATTACHMENTS =
+    globalThis.PWM?.FileAttachPipeline?.MAX_MULTI_FILE_SMALL_ATTACHMENTS || 20;
+  const MAX_MULTI_FILE_LARGE_ATTACHMENTS =
+    globalThis.PWM?.FileAttachPipeline?.MAX_MULTI_FILE_LARGE_ATTACHMENTS || 5;
+  const MULTI_FILE_SMALL_MAX_BYTES =
+    globalThis.PWM?.FileAttachPipeline?.MULTI_FILE_SMALL_MAX_BYTES || LOCAL_TEXT_HARD_BLOCK_BYTES;
+  const MULTI_FILE_SUPPORTED_MAX_BYTES =
+    globalThis.PWM?.FileAttachPipeline?.MULTI_FILE_SUPPORTED_MAX_BYTES || LARGE_TEXT_STREAMING_MAX_BYTES;
   const GEMINI_UPLOAD_INPUT_WAIT_MS = 450;
   const GEMINI_GHOST_INGRESS_TIMEOUT_MS = 2200;
   const GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MS = 60000;
@@ -8681,12 +8687,12 @@
     });
   }
 
-  function createBlockedBeforeProcessingItems(files) {
+  function createBlockedBeforeProcessingItems(files, code = "blocked_by_policy") {
     return Array.from(files || []).map((file, index) => ({
       ok: false,
       status: "blocked",
-      code: "blocked_by_policy",
-      summary: summarizeMultiFileItem(index, "blocked", file, "blocked_by_policy")
+      code,
+      summary: summarizeMultiFileItem(index, "blocked", file, code)
     }));
   }
 
@@ -8711,6 +8717,37 @@
         : await readLocalTextFileFromDataTransfer(createSingleFileDataTransfer(file));
 
       if (!localFile.handled || !localFile.ok) {
+        if (localFile.code === "streaming_required" && localFile.sourceFile) {
+          const streamResult = await streamRedactLocalTextFile(localFile.sourceFile, localFile.file);
+          if (streamResult?.action === "redacted" && streamResult.sanitizedFile) {
+            return {
+              ok: true,
+              status: "sanitized",
+              sanitizedFile: streamResult.sanitizedFile,
+              localFile,
+              analysis: {
+                normalizedText: "",
+                secretFindings: Array.from({ length: Number(streamResult.findingsCount || 0) }, () => ({})),
+                findings: []
+              },
+              result: { redactedText: "", replacements: [] },
+              streamed: true,
+              summary: summarizeMultiFileItem(index, "sanitized", file, "")
+            };
+          }
+          return {
+            ok: false,
+            status: "failed",
+            code: streamResult?.action === "blocked" ? "file_exceeds_supported_size" : "redaction_failed",
+            message: "LeakGuard blocked one raw file because streaming sanitization failed.",
+            summary: summarizeMultiFileItem(
+              index,
+              streamResult?.action === "blocked" ? "blocked" : "failed",
+              file,
+              streamResult?.action === "blocked" ? "file_exceeds_supported_size" : "redaction_failed"
+            )
+          };
+        }
         const blockCode = localFile.code || contentExtractionResult?.fallbackReason || "file_scan_failed";
         const blockedByPolicy = blockCode === "unsupported_file_type" || blockCode === "blocked_by_policy";
         const status = localFile.handled || blockedByPolicy ? "blocked" : "failed";
@@ -8727,13 +8764,13 @@
       const sizeInfo = imageRedactionMode
         ? { zone: "fast", bytes: Math.max(0, Number(localFile.file?.sizeBytes || 0)) }
         : classifyLocalTextPayloadSize({ text: localFile.text, sizeBytes: localFile.file?.sizeBytes });
-      if (sizeInfo.zone === "blocked" || localFile.code === "streaming_required") {
+      if (sizeInfo.zone === "blocked") {
         return {
           ok: false,
           status: "blocked",
-          code: sizeInfo.zone === "blocked" ? "local_text_payload_too_large" : "streaming_required",
+          code: "file_exceeds_supported_size",
           message: "LeakGuard blocked one raw file because it exceeds safe multi-file local processing limits.",
-          summary: summarizeMultiFileItem(index, "blocked", file, sizeInfo.zone === "blocked" ? "local_text_payload_too_large" : "streaming_required")
+          summary: summarizeMultiFileItem(index, "blocked", file, "file_exceeds_supported_size")
         };
       }
 
@@ -8822,7 +8859,10 @@
 
   async function maybeHandleMultiFileInsert(event, input, files, context, processingSite, controls) {
     const plan = globalThis.PWM.FileAttachPipeline.createMultiFileAttachPlan(files, {
-      maxFiles: MAX_MULTI_FILE_ATTACHMENTS
+      maxSmallFiles: MAX_MULTI_FILE_SMALL_ATTACHMENTS,
+      maxLargeFiles: MAX_MULTI_FILE_LARGE_ATTACHMENTS,
+      smallMaxBytes: MULTI_FILE_SMALL_MAX_BYTES,
+      supportedMaxBytes: MULTI_FILE_SUPPORTED_MAX_BYTES
     });
     if (plan.mode === "single") return null;
 
@@ -8834,7 +8874,7 @@
     }
 
     if (!plan.ok) {
-      const blockedBeforeProcessingItems = createBlockedBeforeProcessingItems(files);
+      const blockedBeforeProcessingItems = createBlockedBeforeProcessingItems(files, plan.reason);
       const blockedBeforeProcessingSummary = createMultiFileStatusSummary([], blockedBeforeProcessingItems);
       controls.failProcessing(plan.reason, "Raw file upload blocked");
       setBadge("Raw file upload blocked");
@@ -8843,7 +8883,7 @@
         "Raw file upload blocked",
         formatMultiFileStatusMessage(blockedBeforeProcessingSummary, {
           blockedBeforeProcessing: true,
-          maxFiles: plan.maxFiles
+          reason: plan.reason
         })
       );
       refreshBadgeFromCurrentInput();
@@ -8851,7 +8891,10 @@
         site: processingSite,
         reason: plan.reason,
         fileCount: plan.fileCount,
-        maxFiles: plan.maxFiles,
+        smallCount: plan.smallCount,
+        largeCount: plan.largeCount,
+        maxSmallFiles: plan.maxSmallFiles,
+        maxLargeFiles: plan.maxLargeFiles,
         summary: blockedBeforeProcessingSummary
       });
       return { handled: true, ok: false, reason: plan.reason };
@@ -8925,14 +8968,19 @@
     );
     if (!handoffOk) {
       const sanitizedFiles = sanitizedItems.map((item) => item.sanitizedFile);
-      const pendingAdapter =
-        context === "drop" && !blockedItems.length ? getFileHandoffAdapterForLocation() : null;
+      const pendingPlan = globalThis.PWM.FileAttachPipeline.createMultiFileAttachPlan(sanitizedFiles, {
+        maxSmallFiles: MAX_MULTI_FILE_SMALL_ATTACHMENTS,
+        maxLargeFiles: MAX_MULTI_FILE_LARGE_ATTACHMENTS,
+        smallMaxBytes: MULTI_FILE_SMALL_MAX_BYTES,
+        supportedMaxBytes: MULTI_FILE_SUPPORTED_MAX_BYTES
+      });
+      const pendingAdapter = !blockedItems.length ? getFileHandoffAdapterForLocation() : null;
       if (
         pendingAdapter &&
         (pendingAdapter.id === "gemini" || pendingAdapter.id === "grok") &&
         isFileHandoffAdapterPendingAttachEnabled(pendingAdapter) &&
         sanitizedFiles.length > 1 &&
-        sanitizedFiles.length <= MAX_MULTI_FILE_ATTACHMENTS
+        pendingPlan.ok
       ) {
         const details = createSanitizedFileHandoffDetails(
           event,

@@ -76,8 +76,6 @@
       return pending;
     }
 
-    const MAX_PENDING_SANITIZED_FILES = 5;
-
     function getPendingFiles(pending) {
       if (!pending) return [];
       if (Array.isArray(pending.sanitizedFiles)) return pending.sanitizedFiles.filter(Boolean);
@@ -117,10 +115,10 @@
       const safeName = `file-${index + 1}${getSafePendingExtension(file, index)}`;
       const type = typeof file.type === "string" ? file.type : "";
       const lastModified = Number(file.lastModified || Date.now()) || Date.now();
-      if (typeof root.File === "function" && typeof root.Blob === "function" && file instanceof root.Blob) {
-        return new root.File([file], safeName, { type, lastModified });
+      if (typeof globalThis.File === "function" && typeof globalThis.Blob === "function" && file instanceof globalThis.Blob) {
+        return new globalThis.File([file], safeName, { type, lastModified });
       }
-      if (typeof root.Blob === "function" && file instanceof root.Blob) {
+      if (typeof globalThis.Blob === "function" && file instanceof globalThis.Blob) {
         try {
           Object.defineProperty(file, "name", { value: safeName, configurable: true });
           Object.defineProperty(file, "lastModified", { value: lastModified, configurable: true });
@@ -139,14 +137,20 @@
 
     function normalizePendingSanitizedFiles(value) {
       const inputFiles = (Array.isArray(value) ? value : [value]).filter(Boolean);
-      if (!inputFiles.length || inputFiles.length > MAX_PENDING_SANITIZED_FILES) return [];
+      const planFactory = globalThis.PWM?.FileAttachPipeline?.createMultiFileAttachPlan;
+      const plan = typeof planFactory === "function"
+        ? planFactory(inputFiles)
+        : {
+            ok: inputFiles.length > 0 && inputFiles.length <= 5
+          };
+      if (!inputFiles.length || !plan.ok) return [];
       const shouldUseSafeNames = inputFiles.length > 1;
       const files = inputFiles.map((file, index) => clonePendingSanitizedFile(file, index, shouldUseSafeNames));
       return files.every(Boolean) ? files : [];
     }
 
     function summarizePendingFile(file, index) {
-      const summaryFactory = root.PWM?.FileAttachPipeline?.createMultiFileItemSummary;
+      const summaryFactory = globalThis.PWM?.FileAttachPipeline?.createMultiFileItemSummary;
       if (typeof summaryFactory === "function") {
         return summaryFactory({
           index,
@@ -257,7 +261,17 @@
     function queueSite(site, event, input, sanitizedFile, details = null) {
       const isGemini = site === "gemini";
       const sanitizedFiles = normalizePendingSanitizedFiles(sanitizedFile);
-      if ((isGemini ? !isGeminiHost() : !isGrokHost()) || event?.type !== "drop" || !sanitizedFiles.length) return false;
+      const eventType = String(event?.type || "");
+      const hostOk = isGemini ? isGeminiHost() : isGrokHost();
+      const eventOk = /^(?:drop|paste|change|input)$/.test(eventType);
+      if (!hostOk || !eventOk || !sanitizedFiles.length) {
+        debugReveal(`file-handoff:${site}-pending-queue-skipped`, {
+          reason: !hostOk ? "host_mismatch" : !eventOk ? "unsupported_event_type" : "invalid_sanitized_files",
+          eventType,
+          sanitizedFileCount: sanitizedFiles.length
+        });
+        return false;
+      }
       const ttlMs = isGemini ? geminiTtlMs : grokTtlMs;
       const requestedHandoffStage = String(details?.handoffStage || "");
       const isStreamingPending = requestedHandoffStage.includes("streaming");

@@ -47,6 +47,7 @@ const contentEventBindingsSource = fs.readFileSync(
 );
 const backgroundSource = fs.readFileSync(path.join(repoRoot, "src/background/core.js"), "utf8");
 const overlayCssSource = fs.readFileSync(path.join(repoRoot, "src/content/overlay.css"), "utf8");
+const MiB = 1024 * 1024;
 
 require(path.join(repoRoot, "src/shared/fileLimits.js"));
 require(path.join(repoRoot, "src/content/file_paste_helpers.js"));
@@ -748,6 +749,7 @@ function createClipboardEvent({
     stopImmediatePropagation: 0
   };
   const event = {
+    type: "paste",
     clipboardData: clipboardData || {
       getData(type) {
         return type === "text/plain" || type === "text" ? text : "";
@@ -1255,6 +1257,10 @@ function createHarness(overrides = {}) {
       "const LOCAL_TEXT_OPTIMIZED_MAX_BYTES = 4 * 1024 * 1024;",
       "const LOCAL_TEXT_HARD_BLOCK_BYTES = 4 * 1024 * 1024;",
       "const MAX_MULTI_FILE_ATTACHMENTS = 5;",
+      "const MAX_MULTI_FILE_SMALL_ATTACHMENTS = 20;",
+      "const MAX_MULTI_FILE_LARGE_ATTACHMENTS = 5;",
+      "const MULTI_FILE_SMALL_MAX_BYTES = 4 * 1024 * 1024;",
+      "const MULTI_FILE_SUPPORTED_MAX_BYTES = 50 * 1024 * 1024;",
       'const LOCAL_TEXT_HARD_BLOCK_TITLE = "Large payload blocked for browser stability";',
       'const LOCAL_TEXT_HARD_BLOCK_MESSAGE = "This content is over 4 MB. LeakGuard did not process or send it automatically to avoid browser instability. Split the file into smaller parts, or sanitize it separately before upload.";',
       "const LARGE_TEXT_STREAMING_MAX_BYTES = 50 * 1024 * 1024;",
@@ -2636,9 +2642,98 @@ async function testMultiFileDropSanitizesFiveFilesInOrder() {
   assert.deepStrictEqual(dispatched[0].dataTransfer.files.map((file) => file.name), files.map((file) => file.name));
 }
 
-async function testMultiFileDropBlocksSixFilesBeforeReading() {
-  const files = Array.from({ length: 6 }, (_, index) => ({
-    name: `too-many-${index + 1}.env`,
+async function testMultiFileDropSanitizesFiveLargeFilesByStreamingAsBatch() {
+  const dispatched = [];
+  const target = { tagName: "DIV", dispatchEvent: (event) => { dispatched.push(event); return true; } };
+  const sizesMb = [1, 5, 10, 25, 50];
+  const files = sizesMb.map((sizeMb, index) => ({
+    name: `large-${index + 1}.txt`,
+    type: "text/plain",
+    size: sizeMb * MiB
+  }));
+  let streamCalls = 0;
+  const { maybeHandleDrop, calls } = createHarness({
+    readLocalTextFileFromDataTransfer: async (transfer) => {
+      calls.reads.push(transfer);
+      const file = transfer.files[0];
+      if (file.size > 4 * MiB) {
+        return {
+          handled: true,
+          ok: false,
+          code: "streaming_required",
+          sourceFile: file,
+          file: { name: file.name, type: file.type, sizeBytes: file.size }
+        };
+      }
+      return {
+        handled: true,
+        ok: true,
+        text: "API_KEY=LeakGuardDropApiKey1234567890",
+        file: { name: file.name, type: file.type, sizeBytes: file.size }
+      };
+    },
+    StreamingFileRedactor: {
+      LARGE_TEXT_STREAMING_MAX_BYTES: 50 * MiB,
+      redactTextFileStream: async (file, options) => {
+        streamCalls += 1;
+        await options.redactText("API_KEY=LeakGuardDropApiKey1234567890");
+        return {
+          action: "redacted",
+          sanitizedFile: { name: file.name, type: file.type, size: Math.min(file.size, 128), text: "API_KEY=[PWM_1]" },
+          findingsCount: 1,
+          bytesProcessed: file.size
+        };
+      }
+    }
+  });
+  const { event } = createEvent({ dataTransfer: createDataTransfer({ files }), target });
+
+  await maybeHandleDrop(event);
+
+  assert.strictEqual(calls.reads.length, 5);
+  assert.strictEqual(streamCalls, 4);
+  assert.strictEqual(calls.createdFiles.length, 1);
+  assert.strictEqual(dispatched.length, 1);
+  assert.strictEqual(dispatched[0].dataTransfer.files.length, 5);
+  assert.deepStrictEqual(dispatched[0].dataTransfer.files.map((file) => file.name), files.map((file) => file.name));
+  assert.strictEqual(JSON.stringify(calls.modals).includes("file_too_large"), false);
+  const modal = calls.modals.find(([title]) => title === "Some files were blocked" || title === "Raw file upload blocked");
+  assert.strictEqual(Boolean(modal), false);
+}
+
+async function testMultiFileDropSanitizesTwentySmallFilesInOrder() {
+  const dispatched = [];
+  const target = { tagName: "DIV", dispatchEvent: (event) => { dispatched.push(event); return true; } };
+  const files = Array.from({ length: 20 }, (_, index) => ({
+    name: `small-${index + 1}.txt`,
+    type: "text/plain",
+    size: 32 + index
+  }));
+  const { maybeHandleDrop, calls } = createHarness({
+    readLocalTextFileFromDataTransfer: async (transfer) => {
+      calls.reads.push(transfer);
+      const file = transfer.files[0];
+      return {
+        handled: true,
+        ok: true,
+        text: "API_KEY=LeakGuardDropApiKey1234567890",
+        file: { name: file.name, type: file.type, sizeBytes: file.size }
+      };
+    }
+  });
+  const { event } = createEvent({ dataTransfer: createDataTransfer({ files }), target });
+
+  await maybeHandleDrop(event);
+
+  assert.strictEqual(calls.reads.length, 20);
+  assert.strictEqual(calls.createdFiles.length, 20);
+  assert.strictEqual(dispatched.length, 1);
+  assert.deepStrictEqual(dispatched[0].dataTransfer.files.map((file) => file.name), files.map((file) => file.name));
+}
+
+async function testMultiFileDropBlocksTwentyOneSmallFilesBeforeReading() {
+  const files = Array.from({ length: 21 }, (_, index) => ({
+    name: `too-many-small-${index + 1}.env`,
     type: "text/plain",
     size: 12
   }));
@@ -2651,13 +2746,373 @@ async function testMultiFileDropBlocksSixFilesBeforeReading() {
   assert.strictEqual(calls.createdFiles.length, 0);
   const modal = calls.modals.find(([title]) => title === "Raw file upload blocked");
   assert.ok(modal);
-  assert.match(String(modal[1]), /up to 5 files/);
+  assert.match(String(modal[1]), /blocked before reading or processing/);
+  assert.match(String(modal[1]), /reason: small_file_count_exceeded/);
+  assert.strictEqual(String(modal[1]).includes("too-many-small-1.env"), false);
+  assert.ok(calls.debugEvents.some((entry) => entry.label === "file-handoff:multi-file-blocked" && entry.details.reason === "small_file_count_exceeded"));
+}
+
+async function testMultiFileDropBlocksSixLargeFilesBeforeReading() {
+  const files = Array.from({ length: 6 }, (_, index) => ({
+    name: `too-many-large-${index + 1}.env`,
+    type: "text/plain",
+    size: 5 * MiB
+  }));
+  const { maybeHandleDrop, calls } = createHarness();
+  const { event } = createEvent({ dataTransfer: createDataTransfer({ files }) });
+
+  await maybeHandleDrop(event);
+
+  assert.strictEqual(calls.reads.length, 0);
+  assert.strictEqual(calls.createdFiles.length, 0);
+  const modal = calls.modals.find(([title]) => title === "Raw file upload blocked");
+  assert.ok(modal);
+  assert.match(String(modal[1]), /Up to 5 large files/);
   assert.match(String(modal[1]), /blocked before reading or processing/);
   assert.match(String(modal[1]), /No raw files were uploaded/);
   assert.match(String(modal[1]), /file-1/);
-  assert.match(String(modal[1]), /reason: blocked_by_policy/);
-  assert.strictEqual(String(modal[1]).includes("too-many-1.env"), false);
-  assert.ok(calls.debugEvents.some((entry) => entry.label === "file-handoff:multi-file-blocked" && entry.details.reason === "too_many_files"));
+  assert.match(String(modal[1]), /reason: large_file_count_exceeded/);
+  assert.strictEqual(String(modal[1]).includes("too-many-large-1.env"), false);
+  assert.ok(calls.debugEvents.some((entry) => entry.label === "file-handoff:multi-file-blocked" && entry.details.reason === "large_file_count_exceeded"));
+}
+
+async function testMultiFileDropSanitizesMixedSmallAndLargeBatch() {
+  const dispatched = [];
+  const target = { tagName: "DIV", dispatchEvent: (event) => { dispatched.push(event); return true; } };
+  const smallFiles = Array.from({ length: 10 }, (_, index) => ({
+    name: `mixed-small-${index + 1}.txt`,
+    type: "text/plain",
+    size: 100 + index
+  }));
+  const largeFiles = [5, 10, 25].map((sizeMb, index) => ({
+    name: `mixed-large-${index + 1}.txt`,
+    type: "text/plain",
+    size: sizeMb * MiB
+  }));
+  const files = [...smallFiles, ...largeFiles];
+  let streamCalls = 0;
+  const { maybeHandleDrop, calls } = createHarness({
+    readLocalTextFileFromDataTransfer: async (transfer) => {
+      calls.reads.push(transfer);
+      const file = transfer.files[0];
+      if (file.size > 4 * MiB) {
+        return {
+          handled: true,
+          ok: false,
+          code: "streaming_required",
+          sourceFile: file,
+          file: { name: file.name, type: file.type, sizeBytes: file.size }
+        };
+      }
+      return {
+        handled: true,
+        ok: true,
+        text: "API_KEY=LeakGuardDropApiKey1234567890",
+        file: { name: file.name, type: file.type, sizeBytes: file.size }
+      };
+    },
+    StreamingFileRedactor: {
+      LARGE_TEXT_STREAMING_MAX_BYTES: 50 * MiB,
+      redactTextFileStream: async (file, options) => {
+        streamCalls += 1;
+        await options.redactText("API_KEY=LeakGuardDropApiKey1234567890");
+        return {
+          action: "redacted",
+          sanitizedFile: { name: file.name, type: file.type, size: 128, text: "API_KEY=[PWM_1]" },
+          findingsCount: 1,
+          bytesProcessed: file.size
+        };
+      }
+    }
+  });
+  const { event } = createEvent({ dataTransfer: createDataTransfer({ files }), target });
+
+  await maybeHandleDrop(event);
+
+  assert.strictEqual(calls.reads.length, 13);
+  assert.strictEqual(streamCalls, 3);
+  assert.strictEqual(dispatched.length, 1);
+  assert.deepStrictEqual(dispatched[0].dataTransfer.files.map((file) => file.name), files.map((file) => file.name));
+}
+
+async function testMultiFileDropBlocksMixedBatchWithTooManyLargeFilesBeforeReading() {
+  const files = [
+    ...Array.from({ length: 10 }, (_, index) => ({ name: `small-${index + 1}.txt`, type: "text/plain", size: 100 })),
+    ...Array.from({ length: 6 }, (_, index) => ({ name: `large-${index + 1}.txt`, type: "text/plain", size: 5 * MiB }))
+  ];
+  const { maybeHandleDrop, calls } = createHarness();
+  const { event } = createEvent({ dataTransfer: createDataTransfer({ files }) });
+
+  await maybeHandleDrop(event);
+
+  assert.strictEqual(calls.reads.length, 0);
+  assert.strictEqual(calls.createdFiles.length, 0);
+  const modal = calls.modals.find(([title]) => title === "Raw file upload blocked");
+  assert.ok(modal);
+  assert.match(String(modal[1]), /reason: large_file_count_exceeded/);
+}
+
+async function testMultiFileDropBlocksFileExceedingSupportedSize() {
+  const files = [
+    { name: "small.txt", type: "text/plain", size: 100 },
+    { name: "too-big.txt", type: "text/plain", size: 51 * MiB }
+  ];
+  const { maybeHandleDrop, calls } = createHarness();
+  const { event } = createEvent({ dataTransfer: createDataTransfer({ files }) });
+
+  await maybeHandleDrop(event);
+
+  assert.strictEqual(calls.reads.length, 0);
+  const modal = calls.modals.find(([title]) => title === "Raw file upload blocked");
+  assert.ok(modal);
+  assert.match(String(modal[1]), /reason: file_exceeds_supported_size/);
+  assert.strictEqual(String(modal[1]).includes("too-big.txt"), false);
+}
+
+async function testMultiFileInputSanitizesMixedSmallAndLargeBatch() {
+  const fileInput = createFileInput({ multiple: true });
+  const smallFiles = Array.from({ length: 10 }, (_, index) => ({
+    name: `input-small-${index + 1}.txt`,
+    type: "text/plain",
+    size: 100 + index
+  }));
+  const largeFiles = [5, 10, 25].map((sizeMb, index) => ({
+    name: `input-large-${index + 1}.txt`,
+    type: "text/plain",
+    size: sizeMb * MiB
+  }));
+  fileInput.files = [...smallFiles, ...largeFiles];
+  let streamCalls = 0;
+  const composer = { tagName: "TEXTAREA", text: "", selection: { start: 0, end: 0 } };
+  const { maybeHandleFileInputChange, calls } = createHarness({
+    location: { hostname: "chatgpt.com" },
+    findComposer: () => composer,
+    requestRedaction: async (text, findings, options) => {
+      calls.redactions.push({ text, findings, options });
+      return { redactedText: "API_KEY=[PWM_1]" };
+    },
+    readLocalTextFileFromDataTransfer: async (transfer) => {
+      calls.reads.push(transfer);
+      const file = transfer.files[0];
+      if (file.size > 4 * MiB) {
+        return {
+          handled: true,
+          ok: false,
+          code: "streaming_required",
+          sourceFile: file,
+          file: { name: file.name, type: file.type, sizeBytes: file.size }
+        };
+      }
+      return {
+        handled: true,
+        ok: true,
+        text: "API_KEY=LeakGuardInputApiKey1234567890",
+        file: { name: file.name, type: file.type, sizeBytes: file.size }
+      };
+    },
+    StreamingFileRedactor: {
+      LARGE_TEXT_STREAMING_MAX_BYTES: 50 * MiB,
+      redactTextFileStream: async (file, options) => {
+        streamCalls += 1;
+        await options.redactText("API_KEY=LeakGuardInputApiKey1234567890");
+        return {
+          action: "redacted",
+          sanitizedFile: { name: file.name, type: file.type, size: 128, text: "API_KEY=[PWM_1]" },
+          findingsCount: 1,
+          bytesProcessed: file.size
+        };
+      }
+    }
+  });
+  const { event } = createEvent({ type: "change", target: fileInput });
+
+  await maybeHandleFileInputChange(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(calls.reads.length, 13);
+  assert.strictEqual(streamCalls, 3);
+  assert.strictEqual(fileInput.files.length, 13);
+  assert.deepStrictEqual(fileInput.files.map((file) => file.name), [...smallFiles, ...largeFiles].map((file) => file.name));
+  fileInput.files.forEach((file) => {
+    assert.strictEqual(String(file.text || "").includes("LeakGuardInputApiKey1234567890"), false);
+  });
+}
+
+async function testMultiFileInputBlocksTooManyLargeFilesBeforeReading() {
+  const fileInput = createFileInput({ multiple: true });
+  fileInput.files = [
+    ...Array.from({ length: 10 }, (_, index) => ({ name: `input-small-${index + 1}.txt`, type: "text/plain", size: 100 })),
+    ...Array.from({ length: 6 }, (_, index) => ({ name: `input-large-${index + 1}.txt`, type: "text/plain", size: 5 * MiB }))
+  ];
+  const { maybeHandleFileInputChange, calls } = createHarness({
+    location: { hostname: "chatgpt.com" },
+    findComposer: () => ({ tagName: "TEXTAREA", text: "", selection: { start: 0, end: 0 } })
+  });
+  const { event } = createEvent({ type: "change", target: fileInput });
+
+  await maybeHandleFileInputChange(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(calls.reads.length, 0);
+  assert.strictEqual(fileInput.files.length, 0);
+  const modal = calls.modals.find(([title]) => title === "Raw file upload blocked");
+  assert.ok(modal);
+  assert.match(String(modal[1]), /reason: large_file_count_exceeded/);
+  assert.strictEqual(String(modal[1]).includes("input-large-1.txt"), false);
+}
+
+async function testMultiFileInputKeepsUnsupportedOutOfSanitizedAssignment() {
+  const fileInput = createFileInput({ multiple: true });
+  const files = [
+    { name: "input-safe.env", type: "text/plain", size: 18 },
+    { name: "input-blocked.svg", type: "image/svg+xml", size: 20 },
+    { name: "input-safe.log", type: "text/plain", size: 22 }
+  ];
+  fileInput.files = files;
+  const { maybeHandleFileInputChange, calls } = createHarness({
+    location: { hostname: "chatgpt.com" },
+    findComposer: () => ({ tagName: "TEXTAREA", text: "", selection: { start: 0, end: 0 } }),
+    readLocalTextFileFromDataTransfer: async (transfer) => {
+      calls.reads.push(transfer);
+      const file = transfer.files[0];
+      if (/\.svg$/i.test(file.name)) {
+        return { handled: true, ok: false, code: "unsupported_file_type", message: `raw unsupported ${file.name}` };
+      }
+      return {
+        handled: true,
+        ok: true,
+        text: "API_KEY=LeakGuardInputApiKey1234567890",
+        file: { name: file.name, type: file.type, sizeBytes: file.size }
+      };
+    }
+  });
+  const { event } = createEvent({ type: "change", target: fileInput });
+
+  await maybeHandleFileInputChange(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(fileInput.files.length, 2);
+  assert.deepStrictEqual(fileInput.files.map((file) => file.name), ["input-safe.env", "input-safe.log"]);
+  assert.strictEqual(JSON.stringify(fileInput.files).includes("input-blocked.svg"), false);
+  const modal = calls.modals.find(([title]) => title === "Some files were blocked");
+  assert.ok(modal);
+  assert.match(String(modal[1]), /reason: unsupported_file_type/);
+  assert.strictEqual(String(modal[1]).includes("input-blocked.svg"), false);
+}
+
+async function testMultiFilePasteSanitizesTwentySmallFiles() {
+  const dispatched = [];
+  const target = { tagName: "TEXTAREA", text: "", selection: { start: 0, end: 0 }, dispatchEvent: (event) => { dispatched.push(event); return true; } };
+  const files = Array.from({ length: 20 }, (_, index) => ({
+    name: `paste-small-${index + 1}.txt`,
+    type: "text/plain",
+    size: 32 + index
+  }));
+  const transfer = createDataTransfer({ files });
+  const { maybeHandlePaste, calls } = createHarness({
+    location: { hostname: "chatgpt.com" },
+    findComposer: () => target,
+    requestRedaction: async (text, findings, options) => {
+      calls.redactions.push({ text, findings, options });
+      return { redactedText: "API_KEY=[PWM_1]" };
+    },
+    readLocalTextFileFromDataTransfer: async (dataTransfer) => {
+      calls.reads.push(dataTransfer);
+      const file = dataTransfer.files[0];
+      return {
+        handled: true,
+        ok: true,
+        text: "API_KEY=LeakGuardPasteApiKey1234567890",
+        file: { name: file.name, type: file.type, sizeBytes: file.size }
+      };
+    }
+  });
+  const { event } = createClipboardEvent({
+    target,
+    clipboardData: {
+      ...transfer,
+      getData: () => ""
+    }
+  });
+
+  await maybeHandlePaste(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(calls.reads.length, 20);
+  assert.strictEqual(dispatched.length, 1);
+  assert.strictEqual(dispatched[0].clipboardData.files.length, 20);
+  assert.deepStrictEqual(dispatched[0].clipboardData.files.map((file) => file.name), files.map((file) => file.name));
+  dispatched[0].clipboardData.files.forEach((file) => {
+    assert.strictEqual(String(file.text || "").includes("LeakGuardPasteApiKey1234567890"), false);
+  });
+}
+
+async function testGeminiGrokMultiFilePasteQueuesSanitizedPendingAfterDirectHandoffFails() {
+  for (const [hostname, siteLabel] of [
+    ["gemini.google.com", "gemini"],
+    ["grok.com", "grok"]
+  ]) {
+    const target = {
+      tagName: "DIV",
+      dispatchEvent: () => {
+        throw new Error("synthetic paste rejected");
+      }
+    };
+    const files = [
+      { name: `${siteLabel}-one.env`, type: "text/plain", size: 18 },
+      { name: `${siteLabel}-two.env`, type: "text/plain", size: 20 }
+    ];
+    const transfer = createDataTransfer({ files });
+    const { maybeHandlePaste, calls } = createHarness({
+      location: { hostname },
+      findComposer: () => target,
+      createSanitizedTextFile: (file, text) => {
+        const sanitizedFile = {
+          name: file.name,
+          type: file.type,
+          size: String(text || "").length,
+          async text() {
+            return text;
+          }
+        };
+        calls.createdFiles.push({ file, text, sanitizedFile });
+        return sanitizedFile;
+      },
+      readLocalTextFileFromDataTransfer: async (dataTransfer) => {
+        calls.reads.push(dataTransfer);
+        const file = dataTransfer.files[0];
+        return {
+          handled: true,
+          ok: true,
+          text: "API_KEY=LeakGuardPasteApiKey1234567890",
+          file: { name: file.name, type: file.type, sizeBytes: file.size }
+        };
+      }
+    });
+    const { event } = createClipboardEvent({
+      target,
+      clipboardData: {
+        ...transfer,
+        getData: () => ""
+      }
+    });
+
+    await maybeHandlePaste(event);
+
+    assert.strictEqual(event.defaultPrevented, true);
+    assert.ok(
+      calls.debugEvents.some((entry) => entry.label === `file-handoff:${siteLabel}-pending-queued`),
+      JSON.stringify({
+        events: calls.debugEvents.map((entry) => ({ label: entry.label, details: entry.details })),
+        modals: calls.modals.map(([title]) => title),
+        reads: calls.reads.length
+      })
+    );
+    assert.strictEqual(calls.modals.some(([title]) => title === "Raw file upload blocked"), false);
+    const queued = calls.debugEvents.find((entry) => entry.label === `file-handoff:${siteLabel}-pending-queued`);
+    assert.strictEqual(JSON.stringify(queued.details).includes(`${siteLabel}-one.env`), false);
+    assert.strictEqual(JSON.stringify(queued.details).includes("LeakGuardPasteApiKey1234567890"), false);
+  }
 }
 
 async function testMultiFileDropPartialBlockShowsPerFileSafeSummary() {
@@ -2700,11 +3155,11 @@ async function testMultiFileDropPartialBlockShowsPerFileSafeSummary() {
   const message = String(modal[1]);
   assert.match(message, /LeakGuard attached 3 sanitized file\(s\) and blocked 2 file\(s\)\./);
   assert.match(message, /No raw files were uploaded\./);
-  assert.match(message, /Attached files:\n- file-1 \(\.env, text, 18 bytes, attached\)/);
-  assert.match(message, /- file-3 \(\.json, application, 22 bytes, attached\)/);
-  assert.match(message, /- file-5 \(\.md, text, 26 bytes, attached\)/);
-  assert.match(message, /Blocked files:\n- file-2 \(\.svg, image, 20 bytes, blocked, reason: unsupported_file_type\)/);
-  assert.match(message, /- file-4 \(\.bmp, image, 24 bytes, failed, reason: unknown_blocked\)/);
+  assert.match(message, /Attached files:\n- file-1 \(\.env, text, 18 bytes\) - attached/);
+  assert.match(message, /- file-3 \(\.json, application, 22 bytes\) - attached/);
+  assert.match(message, /- file-5 \(\.md, text, 26 bytes\) - attached/);
+  assert.match(message, /Blocked files:\n- file-2 \(\.svg, image, 20 bytes\) - blocked, reason: unsupported_file_type/);
+  assert.match(message, /- file-4 \(\.bmp, image, 24 bytes\) - failed, reason: unknown_blocked/);
   assert.strictEqual(message.includes("safe-one-"), false);
   assert.strictEqual(message.includes("blocked-one.svg"), false);
   assert.strictEqual(message.includes(rawSecret), false);
@@ -2810,8 +3265,8 @@ async function testMultiFileDropAllFilesFailedShowsSafeBlockedSummary() {
   const message = String(modal[1]);
   assert.match(message, /blocked 2 file\(s\)/);
   assert.match(message, /No raw files were uploaded\./);
-  assert.match(message, /Blocked files:\n- file-1 \(\.env, text, 18 bytes, failed, reason: file_processing_exception\)/);
-  assert.match(message, /- file-2 \(\.env, text, 20 bytes, failed, reason: file_processing_exception\)/);
+  assert.match(message, /Blocked files:\n- file-1 \(\.env, text, 18 bytes\) - failed, reason: file_processing_exception/);
+  assert.match(message, /- file-2 \(\.env, text, 20 bytes\) - failed, reason: file_processing_exception/);
   assert.strictEqual(message.includes(rawSecret), false);
   assert.strictEqual(message.includes("C:\\tmp"), false);
   assert.strictEqual(message.includes("stack trace"), false);
@@ -2854,8 +3309,8 @@ async function testGeminiGrokPartialBlockDoesNotEnterPendingQueueAndShowsSafeSum
     assert.ok(modal, `${siteLabel} should show a partial-block modal`);
     const message = String(modal[1]);
     assert.match(message, /No raw files were uploaded\./);
-    assert.match(message, /file-1 \(\.env, text, 18 bytes, (?:attached|failed)(?:, reason: sanitized_handoff_failed)?\)/);
-    assert.match(message, /file-2 \(\.svg, image, 20 bytes, blocked, reason: unsupported_file_type\)/);
+    assert.match(message, /file-1 \(\.env, text, 18 bytes\) - (?:attached|failed)(?:, reason: sanitized_handoff_failed)?/);
+    assert.match(message, /file-2 \(\.svg, image, 20 bytes\) - blocked, reason: unsupported_file_type/);
     assert.strictEqual(message.includes(rawSecret), false);
     assert.strictEqual(message.includes(`${siteLabel}-safe.env`), false);
     assert.strictEqual(message.includes("raw blocked"), false);
@@ -14069,7 +14524,8 @@ async function testFirefoxContenteditablePasteBlocksBeforeAsyncAndWritesOnlyPlac
 }
 
 function testMultiFileProtectedUploadStaticGuards() {
-  assert.ok(contentSource.includes("MAX_MULTI_FILE_ATTACHMENTS"), "content should define a hard multi-file limit");
+  assert.ok(contentSource.includes("MAX_MULTI_FILE_SMALL_ATTACHMENTS"), "content should define a small-file multi-file cap");
+  assert.ok(contentSource.includes("MAX_MULTI_FILE_LARGE_ATTACHMENTS"), "content should define a large-file multi-file cap");
   assert.ok(contentSource.includes("createMultiFileAttachPlan"), "content should use the multi-file planning guard");
   assert.ok(contentSource.includes("maybeHandleMultiFileInsert"), "content should route multi-file uploads through a dedicated guard");
   assert.ok(contentSource.includes("processLocalFileForSanitizedBatch"), "content should process each file independently");
@@ -14089,7 +14545,18 @@ function testMultiFileProtectedUploadStaticGuards() {
   await testFileDropIsHandledWithoutComposerTarget();
   await testMultiFileDropSanitizesTwoFilesAsBatch();
   await testMultiFileDropSanitizesFiveFilesInOrder();
-  await testMultiFileDropBlocksSixFilesBeforeReading();
+  await testMultiFileDropSanitizesFiveLargeFilesByStreamingAsBatch();
+  await testMultiFileDropSanitizesTwentySmallFilesInOrder();
+  await testMultiFileDropBlocksTwentyOneSmallFilesBeforeReading();
+  await testMultiFileDropBlocksSixLargeFilesBeforeReading();
+  await testMultiFileDropSanitizesMixedSmallAndLargeBatch();
+  await testMultiFileDropBlocksMixedBatchWithTooManyLargeFilesBeforeReading();
+  await testMultiFileDropBlocksFileExceedingSupportedSize();
+  await testMultiFileInputSanitizesMixedSmallAndLargeBatch();
+  await testMultiFileInputBlocksTooManyLargeFilesBeforeReading();
+  await testMultiFileInputKeepsUnsupportedOutOfSanitizedAssignment();
+  await testMultiFilePasteSanitizesTwentySmallFiles();
+  await testGeminiGrokMultiFilePasteQueuesSanitizedPendingAfterDirectHandoffFails();
   await testMultiFileDropPartialBlockShowsPerFileSafeSummary();
   await testMixedMultiFileDropBlocksUnsupportedWithoutRawFallback();
   await testMultiFileDropBlocksThrownReadPerFileWithoutRawFallback();
