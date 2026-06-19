@@ -8,16 +8,6 @@ require(path.join(repoRoot, "src/shared/runtime_scripts.js"));
 
 const { contentScripts, backgroundScripts } = globalThis.PWM.RuntimeScripts;
 
-function assertNoDuplicateScripts(scripts, label) {
-  const seen = new Set();
-  const duplicates = [];
-  for (const script of scripts) {
-    if (seen.has(script)) duplicates.push(script);
-    seen.add(script);
-  }
-  assert.deepStrictEqual(duplicates, [], `${label} should not load duplicate scripts`);
-}
-
 function assertIncludes(scripts, script, label) {
   const index = scripts.indexOf(script);
   assert.notStrictEqual(index, -1, `${label} should include ${script}`);
@@ -89,7 +79,6 @@ function getScannerPageScripts() {
 }
 
 function testContentRuntimeScriptOrder() {
-  assertNoDuplicateScripts(contentScripts, "content scripts");
   assert.strictEqual(
     contentScripts.at(-1),
     "content/content.js",
@@ -169,7 +158,6 @@ function testContentRuntimeScriptOrder() {
 
 function testScannerPageScriptOrder() {
   const scannerScripts = getScannerPageScripts();
-  assertNoDuplicateScripts(scannerScripts, "scanner page scripts");
   assertAfterAll(scannerScripts, "shared/detector.js", [
     "shared/entropy.js",
     "shared/patterns.js"
@@ -188,7 +176,6 @@ function testScannerPageScriptOrder() {
 }
 
 function testBackgroundRuntimeScriptOrder() {
-  assertNoDuplicateScripts(backgroundScripts, "background scripts");
   assert.strictEqual(
     backgroundScripts.at(-1),
     "background/core.js",

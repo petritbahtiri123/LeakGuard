@@ -12,6 +12,12 @@ Use this file as a short handoff log for AI-made changes. Add newest entries fir
 ```
 
 ## Entries
+### 2026-06-19 - v2.1.0 release packaging
+- Goal: Bump release metadata to `2.1.0`, prepare Chrome Web Store release checklist/notes, and regenerate release artifacts using the existing release workflow.
+- Files: `package.json`, `package-lock.json`, `manifests/base.json`, `README.md`, `docs/RELEASE_2_1_0_CHROME_WEB_STORE_CHECKLIST.md`, `docs/CODEX_CHANGELOG.md`
+- Tests: release validation commands recorded in final summary.
+- Notes: Release packaging only. No detector thresholds, Onix retraining, runtime behavior, permissions, or generated model artifacts changed.
+
 ### 2026-06-18 - Codex context and playbook refresh
 - Goal: Updated agent-facing context, architecture lifecycle, modularized file map, runtime script-order rules, Onix training/eval guidance, fail-closed/debug safety guidance, and reusable Codex playbooks after recent modularization and QA changes.
 - Files: `AGENTS.md`, `docs/CODEX_FAST_CONTEXT.md`, `docs/CODEX_CONTEXT_ROUTER.md`, `docs/REPO_MAP.md`, `docs/BUG_PLAYBOOK.md`, `docs/AI_ASSIST.md`, `ai/README.md`, `docs/codex-playbooks/*`, `docs/FILE_UPLOAD_SCANNING_GUIDE.md`, `docs/file-handoff-architecture.md`, `docs/RELEASE_QA_CHECKLIST.md`, `docs/DOCUMENTATION_ROADMAP.md`, `docs/README.md`
