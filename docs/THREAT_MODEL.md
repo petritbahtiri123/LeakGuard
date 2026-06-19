@@ -32,7 +32,7 @@ It does not expand product scope. LeakGuard remains a local risk-reduction tool,
 | Raw secrets, emails, public IPv4 hosts, and public IPv4 ranges | Replace with placeholders before protected submission unless the user or policy allows otherwise. |
 | Supported local text-file contents and chunks | Read only after user selection, paste, or drop; redact locally; avoid raw upload after LeakGuard attempts sanitization. |
 | Supported document extracted text | Extract text from PDF, DOCX, and XLSX locally; redact before `.redacted.txt` export/fallback or regenerated PDF/DOCX/XLSX handoff from sanitized text only. |
-| Image metadata, OCR text, and image bytes | Process locally for metadata, scanner OCR, and opt-in protected-site OCR; avoid persistence, logging, remote OCR, and raw image upload after LeakGuard attempts sanitization. |
+| Image metadata, OCR text, and image bytes | Process locally for metadata, scanner OCR, and settings-controlled/default-on protected-site OCR; avoid persistence, logging, remote OCR, and raw image upload after LeakGuard attempts sanitization. |
 | Placeholder private state | Keep raw mappings background-owned and session-scoped for reveal only. |
 | Public placeholder state | Expose only safe state needed by content scripts, such as placeholder counts and trusted placeholder tokens. |
 | Secure reveal requests | Use opaque ids and session binding; return raw values only to extension-owned UI. |

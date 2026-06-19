@@ -35,7 +35,7 @@ Use repo-focused tools such as GitHub Secret Scanning, Gitleaks, detect-secrets,
 
 LeakGuard currently focuses on supported browser composers and selected local text files. It does not cover every website, every editor implementation, file upload flow, drag-and-drop payload, screenshot, clipboard history, malware, hostile extension, compromised browser, or operating-system exposure path.
 
-The File Scanner is text-only in the current release. PDF, DOCX, image OCR, and visual redaction are not enabled.
+LeakGuard supports scoped local file handling, but it is still limited. PDF, DOCX, and XLSX handling is text extraction followed by sanitized regenerated output where supported, not layout-preserving document redaction. Scanner image OCR and eligible visual image redaction are limited to English PNG/JPG/JPEG/WEBP image files, and protected-site image OCR is settings-controlled and enabled by default for supported image uploads.
 
 ## AI Assist Boundaries
 

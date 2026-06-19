@@ -38,7 +38,7 @@ The Firefox listing should match LeakGuard's local-only model:
 - no sale or transfer of user data
 - no collection of prompt text, file contents, raw secrets, email addresses, or raw network values by a remote service
 
-If AMO asks about selected local files, describe local file processing in the browser and keep scope precise: text/source files, text PDF extraction, DOCX text extraction, XLSX text extraction, image metadata, English-only scanner image OCR, and protected-site image OCR only when the user opts in. Scanner and protected-site text PDFs can export regenerated `.redacted.pdf` from sanitized text only; protected-site PDFs fall back to `.redacted.txt` when regeneration would truncate. Scanner and protected-site DOCX can export regenerated `.redacted.docx` from sanitized text only; protected-site DOCX falls back to `.redacted.txt` when regeneration would truncate. Scanner and protected-site XLSX can export regenerated `.redacted.xlsx` from sanitized text only; protected-site XLSX falls back to `.redacted.txt` when regeneration would truncate. Image metadata and OCR text outputs export `.redacted.txt`; eligible visual image redaction exports flattened `.redacted.png`.
+If AMO asks about selected local files, describe local file processing in the browser and keep scope precise: text/source files, text PDF extraction, DOCX text extraction, XLSX text extraction, image metadata, English-only scanner image OCR, and settings-controlled protected-site image OCR that is enabled by default for supported image uploads and can be turned off. Scanner and protected-site text PDFs can export regenerated `.redacted.pdf` from sanitized text only; protected-site PDFs fall back to `.redacted.txt` when regeneration would truncate. Scanner and protected-site DOCX can export regenerated `.redacted.docx` from sanitized text only; protected-site DOCX falls back to `.redacted.txt` when regeneration would truncate. Scanner and protected-site XLSX can export regenerated `.redacted.xlsx` from sanitized text only; protected-site XLSX falls back to `.redacted.txt` when regeneration would truncate. Image metadata and OCR text outputs export `.redacted.txt`; eligible visual image redaction exports flattened `.redacted.png`.
 
 Do not publish the privacy/support contact fields until [PRIVACY_POLICY.md](PRIVACY_POLICY.md) and [STORE_ASSETS_CHECKLIST.md](STORE_ASSETS_CHECKLIST.md) have real project contacts. No correct support or privacy contact is currently discoverable in this repository.
 
@@ -88,7 +88,7 @@ Then manually check:
 - secure reveal stays in the popup
 - File Scanner handles one supported text file
 - File Scanner handles one text PDF, one DOCX, one XLSX, one image metadata scan, and one local English OCR image
-- protected-site OCR remains off by default until explicitly enabled
+- protected-site OCR is enabled by default for supported image uploads and can be turned off in settings
 - unsupported files show honest text-only messaging and are not marked scanned, sanitized, or protected
 
 For full release coverage, complete [RELEASE_QA_CHECKLIST.md](RELEASE_QA_CHECKLIST.md).
