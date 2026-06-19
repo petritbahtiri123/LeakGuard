@@ -11,7 +11,14 @@ const { createPendingSanitizedFileHandoffManager } = require(path.join(
 const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
 
 function createSanitizedFile(name, text = "API_KEY=[PWM_1]") {
-  return { name, type: "text/plain", size: text.length, text };
+  return {
+    name,
+    type: "text/plain",
+    size: text.length,
+    async text() {
+      return text;
+    }
+  };
 }
 
 function createHarness({ site = "gemini", fileInputs = [], now = 1000 } = {}) {
@@ -109,16 +116,17 @@ function testGeminiMultiFilePendingQueuesSanitizedOnlyAndRetriesInOrder() {
   const harness = createHarness({ site: "gemini", fileInputs: [input] });
   const queued = harness.manager.queuePendingGeminiSanitizedFileHandoff({ type: "drop", target: {} }, null, files, {});
   assert.strictEqual(queued, true);
-  assert.strictEqual(harness.manager.hasPendingGeminiSanitizedFileHandoff(files), true);
+  assert.strictEqual(harness.manager.hasPendingGeminiSanitizedFileHandoff(), true);
   const pendingDebug = harness.manager.getPendingGeminiSanitizedFileHandoffDebug();
   assert.deepStrictEqual(pendingDebug.sanitizedFilesDebug.map((item) => item.label), ["file-1", "file-2", "file-3"]);
   assert.strictEqual(JSON.stringify(pendingDebug).includes("one.env"), false);
   assert.strictEqual(JSON.stringify(pendingDebug).includes("API_KEY"), false);
-  assert.deepStrictEqual(harness.prompts[0].sanitizedFiles, files);
+  assert.strictEqual(harness.prompts[0].sanitizedFiles.length, files.length);
+  assert.deepStrictEqual(harness.prompts[0].sanitizedFiles.map((file) => file.name), ["file-1.env", "file-2.json", "file-3.log"]);
 
   const attached = harness.manager.attemptPendingGeminiSanitizedFileHandoff("retry");
   assert.strictEqual(attached, true);
-  assert.deepStrictEqual(input.files, files);
+  assert.deepStrictEqual(input.files.map((file) => file.name), ["file-1.env", "file-2.json", "file-3.log"]);
   assert.deepStrictEqual(input.events, ["input", "change"]);
   assert.strictEqual(harness.manager.hasPendingGeminiSanitizedFileHandoff(files), false);
 }
@@ -129,10 +137,10 @@ function testGrokMultiFilePendingQueuesSanitizedOnlyAndRetriesInOrder() {
   const harness = createHarness({ site: "grok", fileInputs: [input] });
   const queued = harness.manager.queuePendingGrokSanitizedFileHandoff({ type: "drop", target: {} }, null, files, {});
   assert.strictEqual(queued, true);
-  assert.strictEqual(harness.manager.hasPendingGrokSanitizedFileHandoff(files), true);
+  assert.strictEqual(harness.manager.hasPendingGrokSanitizedFileHandoff(), true);
   const attached = harness.manager.attemptPendingGrokSanitizedFileHandoff("retry");
   assert.strictEqual(attached, true);
-  assert.deepStrictEqual(input.files, files);
+  assert.deepStrictEqual(input.files.map((file) => file.name), ["file-1.env", "file-2.md"]);
 }
 
 function testInvalidOrTooManyFilesNeverQueue() {
@@ -145,6 +153,14 @@ function testInvalidOrTooManyFilesNeverQueue() {
     harness.manager.queuePendingGeminiSanitizedFileHandoff({ type: "drop", target: {} }, null, [createSanitizedFile("safe.env"), { name: "raw.env", rawFile: true }], {}),
     false
   );
+  assert.strictEqual(
+    harness.manager.queuePendingGeminiSanitizedFileHandoff({ type: "drop", target: {} }, null, [createSanitizedFile("safe.env"), { name: "raw.env", originalFile: {} }], {}),
+    false
+  );
+  assert.strictEqual(
+    harness.manager.queuePendingGeminiSanitizedFileHandoff({ type: "drop", target: {} }, null, [createSanitizedFile("safe.env"), { name: "raw.env", rawText: "API_KEY=raw" }], {}),
+    false
+  );
   assert.strictEqual(harness.manager.getPendingGeminiSanitizedFileHandoffDebug(), null);
 }
 
@@ -155,7 +171,7 @@ function testExpiredAndReplacedPendingBatchesCleanUp() {
   assert.strictEqual(harness.manager.queuePendingGeminiSanitizedFileHandoff({ type: "drop", target: {} }, null, first, {}), true);
   assert.strictEqual(harness.manager.queuePendingGeminiSanitizedFileHandoff({ type: "drop", target: {} }, null, second, {}), true);
   assert.strictEqual(harness.manager.hasPendingGeminiSanitizedFileHandoff(first), false);
-  assert.strictEqual(harness.manager.hasPendingGeminiSanitizedFileHandoff(second), true);
+  assert.strictEqual(harness.manager.hasPendingGeminiSanitizedFileHandoff(), true);
   assert.ok(harness.debugEvents.some((entry) => entry.label === "file-handoff:gemini-pending-cleared" && entry.payload.reason === "replaced"));
   const expiry = harness.timers.find((timer) => timer.delay === 60000 && !timer.cleared);
   assert.ok(expiry);
@@ -173,6 +189,21 @@ function testMissingInputFailsClosedWithoutRawReplay() {
   assert.ok(harness.debugEvents.some((entry) => entry.label === "file-handoff:grok-pending-input-not-found"));
 }
 
+function testRawFilenamesAreReplacedWithSafePendingLabels() {
+  const rawFilename = "sk-live-raw-token-value.env";
+  const files = [createSanitizedFile(rawFilename), createSanitizedFile("safe.log")];
+  const input = createInput();
+  const harness = createHarness({ site: "gemini", fileInputs: [input] });
+  assert.strictEqual(harness.manager.queuePendingGeminiSanitizedFileHandoff({ type: "drop", target: {} }, null, files, {}), true);
+  const debugJson = JSON.stringify(harness.manager.getPendingGeminiSanitizedFileHandoffDebug());
+  const promptJson = JSON.stringify(harness.prompts[0]);
+  assert.strictEqual(debugJson.includes(rawFilename), false);
+  assert.strictEqual(promptJson.includes(rawFilename), false);
+  assert.deepStrictEqual(harness.prompts[0].sanitizedFiles.map((file) => file.name), ["file-1.env", "file-2.log"]);
+  assert.strictEqual(harness.manager.attemptPendingGeminiSanitizedFileHandoff("retry"), true);
+  assert.deepStrictEqual(input.files.map((file) => file.name), ["file-1.env", "file-2.log"]);
+}
+
 function testContentQueuesOnlyGeminiGrokCleanSanitizedBatchesAfterDirectFailure() {
   assert.ok(contentSource.includes("multi-file-pending-sanitized-file-handoff"));
   assert.ok(contentSource.includes("pendingAdapter.id === \"gemini\" || pendingAdapter.id === \"grok\""));
@@ -186,6 +217,7 @@ testGrokMultiFilePendingQueuesSanitizedOnlyAndRetriesInOrder();
 testInvalidOrTooManyFilesNeverQueue();
 testExpiredAndReplacedPendingBatchesCleanUp();
 testMissingInputFailsClosedWithoutRawReplay();
+testRawFilenamesAreReplacedWithSafePendingLabels();
 testContentQueuesOnlyGeminiGrokCleanSanitizedBatchesAfterDirectFailure();
 
 console.log("PASS pending multi-file sanitized handoff regressions");

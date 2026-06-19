@@ -84,14 +84,65 @@
       return pending.sanitizedFile ? [pending.sanitizedFile] : [];
     }
 
-    function isSafeSanitizedPendingFile(file) {
-      return Boolean(file && typeof file === "object" && !file.rawFile && !file.originalFile && !file.rawMarker);
+    function hasUnsafePendingFileMarkers(file, strictContent = false) {
+      if (!file || typeof file !== "object") return true;
+      if (file.rawFile || file.originalFile || file.rawMarker) return true;
+      if (typeof file.path === "string" && file.path) return true;
+      if (typeof file.webkitRelativePath === "string" && file.webkitRelativePath) return true;
+      if (strictContent) {
+        for (const key of ["rawText", "rawContent", "content", "contents"]) {
+          if (Object.prototype.hasOwnProperty.call(file, key)) return true;
+        }
+        if (Object.prototype.hasOwnProperty.call(file, "text") && typeof file.text !== "function") return true;
+      }
+      return false;
+    }
+
+    function isSafeSanitizedPendingFile(file, strictContent = false) {
+      return !hasUnsafePendingFileMarkers(file, strictContent);
+    }
+
+    function getSafePendingExtension(file, index) {
+      const name = String(file?.name || "").split(/[\\/]/).pop().toLowerCase();
+      const match = /\.([a-z0-9]{1,12})$/i.exec(name);
+      if (match) return `.${match[1].toLowerCase()}`;
+      const summary = summarizePendingFile(file, index);
+      const extension = String(summary.extension || "").toLowerCase();
+      return /^\.[a-z0-9]{1,12}$/.test(extension) ? extension : ".bin";
+    }
+
+    function clonePendingSanitizedFile(file, index, shouldUseSafeName) {
+      if (!isSafeSanitizedPendingFile(file, shouldUseSafeName)) return null;
+      if (!shouldUseSafeName) return file;
+      const safeName = `file-${index + 1}${getSafePendingExtension(file, index)}`;
+      const type = typeof file.type === "string" ? file.type : "";
+      const lastModified = Number(file.lastModified || Date.now()) || Date.now();
+      if (typeof root.File === "function" && typeof root.Blob === "function" && file instanceof root.Blob) {
+        return new root.File([file], safeName, { type, lastModified });
+      }
+      if (typeof root.Blob === "function" && file instanceof root.Blob) {
+        try {
+          Object.defineProperty(file, "name", { value: safeName, configurable: true });
+          Object.defineProperty(file, "lastModified", { value: lastModified, configurable: true });
+          return file;
+        } catch {
+          return null;
+        }
+      }
+      return {
+        name: safeName,
+        type,
+        size: Math.max(0, Number(file.size || 0) || 0),
+        lastModified
+      };
     }
 
     function normalizePendingSanitizedFiles(value) {
-      const files = (Array.isArray(value) ? value : [value]).filter(Boolean);
-      if (!files.length || files.length > MAX_PENDING_SANITIZED_FILES) return [];
-      return files.every(isSafeSanitizedPendingFile) ? files : [];
+      const inputFiles = (Array.isArray(value) ? value : [value]).filter(Boolean);
+      if (!inputFiles.length || inputFiles.length > MAX_PENDING_SANITIZED_FILES) return [];
+      const shouldUseSafeNames = inputFiles.length > 1;
+      const files = inputFiles.map((file, index) => clonePendingSanitizedFile(file, index, shouldUseSafeNames));
+      return files.every(Boolean) ? files : [];
     }
 
     function summarizePendingFile(file, index) {
