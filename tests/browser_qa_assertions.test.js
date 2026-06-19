@@ -53,6 +53,8 @@ function testFailureCodesAreStable() {
     "TEXT_PASTE_REDACTION_FAILED",
     "FILE_INPUT_REDACTION_FAILED",
     "FILE_DROP_REDACTION_FAILED",
+    "MULTI_FILE_LIMIT_EXCEEDED",
+    "MULTI_FILE_PARTIAL_BLOCKED",
     "DETECTOR_MISS",
     "ENTROPY_MISS",
     "ONIX_MISS",
@@ -180,6 +182,22 @@ function testFileAndDebugAssertionsStayMetadataOnly() {
       },
       { placeholderRequired: true, rawFallbackBlocked: true },
       baseContext
+    )
+  );
+
+  assert.doesNotThrow(() =>
+    assertDebugOutputMetadataOnly(
+      [
+        {
+          stage: "multi-file",
+          fileCount: 5,
+          files: [
+            { index: 0, label: "file-1", extension: ".env", status: "sanitized" },
+            { index: 1, label: "file-2", extension: ".svg", status: "blocked", code: "unsupported_file_type" }
+          ]
+        }
+      ],
+      { ...baseContext, stage: "multi-file metadata" }
     )
   );
 }

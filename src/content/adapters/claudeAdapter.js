@@ -9,6 +9,7 @@
       siteLabel: "Claude",
       hosts: ["claude.ai"],
       supportsDirectFileInputAssignment: true,
+      supportsMultiFileHandoff: true,
       supportsDirectDropReplay: false,
       supportsPendingAttach: true,
       supportsTrustedAttachButton: true,

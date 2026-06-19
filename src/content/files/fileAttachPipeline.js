@@ -2,6 +2,83 @@
   const root = typeof globalThis !== "undefined" ? globalThis : window;
   root.PWM = root.PWM || {};
 
+
+  const MAX_MULTI_FILE_ATTACHMENTS = 5;
+
+  function normalizeMultiFileIndex(value) {
+    const index = Number(value);
+    return Number.isFinite(index) && index >= 0 ? Math.floor(index) : 0;
+  }
+
+  function normalizeMultiFileReasonCode(value) {
+    const code = String(value || "").replace(/[^a-z0-9_:-]/gi, "").slice(0, 64);
+    if (!code) return "";
+    if (/(?:authorization|bearer|cookie|credential|key|password|raw|secret|token|sk-proj|akia)/i.test(code)) {
+      return "sensitive-code";
+    }
+    if (/[A-Za-z0-9_-]{24,}/.test(code)) return "sensitive-code";
+    return code;
+  }
+
+  function createMultiFileItemSummary(item = {}) {
+    const metadata = item.metadata && typeof item.metadata === "object" ? item.metadata : {};
+    const file = item.file && typeof item.file === "object" ? item.file : {};
+    const index = normalizeMultiFileIndex(item.index);
+    const extension = String(metadata.extension || file.extension || "").slice(0, 16);
+    const mimeCategory = String(metadata.mimeCategory || file.mimeCategory || file.type || "")
+      .split("/")[0]
+      .replace(/[^a-z0-9.+-]/gi, "")
+      .slice(0, 32);
+    const status = /^(?:sanitized|blocked|failed|pending)$/.test(String(item.status || ""))
+      ? String(item.status)
+      : "failed";
+    return {
+      index,
+      label: `file-${index + 1}`,
+      status,
+      extension,
+      mimeCategory,
+      sizeBytes: Math.max(0, Number(metadata.sizeBytes ?? file.sizeBytes ?? file.size ?? 0) || 0),
+      code: normalizeMultiFileReasonCode(item.code || item.reason || "")
+    };
+  }
+
+  function createMultiFileAttachPlan(files = [], options = {}) {
+    const maxFiles = Math.max(1, Number(options.maxFiles || MAX_MULTI_FILE_ATTACHMENTS));
+    const fileCount = Array.from(files || []).length;
+    if (fileCount <= 1) {
+      return {
+        mode: "single",
+        ok: true,
+        fileCount,
+        acceptedCount: fileCount,
+        blockedCount: 0,
+        maxFiles,
+        reason: ""
+      };
+    }
+    if (fileCount > maxFiles) {
+      return {
+        mode: "blocked",
+        ok: false,
+        fileCount,
+        acceptedCount: 0,
+        blockedCount: fileCount,
+        maxFiles,
+        reason: "too_many_files"
+      };
+    }
+    return {
+      mode: "multi",
+      ok: true,
+      fileCount,
+      acceptedCount: fileCount,
+      blockedCount: 0,
+      maxFiles,
+      reason: ""
+    };
+  }
+
   function originalFileMetadataFromLocalFile(localFile) {
     return root.PWM.SafeSnapshots.originalFileMetadataFromLocalFile(localFile);
   }
@@ -435,6 +512,9 @@
   }
 
   root.PWM.FileAttachPipeline = {
+    MAX_MULTI_FILE_ATTACHMENTS,
+    createMultiFileAttachPlan,
+    createMultiFileItemSummary,
     originalFileMetadataFromLocalFile,
     createSanitizedPayload,
     createProcessingStageControls,

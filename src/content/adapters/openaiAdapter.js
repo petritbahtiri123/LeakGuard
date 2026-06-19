@@ -9,6 +9,7 @@
       siteLabel: "OpenAI Chat",
       hosts: ["chat.openai.com"],
       supportsDirectFileInputAssignment: true,
+      supportsMultiFileHandoff: true,
       supportsDirectDropReplay: false,
       supportsPendingAttach: true,
       supportsTrustedAttachButton: true,

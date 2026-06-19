@@ -252,6 +252,8 @@
   const SUPPORTED_IMAGE_REDACTION_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
   const UNSUPPORTED_PROTECTED_IMAGE_EXTENSIONS = new Set([".gif", ".bmp", ".ico", ".svg"]);
   const FILE_DRAG_SESSION_RESET_MS = 5000;
+  const MAX_MULTI_FILE_ATTACHMENTS =
+    globalThis.PWM?.FileAttachPipeline?.MAX_MULTI_FILE_ATTACHMENTS || 5;
   const GEMINI_UPLOAD_INPUT_WAIT_MS = 450;
   const GEMINI_GHOST_INGRESS_TIMEOUT_MS = 2200;
   const GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MS = 60000;
@@ -4150,26 +4152,29 @@
   }
 
   function createSanitizedDataTransfer(sanitizedFile) {
-    if (!sanitizedFile || typeof DataTransfer !== "function" || !canUseSyntheticDataTransferFileList()) {
+    const sanitizedFiles = Array.isArray(sanitizedFile) ? sanitizedFile : [sanitizedFile];
+    const files = sanitizedFiles.filter(Boolean);
+    if (!files.length || typeof DataTransfer !== "function" || !canUseSyntheticDataTransferFileList()) {
       return null;
     }
 
     try {
       const transfer = new DataTransfer();
       if (typeof transfer.items?.add !== "function") return null;
-      transfer.items.add(sanitizedFile);
-      return Number(transfer.files?.length || 0) > 0 ? transfer : null;
+      files.forEach((file) => transfer.items.add(file));
+      return Number(transfer.files?.length || 0) === files.length ? transfer : null;
     } catch {
       return null;
     }
   }
 
   function createSanitizedDataTransferForHandoff(sanitizedFile, details) {
+    const sanitizedFiles = Array.isArray(sanitizedFile) ? sanitizedFile : [sanitizedFile];
     if (details) {
       details.dataTransferConstructorSucceeded = false;
       details.dataTransferItemsAddSucceeded = false;
     }
-    if (!sanitizedFile || typeof DataTransfer !== "function" || !canUseSyntheticDataTransferFileList()) {
+    if (!sanitizedFiles.filter(Boolean).length || typeof DataTransfer !== "function" || !canUseSyntheticDataTransferFileList()) {
       return null;
     }
 
@@ -4177,9 +4182,10 @@
       const transfer = new DataTransfer();
       if (details) details.dataTransferConstructorSucceeded = true;
       if (typeof transfer.items?.add !== "function") return null;
-      transfer.items.add(sanitizedFile);
+      const files = sanitizedFiles.filter(Boolean);
+      files.forEach((file) => transfer.items.add(file));
       if (details) details.dataTransferItemsAddSucceeded = true;
-      return Number(transfer.files?.length || 0) > 0 ? transfer : null;
+      return Number(transfer.files?.length || 0) === files.length ? transfer : null;
     } catch (error) {
       if (details) {
         assignSafeFileAttachErrorMetadata(details, error);
@@ -8630,6 +8636,266 @@
     );
   }
 
+  function createSingleFileDataTransfer(file) {
+    return {
+      files: file ? [file] : [],
+      types: file ? ["Files"] : [],
+      items: []
+    };
+  }
+
+  function getLocalFileSafeMetadata(file) {
+    const extension = getLocalFileExtension(file);
+    const mimeType = getLocalFileMimeType(file);
+    return {
+      extension,
+      mimeCategory: mimeType ? mimeType.split("/")[0].replace(/[^a-z0-9.+-]/gi, "").slice(0, 32) : "",
+      sizeBytes: Math.max(0, Number(file?.size || 0) || 0)
+    };
+  }
+
+  function summarizeMultiFileItem(index, status, file, code = "") {
+    return globalThis.PWM.FileAttachPipeline.createMultiFileItemSummary({
+      index,
+      status,
+      code,
+      metadata: getLocalFileSafeMetadata(file)
+    });
+  }
+
+  async function processLocalFileForSanitizedBatch(file, index, context) {
+    const contentExtractionResult = shouldUseContentFileExtractionPipeline(file)
+      ? await processFileForAdapterHandoff({ file, context })
+      : null;
+    const localFile = contentExtractionResult
+      ? localFileFromContentExtractionResult(contentExtractionResult)
+      : await readLocalTextFileFromDataTransfer(createSingleFileDataTransfer(file));
+
+    if (!localFile.handled || !localFile.ok) {
+      return {
+        ok: false,
+        status: localFile.handled ? "blocked" : "failed",
+        code: localFile.code || contentExtractionResult?.fallbackReason || "file_scan_failed",
+        message: localFile.message || "LeakGuard blocked one raw file because local scanning failed.",
+        summary: summarizeMultiFileItem(index, localFile.handled ? "blocked" : "failed", file, localFile.code || "file_scan_failed")
+      };
+    }
+
+    const imageRedactionMode = localFile.imageRedactionMode === true || localFile.fileOnlyUpload === true;
+    const sizeInfo = imageRedactionMode
+      ? { zone: "fast", bytes: Math.max(0, Number(localFile.file?.sizeBytes || 0)) }
+      : classifyLocalTextPayloadSize({ text: localFile.text, sizeBytes: localFile.file?.sizeBytes });
+    if (sizeInfo.zone === "blocked" || localFile.code === "streaming_required") {
+      return {
+        ok: false,
+        status: "blocked",
+        code: sizeInfo.zone === "blocked" ? "local_text_payload_too_large" : "streaming_required",
+        message: "LeakGuard blocked one raw file because it exceeds safe multi-file local processing limits.",
+        summary: summarizeMultiFileItem(index, "blocked", file, sizeInfo.zone === "blocked" ? "local_text_payload_too_large" : "streaming_required")
+      };
+    }
+
+    let analysis;
+    let result;
+    let sanitizedFile;
+    if (contentExtractionResult?.status === "ready") {
+      const contentExtractionFileOnly = localFile.fileOnlyUpload === true || contentExtractionResult.fileOnlyUpload === true;
+      result = {
+        redactedText: contentExtractionFileOnly ? "" : contentExtractionResult.sanitizedText,
+        replacements: []
+      };
+      sanitizedFile = contentExtractionResult.sanitizedFile;
+      analysis = {
+        normalizedText: contentExtractionResult.sanitizedText,
+        secretFindings: Array.from(
+          { length: Number(contentExtractionResult.metadata?.scan?.findingsCount || 0) },
+          () => ({})
+        ),
+        findings: []
+      };
+    } else {
+      analysis = analyzeText(localFile.text);
+      result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
+      sanitizedFile = createSanitizedTextFile(localFile.file, result.redactedText);
+    }
+
+    if (!sanitizedFile) {
+      return {
+        ok: false,
+        status: "failed",
+        code: "sanitized_file_create_failed",
+        message: "LeakGuard blocked one raw file because sanitized output could not be created.",
+        summary: summarizeMultiFileItem(index, "failed", file, "sanitized_file_create_failed")
+      };
+    }
+
+    return {
+      ok: true,
+      status: "sanitized",
+      sanitizedFile,
+      localFile,
+      analysis,
+      result,
+      imageRedactionMode,
+      summary: summarizeMultiFileItem(index, "sanitized", sanitizedFile, "")
+    };
+  }
+
+  async function handOffSanitizedFileBatch(event, input, sanitizedFiles, context) {
+    const transfer = createSanitizedDataTransfer(sanitizedFiles);
+    if (!transfer) return false;
+
+    if (context === "file-input" && isFileInputElement(event?.target)) {
+      return handOffSanitizedFileInput(event.target, transfer, { dispatchInput: true });
+    }
+
+    const fileInput = resolveFileInputForHandoff(event, input);
+    if (fileInput && handOffSanitizedFileInput(fileInput, transfer, { dispatchInput: true })) {
+      return true;
+    }
+
+    const target = event?.target || input || document.activeElement;
+    if (context === "drop") {
+      try {
+        transfer.dropEffect = "copy";
+      } catch {
+        // Some DataTransfer implementations expose dropEffect as read-only.
+      }
+      return dispatchSanitizedFileEvent(target, "drop", transfer);
+    }
+    if (context === "paste") {
+      return dispatchSanitizedFileEvent(target, "paste", transfer);
+    }
+    return false;
+  }
+
+  async function maybeHandleMultiFileInsert(event, input, files, context, processingSite, controls) {
+    const plan = globalThis.PWM.FileAttachPipeline.createMultiFileAttachPlan(files, {
+      maxFiles: MAX_MULTI_FILE_ATTACHMENTS
+    });
+    if (plan.mode === "single") return null;
+
+    if (!event.defaultPrevented) {
+      consumeInterceptionEvent(event);
+    }
+    if (event?.target?.tagName === "INPUT" && String(event.target.type || "").toLowerCase() === "file") {
+      clearLocalFileInputSelection(event.target);
+    }
+
+    if (!plan.ok) {
+      controls.failProcessing(plan.reason, "Raw file upload blocked");
+      setBadge("Raw file upload blocked");
+      hideBadgeSoon(4200);
+      await showMessageModal(
+        "Raw file upload blocked",
+        `LeakGuard supports up to ${plan.maxFiles} files per protected upload. No raw files were uploaded.`
+      );
+      refreshBadgeFromCurrentInput();
+      debugFileAttachMetadata("file-handoff:multi-file-blocked", {
+        site: processingSite,
+        reason: plan.reason,
+        fileCount: plan.fileCount,
+        maxFiles: plan.maxFiles
+      });
+      return { handled: true, ok: false, reason: plan.reason };
+    }
+
+    showFileProcessingOverlay({
+      site: processingSite,
+      title: `LeakGuard is scanning ${plan.fileCount} files...`,
+      status: "Scanning files locally...",
+      progress: `0/${plan.fileCount}`,
+      blocking: true
+    });
+
+    let processed;
+    try {
+      processed = await Promise.all(
+        files.map((file, index) => processLocalFileForSanitizedBatch(file, index, context))
+      );
+    } catch (error) {
+      debugFileAttachMetadata("file-handoff:multi-file-redaction-failed", { site: processingSite, error });
+      controls.failProcessing("multi_file_processing_exception", "Raw file upload blocked");
+      setBadge("Raw file upload blocked");
+      hideBadgeSoon(4200);
+      await showMessageModal(
+        "Raw file upload blocked",
+        "LeakGuard blocked the multi-file upload because local sanitization failed. No raw files were uploaded."
+      );
+      refreshBadgeFromCurrentInput();
+      return { handled: true, ok: false, reason: "multi_file_processing_exception" };
+    }
+
+    const sanitizedItems = processed.filter((item) => item.ok && item.sanitizedFile);
+    const blockedItems = processed.filter((item) => !item.ok);
+    debugFileAttachMetadata("file-handoff:multi-file-processed", {
+      site: processingSite,
+      fileCount: files.length,
+      sanitizedCount: sanitizedItems.length,
+      blockedCount: blockedItems.length,
+      files: processed.map((item) => item.summary)
+    });
+
+    if (!sanitizedItems.length) {
+      controls.failProcessing("multi_file_all_blocked", "Raw file upload blocked");
+      setBadge("Raw file upload blocked");
+      hideBadgeSoon(4200);
+      await showMessageModal(
+        "Raw file upload blocked",
+        "LeakGuard could not create a sanitized replacement for any selected file. No raw files were uploaded."
+      );
+      refreshBadgeFromCurrentInput();
+      return { handled: true, ok: false, reason: "multi_file_all_blocked" };
+    }
+
+    updateFileProcessingOverlay({
+      site: processingSite,
+      status: "Preparing sanitized file upload...",
+      progress: `${sanitizedItems.length}/${plan.fileCount}`,
+      blocking: true
+    });
+
+    const handoffOk = await handOffSanitizedFileBatch(
+      event,
+      input,
+      sanitizedItems.map((item) => item.sanitizedFile),
+      context
+    );
+    if (!handoffOk) {
+      controls.failProcessing("multi_file_sanitized_handoff_failed", "Raw file upload blocked");
+      setBadge("Raw file upload blocked");
+      hideBadgeSoon(4200);
+      await showMessageModal(
+        "Raw file upload blocked",
+        "LeakGuard sanitized the selected files but could not safely attach them. No raw files were uploaded."
+      );
+      refreshBadgeFromCurrentInput();
+      return { handled: true, ok: false, reason: "multi_file_sanitized_handoff_failed" };
+    }
+
+    if (blockedItems.length) {
+      controls.showProcessingSuccess("Sanitized files attached; unsupported files blocked.", "multi-file-partial-success");
+      setBadge("LeakGuard attached sanitized files; blocked unsafe files.");
+      await showMessageModal(
+        "Some files were blocked",
+        `LeakGuard attached ${sanitizedItems.length} sanitized file(s) and blocked ${blockedItems.length} file(s). No raw files were uploaded.`
+      );
+    } else {
+      controls.showProcessingSuccess("Sanitized files attached.", "multi-file-attached");
+      setBadge("LeakGuard attached sanitized files.");
+    }
+    hideBadgeSoon(4200);
+    refreshBadgeFromCurrentInput();
+    return {
+      handled: true,
+      ok: true,
+      stage: "file",
+      strategy: "multi-file-sanitized-file-handoff",
+      sanitizedCount: sanitizedItems.length,
+      blockedCount: blockedItems.length
+    };
+  }
+
   async function maybeHandleLocalFileInsert(event, input, dataTransfer, context) {
     if (
       !extensionRuntimeAvailable ||
@@ -8645,6 +8911,24 @@
     }
 
     const localTransferFiles = listLocalTransferFiles(dataTransfer);
+    const processingSite = getCurrentHandoffDriverId();
+    const { failProcessing, hideProcessing, showProcessingSuccess } =
+      globalThis.PWM.FileAttachPipeline.createProcessingStageControls({
+        site: processingSite,
+        showFileProcessingError,
+        hideFileProcessingOverlay,
+        showFileProcessingSuccess
+      });
+    const multiFileResult = await maybeHandleMultiFileInsert(
+      event,
+      input,
+      localTransferFiles,
+      context,
+      processingSite,
+      { failProcessing, hideProcessing, showProcessingSuccess }
+    );
+    if (multiFileResult) return multiFileResult;
+
     const contentExtractionFile =
       localTransferFiles.length === 1 && shouldUseContentFileExtractionPipeline(localTransferFiles[0])
         ? localTransferFiles[0]
@@ -8714,15 +8998,6 @@
         browser: isFirefoxRuntime() ? "firefox" : "other"
       });
     }
-
-    const processingSite = getCurrentHandoffDriverId();
-    const { failProcessing, hideProcessing, showProcessingSuccess } =
-      globalThis.PWM.FileAttachPipeline.createProcessingStageControls({
-        site: processingSite,
-        showFileProcessingError,
-        hideFileProcessingOverlay,
-        showFileProcessingSuccess
-      });
 
     showFileProcessingOverlay({
       site: processingSite,

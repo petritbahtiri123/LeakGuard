@@ -124,12 +124,12 @@ function testUnsupportedHostnamesDoNotReceiveSpecialAdapterBehavior() {
 function testAdapterParityCapabilitiesStayStable() {
   const adapters = createAdapters();
   const expectedCapabilities = {
-    chatgpt: { directFileInput: true, directDropReplay: false, pendingAttach: true },
-    openai: { directFileInput: true, directDropReplay: false, pendingAttach: true },
-    gemini: { directFileInput: true, directDropReplay: false, pendingAttach: true },
-    grok: { directFileInput: true, directDropReplay: true, pendingAttach: true },
-    claude: { directFileInput: true, directDropReplay: false, pendingAttach: true },
-    x: { directFileInput: true, directDropReplay: false, pendingAttach: true }
+    chatgpt: { directFileInput: true, directDropReplay: false, pendingAttach: true, multiFile: true },
+    openai: { directFileInput: true, directDropReplay: false, pendingAttach: true, multiFile: true },
+    gemini: { directFileInput: true, directDropReplay: false, pendingAttach: true, multiFile: true },
+    grok: { directFileInput: true, directDropReplay: true, pendingAttach: true, multiFile: true },
+    claude: { directFileInput: true, directDropReplay: false, pendingAttach: true, multiFile: true },
+    x: { directFileInput: true, directDropReplay: false, pendingAttach: true, multiFile: true }
   };
 
   for (const [id, expected] of Object.entries(expectedCapabilities)) {
@@ -148,6 +148,11 @@ function testAdapterParityCapabilitiesStayStable() {
       description.pendingAttachEnabled,
       expected.pendingAttach,
       `${id} pending attach effective state should stay stable`
+    );
+    assert.strictEqual(
+      description.supportsMultiFileHandoff,
+      expected.multiFile,
+      `${id} multi-file sanitized handoff capability should stay stable`
     );
     assert.strictEqual(
       description.supportsTrustedAttachButton,

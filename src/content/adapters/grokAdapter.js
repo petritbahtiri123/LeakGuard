@@ -9,6 +9,7 @@
       siteLabel: "Grok",
       hosts: ["grok.com"],
       supportsDirectFileInputAssignment: true,
+      supportsMultiFileHandoff: true,
       supportsDirectDropReplay: true,
       supportsPendingAttach: true,
       supportsTrustedAttachButton: true,
