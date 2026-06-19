@@ -12,6 +12,11 @@ Use this file as a short handoff log for AI-made changes. Add newest entries fir
 ```
 
 ## Entries
+### 2026-06-19 - v2.1.0 release packaging
+- Goal: Bump release metadata to `2.1.0`, prepare Chrome Web Store release checklist/notes, and regenerate release artifacts using the existing release workflow.
+- Files: `package.json`, `package-lock.json`, `manifests/base.json`, `README.md`, `docs/RELEASE_2_1_0_CHROME_WEB_STORE_CHECKLIST.md`, `docs/CODEX_CHANGELOG.md`
+- Tests: release validation commands recorded in final summary.
+- Notes: Release packaging only. No detector thresholds, Onix retraining, runtime behavior, permissions, or generated model artifacts changed.
 ### 2026-06-19 - v2.1.0 release prep
 - Goal: Bump LeakGuard release/version metadata to `2.1.0` for Chrome Web Store publishing.
 - Files: `package.json`, `package-lock.json`, `manifests/base.json`, `docs/CODEX_CHANGELOG.md`

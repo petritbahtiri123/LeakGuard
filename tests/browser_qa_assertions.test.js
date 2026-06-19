@@ -53,6 +53,13 @@ function testFailureCodesAreStable() {
     "TEXT_PASTE_REDACTION_FAILED",
     "FILE_INPUT_REDACTION_FAILED",
     "FILE_DROP_REDACTION_FAILED",
+    "MULTI_FILE_LIMIT_EXCEEDED",
+    "MULTI_FILE_PARTIAL_BLOCKED",
+    "MULTI_FILE_PENDING_DIRECT_HANDOFF_FAILED",
+    "MULTI_FILE_PENDING_QUEUED",
+    "MULTI_FILE_PENDING_EXPIRED",
+    "MULTI_FILE_PENDING_RETRY_FAILED",
+    "MULTI_FILE_PENDING_ATTACH_FAILED",
     "DETECTOR_MISS",
     "ENTROPY_MISS",
     "ONIX_MISS",
@@ -181,6 +188,69 @@ function testFileAndDebugAssertionsStayMetadataOnly() {
       { placeholderRequired: true, rawFallbackBlocked: true },
       baseContext
     )
+  );
+
+  assert.doesNotThrow(() =>
+    assertDebugOutputMetadataOnly(
+      [
+        {
+          stage: "multi-file",
+          fileCount: 5,
+          files: [
+            { index: 0, label: "file-1", extension: ".env", status: "sanitized" },
+            { index: 1, label: "file-2", extension: ".svg", status: "blocked", code: "unsupported_file_type" }
+          ]
+        }
+      ],
+      { ...baseContext, stage: "multi-file metadata" }
+    )
+  );
+
+  assert.doesNotThrow(() =>
+    assertDebugOutputMetadataOnly(
+      [
+        {
+          stage: "multi-file partial-block",
+          summary: {
+            sanitizedCount: 3,
+            blockedCount: 2,
+            attached: [
+              { index: 0, label: "file-1", extension: ".env", mimeCategory: "text", sizeBytes: 18, status: "attached" }
+            ],
+            blocked: [
+              { index: 1, label: "file-2", extension: ".svg", mimeCategory: "image", sizeBytes: 20, status: "blocked", code: "unsupported_file_type" },
+              { index: 3, label: "file-4", extension: ".bmp", mimeCategory: "image", sizeBytes: 24, status: "failed", code: "unknown_blocked" }
+            ]
+          }
+        }
+      ],
+      { ...baseContext, stage: "multi-file safe summary" }
+    )
+  );
+
+  assert.throws(
+    () =>
+      assertDebugOutputMetadataOnly(
+        [
+          {
+            stage: "multi-file partial-block",
+            blocked: [
+              {
+                index: 1,
+                label: "file-2",
+                fileName: `C:\\tmp\\customer-${rawCanary}.svg`,
+                code: `Error: failed to parse ${rawCanary}`
+              }
+            ]
+          }
+        ],
+        { ...baseContext, stage: "multi-file unsafe summary" }
+      ),
+    (error) => {
+      assert.strictEqual(error.failureCode, "DEBUG_RAW_LEAK");
+      assertNoRawCanaries(error.message, "unsafe multi-file summary assertion error");
+      return true;
+    }
   );
 }
 

@@ -34,6 +34,9 @@ const fileCapabilityMatrix = fs.readFileSync(
   path.join(repoRoot, "docs/FILE_CAPABILITY_MATRIX.md"),
   "utf8"
 );
+const nonGoals = fs.readFileSync(path.join(repoRoot, "docs/NON_GOALS.md"), "utf8");
+const threatModel = fs.readFileSync(path.join(repoRoot, "docs/THREAT_MODEL.md"), "utf8");
+const firefoxAmoChecklist = fs.readFileSync(path.join(repoRoot, "docs/FIREFOX_AMO_CHECKLIST.md"), "utf8");
 const phase14cProtectedSitePdfPlanPath = path.join(
   repoRoot,
   "docs/phase-14c-protected-site-pdf-redacted-output-plan.md"
@@ -754,6 +757,12 @@ function testPublicDocsAlignWithCurrentFileCapabilities() {
     releaseChecklist,
     fileCapabilityMatrix
   };
+  const staleCopyDocs = {
+    ...docs,
+    nonGoals,
+    threatModel,
+    firefoxAmoChecklist
+  };
 
   for (const [label, doc] of Object.entries(docs)) {
     for (const required of [
@@ -771,9 +780,14 @@ function testPublicDocsAlignWithCurrentFileCapabilities() {
     /PDF, DOCX, and image redaction are planned but not enabled/i,
     /OCR is not implemented yet/i,
     /no PDF, DOCX, image OCR, or visual image redaction in this release/i,
+    /The File Scanner is text-only in the current release/i,
+    /PDF, DOCX, image OCR, and visual redaction are not enabled/i,
+    /protected-site image OCR only when the user opts in/i,
+    /protected-site OCR remains off by default/i,
+    /opt-in protected-site OCR/i,
     /Unsupported formats such as PDFs, DOCX files, images, archives, executables, and binary files are not scanned/i
   ]) {
-    for (const [label, doc] of Object.entries(docs)) {
+    for (const [label, doc] of Object.entries(staleCopyDocs)) {
       assert.strictEqual(forbidden.test(doc), false, `${label} should not contain stale file capability copy`);
     }
   }

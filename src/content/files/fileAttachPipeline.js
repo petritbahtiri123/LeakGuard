@@ -2,6 +2,252 @@
   const root = typeof globalThis !== "undefined" ? globalThis : window;
   root.PWM = root.PWM || {};
 
+  const FileLimits = root.PWM.FileLimits || {};
+
+  const MULTI_FILE_SMALL_MAX_BYTES =
+    Number(FileLimits.MULTI_FILE_SMALL_MAX_BYTES || FileLimits.LOCAL_TEXT_HARD_BLOCK_BYTES) || 4 * 1024 * 1024;
+  const MULTI_FILE_SUPPORTED_MAX_BYTES =
+    Number(FileLimits.MULTI_FILE_SUPPORTED_MAX_BYTES || FileLimits.LARGE_TEXT_STREAMING_MAX_BYTES) || 50 * 1024 * 1024;
+  const MAX_MULTI_FILE_SMALL_ATTACHMENTS = Number(FileLimits.MAX_MULTI_FILE_SMALL_ATTACHMENTS) || 20;
+  const MAX_MULTI_FILE_LARGE_ATTACHMENTS = Number(FileLimits.MAX_MULTI_FILE_LARGE_ATTACHMENTS) || 5;
+  const MAX_MULTI_FILE_ATTACHMENTS = MAX_MULTI_FILE_LARGE_ATTACHMENTS;
+  const SAFE_MULTI_FILE_REASON_CODES = new Set([
+    "unsupported_file_type",
+    "large_file_count_exceeded",
+    "small_file_count_exceeded",
+    "file_exceeds_supported_size",
+    "extraction_failed",
+    "redaction_failed",
+    "ocr_unavailable",
+    "unsafe_image_boxes",
+    "sanitized_handoff_failed",
+    "file_processing_exception",
+    "blocked_by_policy",
+    "unknown_blocked"
+  ]);
+
+  function normalizeMultiFileIndex(value) {
+    const index = Number(value);
+    return Number.isFinite(index) && index >= 0 ? Math.floor(index) : 0;
+  }
+
+  function normalizeMultiFileReasonCode(value) {
+    const code = String(value || "").replace(/[^a-z0-9_:-]/gi, "").slice(0, 64);
+    if (!code) return "";
+    if (SAFE_MULTI_FILE_REASON_CODES.has(code)) return code;
+    if (/(?:authorization|bearer|cookie|credential|key|password|raw|secret|token|sk-proj|akia)/i.test(code)) {
+      return "unknown_blocked";
+    }
+    if (/[A-Za-z0-9_-]{24,}/.test(code)) return "unknown_blocked";
+    if (/^(?:file_unavailable|file_scan_failed|file_decode_failed|text_decode_failed|binary_file_detected)$/i.test(code)) {
+      return "extraction_failed";
+    }
+    if (/^(?:file_too_large|local_text_payload_too_large|too_large|max_size_exceeded)$/i.test(code)) {
+      return "file_exceeds_supported_size";
+    }
+    if (/^streaming_required$/i.test(code)) {
+      return "redaction_failed";
+    }
+    if (/^(?:sanitized_file_create_failed|redaction_exception|sanitization_failed)$/i.test(code)) {
+      return "redaction_failed";
+    }
+    if (/^(?:multi_file_sanitized_handoff_failed|sanitized_file_handoff_failed|data_transfer_failed)$/i.test(code)) {
+      return "sanitized_handoff_failed";
+    }
+    if (/^(?:too_many_files|multi_file_limit_exceeded|policy_blocked)$/i.test(code)) {
+      return "blocked_by_policy";
+    }
+    return "unknown_blocked";
+  }
+
+  function normalizeMultiFileStatus(value, fallback = "failed") {
+    const status = String(value || "");
+    return /^(?:sanitized|attached|blocked|failed|pending)$/.test(status) ? status : fallback;
+  }
+
+  function getMultiFileSizeBytes(file = {}) {
+    const metadata = file.metadata && typeof file.metadata === "object" ? file.metadata : {};
+    return Math.max(0, Number(metadata.sizeBytes ?? file.sizeBytes ?? file.size ?? 0) || 0);
+  }
+
+  function isLargeMultiFile(file = {}) {
+    return getMultiFileSizeBytes(file) > MULTI_FILE_SMALL_MAX_BYTES;
+  }
+
+  function formatMultiFileSize(bytes) {
+    const value = Math.max(0, Number(bytes || 0) || 0);
+    if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+    if (value >= 1024) return `${(value / 1024).toFixed(1)} KB`;
+    return `${value} bytes`;
+  }
+
+  function createMultiFileItemSummary(item = {}) {
+    const metadata = item.metadata && typeof item.metadata === "object" ? item.metadata : {};
+    const file = item.file && typeof item.file === "object" ? item.file : {};
+    const index = normalizeMultiFileIndex(item.index);
+    const extension = String(metadata.extension || file.extension || "").slice(0, 16);
+    const mimeCategory = String(metadata.mimeCategory || file.mimeCategory || file.type || "")
+      .split("/")[0]
+      .replace(/[^a-z0-9.+-]/gi, "")
+      .slice(0, 32);
+    const status = normalizeMultiFileStatus(item.status, "failed");
+    return {
+      index,
+      label: `file-${index + 1}`,
+      status,
+      extension,
+      mimeCategory,
+      sizeBytes: getMultiFileSizeBytes({ ...file, metadata }),
+      code: normalizeMultiFileReasonCode(item.code || item.reason || "")
+    };
+  }
+
+  function normalizeMultiFileSummaryItem(value = {}, options = {}) {
+    const summary = value.summary && typeof value.summary === "object" ? value.summary : value;
+    const fallbackStatus = options.fallbackStatus || "failed";
+    const status = normalizeMultiFileStatus(options.status || summary.status, fallbackStatus);
+    return {
+      index: normalizeMultiFileIndex(summary.index),
+      label: /^file-\d+$/.test(String(summary.label || "")) ? String(summary.label) : `file-${normalizeMultiFileIndex(summary.index) + 1}`,
+      status,
+      extension: /^\.[a-z0-9]{1,12}$/i.test(String(summary.extension || "")) ? String(summary.extension).toLowerCase() : "",
+      mimeCategory: String(summary.mimeCategory || "").replace(/[^a-z0-9.+-]/gi, "").slice(0, 32),
+      sizeBytes: getMultiFileSizeBytes(summary),
+      code: normalizeMultiFileReasonCode(options.code || summary.code || "")
+    };
+  }
+
+  function createMultiFileStatusSummary(options = {}) {
+    const sanitizedItems = Array.isArray(options.sanitizedItems) ? options.sanitizedItems : [];
+    const blockedItems = Array.isArray(options.blockedItems) ? options.blockedItems : [];
+    const attached = sanitizedItems.map((item) =>
+      normalizeMultiFileSummaryItem(item, { status: "attached", fallbackStatus: "attached" })
+    );
+    const blocked = blockedItems.map((item) =>
+      normalizeMultiFileSummaryItem(item, {
+        status: item?.summary?.status || item?.status || "blocked",
+        fallbackStatus: "blocked",
+        code: item?.code || item?.summary?.code || "unknown_blocked"
+      })
+    );
+    return {
+      sanitizedCount: attached.length,
+      attachedCount: attached.length,
+      blockedCount: blocked.length,
+      attached,
+      blocked,
+      files: [...attached, ...blocked].sort((a, b) => a.index - b.index)
+    };
+  }
+
+  function formatMultiFileItemLine(item) {
+    const parts = [];
+    if (item.extension) parts.push(item.extension);
+    if (item.mimeCategory) parts.push(item.mimeCategory);
+    parts.push(formatMultiFileSize(item.sizeBytes));
+    const reason = item.code ? `, reason: ${item.code}` : "";
+    return `- ${item.label} (${parts.join(", ")}) - ${item.status}${reason}`;
+  }
+
+  function formatMultiFileStatusMessage(summary = {}, options = {}) {
+    const sanitizedCount = Math.max(0, Number(summary.sanitizedCount ?? summary.attachedCount ?? 0) || 0);
+    const blockedCount = Math.max(0, Number(summary.blockedCount || 0) || 0);
+    const attached = Array.isArray(summary.attached) ? summary.attached : [];
+    const blocked = Array.isArray(summary.blocked) ? summary.blocked : [];
+    const lines = [];
+    if (options.blockedBeforeProcessing) {
+      const reason = normalizeMultiFileReasonCode(options.reason || "");
+      if (reason === "large_file_count_exceeded") {
+        lines.push(`Up to ${MAX_MULTI_FILE_LARGE_ATTACHMENTS} large files can be attached per protected upload. This batch was blocked before reading or processing.`);
+      } else if (reason === "small_file_count_exceeded") {
+        lines.push(`Up to ${MAX_MULTI_FILE_SMALL_ATTACHMENTS} small files can be attached per protected upload. This batch was blocked before reading or processing.`);
+      } else if (reason === "file_exceeds_supported_size") {
+        lines.push(`Files over ${formatMultiFileSize(MULTI_FILE_SUPPORTED_MAX_BYTES)} are not supported for protected upload. This batch was blocked before reading or processing.`);
+      } else {
+        lines.push(`This protected upload batch was blocked before reading or processing.`);
+      }
+    } else if (sanitizedCount > 0 && blockedCount > 0) {
+      lines.push(`LeakGuard attached ${sanitizedCount} sanitized file(s) and blocked ${blockedCount} file(s).`);
+    } else if (sanitizedCount > 0) {
+      lines.push(`LeakGuard attached ${sanitizedCount} sanitized file(s).`);
+    } else {
+      lines.push(`LeakGuard blocked ${blockedCount} file(s).`);
+    }
+    lines.push("No raw files were uploaded.");
+    if (attached.length) {
+      lines.push("", "Attached files:", ...attached.map(formatMultiFileItemLine));
+    }
+    if (blocked.length) {
+      lines.push("", "Blocked files:", ...blocked.map(formatMultiFileItemLine));
+    }
+    return lines.join("\n");
+  }
+
+  function createMultiFileAttachPlan(files = [], options = {}) {
+    const maxSmallFiles = Math.max(1, Number(options.maxSmallFiles || MAX_MULTI_FILE_SMALL_ATTACHMENTS));
+    const maxLargeFiles = Math.max(1, Number(options.maxLargeFiles || MAX_MULTI_FILE_LARGE_ATTACHMENTS));
+    const smallMaxBytes = Math.max(1, Number(options.smallMaxBytes || MULTI_FILE_SMALL_MAX_BYTES));
+    const supportedMaxBytes = Math.max(smallMaxBytes, Number(options.supportedMaxBytes || MULTI_FILE_SUPPORTED_MAX_BYTES));
+    const inputFiles = Array.from(files || []);
+    const fileCount = inputFiles.length;
+    const oversizedCount = inputFiles.filter((file) => getMultiFileSizeBytes(file) > supportedMaxBytes).length;
+    const smallCount = inputFiles.filter((file) => getMultiFileSizeBytes(file) <= smallMaxBytes).length;
+    const largeCount = inputFiles.filter((file) => {
+      const size = getMultiFileSizeBytes(file);
+      return size > smallMaxBytes && size <= supportedMaxBytes;
+    }).length;
+    if (fileCount <= 1) {
+      return {
+        mode: "single",
+        ok: true,
+        fileCount,
+        acceptedCount: fileCount,
+        blockedCount: 0,
+        smallCount,
+        largeCount,
+        maxSmallFiles,
+        maxLargeFiles,
+        smallMaxBytes,
+        supportedMaxBytes,
+        reason: ""
+      };
+    }
+    let reason = "";
+    if (oversizedCount > 0) reason = "file_exceeds_supported_size";
+    else if (largeCount > maxLargeFiles) reason = "large_file_count_exceeded";
+    else if (smallCount > maxSmallFiles) reason = "small_file_count_exceeded";
+    if (reason) {
+      return {
+        mode: "blocked",
+        ok: false,
+        fileCount,
+        acceptedCount: 0,
+        blockedCount: fileCount,
+        smallCount,
+        largeCount,
+        maxSmallFiles,
+        maxLargeFiles,
+        smallMaxBytes,
+        supportedMaxBytes,
+        reason
+      };
+    }
+    return {
+      mode: "multi",
+      ok: true,
+      fileCount,
+      acceptedCount: fileCount,
+      blockedCount: 0,
+      smallCount,
+      largeCount,
+      maxSmallFiles,
+      maxLargeFiles,
+      smallMaxBytes,
+      supportedMaxBytes,
+      reason: ""
+    };
+  }
+
   function originalFileMetadataFromLocalFile(localFile) {
     return root.PWM.SafeSnapshots.originalFileMetadataFromLocalFile(localFile);
   }
@@ -435,6 +681,17 @@
   }
 
   root.PWM.FileAttachPipeline = {
+    MAX_MULTI_FILE_ATTACHMENTS,
+    MAX_MULTI_FILE_SMALL_ATTACHMENTS,
+    MAX_MULTI_FILE_LARGE_ATTACHMENTS,
+    MULTI_FILE_SMALL_MAX_BYTES,
+    MULTI_FILE_SUPPORTED_MAX_BYTES,
+    createMultiFileAttachPlan,
+    createMultiFileItemSummary,
+    createMultiFileStatusSummary,
+    formatMultiFileStatusMessage,
+    formatMultiFileSize,
+    isLargeMultiFile,
     originalFileMetadataFromLocalFile,
     createSanitizedPayload,
     createProcessingStageControls,

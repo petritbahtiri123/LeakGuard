@@ -9,6 +9,7 @@
       siteLabel: "Gemini",
       hosts: ["gemini.google.com"],
       supportsDirectFileInputAssignment: true,
+      supportsMultiFileHandoff: true,
       supportsDirectDropReplay: false,
       supportsPendingAttach: true,
       supportsTrustedAttachButton: true,
@@ -41,7 +42,7 @@
       resolveFileInput: (event, input) => hooks.findGeminiFileInput(event, input).fileInput,
       isUploadClickTarget: (eventOrTarget) => hooks.isLikelyGeminiUploadClickTarget(eventOrTarget),
       attachWithTrustedActivation: (pending) =>
-        hooks.performPendingGeminiUserAttach(pending.event, pending.input, pending.sanitizedFile)
+        hooks.performPendingGeminiUserAttach(pending.event, pending.input, pending.sanitizedFiles || pending.sanitizedFile)
     };
   }
 

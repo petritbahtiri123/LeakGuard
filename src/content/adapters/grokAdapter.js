@@ -9,6 +9,7 @@
       siteLabel: "Grok",
       hosts: ["grok.com"],
       supportsDirectFileInputAssignment: true,
+      supportsMultiFileHandoff: true,
       supportsDirectDropReplay: true,
       supportsPendingAttach: true,
       supportsTrustedAttachButton: true,
@@ -42,7 +43,7 @@
       resolveFileInput: (event, input) => hooks.discoverGrokPendingFileInput(event, input).fileInput,
       isUploadClickTarget: (eventOrTarget) => hooks.isLikelyGrokUploadClickTarget(eventOrTarget),
       attachWithTrustedActivation: (pending) =>
-        hooks.performPendingGrokUserAttach(pending.event, pending.input, pending.sanitizedFile)
+        hooks.performPendingGrokUserAttach(pending.event, pending.input, pending.sanitizedFiles || pending.sanitizedFile)
     };
   }
 

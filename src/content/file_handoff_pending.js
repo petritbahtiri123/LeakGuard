@@ -99,7 +99,7 @@
 
     async function attachPendingSanitizedFileWithTrustedActivation(adapter, pending) {
       const selectedAdapter = normalizeFileHandoffAdapter(adapter);
-      if (!selectedAdapter || !pending?.sanitizedFile) return false;
+      if (!selectedAdapter || (!pending?.sanitizedFile && !pending?.sanitizedFiles)) return false;
       if (!isFileHandoffAdapterPendingAttachEnabled(selectedAdapter)) {
         emitDebug("file-handoff:pending-user-attach-skipped", {
           site: selectedAdapter.id || "",
@@ -115,6 +115,12 @@
 
     async function insertPendingSanitizedFileText(site, event, input, sanitizedFile) {
       if (!sanitizedFile) return false;
+      if (Array.isArray(sanitizedFile)) {
+        setBadge("Sanitized text insertion unavailable for multiple files");
+        hideBadgeSoon(4200);
+        refreshBadgeFromCurrentInput();
+        return false;
+      }
 
       const redactedText = await readSanitizedFileTextForFallback(sanitizedFile);
       const driver = getCurrentHandoffDriver();
@@ -147,6 +153,7 @@
 
     async function downloadPendingSanitizedFile(site, event, input, sanitizedFile) {
       if (!sanitizedFile) return false;
+      if (Array.isArray(sanitizedFile)) return false;
       const driver = getCurrentHandoffDriver();
       const payload = driver.preparePayload(sanitizedFile, "", {
         localFile: sanitizedFile,

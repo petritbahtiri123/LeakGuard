@@ -9,6 +9,7 @@
       siteLabel: "X",
       hosts: ["x.com", "twitter.com"],
       supportsDirectFileInputAssignment: true,
+      supportsMultiFileHandoff: true,
       supportsDirectDropReplay: false,
       supportsPendingAttach: true,
       supportsTrustedAttachButton: true,

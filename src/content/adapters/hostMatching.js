@@ -67,6 +67,7 @@
       siteLabel: adapter.siteLabel || adapter.id || "",
       hosts: Array.from(adapter.hosts || []),
       supportsDirectDropReplay: Boolean(adapter.supportsDirectDropReplay),
+      supportsMultiFileHandoff: Boolean(adapter.supportsMultiFileHandoff),
       supportsPendingAttach: Boolean(adapter.supportsPendingAttach),
       supportsTrustedAttachButton: Boolean(adapter.supportsTrustedAttachButton),
       pendingAttachEnabled: isFileHandoffAdapterPendingAttachEnabled(adapter)
