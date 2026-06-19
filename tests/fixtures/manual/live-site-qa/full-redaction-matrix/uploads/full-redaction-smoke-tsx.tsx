@@ -1,8 +1,5 @@
-<<<<<<< HEAD
-=======
 /* eslint-disable */
 /*
->>>>>>> 64e443abecc3f31ad86f0f8d2076537e900a1889
 LeakGuard full redaction smoke upload fixture
 Supported extension: .tsx
 Use this file for protected-site upload, file drop, and scanner QA.
@@ -187,9 +184,6 @@ PUBLIC_DOC_URL=https://openai.com
 LOCAL_PATH=/home/example/project/config.json
 HARmless_TEXT=product-roadmap-item
 DOCUMENTATION_EXAMPLE=docs/page
-<<<<<<< HEAD
-=======
 
 */
 var leakguardManualQaFixture = true;
->>>>>>> 64e443abecc3f31ad86f0f8d2076537e900a1889
