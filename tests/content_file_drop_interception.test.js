@@ -1546,6 +1546,9 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "createSingleFileDataTransfer"),
       extractFunctionSource(contentSource, "getLocalFileSafeMetadata"),
       extractFunctionSource(contentSource, "summarizeMultiFileItem"),
+      extractFunctionSource(contentSource, "createBlockedBeforeProcessingItems"),
+      extractFunctionSource(contentSource, "createMultiFileStatusSummary"),
+      extractFunctionSource(contentSource, "formatMultiFileStatusMessage"),
       extractFunctionSource(contentSource, "processLocalFileForSanitizedBatch"),
       extractFunctionSource(contentSource, "handOffSanitizedFileBatch"),
       extractFunctionSource(contentSource, "maybeHandleMultiFileInsert"),
@@ -2646,8 +2649,67 @@ async function testMultiFileDropBlocksSixFilesBeforeReading() {
 
   assert.strictEqual(calls.reads.length, 0);
   assert.strictEqual(calls.createdFiles.length, 0);
-  assert.ok(calls.modals.some(([title, message]) => title === "Raw file upload blocked" && /up to 5 files/.test(message)));
+  const modal = calls.modals.find(([title]) => title === "Raw file upload blocked");
+  assert.ok(modal);
+  assert.match(String(modal[1]), /up to 5 files/);
+  assert.match(String(modal[1]), /blocked before reading or processing/);
+  assert.match(String(modal[1]), /No raw files were uploaded/);
+  assert.match(String(modal[1]), /file-1/);
+  assert.match(String(modal[1]), /reason: blocked_by_policy/);
+  assert.strictEqual(String(modal[1]).includes("too-many-1.env"), false);
   assert.ok(calls.debugEvents.some((entry) => entry.label === "file-handoff:multi-file-blocked" && entry.details.reason === "too_many_files"));
+}
+
+async function testMultiFileDropPartialBlockShowsPerFileSafeSummary() {
+  const dispatched = [];
+  const target = { tagName: "DIV", dispatchEvent: (event) => { dispatched.push(event); return true; } };
+  const rawSecret = "sk-proj-PartialFilenameSecret1234567890abcdef";
+  const files = [
+    { name: `safe-one-${rawSecret}.env`, type: "text/plain", size: 18 },
+    { name: "blocked-one.svg", type: "image/svg+xml", size: 20 },
+    { name: "safe-two.json", type: "application/json", size: 22 },
+    { name: "blocked-two.bmp", type: "image/bmp", size: 24 },
+    { name: "safe-three.md", type: "text/markdown", size: 26 }
+  ];
+  const { maybeHandleDrop, calls } = createHarness({
+    readLocalTextFileFromDataTransfer: async (transfer) => {
+      calls.reads.push(transfer);
+      const file = transfer.files[0];
+      if (/\.svg$/i.test(file.name)) {
+        return { handled: false, ok: false, code: "unsupported_file_type", message: `raw unsupported ${file.name} ${rawSecret}` };
+      }
+      if (/\.bmp$/i.test(file.name)) {
+        return { handled: false, ok: false, code: `sk-proj-${rawSecret}`, message: `raw exception ${file.name}` };
+      }
+      return {
+        handled: true,
+        ok: true,
+        text: `API_KEY=LeakGuardDropApiKey1234567890\nfile=${file.name}`,
+        file: { name: file.name, type: file.type, sizeBytes: file.size }
+      };
+    }
+  });
+  const { event } = createEvent({ dataTransfer: createDataTransfer({ files }), target });
+
+  await maybeHandleDrop(event);
+
+  assert.strictEqual(dispatched.length, 1);
+  assert.strictEqual(dispatched[0].dataTransfer.files.length, 3);
+  const modal = calls.modals.find(([title]) => title === "Some files were blocked");
+  assert.ok(modal);
+  const message = String(modal[1]);
+  assert.match(message, /LeakGuard attached 3 sanitized file\(s\) and blocked 2 file\(s\)\./);
+  assert.match(message, /No raw files were uploaded\./);
+  assert.match(message, /Attached files:\n- file-1 \(\.env, text, 18 bytes, attached\)/);
+  assert.match(message, /- file-3 \(\.json, application, 22 bytes, attached\)/);
+  assert.match(message, /- file-5 \(\.md, text, 26 bytes, attached\)/);
+  assert.match(message, /Blocked files:\n- file-2 \(\.svg, image, 20 bytes, blocked, reason: unsupported_file_type\)/);
+  assert.match(message, /- file-4 \(\.bmp, image, 24 bytes, failed, reason: unknown_blocked\)/);
+  assert.strictEqual(message.includes("safe-one-"), false);
+  assert.strictEqual(message.includes("blocked-one.svg"), false);
+  assert.strictEqual(message.includes(rawSecret), false);
+  assert.strictEqual(message.includes("raw unsupported"), false);
+  assert.strictEqual(message.includes("raw exception"), false);
 }
 
 async function testMixedMultiFileDropBlocksUnsupportedWithoutRawFallback() {
@@ -2725,6 +2787,79 @@ async function testMultiFileDropBlocksThrownReadPerFileWithoutRawFallback() {
   assert.ok(processed);
   assert.strictEqual(JSON.stringify(processed.details).includes("throwing.env"), false);
   assert.strictEqual(JSON.stringify(processed.details).includes(rawSecret), false);
+}
+
+async function testMultiFileDropAllFilesFailedShowsSafeBlockedSummary() {
+  const rawSecret = "LeakGuardAllFailedApiKey1234567890";
+  const files = [
+    { name: `C:\\tmp\\${rawSecret}.env`, type: "text/plain", size: 18 },
+    { name: "second.env", type: "text/plain", size: 20 }
+  ];
+  const { maybeHandleDrop, calls } = createHarness({
+    readLocalTextFileFromDataTransfer: async () => {
+      throw new Error(`raw path C:\\tmp\\${rawSecret}.env stack trace`);
+    }
+  });
+  const { event } = createEvent({ dataTransfer: createDataTransfer({ files }) });
+
+  await maybeHandleDrop(event);
+
+  assert.strictEqual(calls.createdFiles.length, 0);
+  const modal = calls.modals.find(([title]) => title === "Raw file upload blocked");
+  assert.ok(modal);
+  const message = String(modal[1]);
+  assert.match(message, /blocked 2 file\(s\)/);
+  assert.match(message, /No raw files were uploaded\./);
+  assert.match(message, /Blocked files:\n- file-1 \(\.env, text, 18 bytes, failed, reason: file_processing_exception\)/);
+  assert.match(message, /- file-2 \(\.env, text, 20 bytes, failed, reason: file_processing_exception\)/);
+  assert.strictEqual(message.includes(rawSecret), false);
+  assert.strictEqual(message.includes("C:\\tmp"), false);
+  assert.strictEqual(message.includes("stack trace"), false);
+}
+
+async function testGeminiGrokPartialBlockDoesNotEnterPendingQueueAndShowsSafeSummary() {
+  for (const [hostname, siteLabel] of [
+    ["gemini.google.com", "gemini"],
+    ["grok.com", "grok"]
+  ]) {
+    const rawSecret = `sk-proj-${siteLabel}-PartialPendingSecret1234567890abcdef`;
+    const target = { tagName: "DIV", dispatchEvent: () => false };
+    const files = [
+      { name: `${siteLabel}-safe.env`, type: "text/plain", size: 18 },
+      { name: `${siteLabel}-${rawSecret}.svg`, type: "image/svg+xml", size: 20 }
+    ];
+    const { maybeHandleDrop, calls } = createHarness({
+      location: { hostname },
+      readLocalTextFileFromDataTransfer: async (transfer) => {
+        calls.reads.push(transfer);
+        const file = transfer.files[0];
+        if (/\.svg$/i.test(file.name)) {
+          return { handled: true, ok: false, code: "unsupported_file_type", message: `raw blocked ${file.name}` };
+        }
+        return {
+          handled: true,
+          ok: true,
+          text: `API_KEY=LeakGuardDropApiKey1234567890\nfile=${file.name}`,
+          file: { name: file.name, type: file.type, sizeBytes: file.size }
+        };
+      }
+    });
+    const { event } = createEvent({ dataTransfer: createDataTransfer({ files }), target });
+
+    await maybeHandleDrop(event);
+
+    assert.strictEqual(calls.debugEvents.some((entry) => entry.label === "file-handoff:pending-queued"), false);
+    assert.strictEqual(calls.debugEvents.some((entry) => entry.label === `file-handoff:${siteLabel}-pending-queued`), false);
+    const modal = calls.modals.find(([title]) => title === "Raw file upload blocked" || title === "Some files were blocked");
+    assert.ok(modal, `${siteLabel} should show a partial-block modal`);
+    const message = String(modal[1]);
+    assert.match(message, /No raw files were uploaded\./);
+    assert.match(message, /file-1 \(\.env, text, 18 bytes, (?:attached|failed)(?:, reason: sanitized_handoff_failed)?\)/);
+    assert.match(message, /file-2 \(\.svg, image, 20 bytes, blocked, reason: unsupported_file_type\)/);
+    assert.strictEqual(message.includes(rawSecret), false);
+    assert.strictEqual(message.includes(`${siteLabel}-safe.env`), false);
+    assert.strictEqual(message.includes("raw blocked"), false);
+  }
 }
 
 async function testFileDropIsBlockedWithoutHelperLoaded() {
@@ -13955,8 +14090,11 @@ function testMultiFileProtectedUploadStaticGuards() {
   await testMultiFileDropSanitizesTwoFilesAsBatch();
   await testMultiFileDropSanitizesFiveFilesInOrder();
   await testMultiFileDropBlocksSixFilesBeforeReading();
+  await testMultiFileDropPartialBlockShowsPerFileSafeSummary();
   await testMixedMultiFileDropBlocksUnsupportedWithoutRawFallback();
   await testMultiFileDropBlocksThrownReadPerFileWithoutRawFallback();
+  await testMultiFileDropAllFilesFailedShowsSafeBlockedSummary();
+  await testGeminiGrokPartialBlockDoesNotEnterPendingQueueAndShowsSafeSummary();
   await testFileDropIsBlockedWithoutHelperLoaded();
   await testFileDropIsConsumedBeforeComposerLookup();
   testProtectedRebuiltFileDropBlocksAtDragGuard();

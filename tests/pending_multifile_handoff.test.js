@@ -208,6 +208,8 @@ function testContentQueuesOnlyGeminiGrokCleanSanitizedBatchesAfterDirectFailure(
   assert.ok(contentSource.includes("multi-file-pending-sanitized-file-handoff"));
   assert.ok(contentSource.includes("pendingAdapter.id === \"gemini\" || pendingAdapter.id === \"grok\""));
   assert.ok(contentSource.includes("!blockedItems.length"));
+  assert.ok(contentSource.includes("formatMultiFileStatusMessage(statusSummary)"));
+  assert.ok(contentSource.includes("formatMultiFileStatusMessage(handoffFailedSummary)"));
   assert.ok(contentSource.includes("sanitizedFiles.length <= MAX_MULTI_FILE_ATTACHMENTS"));
   assert.ok(contentSource.includes("queuePendingSanitizedFileHandoff(pendingAdapter, event, input, sanitizedFiles, details)"));
 }

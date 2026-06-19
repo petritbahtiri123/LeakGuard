@@ -8681,6 +8681,26 @@
     });
   }
 
+  function createBlockedBeforeProcessingItems(files) {
+    return Array.from(files || []).map((file, index) => ({
+      ok: false,
+      status: "blocked",
+      code: "blocked_by_policy",
+      summary: summarizeMultiFileItem(index, "blocked", file, "blocked_by_policy")
+    }));
+  }
+
+  function createMultiFileStatusSummary(sanitizedItems, blockedItems) {
+    return globalThis.PWM.FileAttachPipeline.createMultiFileStatusSummary({
+      sanitizedItems,
+      blockedItems
+    });
+  }
+
+  function formatMultiFileStatusMessage(summary, options = {}) {
+    return globalThis.PWM.FileAttachPipeline.formatMultiFileStatusMessage(summary, options);
+  }
+
   async function processLocalFileForSanitizedBatch(file, index, context) {
     try {
       const contentExtractionResult = shouldUseContentFileExtractionPipeline(file)
@@ -8691,12 +8711,15 @@
         : await readLocalTextFileFromDataTransfer(createSingleFileDataTransfer(file));
 
       if (!localFile.handled || !localFile.ok) {
+        const blockCode = localFile.code || contentExtractionResult?.fallbackReason || "file_scan_failed";
+        const blockedByPolicy = blockCode === "unsupported_file_type" || blockCode === "blocked_by_policy";
+        const status = localFile.handled || blockedByPolicy ? "blocked" : "failed";
         return {
           ok: false,
-          status: localFile.handled ? "blocked" : "failed",
-          code: localFile.code || contentExtractionResult?.fallbackReason || "file_scan_failed",
+          status,
+          code: blockCode,
           message: localFile.message || "LeakGuard blocked one raw file because local scanning failed.",
-          summary: summarizeMultiFileItem(index, localFile.handled ? "blocked" : "failed", file, localFile.code || "file_scan_failed")
+          summary: summarizeMultiFileItem(index, status, file, blockCode)
         };
       }
 
@@ -8756,7 +8779,7 @@
         analysis,
         result,
         imageRedactionMode,
-        summary: summarizeMultiFileItem(index, "sanitized", sanitizedFile, "")
+        summary: summarizeMultiFileItem(index, "sanitized", file, "")
       };
     } catch {
       return {
@@ -8811,19 +8834,25 @@
     }
 
     if (!plan.ok) {
+      const blockedBeforeProcessingItems = createBlockedBeforeProcessingItems(files);
+      const blockedBeforeProcessingSummary = createMultiFileStatusSummary([], blockedBeforeProcessingItems);
       controls.failProcessing(plan.reason, "Raw file upload blocked");
       setBadge("Raw file upload blocked");
       hideBadgeSoon(4200);
       await showMessageModal(
         "Raw file upload blocked",
-        `LeakGuard supports up to ${plan.maxFiles} files per protected upload. No raw files were uploaded.`
+        formatMultiFileStatusMessage(blockedBeforeProcessingSummary, {
+          blockedBeforeProcessing: true,
+          maxFiles: plan.maxFiles
+        })
       );
       refreshBadgeFromCurrentInput();
       debugFileAttachMetadata("file-handoff:multi-file-blocked", {
         site: processingSite,
         reason: plan.reason,
         fileCount: plan.fileCount,
-        maxFiles: plan.maxFiles
+        maxFiles: plan.maxFiles,
+        summary: blockedBeforeProcessingSummary
       });
       return { handled: true, ok: false, reason: plan.reason };
     }
@@ -8859,12 +8888,14 @@
 
     const sanitizedItems = processed.filter((item) => item.ok && item.sanitizedFile);
     const blockedItems = processed.filter((item) => !item.ok);
+    const statusSummary = createMultiFileStatusSummary(sanitizedItems, blockedItems);
     debugFileAttachMetadata("file-handoff:multi-file-processed", {
       site: processingSite,
       fileCount: files.length,
       sanitizedCount: sanitizedItems.length,
       blockedCount: blockedItems.length,
-      files: processed.map((item) => item.summary)
+      files: statusSummary.files,
+      summary: statusSummary
     });
 
     if (!sanitizedItems.length) {
@@ -8873,7 +8904,7 @@
       hideBadgeSoon(4200);
       await showMessageModal(
         "Raw file upload blocked",
-        "LeakGuard could not create a sanitized replacement for any selected file. No raw files were uploaded."
+        formatMultiFileStatusMessage(statusSummary)
       );
       refreshBadgeFromCurrentInput();
       return { handled: true, ok: false, reason: "multi_file_all_blocked" };
@@ -8926,9 +8957,22 @@
       controls.failProcessing("multi_file_sanitized_handoff_failed", "Raw file upload blocked");
       setBadge("Raw file upload blocked");
       hideBadgeSoon(4200);
+      const handoffFailedSummary = createMultiFileStatusSummary(
+        [],
+        processed.map((item) => ({
+          ...item,
+          status: item.ok ? "failed" : item.status,
+          code: item.ok ? "sanitized_handoff_failed" : item.code,
+          summary: {
+            ...(item.summary || {}),
+            status: item.ok ? "failed" : item.summary?.status || item.status,
+            code: item.ok ? "sanitized_handoff_failed" : item.summary?.code || item.code
+          }
+        }))
+      );
       await showMessageModal(
         "Raw file upload blocked",
-        "LeakGuard sanitized the selected files but could not safely attach them. No raw files were uploaded."
+        formatMultiFileStatusMessage(handoffFailedSummary)
       );
       refreshBadgeFromCurrentInput();
       return { handled: true, ok: false, reason: "multi_file_sanitized_handoff_failed" };
@@ -8939,7 +8983,7 @@
       setBadge("LeakGuard attached sanitized files; blocked unsafe files.");
       await showMessageModal(
         "Some files were blocked",
-        `LeakGuard attached ${sanitizedItems.length} sanitized file(s) and blocked ${blockedItems.length} file(s). No raw files were uploaded.`
+        formatMultiFileStatusMessage(statusSummary)
       );
     } else {
       controls.showProcessingSuccess("Sanitized files attached.", "multi-file-attached");

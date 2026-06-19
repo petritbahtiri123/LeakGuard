@@ -4,6 +4,18 @@
 
 
   const MAX_MULTI_FILE_ATTACHMENTS = 5;
+  const SAFE_MULTI_FILE_REASON_CODES = new Set([
+    "unsupported_file_type",
+    "file_too_large",
+    "extraction_failed",
+    "redaction_failed",
+    "ocr_unavailable",
+    "unsafe_image_boxes",
+    "sanitized_handoff_failed",
+    "file_processing_exception",
+    "blocked_by_policy",
+    "unknown_blocked"
+  ]);
 
   function normalizeMultiFileIndex(value) {
     const index = Number(value);
@@ -13,11 +25,32 @@
   function normalizeMultiFileReasonCode(value) {
     const code = String(value || "").replace(/[^a-z0-9_:-]/gi, "").slice(0, 64);
     if (!code) return "";
+    if (SAFE_MULTI_FILE_REASON_CODES.has(code)) return code;
     if (/(?:authorization|bearer|cookie|credential|key|password|raw|secret|token|sk-proj|akia)/i.test(code)) {
-      return "sensitive-code";
+      return "unknown_blocked";
     }
-    if (/[A-Za-z0-9_-]{24,}/.test(code)) return "sensitive-code";
-    return code;
+    if (/[A-Za-z0-9_-]{24,}/.test(code)) return "unknown_blocked";
+    if (/^(?:file_unavailable|file_scan_failed|file_decode_failed|text_decode_failed|binary_file_detected)$/i.test(code)) {
+      return "extraction_failed";
+    }
+    if (/^(?:local_text_payload_too_large|streaming_required|too_large|max_size_exceeded)$/i.test(code)) {
+      return "file_too_large";
+    }
+    if (/^(?:sanitized_file_create_failed|redaction_exception|sanitization_failed)$/i.test(code)) {
+      return "redaction_failed";
+    }
+    if (/^(?:multi_file_sanitized_handoff_failed|sanitized_file_handoff_failed|data_transfer_failed)$/i.test(code)) {
+      return "sanitized_handoff_failed";
+    }
+    if (/^(?:too_many_files|multi_file_limit_exceeded|policy_blocked)$/i.test(code)) {
+      return "blocked_by_policy";
+    }
+    return "unknown_blocked";
+  }
+
+  function normalizeMultiFileStatus(value, fallback = "failed") {
+    const status = String(value || "");
+    return /^(?:sanitized|attached|blocked|failed|pending)$/.test(status) ? status : fallback;
   }
 
   function createMultiFileItemSummary(item = {}) {
@@ -29,9 +62,7 @@
       .split("/")[0]
       .replace(/[^a-z0-9.+-]/gi, "")
       .slice(0, 32);
-    const status = /^(?:sanitized|blocked|failed|pending)$/.test(String(item.status || ""))
-      ? String(item.status)
-      : "failed";
+    const status = normalizeMultiFileStatus(item.status, "failed");
     return {
       index,
       label: `file-${index + 1}`,
@@ -41,6 +72,79 @@
       sizeBytes: Math.max(0, Number(metadata.sizeBytes ?? file.sizeBytes ?? file.size ?? 0) || 0),
       code: normalizeMultiFileReasonCode(item.code || item.reason || "")
     };
+  }
+
+  function normalizeMultiFileSummaryItem(value = {}, options = {}) {
+    const summary = value.summary && typeof value.summary === "object" ? value.summary : value;
+    const fallbackStatus = options.fallbackStatus || "failed";
+    const status = normalizeMultiFileStatus(options.status || summary.status, fallbackStatus);
+    return {
+      index: normalizeMultiFileIndex(summary.index),
+      label: /^file-\d+$/.test(String(summary.label || "")) ? String(summary.label) : `file-${normalizeMultiFileIndex(summary.index) + 1}`,
+      status,
+      extension: /^\.[a-z0-9]{1,12}$/i.test(String(summary.extension || "")) ? String(summary.extension).toLowerCase() : "",
+      mimeCategory: String(summary.mimeCategory || "").replace(/[^a-z0-9.+-]/gi, "").slice(0, 32),
+      sizeBytes: Math.max(0, Number(summary.sizeBytes || 0) || 0),
+      code: normalizeMultiFileReasonCode(options.code || summary.code || "")
+    };
+  }
+
+  function createMultiFileStatusSummary(options = {}) {
+    const sanitizedItems = Array.isArray(options.sanitizedItems) ? options.sanitizedItems : [];
+    const blockedItems = Array.isArray(options.blockedItems) ? options.blockedItems : [];
+    const attached = sanitizedItems.map((item) =>
+      normalizeMultiFileSummaryItem(item, { status: "attached", fallbackStatus: "attached" })
+    );
+    const blocked = blockedItems.map((item) =>
+      normalizeMultiFileSummaryItem(item, {
+        status: item?.summary?.status || item?.status || "blocked",
+        fallbackStatus: "blocked",
+        code: item?.code || item?.summary?.code || "unknown_blocked"
+      })
+    );
+    return {
+      sanitizedCount: attached.length,
+      attachedCount: attached.length,
+      blockedCount: blocked.length,
+      attached,
+      blocked,
+      files: [...attached, ...blocked].sort((a, b) => a.index - b.index)
+    };
+  }
+
+  function formatMultiFileItemLine(item) {
+    const parts = [];
+    if (item.extension) parts.push(item.extension);
+    if (item.mimeCategory) parts.push(item.mimeCategory);
+    parts.push(`${Math.max(0, Number(item.sizeBytes || 0) || 0)} bytes`);
+    parts.push(item.status);
+    if (item.code) parts.push(`reason: ${item.code}`);
+    return `- ${item.label} (${parts.join(", ")})`;
+  }
+
+  function formatMultiFileStatusMessage(summary = {}, options = {}) {
+    const sanitizedCount = Math.max(0, Number(summary.sanitizedCount ?? summary.attachedCount ?? 0) || 0);
+    const blockedCount = Math.max(0, Number(summary.blockedCount || 0) || 0);
+    const attached = Array.isArray(summary.attached) ? summary.attached : [];
+    const blocked = Array.isArray(summary.blocked) ? summary.blocked : [];
+    const lines = [];
+    if (options.blockedBeforeProcessing) {
+      lines.push(`LeakGuard supports up to ${Math.max(1, Number(options.maxFiles || MAX_MULTI_FILE_ATTACHMENTS) || MAX_MULTI_FILE_ATTACHMENTS)} files per protected upload. This batch was blocked before reading or processing.`);
+    } else if (sanitizedCount > 0 && blockedCount > 0) {
+      lines.push(`LeakGuard attached ${sanitizedCount} sanitized file(s) and blocked ${blockedCount} file(s).`);
+    } else if (sanitizedCount > 0) {
+      lines.push(`LeakGuard attached ${sanitizedCount} sanitized file(s).`);
+    } else {
+      lines.push(`LeakGuard blocked ${blockedCount} file(s).`);
+    }
+    lines.push("No raw files were uploaded.");
+    if (attached.length) {
+      lines.push("", "Attached files:", ...attached.map(formatMultiFileItemLine));
+    }
+    if (blocked.length) {
+      lines.push("", "Blocked files:", ...blocked.map(formatMultiFileItemLine));
+    }
+    return lines.join("\n");
   }
 
   function createMultiFileAttachPlan(files = [], options = {}) {
@@ -515,6 +619,8 @@
     MAX_MULTI_FILE_ATTACHMENTS,
     createMultiFileAttachPlan,
     createMultiFileItemSummary,
+    createMultiFileStatusSummary,
+    formatMultiFileStatusMessage,
     originalFileMetadataFromLocalFile,
     createSanitizedPayload,
     createProcessingStageControls,

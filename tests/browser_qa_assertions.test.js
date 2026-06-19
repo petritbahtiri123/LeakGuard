@@ -205,6 +205,53 @@ function testFileAndDebugAssertionsStayMetadataOnly() {
       { ...baseContext, stage: "multi-file metadata" }
     )
   );
+
+  assert.doesNotThrow(() =>
+    assertDebugOutputMetadataOnly(
+      [
+        {
+          stage: "multi-file partial-block",
+          summary: {
+            sanitizedCount: 3,
+            blockedCount: 2,
+            attached: [
+              { index: 0, label: "file-1", extension: ".env", mimeCategory: "text", sizeBytes: 18, status: "attached" }
+            ],
+            blocked: [
+              { index: 1, label: "file-2", extension: ".svg", mimeCategory: "image", sizeBytes: 20, status: "blocked", code: "unsupported_file_type" },
+              { index: 3, label: "file-4", extension: ".bmp", mimeCategory: "image", sizeBytes: 24, status: "failed", code: "unknown_blocked" }
+            ]
+          }
+        }
+      ],
+      { ...baseContext, stage: "multi-file safe summary" }
+    )
+  );
+
+  assert.throws(
+    () =>
+      assertDebugOutputMetadataOnly(
+        [
+          {
+            stage: "multi-file partial-block",
+            blocked: [
+              {
+                index: 1,
+                label: "file-2",
+                fileName: `C:\\tmp\\customer-${rawCanary}.svg`,
+                code: `Error: failed to parse ${rawCanary}`
+              }
+            ]
+          }
+        ],
+        { ...baseContext, stage: "multi-file unsafe summary" }
+      ),
+    (error) => {
+      assert.strictEqual(error.failureCode, "DEBUG_RAW_LEAK");
+      assertNoRawCanaries(error.message, "unsafe multi-file summary assertion error");
+      return true;
+    }
+  );
 }
 
 async function testStepWrapperWritesSafeFailureReport() {

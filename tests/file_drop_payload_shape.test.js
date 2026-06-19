@@ -131,11 +131,78 @@ function testMultiFileAttachPlanLimitsAndMetadata() {
     extension: ".env",
     mimeCategory: "text",
     sizeBytes: 123,
-    code: "sensitive-code"
+    code: "unknown_blocked"
   });
   assert.strictEqual(JSON.stringify(summary).includes("customer-"), false);
 }
 
 testMultiFileAttachPlanLimitsAndMetadata();
+
+function testMultiFileStatusSummaryFormatsSafeDetailsOnly() {
+  const pipeline = globalThis.PWM.FileAttachPipeline;
+  const rawSecret = "sk-proj-SummaryReasonSecret1234567890abcdef";
+  const summary = pipeline.createMultiFileStatusSummary({
+    sanitizedItems: [
+      {
+        summary: pipeline.createMultiFileItemSummary({
+          index: 0,
+          status: "sanitized",
+          file: { name: `safe-${rawSecret}.env`, type: "text/plain", size: 11 },
+          metadata: { extension: ".env", mimeCategory: "text", sizeBytes: 11 }
+        })
+      },
+      {
+        summary: pipeline.createMultiFileItemSummary({
+          index: 2,
+          status: "attached",
+          file: { name: "config.json", type: "application/json", size: 22 },
+          metadata: { extension: ".json", mimeCategory: "application", sizeBytes: 22 }
+        })
+      }
+    ],
+    blockedItems: [
+      {
+        summary: pipeline.createMultiFileItemSummary({
+          index: 1,
+          status: "failed",
+          code: `boom-${rawSecret}`,
+          file: { name: `C:\\Users\\owner\\${rawSecret}.svg`, type: "image/svg+xml", size: 33 },
+          metadata: { extension: ".svg", mimeCategory: "image", sizeBytes: 33 }
+        })
+      }
+    ]
+  });
+
+  assert.strictEqual(summary.sanitizedCount, 2);
+  assert.strictEqual(summary.blockedCount, 1);
+  assert.deepStrictEqual(summary.attached.map((item) => item.label), ["file-1", "file-3"]);
+  assert.deepStrictEqual(summary.blocked.map((item) => item.code), ["unknown_blocked"]);
+  const message = pipeline.formatMultiFileStatusMessage(summary, { blockedBeforeProcessing: false });
+  assert.match(message, /LeakGuard attached 2 sanitized file\(s\) and blocked 1 file\(s\)\./);
+  assert.match(message, /No raw files were uploaded\./);
+  assert.match(message, /Attached files:\n- file-1 \(\.env, text, 11 bytes, attached\)\n- file-3 \(\.json, application, 22 bytes, attached\)/);
+  assert.match(message, /Blocked files:\n- file-2 \(\.svg, image, 33 bytes, failed, reason: unknown_blocked\)/);
+  assert.strictEqual(message.includes(rawSecret), false);
+  assert.strictEqual(message.includes("C:\\Users"), false);
+  assert.strictEqual(message.includes("config.json"), false);
+
+  const blockedBeforeProcessing = pipeline.formatMultiFileStatusMessage(
+    pipeline.createMultiFileStatusSummary({
+      blockedItems: Array.from({ length: 6 }, (_, index) => ({
+        summary: pipeline.createMultiFileItemSummary({
+          index,
+          status: "blocked",
+          code: "blocked_by_policy",
+          metadata: { extension: ".env", mimeCategory: "text", sizeBytes: 10 }
+        })
+      }))
+    }),
+    { blockedBeforeProcessing: true, maxFiles: 5 }
+  );
+  assert.match(blockedBeforeProcessing, /blocked before reading or processing/);
+  assert.match(blockedBeforeProcessing, /LeakGuard supports up to 5 files/);
+}
+
+testMultiFileStatusSummaryFormatsSafeDetailsOnly();
 
 console.log("PASS file drop payload shape regressions");
