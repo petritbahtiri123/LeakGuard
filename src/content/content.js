@@ -1506,6 +1506,7 @@
       options = {
         site: selectedAdapter?.id || pending.site || getCurrentHandoffDriverId(),
         sanitizedFile: pending.sanitizedFile || null,
+        sanitizedFiles: pending.sanitizedFiles || null,
         message: pending.message || getPendingSanitizedAttachPromptMessage(selectedAdapter?.id || pending.site),
         onAttachClick: () => attachPendingSanitizedFileWithTrustedActivation(selectedAdapter, pending),
         onInsertTextClick: () =>
@@ -1513,14 +1514,14 @@
             selectedAdapter?.id || pending.site || getCurrentHandoffDriverId(),
             pending.event,
             pending.input,
-            pending.sanitizedFile
+            pending.sanitizedFiles || pending.sanitizedFile
           ),
         onDownloadClick: () =>
           downloadPendingSanitizedFile(
             selectedAdapter?.id || pending.site || getCurrentHandoffDriverId(),
             pending.event,
             pending.input,
-            pending.sanitizedFile
+            pending.sanitizedFiles || pending.sanitizedFile
           ),
         onCancelClick: () =>
           cancelPendingSanitizedFileAttach(selectedAdapter?.id || pending.site || getCurrentHandoffDriverId())
@@ -1530,7 +1531,8 @@
       selectedAdapter = options.adapter || getFileHandoffAdapterById(options.site) || getFileHandoffAdapterForLocation();
     }
     const site = options.site || getCurrentHandoffDriverId();
-    const sanitizedFile = options.sanitizedFile || null;
+    const sanitizedFile = options.sanitizedFiles || options.sanitizedFile || null;
+    const pendingFileDebug = describeSanitizedFileOrBatchForDebug(sanitizedFile);
     const message = options.message || getPendingSanitizedAttachPromptMessage(site);
 
     clearPendingSanitizedAttachPrompt("replaced");
@@ -1539,13 +1541,13 @@
     const runAction = async (label, callback) => {
       debugReveal(`pending-attach-prompt-${label}`, {
         site,
-        sanitizedFile: describeFileForDebug(sanitizedFile)
+        ...pendingFileDebug
       });
       if (label === "attach-clicked") {
         debugFileAttachMetadata("file-handoff:pending-user-attach-clicked", {
           site,
           adapter: describeFileHandoffAdapter(selectedAdapter),
-          sanitizedFile: describeFileForDebug(sanitizedFile)
+          ...pendingFileDebug
         });
       }
       if (typeof callback !== "function") return;
@@ -1560,18 +1562,18 @@
       debugReveal(CONTENT_DEBUG_EVENTS.PENDING_ATTACH_PROMPT_SHOWN, {
         site,
         rendered: false,
-        sanitizedFile: describeFileForDebug(sanitizedFile)
+        ...pendingFileDebug
       });
       debugFileAttachMetadata(CONTENT_DEBUG_EVENTS.FILE_HANDOFF_PENDING_PROMPT_SHOWN, {
         site,
         rendered: false,
         adapter: describeFileHandoffAdapter(selectedAdapter),
-        sanitizedFile: describeFileForDebug(sanitizedFile)
+        ...pendingFileDebug
       });
       debugFileAttachMetadata(CONTENT_DEBUG_EVENTS.FILE_UI_PENDING_PROMPT_SHOWN, {
         site,
         rendered: false,
-        sanitizedFile: describeFileForDebug(sanitizedFile)
+        ...pendingFileDebug
       });
       return null;
     }
@@ -1649,18 +1651,18 @@
     debugReveal(CONTENT_DEBUG_EVENTS.PENDING_ATTACH_PROMPT_SHOWN, {
       site,
       rendered: true,
-      sanitizedFile: describeFileForDebug(sanitizedFile)
+      ...pendingFileDebug
     });
     debugFileAttachMetadata(CONTENT_DEBUG_EVENTS.FILE_HANDOFF_PENDING_PROMPT_SHOWN, {
       site,
       rendered: true,
       adapter: describeFileHandoffAdapter(selectedAdapter),
-      sanitizedFile: describeFileForDebug(sanitizedFile)
+      ...pendingFileDebug
     });
     debugFileAttachMetadata(CONTENT_DEBUG_EVENTS.FILE_UI_PENDING_PROMPT_SHOWN, {
       site,
       rendered: true,
-      sanitizedFile: describeFileForDebug(sanitizedFile)
+      ...pendingFileDebug
     });
     return prompt;
   }
@@ -5150,6 +5152,22 @@
         type: String(file?.type || "").split(";")[0].slice(0, 80),
         lastModified: Number(file?.lastModified || 0) || 0
       });
+  }
+
+
+  function describeSanitizedFileOrBatchForDebug(sanitizedFile) {
+    const files = Array.isArray(sanitizedFile) ? sanitizedFile.filter(Boolean) : [sanitizedFile].filter(Boolean);
+    if (files.length <= 1) return { sanitizedFile: describeFileForDebug(files[0]) };
+    return {
+      sanitizedFileCount: files.length,
+      sanitizedFiles: files.map((file, index) =>
+        globalThis.PWM.FileAttachPipeline.createMultiFileItemSummary({
+          index,
+          status: "sanitized",
+          file
+        })
+      )
+    };
   }
 
   function describeFileInputForDebug(fileInput, source = "") {
@@ -8875,6 +8893,36 @@
       context
     );
     if (!handoffOk) {
+      const sanitizedFiles = sanitizedItems.map((item) => item.sanitizedFile);
+      const pendingAdapter =
+        context === "drop" && !blockedItems.length ? getFileHandoffAdapterForLocation() : null;
+      if (
+        pendingAdapter &&
+        (pendingAdapter.id === "gemini" || pendingAdapter.id === "grok") &&
+        isFileHandoffAdapterPendingAttachEnabled(pendingAdapter) &&
+        sanitizedFiles.length > 1 &&
+        sanitizedFiles.length <= MAX_MULTI_FILE_ATTACHMENTS
+      ) {
+        const details = createSanitizedFileHandoffDetails(
+          event,
+          sanitizedFiles[0],
+          `${pendingAdapter.id}:multi-file-pending-user-upload-input`
+        );
+        if (queuePendingSanitizedFileHandoff(pendingAdapter, event, input, sanitizedFiles, details)) {
+          controls.showProcessingSuccess("Sanitized files ready for attach.", "multi-file-pending-attach");
+          setBadge(getPendingSanitizedAttachPromptMessage(pendingAdapter.id));
+          hideBadgeSoon(6500);
+          refreshBadgeFromCurrentInput();
+          return {
+            handled: true,
+            ok: true,
+            stage: "pending",
+            strategy: `${pendingAdapter.id}-multi-file-pending-sanitized-file-handoff`,
+            sanitizedCount: sanitizedItems.length,
+            blockedCount: blockedItems.length
+          };
+        }
+      }
       controls.failProcessing("multi_file_sanitized_handoff_failed", "Raw file upload blocked");
       setBadge("Raw file upload blocked");
       hideBadgeSoon(4200);

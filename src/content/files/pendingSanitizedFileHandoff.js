@@ -76,6 +76,62 @@
       return pending;
     }
 
+    const MAX_PENDING_SANITIZED_FILES = 5;
+
+    function getPendingFiles(pending) {
+      if (!pending) return [];
+      if (Array.isArray(pending.sanitizedFiles)) return pending.sanitizedFiles.filter(Boolean);
+      return pending.sanitizedFile ? [pending.sanitizedFile] : [];
+    }
+
+    function isSafeSanitizedPendingFile(file) {
+      return Boolean(file && typeof file === "object" && !file.rawFile && !file.originalFile && !file.rawMarker);
+    }
+
+    function normalizePendingSanitizedFiles(value) {
+      const files = (Array.isArray(value) ? value : [value]).filter(Boolean);
+      if (!files.length || files.length > MAX_PENDING_SANITIZED_FILES) return [];
+      return files.every(isSafeSanitizedPendingFile) ? files : [];
+    }
+
+    function summarizePendingFile(file, index) {
+      const summaryFactory = root.PWM?.FileAttachPipeline?.createMultiFileItemSummary;
+      if (typeof summaryFactory === "function") {
+        return summaryFactory({
+          index,
+          status: "sanitized",
+          file
+        });
+      }
+      const type = String(file?.type || "").split(";")[0].trim().toLowerCase();
+      const name = String(file?.name || "").split(/[\\/]/).pop().toLowerCase();
+      const match = /\.([a-z0-9]{1,12})$/i.exec(name);
+      return {
+        index,
+        label: `file-${index + 1}`,
+        status: "sanitized",
+        extension: match ? `.${match[1].toLowerCase()}` : "",
+        mimeCategory: type ? type.split("/")[0].replace(/[^a-z0-9.+-]/g, "").slice(0, 32) : "",
+        sizeBytes: Math.max(0, Number(file?.size || 0) || 0),
+        code: ""
+      };
+    }
+
+    function summarizePendingFiles(files) {
+      return files.map((file, index) => summarizePendingFile(file, index));
+    }
+
+    function describePendingFilesForDebug(files) {
+      if (files.length <= 1) return { sanitizedFile: describeFileForDebug(files[0]) };
+      return { sanitizedFileCount: files.length, sanitizedFiles: summarizePendingFiles(files) };
+    }
+
+    function getPendingFileRefsForHandoff(pending) {
+      const files = normalizePendingSanitizedFiles(getPendingFiles(pending));
+      if (!files.length) return [];
+      return files;
+    }
+
     function clearSite(site, reason = "") {
       if (site === "gemini") clearPendingGeminiGhostIngressClickInterceptor(reason || "pending-cleared");
       if (!state[site]?.pending) {
@@ -87,7 +143,7 @@
       const payload = {
         reason,
         ageMs: Math.max(0, Date.now() - Number(pending.createdAt || 0)),
-        sanitizedFile: describeFileForDebug(pending.sanitizedFile)
+        ...describePendingFilesForDebug(getPendingFiles(pending))
       };
       if (site === "generic") payload.site = pending.site || "";
       debugReveal(`file-handoff:${site}-pending-cleared`, payload);
@@ -101,15 +157,18 @@
     }
 
     function assignToInput(site, fileInput, event, pending, details, reason, inputDebugLabel) {
-      const transfer = createSanitizedDataTransferForHandoff(pending.sanitizedFile, details);
-      if (!transfer) { details.failureReason = "data_transfer_failed"; logSanitizedFileHandoffFailure(details); return false; }
+      const pendingFiles = getPendingFileRefsForHandoff(pending);
+      if (!pendingFiles.length) { details.failureReason = "pending_sanitized_files_invalid"; logSanitizedFileHandoffFailure(details); clearSite(site, "invalid-pending-files"); return false; }
+      const filesForHandoff = pendingFiles.length === 1 ? pendingFiles[0] : pendingFiles;
+      const transfer = createSanitizedDataTransferForHandoff(filesForHandoff, details);
+      if (!transfer || Number(transfer.files?.length || 0) !== pendingFiles.length) { details.failureReason = "data_transfer_failed"; logSanitizedFileHandoffFailure(details); return false; }
       const assigned = handOffSanitizedFileInput(fileInput, transfer, { dispatchInput: true, details });
       if (!assigned) { logSanitizedFileHandoffFailure(details); return false; }
-      debugReveal(`file-handoff:${site}-pending-assigned`, { reason, input: describeFileInputForDebug(fileInput, inputDebugLabel), sanitizedFile: describeFileForDebug(pending.sanitizedFile) });
-      debugReveal("file-handoff:pending-assigned", { site, reason, input: describeFileInputForDebug(fileInput, inputDebugLabel), sanitizedFile: describeFileForDebug(pending.sanitizedFile) });
+      debugReveal(`file-handoff:${site}-pending-assigned`, { reason, input: describeFileInputForDebug(fileInput, inputDebugLabel), ...describePendingFilesForDebug(pendingFiles) });
+      debugReveal("file-handoff:pending-assigned", { site, reason, input: describeFileInputForDebug(fileInput, inputDebugLabel), ...describePendingFilesForDebug(pendingFiles) });
       clearSite(site, "assigned");
-      showFileProcessingSuccess("Sanitized file attached.", { site, reason: "pending-attached" });
-      setBadge("LeakGuard attached the sanitized file."); hideBadgeSoon(3200); refreshBadgeFromCurrentInput();
+      showFileProcessingSuccess(pendingFiles.length > 1 ? "Sanitized files attached." : "Sanitized file attached.", { site, reason: "pending-attached" });
+      setBadge(pendingFiles.length > 1 ? "LeakGuard attached the sanitized files." : "LeakGuard attached the sanitized file."); hideBadgeSoon(3200); refreshBadgeFromCurrentInput();
       return true;
     }
 
@@ -121,10 +180,10 @@
       const discovery = discoverGeminiFileHandoffElements(event, null);
       const fileInput = discovery.fileInput;
       if (!fileInput) {
-        debugReveal("file-handoff:gemini-pending-input-not-found", { reason, ...describeGeminiHandoffDiscovery(discovery), overlay: describeGeminiOverlayExposure(), sanitizedFile: describeFileForDebug(pending.sanitizedFile) });
+        debugReveal("file-handoff:gemini-pending-input-not-found", { reason, ...describeGeminiHandoffDiscovery(discovery), overlay: describeGeminiOverlayExposure(), ...describePendingFilesForDebug(getPendingFiles(pending)) });
         return false;
       }
-      debugReveal("file-handoff:pending-input-captured", { site: "gemini", reason, input: describeFileInputForDebug(fileInput, "pending-gemini-file-input"), sanitizedFile: describeFileForDebug(pending.sanitizedFile) });
+      debugReveal("file-handoff:pending-input-captured", { site: "gemini", reason, input: describeFileInputForDebug(fileInput, "pending-gemini-file-input"), ...describePendingFilesForDebug(getPendingFiles(pending)) });
       const details = createSanitizedFileHandoffDetails(event, pending.sanitizedFile, "gemini:pending-file-input-assignment");
       details.fileInputCountBeforeClick = discovery.fileInputCount; details.fileInputCountAfterTopTriggerClick = discovery.fileInputCount; details.fileInputCountAfterOverlayItemClick = discovery.fileInputCount; details.openShadowRootCount = discovery.openShadowRootCount; details.failureReason = reason || "pending_file_input_assignment";
       return assignToInput("gemini", fileInput, event, pending, details, reason, "pending-gemini-file-input");
@@ -137,8 +196,8 @@
       const event = { type: "pending-grok-sanitized-file", target: pending.target || null };
       const discovery = discoverGrokPendingFileInput(event, pending.input || null);
       const fileInput = discovery.fileInput;
-      if (!fileInput) { debugReveal("file-handoff:grok-pending-input-not-found", { reason, ...describeGrokPendingInputDiscovery(discovery), sanitizedFile: describeFileForDebug(pending.sanitizedFile) }); return false; }
-      debugReveal("file-handoff:pending-input-captured", { site: "grok", reason, input: describeFileInputForDebug(fileInput, "pending-grok-file-input"), sanitizedFile: describeFileForDebug(pending.sanitizedFile) });
+      if (!fileInput) { debugReveal("file-handoff:grok-pending-input-not-found", { reason, ...describeGrokPendingInputDiscovery(discovery), ...describePendingFilesForDebug(getPendingFiles(pending)) }); return false; }
+      debugReveal("file-handoff:pending-input-captured", { site: "grok", reason, input: describeFileInputForDebug(fileInput, "pending-grok-file-input"), ...describePendingFilesForDebug(getPendingFiles(pending)) });
       const details = createSanitizedFileHandoffDetails(event, pending.sanitizedFile, "grok:pending-file-input-assignment");
       details.fileInputCountBeforeClick = discovery.fileInputCount; details.fileInputCountAfterTopTriggerClick = discovery.fileInputCount; details.fileInputCountAfterOverlayItemClick = discovery.fileInputCount; details.openShadowRootCount = discovery.openShadowRootCount; details.failureReason = reason || "pending_file_input_assignment";
       return assignToInput("grok", fileInput, event, pending, details, reason, "pending-grok-file-input");
@@ -146,12 +205,21 @@
 
     function queueSite(site, event, input, sanitizedFile, details = null) {
       const isGemini = site === "gemini";
-      if ((isGemini ? !isGeminiHost() : !isGrokHost()) || event?.type !== "drop" || !sanitizedFile) return false;
+      const sanitizedFiles = normalizePendingSanitizedFiles(sanitizedFile);
+      if ((isGemini ? !isGeminiHost() : !isGrokHost()) || event?.type !== "drop" || !sanitizedFiles.length) return false;
       const ttlMs = isGemini ? geminiTtlMs : grokTtlMs;
       const requestedHandoffStage = String(details?.handoffStage || "");
       const isStreamingPending = requestedHandoffStage.includes("streaming");
       clearSite(site, "replaced");
-      state[site].pending = { sanitizedFile, input: isGemini ? undefined : input || null, target: isGemini ? undefined : normalizeTarget(event?.target), createdAt: Date.now(), expiresAt: Date.now() + ttlMs, sessionHash: isGemini ? getGeminiSessionHash() || "" : undefined };
+      state[site].pending = {
+        sanitizedFile: sanitizedFiles[0],
+        ...(sanitizedFiles.length > 1 ? { sanitizedFiles, files: summarizePendingFiles(sanitizedFiles) } : {}),
+        input: isGemini ? undefined : input || null,
+        target: isGemini ? undefined : normalizeTarget(event?.target),
+        createdAt: Date.now(),
+        expiresAt: Date.now() + ttlMs,
+        sessionHash: isGemini ? getGeminiSessionHash() || "" : undefined
+      };
       if (details) { details.handoffStage = isStreamingPending ? requestedHandoffStage : `${site}:pending-user-upload-input`; details.failureReason = "pending_until_user_exposes_file_input"; }
       const attemptFn = isGemini ? attemptGemini : attemptGrok;
       if (mutationObserverCtor && documentRef) {
@@ -170,14 +238,14 @@
       };
       try { documentRef?.addEventListener?.("click", state[site].clickHandler, true); } catch { state[site].clickHandler = null; }
       state[site].timer = setTimeoutFn(() => clearSite(site, "expired"), ttlMs);
-      const queuedPayload = { ttlMs, sanitizedFile: describeFileForDebug(sanitizedFile) };
+      const queuedPayload = { ttlMs, ...describePendingFilesForDebug(sanitizedFiles) };
       if (isGemini) queuedPayload.sessionHash = getGeminiSessionHash() || "";
       debugReveal(`file-handoff:${site}-pending-queued`, queuedPayload);
       if (isStreamingPending) debugReveal(`file-handoff:${site}-streaming-pending-queued`, queuedPayload);
-      debugReveal("pending-attach-synthetic-loop-suppressed", { site, streaming: isStreamingPending, sanitizedFile: describeFileForDebug(sanitizedFile) });
+      debugReveal("pending-attach-synthetic-loop-suppressed", { site, streaming: isStreamingPending, ...describePendingFilesForDebug(sanitizedFiles) });
       hideDmzOverlay();
       const pendingEvent = createPendingAttachEvent(event, `pending-${site}-sanitized-file-attach`);
-      showPendingSanitizedAttachPrompt(getFileHandoffAdapterById(site), { site, event: pendingEvent, input, sanitizedFile, message: getPendingSanitizedAttachPromptMessage(site) });
+      showPendingSanitizedAttachPrompt(getFileHandoffAdapterById(site), { site, event: pendingEvent, input, sanitizedFile: sanitizedFiles[0], sanitizedFiles: sanitizedFiles.length > 1 ? sanitizedFiles : undefined, message: getPendingSanitizedAttachPromptMessage(site) });
       setBadge(getPendingSanitizedAttachPromptMessage(site)); hideBadgeSoon(6500);
       return true;
     }
@@ -201,8 +269,27 @@
       return true;
     }
 
-    function has(site, sanitizedFile) { const pending = state[site]?.pending; return Boolean(pending && (!sanitizedFile || pending.sanitizedFile === sanitizedFile)); }
-    function debug(site) { const pending = state[site]?.pending; if (!pending) return null; const out = { keys: Object.keys(pending), sanitizedFileDebug: describeFileForDebug(pending.sanitizedFile), expiresAt: pending.expiresAt }; if (site === "gemini") out.sessionHash = pending.sessionHash || ""; return out; }
+    function has(site, sanitizedFile) {
+      const pending = state[site]?.pending;
+      if (!pending) return false;
+      if (!sanitizedFile) return true;
+      const files = getPendingFiles(pending);
+      if (Array.isArray(sanitizedFile)) return sanitizedFile.length === files.length && sanitizedFile.every((file, index) => file === files[index]);
+      return files.includes(sanitizedFile);
+    }
+    function debug(site) {
+      const pending = state[site]?.pending;
+      if (!pending) return null;
+      const files = getPendingFiles(pending);
+      const out = { keys: Object.keys(pending), expiresAt: pending.expiresAt };
+      if (files.length === 1) out.sanitizedFileDebug = describeFileForDebug(files[0]);
+      if (files.length > 1) {
+        out.sanitizedFileCount = files.length;
+        out.sanitizedFilesDebug = summarizePendingFiles(files);
+      }
+      if (site === "gemini") out.sessionHash = pending.sessionHash || "";
+      return out;
+    }
 
     function schedulePendingGeminiSanitizedFileAttempt(reason = "") {
       return schedule("gemini", attemptGemini, reason);

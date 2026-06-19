@@ -13,14 +13,14 @@ LeakGuard 2.2.0 adds focused protected-site support for up to 5 files in one att
 ## Adapter behavior
 
 - Built-in protected-site adapters declare sanitized multi-file handoff capability through their existing direct file-input handoff path.
-- Multi-file pending attach is intentionally not queued for Gemini/Grok in this release. If a multi-file batch cannot be attached safely through direct/synthetic sanitized handoff, it fails closed instead of staging ambiguous pending raw state.
+- Gemini/Grok can queue one sanitized-only multi-file pending batch when direct sanitized handoff fails and every accepted file produced a safe sanitized output. The pending batch stores sanitized file references plus metadata-only summaries, expires on TTL cleanup, and is replaced by any newer pending batch.
 - Single-file Gemini/Grok pending attach behavior remains unchanged.
 
 ## Debug and QA safety
 
 - Multi-file debug metadata uses file index, safe `file-N` labels, extension, MIME category, byte size, status, and safe reason codes only.
 - Raw filenames, paths, file contents, raw `File` objects, and token-shaped strings must not appear in debug/browser QA reports.
-- Browser QA should cover 2-file, 5-file, >5-file, mixed supported/unsupported, duplicate-name, small/large mix, and image/PDF/DOCX/XLSX/text batches before store release.
+- Browser QA should cover 2-file, 5-file, >5-file, mixed supported/unsupported, duplicate-name, small/large mix, image/PDF/DOCX/XLSX/text batches, and Gemini/Grok sanitized-only multi-file pending attach before store release.
 
 ## Local manual validation
 

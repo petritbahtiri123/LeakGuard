@@ -39,6 +39,7 @@ const testFiles = [
   "tests/file_debug_metadata.test.js",
   "tests/file_drop_payload_shape.test.js",
   "tests/file_drop_streaming_guards.test.js",
+  "tests/pending_multifile_handoff.test.js",
   "tests/file_drag_guard.test.js",
   "tests/content_allow_once_interaction.test.js",
   "tests/content_file_drop_interception.test.js",

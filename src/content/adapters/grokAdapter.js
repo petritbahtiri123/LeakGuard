@@ -43,7 +43,7 @@
       resolveFileInput: (event, input) => hooks.discoverGrokPendingFileInput(event, input).fileInput,
       isUploadClickTarget: (eventOrTarget) => hooks.isLikelyGrokUploadClickTarget(eventOrTarget),
       attachWithTrustedActivation: (pending) =>
-        hooks.performPendingGrokUserAttach(pending.event, pending.input, pending.sanitizedFile)
+        hooks.performPendingGrokUserAttach(pending.event, pending.input, pending.sanitizedFiles || pending.sanitizedFile)
     };
   }
 
