@@ -1,14 +1,16 @@
 # Phase 12A Protected-Site OCR Plan
 
+> Historical plan note, 2026-06-18: protected-site image OCR is now settings-controlled and enabled by default for supported image uploads, with fail-closed raw-upload blocking when OCR/visual redaction is unsafe. Use `docs/FILE_CAPABILITY_MATRIX.md`, `docs/FILE_UPLOAD_SCANNING_GUIDE.md`, and `docs/RELEASE_QA_CHECKLIST.md` for current behavior.
+
 ## Goal
 
 Plan protected-site OCR without changing runtime behavior. This document defines the scope, safety boundaries, lifecycle, adapter expectations, and tests required before any implementation starts.
 
-## Current State
+## Historical State At Plan Time
 
-LeakGuard currently supports local scanner-page OCR for PNG, JPG, JPEG, and WEBP images. Protected-site uploads support text/source files and PDF/DOCX/XLSX text extraction into sanitized files, while protected-site images remain metadata-only and report `image_ocr_not_supported`.
+At the time of this plan, LeakGuard supported local scanner-page OCR for PNG, JPG, JPEG, and WEBP images. Protected-site uploads supported text/source files and PDF/DOCX/XLSX text extraction into sanitized files, while protected-site images remained metadata-only and reported `image_ocr_not_supported`.
 
-Protected-site OCR remains disabled until a later implementation phase.
+Protected-site OCR was disabled until a later implementation phase.
 
 ## Scope
 
@@ -41,14 +43,14 @@ Rationale:
 
 - OCR reads visual content that users may not expect LeakGuard to parse during upload.
 - The protected-site path is closer to live site handoff than the scanner page, so the consent bar should be higher.
-- A default-off gate preserves current metadata-only behavior and makes rollout reversible.
+- A default-off gate would have preserved the then-current metadata-only behavior and made rollout reversible.
 - A one-time confirmation can be offered later, but a settings-backed opt-in is easier to audit and less surprising.
 
 Initial UX recommendation:
 
 - Add a setting such as "Scan image text with local English OCR on protected sites".
 - Default it to off.
-- When off, protected-site images keep current metadata-only behavior and `image_ocr_not_supported` warning.
+- When off, protected-site images would have kept the then-current metadata-only behavior and `image_ocr_not_supported` warning.
 - When a supported image is uploaded on a protected site and the setting is off, show a non-blocking choice that does not let the raw image silently upload:
   - Enable local English OCR for protected-site image uploads.
   - Continue with metadata-only sanitized `.redacted.txt`.
@@ -126,7 +128,7 @@ Add failing tests before implementation starts:
 - OCR timeout blocks or fails safely and leaves no raw upload fallback.
 - OCR cancellation clears pending/progress state and worker state.
 - OCR worker terminates on timeout and error.
-- OCR disabled-by-default path preserves current metadata-only behavior and `image_ocr_not_supported`.
+- OCR disabled-by-default path would have preserved the then-current metadata-only behavior and `image_ocr_not_supported`.
 - Settings or confirmation gate enables OCR only after explicit user action.
 - Gemini pending attach behavior remains unchanged for sanitized OCR output.
 - Grok pending attach behavior remains unchanged for sanitized OCR output.

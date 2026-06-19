@@ -73,6 +73,15 @@ function dirSizeBytes(rootDir) {
   return walkFiles(rootDir).reduce((total, file) => total + fs.statSync(file).size, 0);
 }
 
+function getServiceWorkerImportScripts() {
+  const source = fs.readFileSync(path.join(repoRoot, "src/background/service_worker.js"), "utf8");
+  const match = source.match(/importScripts\(([\s\S]*?)\);/);
+  assert.ok(match, "background service worker should declare importScripts()");
+  return [...match[1].matchAll(/"([^"]+)"/g)].map(([, script]) =>
+    path.posix.normalize(path.posix.join("background", script))
+  );
+}
+
 function assertReleaseArtifactsAreSanitized(results) {
   const sourceContent = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
   const debugLoggerSource = fs.readFileSync(
@@ -1149,9 +1158,10 @@ function assertManifestStructure(result, expectedHostPermissions) {
       false,
       `${result.target} should not use a Chrome service worker entry`
     );
-    assert.ok(
-      (manifest.background?.scripts || []).includes("background/core.js"),
-      `${result.target} should include Firefox background scripts`
+    assert.deepStrictEqual(
+      manifest.background?.scripts || [],
+      getServiceWorkerImportScripts(),
+      `${result.target} Firefox background scripts should mirror the service worker runtime imports`
     );
     assert.deepStrictEqual(
       manifest.browser_specific_settings?.gecko?.data_collection_permissions,
@@ -1350,6 +1360,38 @@ async function run() {
     }
   }
   const contentScripts = chromeManifest.content_scripts[0].js;
+  const placeholderFamiliesIndex = contentScripts.indexOf("shared/placeholders/families.js");
+  const placeholdersIndex = contentScripts.indexOf("shared/placeholders.js");
+  const detectorIndex = contentScripts.indexOf("shared/detector.js");
+  const detectionModuleScripts = [
+    "shared/detection/constants/enterpriseTokens.js",
+    "shared/detection/constants/providerTokens.js",
+    "shared/detection/constants/contextRegexes.js",
+    "shared/detection/contextWindow.js",
+    "shared/detection/cloudScoring.js",
+    "shared/detection/enterprise/shared.js",
+    "shared/detection/enterprise/uncPaths.js",
+    "shared/detection/enterprise/directoryMetadata.js",
+    "shared/detection/enterprise/internalNetwork.js",
+    "shared/detection/enterprise/fileShares.js",
+    "shared/detection/enterprise/adGroups.js",
+    "shared/detection/enterprise/hostnames.js",
+    "shared/detection/enterprise/identity.js",
+    "shared/detection/enterprise/storageAccounts.js",
+    "shared/detection/enterprise/azureResourceGroups.js",
+    "shared/detection/enterprise/cloudResourceNames.js",
+    "shared/detection/enterprise/index.js",
+    "shared/detection/providers/azure.js",
+    "shared/detection/providers/azureIds.js",
+    "shared/detection/providers/aws.js",
+    "shared/detection/providers/gcp.js",
+    "shared/detection/providers/otcOpenStack.js",
+    "shared/detection/providers/kubernetes.js",
+    "shared/detection/providers/genericEndpoints.js",
+    "shared/detection/providers/index.js",
+    "shared/detection/urlUserinfo.js"
+  ];
+  const detectionModuleIndexes = detectionModuleScripts.map((script) => contentScripts.indexOf(script));
   const knownSecretReuseIndex = contentScripts.indexOf("shared/knownSecretReuse.js");
   const transformOutboundPromptIndex = contentScripts.indexOf("shared/transformOutboundPrompt.js");
   const redactorIndex = contentScripts.indexOf("shared/redactor.js");
@@ -1391,10 +1433,24 @@ async function run() {
   const responseObserverIndex = contentScripts.indexOf("content/rehydration/responseObserver.js");
   const revealControllerIndex = contentScripts.indexOf("content/rehydration/revealController.js");
   const debugLoggerIndex = contentScripts.indexOf("content/diagnostics/debugLogger.js");
+  const contentDebugFacadeIndex = contentScripts.indexOf("content/diagnostics/contentDebugFacade.js");
   const contentEventBindingsIndex = contentScripts.indexOf("content/bootstrap/eventBindings.js");
   const contentIndex = contentScripts.indexOf("content/content.js");
 
   assert.ok(knownSecretReuseIndex > -1, "content scripts should include known-secret reuse helpers");
+  assert.ok(placeholderFamiliesIndex > -1, "content scripts should include placeholder family registry");
+  assert.ok(placeholdersIndex > -1, "content scripts should include placeholder manager");
+  assert.ok(detectorIndex > -1, "content scripts should include detector");
+  assert.ok(
+    detectionModuleIndexes.every((index) => index > -1),
+    "content scripts should include modular enterprise/cloud detection helpers"
+  );
+  assert.ok(
+    placeholderFamiliesIndex < placeholdersIndex &&
+      detectionModuleIndexes.every((index) => index < detectorIndex) &&
+      detectionModuleIndexes[detectionModuleIndexes.length - 1] < detectorIndex,
+    "placeholder families must load before placeholders.js and detection modules/indexes must load before detector.js"
+  );
   assert.ok(
     knownSecretReuseIndex < transformOutboundPromptIndex && knownSecretReuseIndex < redactorIndex,
     "known-secret reuse helpers should load before prompt transform and redactor modules"
@@ -1430,6 +1486,7 @@ async function run() {
   assert.ok(responseObserverIndex > -1, "content scripts should include response observer helpers");
   assert.ok(revealControllerIndex > -1, "content scripts should include reveal controller helpers");
   assert.ok(debugLoggerIndex > -1, "content scripts should include raw-safe debug logger helpers");
+  assert.ok(contentDebugFacadeIndex > -1, "content scripts should include raw-safe content debug facade helpers");
   assert.ok(contentEventBindingsIndex > -1, "content scripts should include content event binding helpers");
   const adapterOrderAligned = adapterIndexes.every(
     (index, offset) => offset === 0 || adapterIndexes[offset - 1] < index
@@ -1463,7 +1520,8 @@ async function run() {
       placeholderRehydratorIndex < responseObserverIndex &&
       responseObserverIndex < revealControllerIndex &&
       revealControllerIndex < debugLoggerIndex &&
-      debugLoggerIndex < contentEventBindingsIndex &&
+      debugLoggerIndex < contentDebugFacadeIndex &&
+      contentDebugFacadeIndex < contentEventBindingsIndex &&
       contentEventBindingsIndex < contentIndex,
     "file scanner, streaming redactor, file paste helper, file handoff, pure helper, adapter, and content script injection order should stay aligned"
   );

@@ -17,6 +17,8 @@ require(path.join(repoRoot, "src/shared/knownSecretReuse.js"));
 require(path.join(repoRoot, "src/shared/transformOutboundPrompt.js"));
 require(path.join(repoRoot, "src/content/composer_helpers.js"));
 require(path.join(repoRoot, "src/content/input/rewriteVerificationText.js"));
+require(path.join(repoRoot, "src/content/diagnostics/debugLogger.js"));
+const ContentDebugFacade = require(path.join(repoRoot, "src/content/diagnostics/contentDebugFacade.js"));
 
 const {
   Detector,
@@ -388,6 +390,8 @@ function testPauseBypassGatesPasteAndSendAfterPolicy() {
 
 function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   const applyComposerTextSource = extractFunctionSource(contentSource, "applyComposerText");
+  const submitTransactionalSource = extractFunctionSource(contentSource, "applySubmitRedactionTransactionally");
+  const queueVerifiedSendSource = extractFunctionSource(contentSource, "queueVerifiedComposerSend");
   const typedRewriteSource = extractFunctionSource(contentSource, "applyTypedInterceptionRewrite");
   const beforeInputSource = extractFunctionSource(contentSource, "maybeHandleBeforeInput");
   const fileInsertSource = extractFunctionSource(contentSource, "maybeHandleLocalFileInsert");
@@ -433,9 +437,15 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
     "file drag/drop interception should cover about:blank protected-site child frames"
   );
   assert.ok(
-      fs.readFileSync(path.join(repoRoot, "src/background/core.js"), "utf8").includes('runAt: "document_start"') &&
-      fs.readFileSync(path.join(repoRoot, "src/background/core.js"), "utf8").includes("allFrames: true") &&
-      fs.readFileSync(path.join(repoRoot, "src/background/core.js"), "utf8").includes("matchOriginAsFallback: true"),
+      fs
+        .readFileSync(path.join(repoRoot, "src/background/protectedSiteRegistry.js"), "utf8")
+        .includes('runAt: "document_start"') &&
+      fs
+        .readFileSync(path.join(repoRoot, "src/background/protectedSiteRegistry.js"), "utf8")
+        .includes("allFrames: true") &&
+      fs
+        .readFileSync(path.join(repoRoot, "src/background/protectedSiteRegistry.js"), "utf8")
+        .includes("matchOriginAsFallback: true"),
     "dynamic protected-site content scripts should also install at document_start in related frames"
   );
   assert.ok(
@@ -572,12 +582,61 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
     "beforeinput paste/typing, submit, and Enter-send interception should all stop immediate propagation to block host races"
   );
   assert.ok(
+    contentSource.includes("async function maybeHandleSendButtonClick") &&
+      contentSource.includes('document.addEventListener(\n      "click"') &&
+      contentSource.includes("maybeHandleSendButtonClick(event).catch(handleContentError);"),
+    "risky send-button clicks should be captured before host click handlers can submit raw composer text"
+  );
+  const sendButtonClickSource = extractFunctionSource(contentSource, "maybeHandleSendButtonClick");
+  const modalClickGuardIndex = sendButtonClickSource.indexOf(".pwm-modal-backdrop");
+  assert.ok(
+    modalClickGuardIndex >= 0 && modalClickGuardIndex < sendButtonClickSource.indexOf("if (modalOpen)"),
+    "captured send-button click guard must not consume LeakGuard modal button clicks before target handlers run"
+  );
+  assert.ok(
     beforeInputSource.includes("if (isFirefoxRuntime())") &&
       beforeInputSource.indexOf("consumeInterceptionEvent(event);") <
         beforeInputSource.indexOf("await analyzeTextWithAiAssist(originalText)") &&
       beforeInputSource.indexOf("consumeInterceptionEvent(event);") <
         beforeInputSource.indexOf("await analyzeTextWithAiAssist(next.text)"),
     "Firefox beforeinput should synchronously consume risky raw text before any async analysis can yield to the page"
+  );
+  assert.ok(
+    beforeInputSource.includes("const quickCurrentAnalysis = analyzeText(originalText);") &&
+      beforeInputSource.includes("const quickNextAnalysis = analyzeText(next.text);") &&
+      beforeInputSource.includes("const quickRelevantFindings = selectFindingsOverlappingInsertion(") &&
+      beforeInputSource.indexOf("const quickNextAnalysis = analyzeText(next.text);") <
+        beforeInputSource.lastIndexOf("consumeInterceptionEvent(event);") &&
+      beforeInputSource.lastIndexOf("consumeInterceptionEvent(event);") <
+        beforeInputSource.indexOf("const currentAnalysis = await analyzeTextWithAiAssist(originalText)") &&
+      beforeInputSource.lastIndexOf("consumeInterceptionEvent(event);") <
+        beforeInputSource.indexOf("const nextAnalysis = await analyzeTextWithAiAssist(next.text)"),
+    "non-Firefox beforeinput should synchronously consume deterministic risky input before async AI analysis"
+  );
+  assert.ok(
+    submitSource.includes("const quickAnalysis = analyzeText(text);") &&
+      submitSource.indexOf("const quickAnalysis = analyzeText(text);") <
+        submitSource.lastIndexOf("consumeInterceptionEvent(event);") &&
+      submitSource.lastIndexOf("consumeInterceptionEvent(event);") <
+        submitSource.indexOf("const analysis = await analyzeTextWithAiAssist(text)"),
+    "submit should synchronously consume risky composer text before async AI analysis"
+  );
+  assert.ok(
+    fallbackSendSource.includes("const quickAnalysis = analyzeText(text);") &&
+      fallbackSendSource.indexOf("const quickAnalysis = analyzeText(text);") <
+        fallbackSendSource.indexOf("consumeInterceptionEvent(event);") &&
+      fallbackSendSource.indexOf("consumeInterceptionEvent(event);") <
+        fallbackSendSource.indexOf("const analysis = await analyzeTextWithAiAssist(text)"),
+    "Enter-send fallback should synchronously consume risky composer text before async AI analysis"
+  );
+  assert.ok(
+    beforeInputSource.indexOf("if (!quickRelevantFindings.length && !quickPlaceholderNormalizationChanged)") <
+      beforeInputSource.lastIndexOf("consumeInterceptionEvent(event);") &&
+      submitSource.indexOf("if (!analysisNeedsEventOwnership(quickAnalysis)) return;") <
+        submitSource.lastIndexOf("consumeInterceptionEvent(event);") &&
+      fallbackSendSource.indexOf("if (!analysisNeedsEventOwnership(quickAnalysis)) return;") <
+        fallbackSendSource.indexOf("consumeInterceptionEvent(event);"),
+    "safe beforeinput, submit, and Enter-send events should not be consumed unless sync analysis finds risk"
   );
   assert.ok(
     beforeInputSource.includes("event?.isTrusted === false") &&
@@ -633,6 +692,31 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
       applyComposerTextSource.includes("matchesComposerPlan(plan, actual)") &&
       applyComposerTextSource.includes("verifyComposerRewriteSafe"),
     "contenteditable rewrites should verify stable final text and force direct redacted text when raw input remains"
+  );
+  assert.ok(
+    submitTransactionalSource.includes("rewriteComposerTransactionally(") &&
+      submitTransactionalSource.includes("ensureExactComposerState(input, redactedText") &&
+      submitTransactionalSource.includes("showRewriteFailure("),
+    "submit/Enter redaction helper should use transactional rewrite plus exact verification before any send retry"
+  );
+  assert.ok(
+    queueVerifiedSendSource.includes("ensureExactComposerState(input, expectedText") &&
+      queueVerifiedSendSource.indexOf("ensureExactComposerState(input, expectedText") <
+        queueVerifiedSendSource.indexOf("send();") &&
+      queueVerifiedSendSource.includes("showRewriteFailure("),
+    "submit/Enter send retry should re-check exact composer state in the queued send microtask before clicking/submitting"
+  );
+  assert.ok(
+    submitSource.includes("applySubmitRedactionTransactionally(") &&
+      submitSource.includes("queueVerifiedComposerSend(input, result.redactedText") &&
+      !submitSource.includes("applyComposerText(input, result.redactedText"),
+    "risky submit redaction paths should use the transactional raw-leak-resistant helper instead of direct applyComposerText"
+  );
+  assert.ok(
+    fallbackSendSource.includes("applySubmitRedactionTransactionally(") &&
+      fallbackSendSource.includes("queueVerifiedComposerSend(input, result.redactedText") &&
+      !fallbackSendSource.includes("applyComposerText(input, result.redactedText"),
+    "risky Enter-send redaction paths should use the transactional raw-leak-resistant helper instead of direct applyComposerText"
   );
   assert.ok(
     typedRewriteSource.includes("ensureExactComposerState(input, expectedText)") &&
@@ -799,7 +883,7 @@ function createRewriteVerificationHarness(overrides = {}) {
       input.textContent = input.text.replace(/\n/g, "");
       return true;
     },
-    analyzeText: (text) => {
+    analyzeText: overrides.analyzeText || ((text) => {
       const rawSecrets = [/RawSecretABCDE12345/g, /OriginalSecretXYZ98765/g];
       const findings = [];
       for (const regex of rawSecrets) {
@@ -814,7 +898,7 @@ function createRewriteVerificationHarness(overrides = {}) {
         }
       }
       return { findings, secretFindings: findings };
-    }
+    })
   });
 }
 
@@ -860,6 +944,125 @@ async function testGenericRewriteVerificationSafeCases() {
     context: "chatgpt-wrapper"
   });
   assert.strictEqual(wrapped.ok, true, "ChatGPT/contenteditable wrapper newline differences should pass safely");
+
+  const enterpriseWrapped = await verifyComposerRewriteSafe({
+    input: createVerificationInput("GCP project number:\n[GCP_PROJECT_NUMBER_1]\n", {
+      innerText: "GCP project number:\n[GCP_PROJECT_NUMBER_1]\n",
+      textContent: "GCP project number:[GCP_PROJECT_NUMBER_1]"
+    }),
+    expectedText: "GCP project number: [GCP_PROJECT_NUMBER_1]",
+    originalText: "GCP project number: 123456789012",
+    findings: [{ raw: "123456789012", type: "GCP_PROJECT_NUMBER", severity: "high", score: 90 }],
+    context: "enterprise-placeholder-wrapper"
+  });
+  assert.strictEqual(
+    enterpriseWrapped.ok,
+    true,
+    "enterprise/cloud placeholders should verify after ChatGPT wraps them onto separate lines"
+  );
+
+  const placeholderRescanHarness = createRewriteVerificationHarness({
+    analyzeText: (text) => {
+      const findings = [];
+      for (const match of String(text || "").matchAll(/\[(?:PWM|KUBECONFIG_SECRET)_\d+\]/g)) {
+        findings.push({
+          raw: match[0],
+          severity: "high",
+          score: 100,
+          start: match.index,
+          end: match.index + match[0].length
+        });
+      }
+      for (const match of String(text || "").matchAll(/postgres:\/\/[^\s]+/g)) {
+        findings.push({
+          raw: match[0],
+          type: "CONNECTION_STRING",
+          severity: "high",
+          score: 92,
+          start: match.index,
+          end: match.index + match[0].length
+        });
+      }
+      for (const match of String(text || "").matchAll(/jdbc:sqlserver:\/\/[^\s;]+:[0-9]+;databaseName=[^;]+;user=/g)) {
+        findings.push({
+          raw: match[0],
+          type: "DB_URI",
+          severity: "high",
+          score: 92,
+          start: match.index,
+          end: match.index + match[0].length
+        });
+      }
+      return { findings, secretFindings: findings };
+    }
+  });
+  const placeholderOnly = await placeholderRescanHarness.verifyComposerRewriteSafe({
+    input: createVerificationInput("Authorization: Bearer [PWM_1]\nkubeconfig token: [KUBECONFIG_SECRET_1]"),
+    expectedText: "Authorization: Bearer [PWM_1]\nkubeconfig token: [KUBECONFIG_SECRET_1]",
+    originalText: "Authorization: Bearer RawSecretABCDE12345\nkubeconfig token: OriginalSecretXYZ98765",
+    findings: [
+      { raw: "RawSecretABCDE12345", severity: "high", score: 90 },
+      { raw: "OriginalSecretXYZ98765", severity: "high", score: 90 }
+    ],
+    context: "placeholder-rescan"
+  });
+  assert.strictEqual(
+    placeholderOnly.ok,
+    true,
+    "rewrite verification should not fail just because sanitized placeholders rescan as sensitive values"
+  );
+
+  const preservedLabel = await placeholderRescanHarness.verifyComposerRewriteSafe({
+    input: createVerificationInput("GCP project_id: [GCP_PROJECT_1]"),
+    expectedText: "GCP project_id: [GCP_PROJECT_1]",
+    originalText: "GCP project_id: my-prod-project",
+    findings: [
+      {
+        raw: "project_id",
+        type: "USERNAME",
+        severity: "high",
+        score: 99,
+        method: ["structured-metadata", "csv-row", "full-value", "exact-key"]
+      },
+      { raw: "my-prod-project", type: "GCP_PROJECT", severity: "high", score: 90 }
+    ],
+    context: "preserved-structured-label"
+  });
+  assert.strictEqual(
+    preservedLabel.ok,
+    true,
+    "rewrite verification should allow preserved structured key labels next to redacted values"
+  );
+
+  const sanitizedConnectionString = await placeholderRescanHarness.verifyComposerRewriteSafe({
+    input: createVerificationInput("DATABASE_URL=postgres://admin:[PWM_1]@db.prod.internal:5432/app"),
+    expectedText: "DATABASE_URL=postgres://admin:[PWM_1]@db.prod.internal:5432/app",
+    originalText: "DATABASE_URL=postgres://admin:RawSecretABCDE12345@db.prod.internal:5432/app",
+    findings: [{ raw: "RawSecretABCDE12345", severity: "high", score: 90 }],
+    context: "sanitized-connection-string"
+  });
+  assert.strictEqual(
+    sanitizedConnectionString.ok,
+    true,
+    "rewrite verification should allow sanitized connection strings whose secret segment is a placeholder"
+  );
+
+  const sanitizedJdbc = await placeholderRescanHarness.verifyComposerRewriteSafe({
+    input: createVerificationInput(
+      "JDBC_URL=jdbc:sqlserver://sql.corp.internal:1433;databaseName=payroll;user=[USERNAME_1];password=[PWM_1]"
+    ),
+    expectedText:
+      "JDBC_URL=jdbc:sqlserver://sql.corp.internal:1433;databaseName=payroll;user=[USERNAME_1];password=[PWM_1]",
+    originalText:
+      "JDBC_URL=jdbc:sqlserver://sql.corp.internal:1433;databaseName=payroll;user=svc;password=RawSecretABCDE12345",
+    findings: [{ raw: "RawSecretABCDE12345", severity: "high", score: 90 }],
+    context: "sanitized-jdbc"
+  });
+  assert.strictEqual(
+    sanitizedJdbc.ok,
+    true,
+    "rewrite verification should allow sanitized JDBC lines when the detector range stops before placeholders"
+  );
 }
 
 async function testMultilineCollapseRetryAndFailures() {
@@ -1019,6 +1222,144 @@ async function testTransactionalRewriteFallbackRemovesRawDuplicate() {
   assert.strictEqual(calls.directWrites, 1, "raw+redacted duplicate should force one direct rewrite");
 }
 
+async function testSubmitTransactionalHelperFailsClosedOnRawRestore() {
+  const factory = new Function(
+    [
+      "const calls = { transactional: 0, failures: 0, exactChecks: 0, refreshes: 0 };",
+      "async function rewriteComposerTransactionally(_input, originalText) { calls.transactional += 1; return { ok: false, actual: originalText, strategy: 'raw-restore-detected' }; }",
+      "async function ensureExactComposerState() { calls.exactChecks += 1; return true; }",
+      "function collectFailureDetails(_input, expectedText, actualText, context) { return { expectedText, actualText, context }; }",
+      "async function showRewriteFailure(context, details) { calls.failures += 1; calls.failureContext = context; calls.failureDetails = details; }",
+      "function refreshBadgeFromCurrentInput() { calls.refreshes += 1; }",
+      extractFunctionSource(contentSource, "applySubmitRedactionTransactionally"),
+      "return { applySubmitRedactionTransactionally, calls };"
+    ].join("\n\n")
+  );
+  const { applySubmitRedactionTransactionally, calls } = factory();
+  const rawText = "OPENAI_API_KEY=sk-proj-rawrestoresecretvalue";
+  const redactedText = "OPENAI_API_KEY=[PWM_1]";
+
+  const ok = await applySubmitRedactionTransactionally(
+    { text: rawText },
+    rawText,
+    redactedText,
+    "submit",
+    [{ raw: rawText }]
+  );
+
+  assert.strictEqual(ok, false, "submit transactional helper should fail closed when raw restore is detected");
+  assert.strictEqual(calls.transactional, 1, "submit helper should attempt the transactional rewrite path");
+  assert.strictEqual(calls.failures, 1, "submit helper should show a rewrite failure instead of allowing send");
+  assert.strictEqual(calls.exactChecks, 0, "exact verification should not bless a failed transactional rewrite");
+  assert.strictEqual(calls.failureDetails.actualText, rawText, "failure details should preserve the unsafe actual text summary input");
+}
+
+async function testStaleTypedRewriteFailureKeepsSanitizedEditorUsable() {
+  const createHarness = (options = {}) => {
+    const factory = new Function(
+      "deps",
+      [
+        "const calls = { applies: 0, exactChecks: 0, failures: 0, refreshes: 0 };",
+        "let typedRewriteGeneration = 0;",
+        "const ANY_PLACEHOLDER_TOKEN_REGEX = /\\[(?:PWM|NET|PUB_HOST)_\\d+\\]/g;",
+        "const PLACEHOLDER_TOKEN_REGEX = ANY_PLACEHOLDER_TOKEN_REGEX;",
+        "function normalizeComposerText(value) { return deps.normalizeComposerText(value); }",
+        "function getInputText(input) { return normalizeComposerText(input.text || ''); }",
+        "function analyzeText(text) { return deps.analyzeText(text); }",
+        "function isHighConfidenceRewriteFinding(finding) { return finding?.severity === 'high' || Number(finding?.score) >= 80; }",
+        "function deriveRewriteCaretOffset() { return 0; }",
+        "async function applyComposerText(input, expectedText) {",
+        "  calls.applies += 1;",
+        "  input.text = normalizeComposerText(expectedText);",
+        "  if (deps.simulateNewerRewrite) {",
+        "    typedRewriteGeneration += 1;",
+        "    input.text = normalizeComposerText(deps.newerText);",
+        "  }",
+        "  return { ok: true, actual: input.text };",
+        "}",
+        "async function ensureExactComposerState() { calls.exactChecks += 1; return false; }",
+        "async function showRewriteFailure(context, details) { calls.failures += 1; calls.failureContext = context; calls.failureDetails = details; }",
+        "function collectFailureDetails(_input, expectedText, actualText, context) { return { expectedText, actualText, context }; }",
+        "function refreshBadgeFromCurrentInput() { calls.refreshes += 1; }",
+        extractFunctionSource(contentSource, "containsVisiblePlaceholderToken"),
+        extractFunctionSource(contentSource, "hasUnsafeVisibleSecret"),
+        extractFunctionSource(contentSource, "shouldSuppressStaleTypedRewriteFailure"),
+        extractFunctionSource(contentSource, "applyTypedInterceptionRewrite"),
+        "return { applyTypedInterceptionRewrite, calls };"
+      ].join("\n\n")
+    );
+    return factory({
+      normalizeComposerText: ComposerHelpers.normalizeComposerText,
+      analyzeText: options.analyzeText || (() => ({ secretFindings: [], findings: [] })),
+      simulateNewerRewrite: Boolean(options.simulateNewerRewrite),
+      newerText: options.newerText || ""
+    });
+  };
+
+  const sanitizedHarness = createHarness({
+    simulateNewerRewrite: true,
+    newerText: "TYPED_EDITOR_KEY=[PWM_2]"
+  });
+  const sanitizedInput = { text: "" };
+  const sanitizedOk = await sanitizedHarness.applyTypedInterceptionRewrite(
+    sanitizedInput,
+    "TYPED_EDITOR_KEY=[PWM_1]",
+    "",
+    { end: 0 },
+    "input"
+  );
+
+  assert.strictEqual(sanitizedOk, false, "stale typed rewrite should stop its own caller");
+  assert.strictEqual(sanitizedHarness.calls.failures, 0, "newer sanitized text should not trigger a stale fail-closed modal");
+  assert.strictEqual(sanitizedInput.text, "TYPED_EDITOR_KEY=[PWM_2]");
+
+  const unsafeHarness = createHarness({
+    simulateNewerRewrite: true,
+    newerText: "TYPED_EDITOR_KEY=[PWM_2] sk-proj-StillRawSecretValue1234567890abcdef",
+    analyzeText: (text) => {
+      const match = String(text || "").match(/sk-proj-[A-Za-z0-9_-]+/);
+      const secretFindings = match
+        ? [{ raw: match[0], severity: "high", score: 95 }]
+        : [];
+      return { secretFindings, findings: secretFindings };
+    }
+  });
+  const unsafeOk = await unsafeHarness.applyTypedInterceptionRewrite(
+    { text: "" },
+    "TYPED_EDITOR_KEY=[PWM_1]",
+    "",
+    { end: 0 },
+    "input"
+  );
+
+  assert.strictEqual(unsafeOk, false);
+  assert.strictEqual(unsafeHarness.calls.failures, 1, "stale visible raw secret must still fail closed");
+}
+
+function testTypedDebugDiagnosticsSummarizeOnly() {
+  const rawSecret = "password=TypedDebugSecretValue1234567890";
+  const redactedText = "password=[PWM_1]";
+  const facade = ContentDebugFacade.createContentDebugFacade({
+    DebugLogger: globalThis.PWM.DebugLogger,
+    normalizeText: (value) => String(value || ""),
+    normalizeEditorInnerText: (value) => String(value || ""),
+    normalizeVisiblePlaceholders,
+    placeholderTokenRegex: PLACEHOLDER_TOKEN_REGEX,
+    getInputText: (input) => input.text
+  });
+  const snapshot = facade.collectComposerDebugSnapshot(
+    { text: redactedText, innerText: rawSecret, textContent: rawSecret },
+    rawSecret,
+    redactedText
+  );
+  const serialized = JSON.stringify(snapshot);
+
+  assert.strictEqual(serialized.includes(rawSecret), false, "typed diagnostics must not expose raw typed secrets");
+  assert.strictEqual(snapshot.expected.length, rawSecret.length);
+  assert.strictEqual(snapshot.writeText.placeholderCount, 1);
+  assert.strictEqual(snapshot.innerText.length, rawSecret.length);
+}
+
 function run() {
   testBeforeInputGuardStaysConservative();
   testTypedAssignmentSecretIsCaughtBeforeCommit();
@@ -1041,12 +1382,15 @@ function run() {
   testPauseBypassGatesPasteAndSendAfterPolicy();
   testContentScriptBindsBeforeInputAndKeepsFallbackGuard();
   testPerplexityStyleRewriteVerificationToleratesWhitespaceNormalization();
+  testTypedDebugDiagnosticsSummarizeOnly();
   return Promise.resolve()
     .then(() => testGenericRewriteVerificationSafeCases())
     .then(() => testMultilineCollapseRetryAndFailures())
     .then(() => testRewriteVerificationFailClosedCases())
     .then(() => testRewriteFailureModalSuppression())
     .then(() => testTransactionalRewriteFallbackRemovesRawDuplicate())
+    .then(() => testSubmitTransactionalHelperFailsClosedOnRawRestore())
+    .then(() => testStaleTypedRewriteFailureKeepsSanitizedEditorUsable())
     .then(() => {
       console.log("PASS typed beforeinput interception regressions");
     });

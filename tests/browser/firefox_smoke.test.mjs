@@ -3,6 +3,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { createSign, generateKeyPairSync, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import https from "node:https";
+import { createRequire } from "node:module";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -12,6 +13,8 @@ import { findExecutable } from "./chrome_smoke.test.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "../..");
+const require = createRequire(import.meta.url);
+const { sanitizeBrowserQaText } = require(path.join(repoRoot, "tests/helpers/browserQaAssertions.js"));
 const extensionDir = path.join(repoRoot, "dist", "firefox");
 const smokeTimeoutMs = Number(process.env.LEAKGUARD_FIREFOX_SMOKE_TIMEOUT_MS || 60000);
 const webdriverCommandTimeoutMs = Number(process.env.LEAKGUARD_FIREFOX_WEBDRIVER_TIMEOUT_MS || 30000);
@@ -27,7 +30,8 @@ const syntheticSecrets = {
   github: `ghp_${"C".repeat(36)}`,
   stripe: `sk_live_${"D".repeat(32)}`,
   databasePassword: "SuperFakePassword123",
-  publicIp: "8.8.8.8"
+  publicIp: "8.8.8.8",
+  privateIp: "192.168.1.10"
 };
 
 const promptLines = [
@@ -38,7 +42,7 @@ const promptLines = [
   `STRIPE_SECRET_KEY=${syntheticSecrets.stripe}`,
   `DATABASE_URL=postgres://admin:${syntheticSecrets.databasePassword}@db.example.com:5432/customerdb`,
   `PUBLIC_IP=${syntheticSecrets.publicIp}`,
-  "PRIVATE_IP=192.168.1.10",
+  `PRIVATE_IP=${syntheticSecrets.privateIp}`,
   "PLACEHOLDER_ALREADY=[PWM_1]"
 ];
 const promptPayload = promptLines.join("\n");
@@ -48,8 +52,26 @@ const rawValues = [
   syntheticSecrets.github,
   syntheticSecrets.stripe,
   syntheticSecrets.databasePassword,
-  syntheticSecrets.publicIp
+  syntheticSecrets.publicIp,
+  syntheticSecrets.privateIp
 ];
+const firefoxSmokeSecretCanaries = Object.freeze([
+  { id: "LGQA_FIREFOX_OPENAI_001", value: syntheticSecrets.openAi, expectedPlaceholder: "[PWM_N]" },
+  { id: "LGQA_FIREFOX_ANTHROPIC_001", value: syntheticSecrets.anthropic, expectedPlaceholder: "[PWM_N]" },
+  { id: "LGQA_FIREFOX_GITHUB_001", value: syntheticSecrets.github, expectedPlaceholder: "[PWM_N]" },
+  { id: "LGQA_FIREFOX_STRIPE_001", value: syntheticSecrets.stripe, expectedPlaceholder: "[PWM_N]" },
+  { id: "LGQA_FIREFOX_DB_PASSWORD_001", value: syntheticSecrets.databasePassword, expectedPlaceholder: "[PWM_N]" },
+  { id: "LGQA_FIREFOX_PUBLIC_IP_001", value: syntheticSecrets.publicIp, expectedPlaceholder: "[PUB_HOST_N]" },
+  { id: "LGQA_FIREFOX_PRIVATE_IP_001", value: syntheticSecrets.privateIp, expectedPlaceholder: "[PRIVATE_IP_N]" }
+]);
+
+function firefoxSmokeCanaryLabel(raw) {
+  return firefoxSmokeSecretCanaries.find((canary) => canary.value === raw)?.id || "raw synthetic canary";
+}
+
+function sanitizeFirefoxSmokeDiagnostic(value) {
+  return sanitizeBrowserQaText(value, firefoxSmokeSecretCanaries);
+}
 
 function assertBuiltExtensionExists() {
   const manifestPath = path.join(extensionDir, "manifest.json");
@@ -456,7 +478,7 @@ async function getFirefoxExtensionOrigin(profileDir, extensionId) {
 
 function assertNoRawSyntheticValues(text, label) {
   for (const raw of rawValues) {
-    assert.equal(String(text || "").includes(raw), false, `${label} leaked raw synthetic value ${raw}`);
+    assert.equal(String(text || "").includes(raw), false, `${label} leaked ${firefoxSmokeCanaryLabel(raw)}`);
   }
 }
 
@@ -561,6 +583,15 @@ class WebDriverClient {
   async clickElement(selector) {
     const elementId = await this.findElement(selector);
     await this.request("POST", `/session/${this.sessionId}/element/${elementId}/click`, {});
+  }
+
+  async sendKeys(selector, text) {
+    const elementId = await this.findElement(selector);
+    const value = Array.from(String(text || ""));
+    await this.request("POST", `/session/${this.sessionId}/element/${elementId}/value`, {
+      text: String(text || ""),
+      value
+    });
   }
 
   async setFileInputFiles(selector, files) {
@@ -794,9 +825,7 @@ async function openFirefoxLocalProtectedHarness(webdriver, localOrigin) {
 }
 
 async function runFirefoxPromptRedactionQa(webdriver) {
-  const result = await webdriver.executeAsync(`const payload = arguments[0];
-    const rawValues = arguments[1];
-    const done = arguments[arguments.length - 1];
+  await webdriver.execute(`const payload = arguments[0];
     const textarea = document.querySelector('#prompt-textarea');
     textarea.focus();
 
@@ -806,21 +835,19 @@ async function runFirefoxPromptRedactionQa(webdriver) {
       inputType: 'insertText',
       data: payload
     }));
+    return true;`, [promptPayload]);
 
-    const started = Date.now();
-    const timer = setInterval(() => {
-      const redactButton = Array.from(
-        document.querySelectorAll('.pwm-modal-backdrop button, .pwm-modal button')
-      ).find((button) => /Redact/i.test(button.textContent || ''));
-      if (redactButton) redactButton.click();
-
+  const result = await waitFor(async () => {
+    const state = await webdriver.execute(`const rawValues = arguments[0];
+      const textarea = document.querySelector('#prompt-textarea');
       const value = textarea.value || '';
       const first = /^OPENAI_API_KEY=(\\[PWM_\\d+\\])$/m.exec(value)?.[1] || '';
       const repeat = /^OPENAI_API_KEY_REPEAT=(\\[PWM_\\d+\\])$/m.exec(value)?.[1] || '';
-      const ready = /\\[PWM_\\d+\\]/.test(value) && /PUBLIC_IP=\\[(PUB_HOST|NET)_\\d+\\]/.test(value);
+      const ready = /\\[PWM_\\d+\\]/.test(value) &&
+        /PUBLIC_IP=\\[(PUB_HOST|NET)_\\d+\\]/.test(value) &&
+        /PRIVATE_IP=\\[PRIVATE_IP_\\d+\\]/.test(value);
       if (ready) {
-        clearInterval(timer);
-        done({
+        return {
           value,
           firstPlaceholder: first,
           lineCount: value.split('\\n').length,
@@ -837,13 +864,22 @@ async function runFirefoxPromptRedactionQa(webdriver) {
           repeatedPlaceholderReused: Boolean(first && repeat && first === repeat),
           existingPlaceholderPreserved: /^PLACEHOLDER_ALREADY=\\[PWM_1\\]$/m.test(value),
           publicIpRedacted: /PUBLIC_IP=\\[(PUB_HOST|NET)_\\d+\\]/.test(value),
-          privateIpVisible: value.includes('PRIVATE_IP=192.168.1.10')
-        });
-      } else if (Date.now() - started > 15000) {
-        clearInterval(timer);
-        done({ error: 'Timed out waiting for prompt redaction', value });
+          privateIpRedacted: /^PRIVATE_IP=\\[PRIVATE_IP_\\d+\\]$/m.test(value)
+        };
       }
-    }, 50);`, [promptPayload, rawValues]);
+      return {
+        value,
+        hasRedactButton: Boolean(Array.from(
+          document.querySelectorAll('.pwm-modal-backdrop button, .pwm-modal button')
+        ).find((button) => /Redact/i.test(button.textContent || '')))
+      };`, [rawValues]);
+
+    if (state?.firstPlaceholder) return state;
+    if (state?.hasRedactButton) {
+      await webdriver.sendKeys(".pwm-modal-backdrop button.pwm-btn-primary", "\uE007");
+    }
+    return null;
+  }, "Firefox prompt redaction", 15000);
 
   assert.equal(result.error, undefined, result.error || "Firefox prompt redaction failed");
   assert.equal(result.hasAnyRaw, false, "Firefox prompt still contains raw synthetic values");
@@ -857,32 +893,29 @@ async function runFirefoxPromptRedactionQa(webdriver) {
   assert.equal(result.repeatedPlaceholderReused, true);
   assert.equal(result.existingPlaceholderPreserved, true);
   assert.equal(result.publicIpRedacted, true);
-  assert.equal(result.privateIpVisible, true);
+  assert.equal(
+    result.privateIpRedacted,
+    true,
+    sanitizeFirefoxSmokeDiagnostic(result.value || "Firefox prompt did not redact private IP")
+  );
   return result;
 }
 
 async function runFirefoxSecureRevealQa(webdriver, extensionOrigin, placeholder) {
-  const revealState = await webdriver.executeAsync(`const placeholder = arguments[0];
-    const rawValues = arguments[1];
-    const done = arguments[arguments.length - 1];
+  await webdriver.execute(`const placeholder = arguments[0];
     const echo = document.querySelector('#echo-zone');
     echo.textContent = 'Assistant echoed ' + placeholder + ' after redaction.';
-    const started = Date.now();
-    const timer = setInterval(() => {
-      const chip = document.querySelector('#echo-zone .pwm-secret');
-      if (chip) {
-        clearInterval(timer);
-        chip.click();
-        setTimeout(() => done({
-          chipText: chip.textContent,
-          pageHasRaw: rawValues.some((raw) => document.body.innerText.includes(raw))
-        }), 250);
-      } else if (Date.now() - started > 5000) {
-        clearInterval(timer);
-        done({ error: 'Timed out waiting for hydrated placeholder chip' });
-      }
-    }, 50);`, [placeholder, rawValues]);
-  assert.equal(revealState.error, undefined, revealState.error || "Firefox secure reveal chip failed");
+    return true;`, [placeholder]);
+  const revealState = await waitFor(async () => {
+    const state = await webdriver.execute(`return {
+      hasChip: Boolean(document.querySelector('#echo-zone .pwm-secret')),
+      chipText: document.querySelector('#echo-zone .pwm-secret')?.textContent || '',
+      pageHasRaw: arguments[0].some((raw) => document.body.innerText.includes(raw))
+    };`, [rawValues]);
+    if (!state.hasChip) return null;
+    await webdriver.clickElement("#echo-zone .pwm-secret");
+    return state;
+  }, "Firefox hydrated placeholder chip", 5000);
   assert.equal(revealState.chipText, placeholder);
   assert.equal(revealState.pageHasRaw, false);
 
@@ -952,7 +985,12 @@ async function runFirefoxScannerQa(webdriver, extensionOrigin, tempDir, download
         clicked = true;
         scanButton.click();
       }
-      if (/Scan complete/i.test(status) && /\\[PWM_\\d+\\]/.test(preview)) {
+      if (
+        /Scan complete/i.test(status) &&
+        /\\[PWM_\\d+\\]/.test(preview) &&
+        /PUBLIC_IP=\\[(PUB_HOST|NET)_\\d+\\]/.test(preview) &&
+        /PRIVATE_IP=\\[PRIVATE_IP_\\d+\\]/.test(preview)
+      ) {
         clearInterval(timer);
         done({
           status,
@@ -965,7 +1003,7 @@ async function runFirefoxScannerQa(webdriver, extensionOrigin, tempDir, download
             /^DATABASE_URL=postgres:\\/\\/admin:\\[PWM_\\d+\\]@db\\.example\\.com:5432\\/customerdb$/m
               .test(preview),
           publicIpRedacted: /PUBLIC_IP=\\[(PUB_HOST|NET)_\\d+\\]/.test(preview),
-          privateIpVisible: preview.includes('PRIVATE_IP=192.168.1.10')
+          privateIpRedacted: /^PRIVATE_IP=\\[PRIVATE_IP_\\d+\\]$/m.test(preview)
         });
       } else if (Date.now() - started > 15000) {
         clearInterval(timer);
@@ -980,7 +1018,7 @@ async function runFirefoxScannerQa(webdriver, extensionOrigin, tempDir, download
   assert.equal(supported.stripeRedacted, true);
   assert.equal(supported.databasePasswordRedacted, true);
   assert.equal(supported.publicIpRedacted, true);
-  assert.equal(supported.privateIpVisible, true);
+  assert.equal(supported.privateIpRedacted, true);
 
   const redactedText = await clickDownloadAndReadText(
     webdriver,
@@ -989,9 +1027,21 @@ async function runFirefoxScannerQa(webdriver, extensionOrigin, tempDir, download
     "leakguard-firefox-qa.redacted.env"
   );
   assertNoRawSyntheticValues(redactedText, "Firefox scanner redacted download");
-  assert.match(redactedText, /^OPENAI_API_KEY=\[PWM_\d+\]$/m);
-  assert.match(redactedText, /^PUBLIC_IP=\[(PUB_HOST|NET)_\d+\]$/m);
-  assert.ok(redactedText.includes("PRIVATE_IP=192.168.1.10"));
+  assert.equal(
+    /^OPENAI_API_KEY=\[PWM_\d+\]$/m.test(redactedText),
+    true,
+    "Firefox scanner redacted download should rewrite OPENAI_API_KEY to [PWM_N]"
+  );
+  assert.equal(
+    /^PUBLIC_IP=\[(PUB_HOST|NET)_\d+\]$/m.test(redactedText),
+    true,
+    "Firefox scanner redacted download should rewrite public IP to [PUB_HOST_N]"
+  );
+  assert.equal(
+    /^PRIVATE_IP=\[PRIVATE_IP_\d+\]$/m.test(redactedText),
+    true,
+    "Firefox scanner redacted download should rewrite private IP to [PRIVATE_IP_N]"
+  );
 
   const reportText = await clickDownloadAndReadText(
     webdriver,
@@ -1004,7 +1054,11 @@ async function runFirefoxScannerQa(webdriver, extensionOrigin, tempDir, download
   assert.equal(report.product, "LeakGuard");
   assert.equal(report.localOnly, true);
   assert.ok(Array.isArray(report.findings));
-  assert.match(report.redactedPreview || "", /\[(PWM|PUB_HOST|NET)_\d+\]/);
+  assert.equal(
+    /\[(PWM|PUB_HOST|NET)_\d+\]/.test(report.redactedPreview || ""),
+    true,
+    "Firefox scanner report should contain redacted placeholders"
+  );
   assert.equal(JSON.stringify(report).includes("redactedText"), false);
 
   await webdriver.clickElement("#clear-btn");

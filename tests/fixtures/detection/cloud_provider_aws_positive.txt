@@ -1,0 +1,4 @@
+AWS account ID 123456789012 owns arn:aws:iam::123456789012:role/AdminRole.
+KMS arn:aws:kms:eu-central-1:123456789012:key/11111111-2222-3333-4444-555555555555 protects data.
+Backup bucket s3://company-prod-backup/path/file.txt and company-prod-backup.s3.eu-central-1.amazonaws.com are internal.
+EC2 ids i-0123456789abcdef0 vpc-0123456789abcdef0 subnet-0123456789abcdef0 sg-0123456789abcdef0 eni-0123456789abcdef0 vol-0123456789abcdef0 snap-0123456789abcdef0 ami-0123456789abcdef0 rtb-0123456789abcdef0 nat-0123456789abcdef0 igw-0123456789abcdef0 eipalloc-0123456789abcdef0.

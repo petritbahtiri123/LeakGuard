@@ -12,11 +12,19 @@ Use this file as a short handoff log for AI-made changes. Add newest entries fir
 ```
 
 ## Entries
+<<<<<<< HEAD
 ### 2026-06-19 - v2.1.0 release prep
 - Goal: Bump LeakGuard release/version metadata to `2.1.0` for Chrome Web Store publishing.
 - Files: `package.json`, `package-lock.json`, `manifests/base.json`, `docs/CODEX_CHANGELOG.md`
 - Tests: `npm test` -> pass after temporarily moving pre-existing untracked manual QA fixtures that made ESLint parse prose `.js` files; `npm run docs:check-links` -> pass; `npm run smoke:chrome` -> pass; `npm run smoke:firefox` -> pass; `npm run qa:browser` -> pass; `npm run release:artifacts` -> pass; `npm run test:release-artifacts` -> pass; `git diff --check` -> pass with existing AI artifact line-ending warnings.
 - Notes: Release packaging only; no runtime behavior, detection threshold, Onix retraining, permission, CSP, or generated manifest changes were made by hand. Release ZIP content audit found no tests, manual QA packs, source maps, reports, screenshots, or synthetic secret-pack markers; the expected packaged OCR proof fixture remains present.
+=======
+### 2026-06-18 - Codex context and playbook refresh
+- Goal: Updated agent-facing context, architecture lifecycle, modularized file map, runtime script-order rules, Onix training/eval guidance, fail-closed/debug safety guidance, and reusable Codex playbooks after recent modularization and QA changes.
+- Files: `AGENTS.md`, `docs/CODEX_FAST_CONTEXT.md`, `docs/CODEX_CONTEXT_ROUTER.md`, `docs/REPO_MAP.md`, `docs/BUG_PLAYBOOK.md`, `docs/AI_ASSIST.md`, `ai/README.md`, `docs/codex-playbooks/*`, `docs/FILE_UPLOAD_SCANNING_GUIDE.md`, `docs/file-handoff-architecture.md`, `docs/RELEASE_QA_CHECKLIST.md`, `docs/DOCUMENTATION_ROADMAP.md`, `docs/README.md`
+- Tests: `npm run docs:check-links` -> pass; `node tests/runtime_script_order.test.js` -> pass; `node tests/runtime_script_order_contract.test.js` -> pass; `node tests/onix_dataset.test.js` -> pass; `git diff --check` -> pass with CRLF normalization warnings for touched Markdown files
+- Notes: Documentation-only change. No runtime behavior, detector thresholds, tests, model artifacts, generated outputs, package lock, telemetry posture, or local-only behavior changed.
+>>>>>>> 64e443abecc3f31ad86f0f8d2076537e900a1889
 
 ### 2026-06-10 - Phase 11G synthetic OCR recognition proof
 - Goal: Prove local OCR recognition against a tiny packaged synthetic PNG through an explicit worker probe while keeping scanner UI, protected-site uploads, and user image processing disabled.

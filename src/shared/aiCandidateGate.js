@@ -18,12 +18,31 @@
     "client_secret",
     "connection_string",
     "credential",
+    "email",
+    "login",
+    "principal",
     "passwd",
     "password",
     "private_key",
     "pwd",
+    "samaccountname",
     "secret",
-    "token"
+    "service_account",
+    "token",
+    "upn",
+    "user_name",
+    "username"
+  ];
+
+  const IDENTITY_CONTEXT_WORDS = [
+    "email",
+    "login",
+    "principal",
+    "samaccountname",
+    "service_account",
+    "upn",
+    "user_name",
+    "username"
   ];
 
   const SAFE_KEYS = new Set([
@@ -153,6 +172,13 @@
     if (/[^A-Za-z0-9]/.test(value)) score += 6;
     if (looksStructuredLikeSecret?.(value)) score += 16;
     if (hasKeyword(`${key} ${contextText}`, SECRET_CONTEXT_WORDS)) score += 18;
+    if (
+      hasKeyword(`${key} ${contextText}`, IDENTITY_CONTEXT_WORDS) &&
+      value.length >= 6 &&
+      /[.@_\\-]/.test(value)
+    ) {
+      score += 14;
+    }
     if (hasKeyword(`${key} ${contextText}`, [...SAFE_KEYS])) score -= 24;
     if (candidate?.kind === "urlCredential") score += 16;
     if (candidate?.kind === "naturalLanguage") score += 14;

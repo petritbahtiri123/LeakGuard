@@ -386,7 +386,12 @@ async function testDebugOutputSafety() {
   assertForbiddenAbsent(sanitizedJson, DEBUG_FORBIDDEN_STRINGS, "debug logger payload");
   assert.strictEqual(sanitized.counts.findings, 3);
   assert.strictEqual(sanitized.counts.placeholders, 2);
+<<<<<<< HEAD
   assert.strictEqual(sanitized.reason, "sanitized_handoff_failed");
+=======
+  assert.strictEqual(typeof sanitized.reason, "object");
+  assert.strictEqual(sanitized.reason.redacted, true);
+>>>>>>> 64e443abecc3f31ad86f0f8d2076537e900a1889
   assert.deepStrictEqual(sanitized.password, {
     type: "string",
     length: "DebugPassword123!".length,
@@ -540,11 +545,22 @@ function testRuntimeOrderProtectsNewSurfaces() {
   const baseManifest = JSON.parse(fs.readFileSync(path.join(root, "manifests/base.json"), "utf8"));
   const firefoxManifest = JSON.parse(fs.readFileSync(path.join(root, "manifests/firefox.json"), "utf8"));
   const serviceWorker = fs.readFileSync(path.join(root, "src/background/service_worker.js"), "utf8");
+<<<<<<< HEAD
   assert.deepStrictEqual(baseManifest.content_scripts[0].js, contentScripts);
   assert.deepStrictEqual(firefoxManifest.background.scripts, backgroundScripts);
   for (const script of backgroundScripts) {
     assert.ok(serviceWorker.includes(`"${script.replace(/^background\//, "")}"`), `service worker missing ${script}`);
   }
+=======
+  const importScriptsMatch = serviceWorker.match(/importScripts\(([\s\S]*?)\);/);
+  assert.ok(importScriptsMatch, "service worker should declare importScripts()");
+  const serviceWorkerScripts = [...importScriptsMatch[1].matchAll(/"([^"]+)"/g)].map(([, script]) =>
+    path.posix.normalize(path.posix.join("background", script))
+  );
+  assert.deepStrictEqual(baseManifest.content_scripts[0].js, contentScripts);
+  assert.deepStrictEqual(firefoxManifest.background.scripts, backgroundScripts);
+  assert.deepStrictEqual(serviceWorkerScripts, backgroundScripts);
+>>>>>>> 64e443abecc3f31ad86f0f8d2076537e900a1889
 }
 
 (async () => {

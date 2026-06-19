@@ -2,6 +2,8 @@
 
 Date: 2026-06-01
 
+> Historical status note, 2026-06-18: use `docs/REPO_MAP.md`, `docs/CODEX_FAST_CONTEXT.md`, and `docs/codex-playbooks/INDEX.md` for current Codex routing and module ownership. This plan is retained as review history. Major modularization is mostly complete; line counts, target modules, and "still owns" statements below may be stale unless revalidated against source.
+
 This report is a behavior-preserving review plan. It does not recommend a large immediate refactor, deletion pass, or runtime behavior change. The safest path is to keep the current security and privacy invariants intact while moving reviewable pieces out of `src/content/content.js` in small, reversible PRs.
 
 Evidence used:

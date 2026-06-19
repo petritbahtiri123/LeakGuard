@@ -2,6 +2,8 @@
 
 Date: 2026-06-07
 
+> Historical inventory note, 2026-06-18: content modularization has advanced since this inventory. Use `docs/REPO_MAP.md`, `docs/CODEX_FAST_CONTEXT.md`, and runtime order tests for current module ownership and loading rules.
+
 Scope: `tests/content_file_drop_interception.test.js`.
 
 This inventory maps the large source-extraction-heavy file/drop tests before

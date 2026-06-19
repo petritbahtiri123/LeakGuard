@@ -21,6 +21,21 @@
 - A browser startup failure before extension load, such as Chrome/Edge GPU/CDP startup failure or Firefox geckodriver status timeout, is a local or CI environment failure until rerun evidence shows the extension loaded and failed product assertions.
 - Product failures are failures after the extension loads and a LeakGuard behavior assertion fails, such as missing popup controls, missing protected-site panel, raw marker leakage, failed redaction, or missing scanner export behavior.
 
+## Enterprise Metadata Release-Candidate Helper
+
+- Review [Enterprise Metadata Release-Candidate Evidence](ENTERPRISE_METADATA_RELEASE_CANDIDATE_EVIDENCE.md) before making release claims for enterprise/cloud/internal metadata coverage.
+- Record live logged-in provider results in [Enterprise Metadata Live Manual QA Results](qa/ENTERPRISE_METADATA_LIVE_MANUAL_QA_RESULTS.md).
+- Follow [Enterprise Metadata Live Site QA Runbook](qa/ENTERPRISE_METADATA_LIVE_SITE_QA_RUNBOOK.md) for Chrome, Firefox, ChatGPT, Gemini, and failure-handling steps.
+- Local evidence refresh commands:
+
+```powershell
+npm run docs:check-links
+node tests/security.test.js
+node tests/productization.test.js
+node tests/build_targets.test.js
+git diff --check
+```
+
 ## Phase 19 Live Browser QA Status
 
 - Chrome live QA completed: GO for release readiness after human store listing review.
@@ -62,7 +77,8 @@
 - Confirm public IPv4 hosts are replaced with network placeholders.
 - Confirm public IPv4 CIDR ranges are replaced with network placeholders.
 - Confirm related public hosts inside the same subnet keep readable hierarchical placeholders.
-- Confirm private IPs, private CIDRs, loopback, link-local, default route, wildcard mask, and invalid IP-like text stay visible.
+- Confirm private IPs and private CIDRs are replaced with internal metadata placeholders.
+- Confirm loopback, link-local, default route, wildcard mask, documentation ranges, and invalid IP-like text stay visible.
 
 ## Submission Safety
 
@@ -109,12 +125,13 @@
 - Confirm the sanitized attached/uploaded file redacts `API_KEY` and `DB_PASSWORD` with `[PWM_N]` placeholders.
 - Confirm the sanitized attached/uploaded file keeps `token_limit=4096` visible.
 - Confirm the sanitized attached/uploaded file pseudonymizes the public IP with a `[PUB_HOST_N]` placeholder.
-- Confirm the sanitized attached/uploaded file keeps the private IP visible.
+- Confirm the sanitized attached/uploaded file redacts the private IP with a `[PRIVATE_IP_N]` placeholder.
 - Confirm PDF, DOCX, XLSX, and image metadata uploads on protected sites produce sanitized outputs where supported: complete text PDFs may hand off regenerated `.redacted.pdf`, complete DOCX files may hand off regenerated `.redacted.docx`, complete XLSX files may hand off regenerated `.redacted.xlsx`, and unsafe/truncated cases fall back to `.redacted.txt` or block raw upload.
-- Confirm protected-site OCR is off by default and image uploads use metadata-only `.redacted.txt` unless OCR has been explicitly enabled.
-- Enable protected-site OCR, upload an eligible PNG/JPG/JPEG/WEBP image with a synthetic secret, and confirm the site receives `.redacted.png` only when OCR boxes are eligible.
-- Gemini image upload check: with protected-site OCR enabled, upload or drag/drop a PNG/JPG/JPEG/WEBP image with a visible synthetic secret and confirm Gemini receives only the sanitized image file or a safe fallback/download path.
-- Enable protected-site OCR, upload an image with fallback/ineligible boxes or forced OCR failure, and confirm LeakGuard blocks raw upload.
+- Confirm protected-site OCR is settings-controlled and enabled by default for supported image uploads.
+- Upload an eligible PNG/JPG/JPEG/WEBP image with a synthetic secret and confirm the site receives `.redacted.png` only when OCR boxes are eligible.
+- Gemini image upload check: upload or drag/drop a PNG/JPG/JPEG/WEBP image with a visible synthetic secret and confirm Gemini receives only the sanitized image file or a safe fallback/download path.
+- Turn protected-site OCR off and confirm supported image uploads use metadata-only `.redacted.txt` where safe.
+- Upload an image with fallback/ineligible boxes or forced OCR failure and confirm LeakGuard blocks raw upload.
 - Confirm unsupported/binary/invalid UTF-8 files show clear warning or blocking behavior without claiming they were scanned, sanitized, or protected.
 - Confirm unsupported files are not falsely marked as protected or sanitized.
 - Confirm supported text files above 50 MB are blocked from local redaction with a clear too-large warning.
@@ -127,15 +144,15 @@
 
 - Automated local Firefox smoke now covers popup loading, user-managed protected-site add/disable/re-enable/remove, secure reveal, refresh safety, File Scanner supported/unsupported files, and scanner exports. Keep live AI-site Firefox checks manual.
 - In Firefox on ChatGPT, upload supported PDF/DOCX/XLSX/image metadata files and confirm text PDFs hand off `.redacted.pdf` only when complete, DOCX files hand off `.redacted.docx` only when complete, XLSX files hand off `.redacted.xlsx` only when complete, and sanitized `.redacted.txt` fallback remains available where required; image metadata remains `.redacted.txt`.
-- In Firefox on ChatGPT, upload unsupported files such as archive, executable, legacy/macro Office, binary, and invalid UTF-8 text files; confirm LeakGuard does not claim they were scanned/redacted and normal site upload continues only where safe.
-- In Firefox on ChatGPT, confirm unsupported and invalid UTF-8 uploads do not show `Local file not attached`, do not claim sanitization, and do not block native upload by default.
+- In Firefox on ChatGPT, upload unsupported files such as archive, executable, legacy/macro Office, binary, and invalid UTF-8 text files; confirm LeakGuard does not claim they were scanned/redacted and normal site upload continues only where the path is explicitly safe.
+- In Firefox on ChatGPT, confirm unsupported and invalid UTF-8 uploads do not claim sanitization and block raw upload when LeakGuard consumed the event or attempted sanitization.
 - If Firefox ChatGPT login is blocked by account Advanced Security, mark Firefox ChatGPT as limited manual coverage and rely on Chrome live QA plus automated ChatGPT DOM/state tests for release gating.
 - In Firefox on Gemini, drag and drop a supported UTF-8 text file and confirm LeakGuard scans/redacts locally, then hands off a sanitized file or inserts sanitized text without leaking raw content.
 - In Firefox on Gemini, paste a multiline supported `.env` block with synthetic secrets and confirm sanitized placeholders preserve line breaks instead of collapsing into one long line.
 - In Firefox on ChatGPT, Grok, Gemini, Perplexity, and one user-managed protected site, drag and drop a supported UTF-8 text file and confirm either sanitized file handoff or sanitized text insertion succeeds without raw secrets.
 - In Chrome on Gemini, drag and drop supported UTF-8 text/config/code files at small size, 5 MB, 25 MB, and exactly 50 MiB; confirm LeakGuard redacts locally and Gemini receives only sanitized content.
 - In Firefox and Chrome on Gemini, confirm dropping a file does not unexpectedly open the operating system file picker or duplicate upload dialogs.
-- In Firefox on Gemini, drag and drop unsupported or invalid UTF-8 files and confirm LeakGuard warns once, allows native upload where possible, and does not open duplicate picker/modal loops.
+- In Firefox on Gemini, drag and drop unsupported or invalid UTF-8 files and confirm LeakGuard warns once, blocks raw upload when it cannot safely pass through, and does not open duplicate picker/modal loops.
 - In Firefox on Perplexity or another user-managed protected site, type a synthetic password and confirm redaction succeeds without `Rewrite verification failed` when the raw secret is removed and placeholders remain visible.
 - If Claude manual access is unavailable, keep Claude covered through automated selector and smoke tests rather than blocking release QA on manual validation.
 

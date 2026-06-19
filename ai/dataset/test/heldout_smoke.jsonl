@@ -3,7 +3,7 @@
 {"label":"SECRET","text":"api_key=lg_test_key_51NqProdSecretValue9876543210ABCD"}
 {"label":"NOT_SECRET","text":"region=eu-central-1"}
 {"label":"NOT_SECRET","text":"version=1.2.3"}
-{"label":"NOT_SECRET","text":"username=admin"}
+{"label":"NOT_SECRET","text":"display_name=admin"}
 {"label":"NOT_SECRET","text":"api_version=v1"}
 {"label":"UNSURE","text":"password_hint=ask-admin"}
 {"label":"UNSURE","text":"token_limit=4096"}

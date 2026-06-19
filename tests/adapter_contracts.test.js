@@ -22,6 +22,7 @@ require(path.join(repoRoot, "src/content/adapters/claudeAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/grokAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/xAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/index.js"));
+require(path.join(repoRoot, "src/shared/runtime_scripts.js"));
 
 const hostMatching = globalThis.PWM.HostMatching;
 
@@ -55,10 +56,7 @@ function readJson(relativePath) {
 }
 
 function extractDynamicContentScripts() {
-  const source = fs.readFileSync(path.join(repoRoot, "src/background/core.js"), "utf8");
-  const match = /const CONTENT_SCRIPT_FILES = \[([\s\S]*?)\];/.exec(source);
-  assert.ok(match, "expected background CONTENT_SCRIPT_FILES list");
-  return [...match[1].matchAll(/"([^"]+)"/g)].map((entry) => entry[1]);
+  return globalThis.PWM.RuntimeScripts.contentScripts;
 }
 
 function testAdapterRegistryExposesExpectedProviders() {

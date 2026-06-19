@@ -12,13 +12,23 @@
     return options.placeholderSessionIndex || root.PWM?.PlaceholderRehydrator?.placeholderSessionIndex || (() => null);
   }
 
+  function resolveToneIndex(placeholder, placeholderSessionIndex) {
+    const index = Number(placeholderSessionIndex(placeholder));
+    if (Number.isFinite(index) && index >= 1) {
+      return index;
+    }
+
+    const typedMatch = /^\[[A-Z][A-Z0-9_]*_(\d+)\]$/.exec(String(placeholder || ""));
+    return typedMatch ? Number(typedMatch[1]) : null;
+  }
+
   function createSecretSpan(placeholder, options = {}) {
     const doc = getDocument(options);
     const placeholderSessionIndex = getPlaceholderSessionIndex(options);
     const openReveal = typeof options.openReveal === "function" ? options.openReveal : () => Promise.resolve();
     const onRevealError = typeof options.onRevealError === "function" ? options.onRevealError : () => {};
     const span = doc.createElement("span");
-    const index = placeholderSessionIndex(placeholder);
+    const index = resolveToneIndex(placeholder, placeholderSessionIndex);
 
     span.className = "pwm-secret";
     span.dataset.pwmTone = TONES[index ? (index - 1) % TONES.length : 0];
