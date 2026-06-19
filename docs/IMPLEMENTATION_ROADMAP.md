@@ -1,6 +1,6 @@
 # LeakGuard Implementation Roadmap
 
-Updated: 2026-05-31
+Updated: 2026-06-19
 
 This roadmap turns the open items from [deep-research-report.md](deep-research-report.md), [DOCUMENTATION_ROADMAP.md](DOCUMENTATION_ROADMAP.md), and [code-quality-audit.md](code-quality-audit.md) into an implementation sequence.
 
@@ -295,6 +295,69 @@ Acceptance criteria:
 - Each expansion has a clear non-goal boundary.
 - Each expansion starts with tests and public wording review.
 - No expansion introduces backend processing, telemetry, cloud scanning, remote model calls, or remote secret verification.
+
+### Privacy-Preserving Feedback Loop
+
+Status: Future planning only. Do not implement until a later scoped phase explicitly approves UI, policy, and release wording.
+
+Purpose: collect user-initiated feedback without weakening LeakGuard's local-only privacy model.
+
+MVP direction:
+
+- Add a future `Send Feedback` or `Report Issue` action.
+- Generate a metadata-only feedback template locally.
+- Let the user review and edit the report before anything leaves the browser.
+- Send manually through `mailto:` or a GitHub issue/discussion link.
+
+Possible feedback modes:
+
+- `mailto:` feedback link with a metadata-only template.
+- Copy-safe-report button that copies only reviewed metadata.
+- GitHub issue or discussion link with user-controlled report text.
+- Optional future hosted feedback form, only if it remains metadata-only.
+
+Allowed metadata:
+
+- LeakGuard version.
+- Browser name and version.
+- Extension build/channel.
+- Provider or site category.
+- Feature area.
+- Safe reason codes.
+- File count only.
+- Blocked count only.
+- Adapter name.
+- User-written description, with a clear warning not to paste secrets or sensitive content.
+
+Forbidden metadata:
+
+- Prompts or messages.
+- File contents.
+- Filenames.
+- OCR text.
+- Secrets or suspected secrets.
+- Raw URLs with query strings.
+- Raw DOM text.
+- Screenshots by default.
+- Automatic logs or raw diagnostics.
+
+Security notes:
+
+- No background auto-send.
+- No silent telemetry.
+- No remote diagnostics by default.
+- No host permission expansion for the feedback MVP.
+- Before any feedback entry point ships, enterprise and managed deployments must be able to disable or hide feedback UI through managed policy.
+- Any future backend must have a privacy policy, rate limiting, abuse protection, and server-side redaction or rejection for unsafe payloads.
+
+Open questions:
+
+- Use an email alias, GitHub issues, or GitHub discussions?
+- Should feedback be public or private by default?
+- Should feedback live in the popup, options page, or both?
+- Should enterprise builds disable feedback entirely?
+- Should managed policy control feedback visibility?
+- Should safe diagnostics be opt-in for each report?
 
 ## Validation Matrix
 
