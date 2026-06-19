@@ -1540,6 +1540,9 @@
     const sanitizedFile = options.sanitizedFiles || options.sanitizedFile || null;
     const pendingFileDebug = describeSanitizedFileOrBatchForDebug(sanitizedFile);
     const message = options.message || getPendingSanitizedAttachPromptMessage(site);
+    const isMultiFilePendingAttach =
+      (Array.isArray(options.sanitizedFiles) && options.sanitizedFiles.filter(Boolean).length > 1) ||
+      (Array.isArray(options.sanitizedFile) && options.sanitizedFile.filter(Boolean).length > 1);
 
     clearPendingSanitizedAttachPrompt("replaced");
     pendingAttachPromptSite = site;
@@ -1595,7 +1598,7 @@
 
     const title = document.createElement("p");
     title.className = "pwm-pending-attach-title";
-    title.textContent = "LeakGuard sanitized the file";
+    title.textContent = isMultiFilePendingAttach ? "LeakGuard sanitized the files" : "LeakGuard sanitized the file";
 
     const body = document.createElement("p");
     body.className = "pwm-pending-attach-message";
@@ -1622,25 +1625,31 @@
       return button;
     };
 
-    actions.append(
+    actions.appendChild(
       makeButton(
         "pwm-pending-attach-btn pwm-pending-attach-primary",
-        "Attach sanitized file",
+        isMultiFilePendingAttach ? "Attach sanitized files" : "Attach sanitized file",
         "attach-clicked",
         options.onAttachClick
-      ),
-      makeButton(
-        "pwm-pending-attach-btn",
-        "Insert sanitized text instead",
-        "insert-text-clicked",
-        options.onInsertTextClick
-      ),
-      makeButton(
-        "pwm-pending-attach-btn",
-        "Download sanitized copy",
-        "download-clicked",
-        options.onDownloadClick
-      ),
+      )
+    );
+    if (!isMultiFilePendingAttach) {
+      actions.append(
+        makeButton(
+          "pwm-pending-attach-btn",
+          "Insert sanitized text instead",
+          "insert-text-clicked",
+          options.onInsertTextClick
+        ),
+        makeButton(
+          "pwm-pending-attach-btn",
+          "Download sanitized copy",
+          "download-clicked",
+          options.onDownloadClick
+        )
+      );
+    }
+    actions.appendChild(
       makeButton(
         "pwm-pending-attach-btn pwm-pending-attach-secondary",
         "Cancel",
@@ -6542,9 +6551,13 @@
 
   async function performPendingGeminiUserAttach(event, input, sanitizedFile) {
     if (!isGeminiHost() || !sanitizedFile) return false;
+    const sanitizedFiles = Array.isArray(sanitizedFile)
+      ? sanitizedFile.filter(Boolean)
+      : [sanitizedFile].filter(Boolean);
+    if (!sanitizedFiles.length) return false;
 
     debugReveal("gemini-pending-user-attach-start", {
-      sanitizedFile: describeFileForDebug(sanitizedFile)
+      ...describeSanitizedFileOrBatchForDebug(sanitizedFiles)
     });
     clearPendingGeminiGhostIngressClickInterceptor("pending-user-attach");
 
@@ -6564,7 +6577,7 @@
           if (menuButton && openGeminiUploadMenuSafely(menuButton)) {
             debugReveal("gemini-pending-user-attach-menu-opened", {
               menuButton: describeElementForDebug(menuButton, "gemini-upload-menu-button"),
-              sanitizedFile: describeFileForDebug(sanitizedFile)
+              ...describeSanitizedFileOrBatchForDebug(sanitizedFiles)
             });
             menuItem = await waitForGeminiUploadFilesMenuItem(3000);
           }
@@ -6573,7 +6586,7 @@
         if (menuItem && openGeminiUploadFilesMenuItemSafely(menuItem)) {
           debugReveal("gemini-pending-user-attach-menu-item-clicked", {
             menuItem: describeElementForDebug(menuItem, "gemini-upload-files-menu-item"),
-            sanitizedFile: describeFileForDebug(sanitizedFile)
+            ...describeSanitizedFileOrBatchForDebug(sanitizedFiles)
           });
           const waitMs = 2500;
           const guardedInput =
@@ -6624,7 +6637,7 @@
     if (!fileInput) {
       debugReveal("file-handoff:gemini-pending-input-not-found", {
         reason: "pending-user-attach",
-        sanitizedFile: describeFileForDebug(sanitizedFile)
+        ...describeSanitizedFileOrBatchForDebug(sanitizedFiles)
       });
       if (suppressStaleHandoffErrorAfterSuccess("pending_attach_input_not_found", "gemini", sanitizedFile)) {
         return true;
@@ -6637,13 +6650,13 @@
 
     debugReveal("gemini-pending-user-attach-input-captured", {
       input: describeFileInputForDebug(fileInput, "gemini-pending-user-attach-input"),
-      sanitizedFile: describeFileForDebug(sanitizedFile)
+      ...describeSanitizedFileOrBatchForDebug(sanitizedFiles)
     });
     debugReveal("file-handoff:pending-input-captured", {
       site: "gemini",
       reason: "pending-user-attach",
       input: describeFileInputForDebug(fileInput, "gemini-pending-user-attach-input"),
-      sanitizedFile: describeFileForDebug(sanitizedFile)
+      ...describeSanitizedFileOrBatchForDebug(sanitizedFiles)
     });
 
     const transfer = createSanitizedDataTransferForHandoff(sanitizedFile, details);
@@ -6658,23 +6671,39 @@
       logSanitizedFileHandoffFailure(details);
       return false;
     }
+    const assignedFiles = Array.from(fileInput.files || []);
+    const assignmentMatches =
+      assignedFiles.length === sanitizedFiles.length &&
+      sanitizedFiles.every((file, index) => assignedFiles[index] === file);
+    if (!assignmentMatches) {
+      details.failureReason = "input_files_assignment_count_mismatch";
+      logSanitizedFileHandoffFailure(details);
+      debugReveal("file-handoff:gemini-pending-assignment-mismatch", {
+        reason: "pending-user-attach",
+        expectedFileCount: sanitizedFiles.length,
+        assignedFileCount: assignedFiles.length,
+        input: describeFileInputForDebug(fileInput, "gemini-pending-user-attach-input"),
+        ...describeSanitizedFileOrBatchForDebug(sanitizedFiles)
+      });
+      return false;
+    }
 
     debugReveal("gemini-pending-user-attach-assigned", {
       input: describeFileInputForDebug(fileInput, "gemini-pending-user-attach-input"),
-      sanitizedFile: describeFileForDebug(sanitizedFile)
+      ...describeSanitizedFileOrBatchForDebug(sanitizedFiles)
     });
     debugReveal("file-handoff:pending-assigned", {
       site: "gemini",
       reason: "pending-user-attach",
       input: describeFileInputForDebug(fileInput, "gemini-pending-user-attach-input"),
-      sanitizedFile: describeFileForDebug(sanitizedFile)
+      ...describeSanitizedFileOrBatchForDebug(sanitizedFiles)
     });
     clearPendingGeminiSanitizedFileHandoff("assigned");
-    showFileProcessingSuccess("Sanitized file attached.", {
+    showFileProcessingSuccess(sanitizedFiles.length > 1 ? "Sanitized files attached." : "Sanitized file attached.", {
       site: "gemini",
       reason: "pending-attached"
     });
-    setBadge("LeakGuard attached the sanitized file.");
+    setBadge(sanitizedFiles.length > 1 ? "LeakGuard attached the sanitized files." : "LeakGuard attached the sanitized file.");
     hideBadgeSoon(3200);
     refreshBadgeFromCurrentInput();
     return true;
@@ -8960,47 +8989,62 @@
       blocking: true
     });
 
+    const sanitizedFiles = sanitizedItems.map((item) => item.sanitizedFile);
+    const pendingPlan = globalThis.PWM.FileAttachPipeline.createMultiFileAttachPlan(sanitizedFiles, {
+      maxSmallFiles: MAX_MULTI_FILE_SMALL_ATTACHMENTS,
+      maxLargeFiles: MAX_MULTI_FILE_LARGE_ATTACHMENTS,
+      smallMaxBytes: MULTI_FILE_SMALL_MAX_BYTES,
+      supportedMaxBytes: MULTI_FILE_SUPPORTED_MAX_BYTES
+    });
+    const pendingAdapter = !blockedItems.length ? getFileHandoffAdapterForLocation() : null;
+    const canQueuePendingMultiFileHandoff =
+      pendingAdapter &&
+      (pendingAdapter.id === "gemini" || pendingAdapter.id === "grok") &&
+      isFileHandoffAdapterPendingAttachEnabled(pendingAdapter) &&
+      sanitizedFiles.length > 1 &&
+      pendingPlan.ok;
+    const queuePendingMultiFileHandoff = () => {
+      if (!canQueuePendingMultiFileHandoff) return false;
+      const details = createSanitizedFileHandoffDetails(
+        event,
+        sanitizedFiles[0],
+        `${pendingAdapter.id}:multi-file-pending-user-upload-input`
+      );
+      if (!queuePendingSanitizedFileHandoff(pendingAdapter, event, input, sanitizedFiles, details)) return false;
+      controls.showProcessingSuccess("Sanitized files ready for attach.", "multi-file-pending-attach");
+      setBadge(getPendingSanitizedAttachPromptMessage(pendingAdapter.id));
+      hideBadgeSoon(6500);
+      refreshBadgeFromCurrentInput();
+      return true;
+    };
+    const shouldPreferPendingMultiFileHandoff = pendingAdapter?.id === "gemini";
+    if (shouldPreferPendingMultiFileHandoff && queuePendingMultiFileHandoff()) {
+      return {
+        handled: true,
+        ok: true,
+        stage: "pending",
+        strategy: `${pendingAdapter.id}-multi-file-pending-sanitized-file-handoff`,
+        sanitizedCount: sanitizedItems.length,
+        blockedCount: blockedItems.length
+      };
+    }
+
     const handoffOk = await handOffSanitizedFileBatch(
       event,
       input,
-      sanitizedItems.map((item) => item.sanitizedFile),
+      sanitizedFiles,
       context
     );
     if (!handoffOk) {
-      const sanitizedFiles = sanitizedItems.map((item) => item.sanitizedFile);
-      const pendingPlan = globalThis.PWM.FileAttachPipeline.createMultiFileAttachPlan(sanitizedFiles, {
-        maxSmallFiles: MAX_MULTI_FILE_SMALL_ATTACHMENTS,
-        maxLargeFiles: MAX_MULTI_FILE_LARGE_ATTACHMENTS,
-        smallMaxBytes: MULTI_FILE_SMALL_MAX_BYTES,
-        supportedMaxBytes: MULTI_FILE_SUPPORTED_MAX_BYTES
-      });
-      const pendingAdapter = !blockedItems.length ? getFileHandoffAdapterForLocation() : null;
-      if (
-        pendingAdapter &&
-        (pendingAdapter.id === "gemini" || pendingAdapter.id === "grok") &&
-        isFileHandoffAdapterPendingAttachEnabled(pendingAdapter) &&
-        sanitizedFiles.length > 1 &&
-        pendingPlan.ok
-      ) {
-        const details = createSanitizedFileHandoffDetails(
-          event,
-          sanitizedFiles[0],
-          `${pendingAdapter.id}:multi-file-pending-user-upload-input`
-        );
-        if (queuePendingSanitizedFileHandoff(pendingAdapter, event, input, sanitizedFiles, details)) {
-          controls.showProcessingSuccess("Sanitized files ready for attach.", "multi-file-pending-attach");
-          setBadge(getPendingSanitizedAttachPromptMessage(pendingAdapter.id));
-          hideBadgeSoon(6500);
-          refreshBadgeFromCurrentInput();
-          return {
-            handled: true,
-            ok: true,
-            stage: "pending",
-            strategy: `${pendingAdapter.id}-multi-file-pending-sanitized-file-handoff`,
-            sanitizedCount: sanitizedItems.length,
-            blockedCount: blockedItems.length
-          };
-        }
+      if (queuePendingMultiFileHandoff()) {
+        return {
+          handled: true,
+          ok: true,
+          stage: "pending",
+          strategy: `${pendingAdapter.id}-multi-file-pending-sanitized-file-handoff`,
+          sanitizedCount: sanitizedItems.length,
+          blockedCount: blockedItems.length
+        };
       }
       controls.failProcessing("multi_file_sanitized_handoff_failed", "Raw file upload blocked");
       setBadge("Raw file upload blocked");

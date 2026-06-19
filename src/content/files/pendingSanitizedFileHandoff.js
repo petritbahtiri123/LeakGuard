@@ -219,6 +219,22 @@
       if (!transfer || Number(transfer.files?.length || 0) !== pendingFiles.length) { details.failureReason = "data_transfer_failed"; logSanitizedFileHandoffFailure(details); return false; }
       const assigned = handOffSanitizedFileInput(fileInput, transfer, { dispatchInput: true, details });
       if (!assigned) { logSanitizedFileHandoffFailure(details); return false; }
+      const assignedFiles = Array.from(fileInput.files || []);
+      const assignmentMatches =
+        assignedFiles.length === pendingFiles.length &&
+        pendingFiles.every((file, index) => assignedFiles[index] === file);
+      if (!assignmentMatches) {
+        details.failureReason = "input_files_assignment_count_mismatch";
+        logSanitizedFileHandoffFailure(details);
+        debugReveal(`file-handoff:${site}-pending-assignment-mismatch`, {
+          reason,
+          expectedFileCount: pendingFiles.length,
+          assignedFileCount: assignedFiles.length,
+          input: describeFileInputForDebug(fileInput, inputDebugLabel),
+          ...describePendingFilesForDebug(pendingFiles)
+        });
+        return false;
+      }
       debugReveal(`file-handoff:${site}-pending-assigned`, { reason, input: describeFileInputForDebug(fileInput, inputDebugLabel), ...describePendingFilesForDebug(pendingFiles) });
       debugReveal("file-handoff:pending-assigned", { site, reason, input: describeFileInputForDebug(fileInput, inputDebugLabel), ...describePendingFilesForDebug(pendingFiles) });
       clearSite(site, "assigned");

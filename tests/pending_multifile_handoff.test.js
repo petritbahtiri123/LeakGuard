@@ -33,7 +33,7 @@ function createSizedSanitizedFile(name, size) {
   };
 }
 
-function createHarness({ site = "gemini", fileInputs = [], now = 1000 } = {}) {
+function createHarness({ site = "gemini", fileInputs = [], now = 1000, handOffSanitizedFileInput = null } = {}) {
   const debugEvents = [];
   const prompts = [];
   const timers = [];
@@ -96,11 +96,13 @@ function createHarness({ site = "gemini", fileInputs = [], now = 1000 } = {}) {
       const normalized = Array.isArray(files) ? files : [files];
       return { files: normalized };
     },
-    handOffSanitizedFileInput(input, transfer) {
-      input.files = transfer.files;
-      input.events = ["input", "change"];
-      return true;
-    },
+    handOffSanitizedFileInput:
+      handOffSanitizedFileInput ||
+      ((input, transfer) => {
+        input.files = transfer.files;
+        input.events = ["input", "change"];
+        return true;
+      }),
     createSanitizedFileHandoffDetails: () => ({}),
     logSanitizedFileHandoffFailure: (details) => failures.push(details),
     showPendingSanitizedAttachPrompt: (_adapter, pending) => prompts.push(pending),
@@ -260,6 +262,25 @@ function testMissingInputFailsClosedWithoutRawReplay() {
   assert.ok(harness.debugEvents.some((entry) => entry.label === "file-handoff:grok-pending-input-not-found"));
 }
 
+function testGeminiPendingAssignmentCountMismatchDoesNotClearPending() {
+  const files = [createSanitizedFile("one.env"), createSanitizedFile("two.env")];
+  const input = createInput();
+  const harness = createHarness({
+    site: "gemini",
+    fileInputs: [input],
+    handOffSanitizedFileInput(fileInput, transfer) {
+      fileInput.files = [transfer.files[0]];
+      fileInput.events = ["input", "change"];
+      return true;
+    }
+  });
+  assert.strictEqual(harness.manager.queuePendingGeminiSanitizedFileHandoff({ type: "drop", target: {} }, null, files, {}), true);
+  assert.strictEqual(harness.manager.attemptPendingGeminiSanitizedFileHandoff("retry"), false);
+  assert.strictEqual(harness.manager.hasPendingGeminiSanitizedFileHandoff(), true);
+  assert.strictEqual(harness.failures.some((details) => details.failureReason === "input_files_assignment_count_mismatch"), true);
+  assert.ok(harness.debugEvents.some((entry) => entry.label === "file-handoff:gemini-pending-assignment-mismatch"));
+}
+
 function testRawFilenamesAreReplacedWithSafePendingLabels() {
   const rawFilename = "sk-live-raw-token-value.env";
   const files = [createSanitizedFile(rawFilename), createSanitizedFile("safe.log")];
@@ -278,6 +299,7 @@ function testRawFilenamesAreReplacedWithSafePendingLabels() {
 function testContentQueuesOnlyGeminiGrokCleanSanitizedBatchesAfterDirectFailure() {
   assert.ok(contentSource.includes("multi-file-pending-sanitized-file-handoff"));
   assert.ok(contentSource.includes("pendingAdapter.id === \"gemini\" || pendingAdapter.id === \"grok\""));
+  assert.ok(contentSource.includes("const shouldPreferPendingMultiFileHandoff = pendingAdapter?.id === \"gemini\""));
   assert.ok(contentSource.includes("!blockedItems.length"));
   assert.ok(contentSource.includes("formatMultiFileStatusMessage(statusSummary)"));
   assert.ok(contentSource.includes("formatMultiFileStatusMessage(handoffFailedSummary)"));
@@ -292,6 +314,7 @@ testNonDropPendingQueuesSanitizedOnlyAndRetriesInOrder();
 testInvalidOrTooManyFilesNeverQueue();
 testExpiredAndReplacedPendingBatchesCleanUp();
 testMissingInputFailsClosedWithoutRawReplay();
+testGeminiPendingAssignmentCountMismatchDoesNotClearPending();
 testRawFilenamesAreReplacedWithSafePendingLabels();
 testContentQueuesOnlyGeminiGrokCleanSanitizedBatchesAfterDirectFailure();
 

@@ -51,7 +51,7 @@ If you want to support development and future work such as:
 Support here:
 https://ko-fi.com/petritbahtiri
 
-## v2.1.0 Snapshot
+## v2.2.0 Snapshot
 
 - Built-in protection for `chatgpt.com`, `chat.openai.com`, `claude.ai`, `gemini.google.com`, `grok.com`, and `x.com`
 - User-managed protection for additional exact `http://` or `https://` origins

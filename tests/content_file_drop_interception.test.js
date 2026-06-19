@@ -3115,6 +3115,99 @@ async function testGeminiGrokMultiFilePasteQueuesSanitizedPendingAfterDirectHand
   }
 }
 
+async function testGeminiMultiFilePasteQueuesPendingBeforeDirectHandoff() {
+  const dispatched = [];
+  const target = {
+    tagName: "DIV",
+    dispatchEvent: (event) => {
+      dispatched.push(event);
+      return true;
+    }
+  };
+  const files = [
+    { name: "gemini-one.env", type: "text/plain", size: 18 },
+    { name: "gemini-two.env", type: "text/plain", size: 20 }
+  ];
+  const transfer = createDataTransfer({ files });
+  const { maybeHandlePaste, calls } = createHarness({
+    location: { hostname: "gemini.google.com" },
+    findComposer: () => target,
+    createSanitizedTextFile: (file, text) => {
+      const sanitizedFile = {
+        name: file.name,
+        type: file.type,
+        size: String(text || "").length,
+        async text() {
+          return text;
+        }
+      };
+      calls.createdFiles.push({ file, text, sanitizedFile });
+      return sanitizedFile;
+    },
+    readLocalTextFileFromDataTransfer: async (dataTransfer) => {
+      calls.reads.push(dataTransfer);
+      const file = dataTransfer.files[0];
+      return {
+        handled: true,
+        ok: true,
+        text: "API_KEY=LeakGuardPasteApiKey1234567890",
+        file: { name: file.name, type: file.type, sizeBytes: file.size }
+      };
+    }
+  });
+  const { event } = createClipboardEvent({
+    target,
+    clipboardData: {
+      ...transfer,
+      getData: () => ""
+    }
+  });
+
+  await maybeHandlePaste(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(dispatched.length, 0, "Gemini multi-file batches must not use direct synthetic paste first");
+  assert.ok(calls.debugEvents.some((entry) => entry.label === "file-handoff:gemini-pending-queued"));
+  assert.strictEqual(calls.modals.some(([title]) => title === "Raw file upload blocked"), false);
+  const prompt = calls.debugEvents.find((entry) => entry.label === "file-ui:pending-prompt-shown");
+  assert.ok(prompt, "Gemini pending prompt should be shown");
+  assert.strictEqual(JSON.stringify(prompt.details).includes("gemini-one.env"), false);
+  assert.strictEqual(JSON.stringify(calls.debugEvents).includes("LeakGuardPasteApiKey1234567890"), false);
+}
+
+async function testGrokMultiFilePasteKeepsDirectFirstHandoff() {
+  const dispatched = [];
+  const target = {
+    tagName: "DIV",
+    dispatchEvent: (event) => {
+      dispatched.push(event);
+      return true;
+    }
+  };
+  const files = [
+    { name: "grok-one.env", type: "text/plain", size: 18 },
+    { name: "grok-two.env", type: "text/plain", size: 20 }
+  ];
+  const transfer = createDataTransfer({ files });
+  const { maybeHandlePaste, calls } = createHarness({
+    location: { hostname: "grok.com" },
+    findComposer: () => target
+  });
+  const { event } = createClipboardEvent({
+    target,
+    clipboardData: {
+      ...transfer,
+      getData: () => ""
+    }
+  });
+
+  await maybeHandlePaste(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(dispatched.length, 1, "Grok should keep direct sanitized multi-file handoff first");
+  assert.strictEqual(calls.debugEvents.some((entry) => entry.label === "file-handoff:grok-pending-queued"), false);
+}
+
 async function testMultiFileDropPartialBlockShowsPerFileSafeSummary() {
   const dispatched = [];
   const target = { tagName: "DIV", dispatchEvent: (event) => { dispatched.push(event); return true; } };
@@ -5094,6 +5187,73 @@ async function testGeminiPendingAttachPromptButtonCompletesTrustedAttach() {
     !harness.debugEvents.some((entry) => /hidden-trigger-clicked/.test(entry.label)),
     "pending attach prompt should not start hidden-trigger loops before user attach"
   );
+}
+
+async function testGeminiMultiFilePendingAttachPromptButtonCompletesTrustedAttach() {
+  const sanitizedFiles = [
+    {
+      name: "file-1.env",
+      type: "text/plain",
+      size: 18,
+      text: "API_KEY=[PWM_1]"
+    },
+    {
+      name: "file-2.json",
+      type: "application/json",
+      size: 20,
+      text: "{\"apiKey\":\"[PWM_2]\"}"
+    }
+  ];
+  const fileInputs = [];
+  const overlayItems = [];
+  const uploadFilesMenuItem = createOverlayItem({
+    dataTestId: "local-images-files-uploader-button",
+    onClick: () => {
+      if (!fileInputs.length) {
+        fileInputs.push(createFileInput({ source: "light-dom", name: "Filedata", multiple: true }));
+      }
+    }
+  });
+  const uploadTrigger = createUploadTrigger({
+    ariaLabel: "Open upload file menu",
+    className: "upload-card-button",
+    onClick: () => {
+      if (!overlayItems.length) overlayItems.push(uploadFilesMenuItem);
+    }
+  });
+  const harness = createHandoffHarness({
+    userAgent: "Firefox",
+    fileInputs,
+    uploadTriggers: [uploadTrigger],
+    overlayItems
+  });
+  const event = {
+    type: "drop",
+    target: { nodeType: 1, tagName: "DIV", dispatchEvent: () => true },
+    dataTransfer: createDataTransfer()
+  };
+
+  const queued = harness.queuePendingGeminiSanitizedFileHandoff(event, null, sanitizedFiles, {
+    handoffStage: "gemini:multi-file-pending-user-upload-input"
+  });
+
+  assert.strictEqual(queued, true);
+  assert.strictEqual(harness.promptNodes.length, 1);
+  assert.strictEqual(findButtonByText(harness.promptNodes[0], "Insert sanitized text instead"), null);
+  assert.strictEqual(findButtonByText(harness.promptNodes[0], "Download sanitized copy"), null);
+  const attachButton = findButtonByText(harness.promptNodes[0], "Attach sanitized files");
+  assert.ok(attachButton, "expected multi-file attach button");
+  attachButton.dispatchEvent(createClickEvent(attachButton).event);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepStrictEqual(uploadTrigger.events, ["pointerdown", "mousedown", "mouseup", "click"]);
+  assert.deepStrictEqual(uploadFilesMenuItem.events, ["pointerdown", "mousedown", "mouseup", "click"]);
+  assert.strictEqual(fileInputs.length, 1);
+  assert.strictEqual(fileInputs[0].files.length, 2);
+  assert.deepStrictEqual(Array.from(fileInputs[0].files), sanitizedFiles);
+  assert.deepStrictEqual(fileInputs[0].events, ["input", "change"]);
+  assert.strictEqual(harness.hasPendingGeminiSanitizedFileHandoff(sanitizedFiles), false);
+  assert.strictEqual(harness.promptNodes[0].isConnected, false);
 }
 
 async function testGrokPendingUploadClickThenFileInputAssignsSanitizedFile() {
@@ -14557,6 +14717,8 @@ function testMultiFileProtectedUploadStaticGuards() {
   await testMultiFileInputKeepsUnsupportedOutOfSanitizedAssignment();
   await testMultiFilePasteSanitizesTwentySmallFiles();
   await testGeminiGrokMultiFilePasteQueuesSanitizedPendingAfterDirectHandoffFails();
+  await testGeminiMultiFilePasteQueuesPendingBeforeDirectHandoff();
+  await testGrokMultiFilePasteKeepsDirectFirstHandoff();
   await testMultiFileDropPartialBlockShowsPerFileSafeSummary();
   await testMixedMultiFileDropBlocksUnsupportedWithoutRawFallback();
   await testMultiFileDropBlocksThrownReadPerFileWithoutRawFallback();
@@ -14631,6 +14793,7 @@ function testMultiFileProtectedUploadStaticGuards() {
   await testGeminiPendingClickObserverDoesNotClickUploadUi();
   await testGeminiPendingUploadClickThenFiledataInputAssignsSanitizedFile();
   await testGeminiPendingAttachPromptButtonCompletesTrustedAttach();
+  await testGeminiMultiFilePendingAttachPromptButtonCompletesTrustedAttach();
   await testGrokPendingUploadClickThenFileInputAssignsSanitizedFile();
   await testGrokPendingAttachPromptButtonAssignsSanitizedFile();
   await testPendingAttachGateBehaviorForAdapters();

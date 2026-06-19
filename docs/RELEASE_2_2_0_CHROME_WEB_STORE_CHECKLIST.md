@@ -1,27 +1,27 @@
-# LeakGuard 2.1.0 Chrome Web Store Release Checklist
+# LeakGuard 2.2.0 Chrome Web Store Release Checklist
 
 ## Release identity
 
-- Version: `2.1.0`
+- Version: `2.2.0`
 - Target: Chrome Web Store package generated from `dist/chrome`
 - Release command: `npm run release:artifacts`
-- Chrome ZIP: `artifacts/release/leakguard-chrome-v2.1.0.zip`
-- Firefox ZIP: `artifacts/release/leakguard-firefox-v2.1.0.zip`
-- Enterprise ZIPs: `artifacts/release/leakguard-chrome-enterprise-v2.1.0.zip`, `artifacts/release/leakguard-firefox-enterprise-v2.1.0.zip`
+- Chrome ZIP: `artifacts/release/leakguard-chrome-v2.2.0.zip`
+- Firefox ZIP: `artifacts/release/leakguard-firefox-v2.2.0.zip`
+- Enterprise ZIPs: `artifacts/release/leakguard-chrome-enterprise-v2.2.0.zip`, `artifacts/release/leakguard-firefox-enterprise-v2.2.0.zip`
 - Checksums: `artifacts/release/SHA256SUMS`, `artifacts/release/release-checksums.json`
 
 ## Validation status
 
-- [x] `package.json` version is `2.1.0`.
-- [x] `package-lock.json` root version is `2.1.0`.
-- [x] `manifests/base.json` version is `2.1.0`.
-- [x] Chrome manifest version confirmed as `2.1.0` in `dist/chrome/manifest.json` and `artifacts/release/leakguard-chrome-v2.1.0.zip`.
-- [x] Firefox manifest version confirmed as `2.1.0` in `dist/firefox/manifest.json` and `artifacts/release/leakguard-firefox-v2.1.0.zip`.
+- [x] `package.json` version is `2.2.0`.
+- [x] `package-lock.json` root version is `2.2.0`.
+- [x] `manifests/base.json` version is `2.2.0`.
+- [ ] Chrome manifest version confirmed as `2.2.0` in `dist/chrome/manifest.json` and `artifacts/release/leakguard-chrome-v2.2.0.zip`.
+- [ ] Firefox manifest version confirmed as `2.2.0` in `dist/firefox/manifest.json` and `artifacts/release/leakguard-firefox-v2.2.0.zip`.
 - [x] `npm test` passed.
 - [x] `npm run docs:check-links` passed.
 - [x] Focused release checks passed.
-- [x] `npm run release:artifacts` completed and generated Chrome, Chrome Enterprise, Firefox, and Firefox Enterprise ZIPs.
-- [x] `npm run test:release-artifacts` passed.
+- [ ] `npm run release:artifacts` completed and generated Chrome, Chrome Enterprise, Firefox, and Firefox Enterprise ZIPs.
+- [ ] `npm run test:release-artifacts` passed.
 - [x] Package contents checked for source maps, dev-only files, tests, generated QA artifacts, local reports, screenshots, browser QA artifacts, and real-sanitized eval files.
 - [x] Runtime Onix model artifacts are included only as required for packaged local AI assist.
 - [x] Runtime OCR assets are included only as required for packaged local OCR/image redaction support.
@@ -42,7 +42,7 @@
 
 ## Chrome Web Store release notes
 
-LeakGuard 2.1.0 improves local-only privacy protection with stronger cloud secret detection, safer entropy handling, expanded local AI gray-zone classification, hardened file handling, safer diagnostics, and broader browser QA coverage. This release also improves reliability and performance through internal modularization.
+LeakGuard 2.2.0 improves local-only privacy protection with protected-site multi-file sanitized handoff, safer Gemini pending attach behavior, stronger local file handling, metadata-only multi-file status reporting, and broader browser QA coverage. This release preserves local-only processing with no raw fallback after LeakGuard consumes or sanitizes files.
 
 ## Upload decision
 
