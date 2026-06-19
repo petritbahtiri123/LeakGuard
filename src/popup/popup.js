@@ -57,6 +57,7 @@
     allowProtectionPause: false,
     protectionEnforced: false
   };
+  let currentSiteProtectionEligible = false;
 
   function setFeedback(text) {
     feedbackEl.textContent = text || "";
@@ -131,7 +132,9 @@
       protectionCopyEl.textContent = "Protection is active.";
     }
 
-    pauseBtn.hidden = !currentProtection.allowProtectionPause;
+    pauseBtn.hidden =
+      !currentProtection.allowProtectionPause ||
+      (!currentSiteProtectionEligible && !currentProtection.paused);
     pauseBtn.textContent = currentProtection.paused ? "Resume Protection" : "Pause Protection";
     renderPolicyWarning();
   }
@@ -194,8 +197,9 @@
   function renderOverview(overview) {
     currentOverview = overview || null;
     updatePolicy(overview?.policy);
-    updateProtection(overview?.state?.protection || overview?.protection);
     const site = overview?.currentSite || null;
+    currentSiteProtectionEligible = Boolean(site?.protected);
+    updateProtection(overview?.state?.protection || overview?.protection);
 
     if (!site) {
       siteLabelEl.textContent = "No active site";

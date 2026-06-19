@@ -396,6 +396,7 @@ async function getProtectedSiteOverview(url, tabId = null) {
   if (storedRule && !storedRule.enabled) {
     return {
       policy,
+      protection,
       builtInSites: BUILTIN_PROTECTED_SITES,
       managedSites,
       userSites,
