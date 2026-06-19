@@ -2685,6 +2685,46 @@ async function testMixedMultiFileDropBlocksUnsupportedWithoutRawFallback() {
   assert.strictEqual(JSON.stringify(processed.details).includes("bad.svg"), false);
 }
 
+async function testMultiFileDropBlocksThrownReadPerFileWithoutRawFallback() {
+  const dispatched = [];
+  const target = { tagName: "DIV", dispatchEvent: (event) => { dispatched.push(event); return true; } };
+  const rawSecret = "LeakGuardThrownReadApiKey1234567890";
+  const files = [
+    { name: "first.env", type: "text/plain", size: 18 },
+    { name: "throwing.env", type: "text/plain", size: 20 },
+    { name: "third.log", type: "text/plain", size: 22 }
+  ];
+  const { maybeHandleDrop, calls } = createHarness({
+    readLocalTextFileFromDataTransfer: async (transfer) => {
+      calls.reads.push(transfer);
+      const file = transfer.files[0];
+      if (file.name === "throwing.env") {
+        throw new Error(`raw filename ${file.name} ${rawSecret}`);
+      }
+      return {
+        handled: true,
+        ok: true,
+        text: `API_KEY=${rawSecret}\nfile=${file.name}`,
+        file: { name: file.name, type: file.type, sizeBytes: file.size }
+      };
+    }
+  });
+  const { event } = createEvent({ dataTransfer: createDataTransfer({ files }), target });
+
+  await maybeHandleDrop(event);
+
+  assert.strictEqual(calls.reads.length, 3);
+  assert.strictEqual(calls.createdFiles.length, 2);
+  assert.strictEqual(dispatched.length, 1);
+  assert.deepStrictEqual(dispatched[0].dataTransfer.files.map((file) => file.name), ["first.env", "third.log"]);
+  assert.strictEqual(JSON.stringify(dispatched).includes(rawSecret), false);
+  assert.ok(calls.modals.some(([title, message]) => title === "Some files were blocked" && /blocked 1 file/.test(message)));
+  const processed = calls.debugEvents.find((entry) => entry.label === "file-handoff:multi-file-processed");
+  assert.ok(processed);
+  assert.strictEqual(JSON.stringify(processed.details).includes("throwing.env"), false);
+  assert.strictEqual(JSON.stringify(processed.details).includes(rawSecret), false);
+}
+
 async function testFileDropIsBlockedWithoutHelperLoaded() {
   const { maybeHandleDrop, calls } = createHarness({
     dataTransferHasFiles: undefined,
@@ -13914,6 +13954,7 @@ function testMultiFileProtectedUploadStaticGuards() {
   await testMultiFileDropSanitizesFiveFilesInOrder();
   await testMultiFileDropBlocksSixFilesBeforeReading();
   await testMixedMultiFileDropBlocksUnsupportedWithoutRawFallback();
+  await testMultiFileDropBlocksThrownReadPerFileWithoutRawFallback();
   await testFileDropIsBlockedWithoutHelperLoaded();
   await testFileDropIsConsumedBeforeComposerLookup();
   testProtectedRebuiltFileDropBlocksAtDragGuard();

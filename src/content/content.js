@@ -8664,81 +8664,91 @@
   }
 
   async function processLocalFileForSanitizedBatch(file, index, context) {
-    const contentExtractionResult = shouldUseContentFileExtractionPipeline(file)
-      ? await processFileForAdapterHandoff({ file, context })
-      : null;
-    const localFile = contentExtractionResult
-      ? localFileFromContentExtractionResult(contentExtractionResult)
-      : await readLocalTextFileFromDataTransfer(createSingleFileDataTransfer(file));
+    try {
+      const contentExtractionResult = shouldUseContentFileExtractionPipeline(file)
+        ? await processFileForAdapterHandoff({ file, context })
+        : null;
+      const localFile = contentExtractionResult
+        ? localFileFromContentExtractionResult(contentExtractionResult)
+        : await readLocalTextFileFromDataTransfer(createSingleFileDataTransfer(file));
 
-    if (!localFile.handled || !localFile.ok) {
+      if (!localFile.handled || !localFile.ok) {
+        return {
+          ok: false,
+          status: localFile.handled ? "blocked" : "failed",
+          code: localFile.code || contentExtractionResult?.fallbackReason || "file_scan_failed",
+          message: localFile.message || "LeakGuard blocked one raw file because local scanning failed.",
+          summary: summarizeMultiFileItem(index, localFile.handled ? "blocked" : "failed", file, localFile.code || "file_scan_failed")
+        };
+      }
+
+      const imageRedactionMode = localFile.imageRedactionMode === true || localFile.fileOnlyUpload === true;
+      const sizeInfo = imageRedactionMode
+        ? { zone: "fast", bytes: Math.max(0, Number(localFile.file?.sizeBytes || 0)) }
+        : classifyLocalTextPayloadSize({ text: localFile.text, sizeBytes: localFile.file?.sizeBytes });
+      if (sizeInfo.zone === "blocked" || localFile.code === "streaming_required") {
+        return {
+          ok: false,
+          status: "blocked",
+          code: sizeInfo.zone === "blocked" ? "local_text_payload_too_large" : "streaming_required",
+          message: "LeakGuard blocked one raw file because it exceeds safe multi-file local processing limits.",
+          summary: summarizeMultiFileItem(index, "blocked", file, sizeInfo.zone === "blocked" ? "local_text_payload_too_large" : "streaming_required")
+        };
+      }
+
+      let analysis;
+      let result;
+      let sanitizedFile;
+      if (contentExtractionResult?.status === "ready") {
+        const contentExtractionFileOnly = localFile.fileOnlyUpload === true || contentExtractionResult.fileOnlyUpload === true;
+        result = {
+          redactedText: contentExtractionFileOnly ? "" : contentExtractionResult.sanitizedText,
+          replacements: []
+        };
+        sanitizedFile = contentExtractionResult.sanitizedFile;
+        analysis = {
+          normalizedText: contentExtractionResult.sanitizedText,
+          secretFindings: Array.from(
+            { length: Number(contentExtractionResult.metadata?.scan?.findingsCount || 0) },
+            () => ({})
+          ),
+          findings: []
+        };
+      } else {
+        analysis = analyzeText(localFile.text);
+        result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
+        sanitizedFile = createSanitizedTextFile(localFile.file, result.redactedText);
+      }
+
+      if (!sanitizedFile) {
+        return {
+          ok: false,
+          status: "failed",
+          code: "sanitized_file_create_failed",
+          message: "LeakGuard blocked one raw file because sanitized output could not be created.",
+          summary: summarizeMultiFileItem(index, "failed", file, "sanitized_file_create_failed")
+        };
+      }
+
       return {
-        ok: false,
-        status: localFile.handled ? "blocked" : "failed",
-        code: localFile.code || contentExtractionResult?.fallbackReason || "file_scan_failed",
-        message: localFile.message || "LeakGuard blocked one raw file because local scanning failed.",
-        summary: summarizeMultiFileItem(index, localFile.handled ? "blocked" : "failed", file, localFile.code || "file_scan_failed")
+        ok: true,
+        status: "sanitized",
+        sanitizedFile,
+        localFile,
+        analysis,
+        result,
+        imageRedactionMode,
+        summary: summarizeMultiFileItem(index, "sanitized", sanitizedFile, "")
       };
-    }
-
-    const imageRedactionMode = localFile.imageRedactionMode === true || localFile.fileOnlyUpload === true;
-    const sizeInfo = imageRedactionMode
-      ? { zone: "fast", bytes: Math.max(0, Number(localFile.file?.sizeBytes || 0)) }
-      : classifyLocalTextPayloadSize({ text: localFile.text, sizeBytes: localFile.file?.sizeBytes });
-    if (sizeInfo.zone === "blocked" || localFile.code === "streaming_required") {
-      return {
-        ok: false,
-        status: "blocked",
-        code: sizeInfo.zone === "blocked" ? "local_text_payload_too_large" : "streaming_required",
-        message: "LeakGuard blocked one raw file because it exceeds safe multi-file local processing limits.",
-        summary: summarizeMultiFileItem(index, "blocked", file, sizeInfo.zone === "blocked" ? "local_text_payload_too_large" : "streaming_required")
-      };
-    }
-
-    let analysis;
-    let result;
-    let sanitizedFile;
-    if (contentExtractionResult?.status === "ready") {
-      const contentExtractionFileOnly = localFile.fileOnlyUpload === true || contentExtractionResult.fileOnlyUpload === true;
-      result = {
-        redactedText: contentExtractionFileOnly ? "" : contentExtractionResult.sanitizedText,
-        replacements: []
-      };
-      sanitizedFile = contentExtractionResult.sanitizedFile;
-      analysis = {
-        normalizedText: contentExtractionResult.sanitizedText,
-        secretFindings: Array.from(
-          { length: Number(contentExtractionResult.metadata?.scan?.findingsCount || 0) },
-          () => ({})
-        ),
-        findings: []
-      };
-    } else {
-      analysis = analyzeText(localFile.text);
-      result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
-      sanitizedFile = createSanitizedTextFile(localFile.file, result.redactedText);
-    }
-
-    if (!sanitizedFile) {
+    } catch {
       return {
         ok: false,
         status: "failed",
-        code: "sanitized_file_create_failed",
-        message: "LeakGuard blocked one raw file because sanitized output could not be created.",
-        summary: summarizeMultiFileItem(index, "failed", file, "sanitized_file_create_failed")
+        code: "file_processing_exception",
+        message: "LeakGuard blocked one raw file because local sanitization failed.",
+        summary: summarizeMultiFileItem(index, "failed", file, "file_processing_exception")
       };
     }
-
-    return {
-      ok: true,
-      status: "sanitized",
-      sanitizedFile,
-      localFile,
-      analysis,
-      result,
-      imageRedactionMode,
-      summary: summarizeMultiFileItem(index, "sanitized", sanitizedFile, "")
-    };
   }
 
   async function handOffSanitizedFileBatch(event, input, sanitizedFiles, context) {
@@ -8813,8 +8823,11 @@
       processed = await Promise.all(
         files.map((file, index) => processLocalFileForSanitizedBatch(file, index, context))
       );
-    } catch (error) {
-      debugFileAttachMetadata("file-handoff:multi-file-redaction-failed", { site: processingSite, error });
+    } catch {
+      debugFileAttachMetadata("file-handoff:multi-file-redaction-failed", {
+        site: processingSite,
+        reason: "multi_file_processing_exception"
+      });
       controls.failProcessing("multi_file_processing_exception", "Raw file upload blocked");
       setBadge("Raw file upload blocked");
       hideBadgeSoon(4200);
