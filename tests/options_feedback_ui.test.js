@@ -137,8 +137,8 @@ function testFeedbackActionsAreExplicitAndNonNetworked() {
   assert.ok(optionsSource.includes('window.open(url, "_blank", "noopener,noreferrer")'));
   assert.ok(
     optionsSource.includes("DEFAULT_FEEDBACK_GITHUB_REPOSITORY") &&
-      optionsSource.includes("GitHub feedback target is not configured yet."),
-    "GitHub opening should remain disabled while the target is the TODO placeholder"
+      optionsSource.includes("isFeedbackGithubTargetConfigured"),
+    "GitHub opening should require a configured target check"
   );
 
   for (const forbidden of [

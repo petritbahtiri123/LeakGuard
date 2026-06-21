@@ -309,7 +309,7 @@
   }
 
   function isFeedbackGithubTargetConfigured() {
-    return FeedbackReport.DEFAULT_FEEDBACK_GITHUB_REPOSITORY !== "TODO-OWNER/TODO-REPO";
+    return /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(FeedbackReport.DEFAULT_FEEDBACK_GITHUB_REPOSITORY || "");
   }
 
   function updateFeedbackReportPreview() {
@@ -328,7 +328,7 @@
     openFeedbackLinkButtonEl.disabled = !isFeedbackGithubTargetConfigured();
     openFeedbackLinkButtonEl.title = isFeedbackGithubTargetConfigured()
       ? ""
-      : "GitHub feedback target is not configured yet.";
+      : "GitHub feedback target is unavailable.";
   }
 
   function resetFeedbackReport() {
@@ -359,7 +359,7 @@
   function handleOpenFeedbackLink() {
     updateFeedbackReportPreview();
     if (!isFeedbackGithubTargetConfigured()) {
-      setFeedbackActionStatus("GitHub feedback target is not configured yet. Copy the safe report instead.");
+      setFeedbackActionStatus("GitHub feedback target is unavailable. Copy the safe report instead.");
       return;
     }
 

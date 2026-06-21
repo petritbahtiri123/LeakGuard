@@ -4,7 +4,7 @@
 
   const FEEDBACK_DESCRIPTION_WARNING =
     "Do not paste secrets, prompts, messages, file contents, filenames, OCR text, raw URLs, screenshots, logs, or other sensitive content.";
-  const DEFAULT_FEEDBACK_GITHUB_REPOSITORY = "TODO-OWNER/TODO-REPO";
+  const DEFAULT_FEEDBACK_GITHUB_REPOSITORY = "petritbahtiri123/LeakGuard";
   const UNSPECIFIED = "unspecified";
   const SAFE_LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 _.-]{0,79}$/;
   const SAFE_REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;

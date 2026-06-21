@@ -210,7 +210,12 @@ function testGitHubDiscussionUrlUsesExpectedRouteAndEncoding() {
 }
 
 function testGitHubFeedbackUrlRejectsUnsafeTargetsAndEmptyReports() {
-  assert.strictEqual(DEFAULT_FEEDBACK_GITHUB_REPOSITORY, "TODO-OWNER/TODO-REPO");
+  assert.strictEqual(DEFAULT_FEEDBACK_GITHUB_REPOSITORY, "petritbahtiri123/LeakGuard");
+  assert.strictEqual(
+    new URL(buildGitHubFeedbackIssueUrl({ description: "Safe user text." })).pathname,
+    "/petritbahtiri123/LeakGuard/issues/new",
+    "default feedback issue URL should target the approved LeakGuard repository"
+  );
   assert.strictEqual(
     buildGitHubFeedbackIssueUrl({}, { repository: "safe-owner/safe-repo" }),
     null,

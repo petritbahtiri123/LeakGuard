@@ -308,7 +308,7 @@ Implemented so far:
 - Metadata-only feedback report builder exists.
 - Options-page `Send Feedback` entry point exists behind the policy gate.
 - Copy-safe-report flow exists after user review.
-- GitHub issue URL builder exists, but the visible GitHub open action remains disabled while the target is `TODO-OWNER/TODO-REPO`.
+- GitHub issue URL builder exists and targets the approved `petritbahtiri123/LeakGuard` issue destination.
 
 Current behavior:
 
@@ -316,7 +316,7 @@ Current behavior:
 - The user must review and may edit the metadata-only report before copying or opening anything.
 - No feedback is sent automatically, in the background, or through a GitHub API call.
 - No telemetry, backend processing, diagnostics upload, screenshots, prompts, messages, file contents, filenames, OCR text, raw DOM text, raw URLs, or automatic logs are collected for feedback.
-- GitHub issue opening must stay disabled until a real approved public or private target replaces the placeholder.
+- GitHub issue opening remains explicit user action only and must not submit through the GitHub API.
 
 Possible feedback modes:
 
@@ -356,7 +356,7 @@ Current non-goals and release blockers:
 - No network calls, telemetry, GitHub API calls, or background sending.
 - No backend integration.
 - No automatic diagnostics collection.
-- No release claim that feedback is fully available while `allowFeedback` defaults false and the GitHub target remains a placeholder.
+- No release claim that feedback is broadly available while `allowFeedback` defaults false.
 - Add browser-visible QA coverage before enabling this for release.
 
 Security notes:
@@ -371,7 +371,6 @@ Security notes:
 Open questions:
 
 - Use GitHub issues, GitHub discussions, or an email alias for the MVP entry point?
-- Replace the `TODO-OWNER/TODO-REPO` GitHub feedback URL placeholder with an approved public or private target before surfacing links in UI.
 - Should feedback be public or private by default?
 - Should feedback live in the popup, options page, or both?
 - Should enterprise builds disable feedback entirely by default?

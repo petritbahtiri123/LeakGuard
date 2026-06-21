@@ -1182,6 +1182,26 @@ async function runFirefoxOcrWasmProbeQa(webdriver, extensionOrigin) {
   });
 }
 
+async function runFirefoxFeedbackDefaultHiddenSmoke(webdriver, extensionOrigin) {
+  await webdriver.navigate(`${extensionOrigin}/options/options.html`);
+  await waitFor(
+    () => webdriver.execute(
+      "return Boolean(document.querySelector('#feedback-section') && document.querySelector('#feedback-entry'));"
+    ),
+    "Firefox feedback controls"
+  );
+  const state = await webdriver.execute(`return {
+    hidden: Boolean(document.querySelector('#feedback-section')?.hidden),
+    unavailable: Boolean(
+      document.querySelector('#feedback-entry')?.disabled ||
+      document.querySelector('#feedback-section')?.hidden
+    )
+  };`);
+
+  assert.equal(state.hidden, true, "Firefox feedback section should be hidden by default");
+  assert.equal(state.unavailable, true, "Firefox feedback action should be unavailable by default");
+}
+
 async function runFirefoxSmoke() {
   assertBuiltExtensionExists();
   const firefoxPath = findFirefoxExecutable();
@@ -1221,6 +1241,8 @@ async function runFirefoxSmoke() {
     const installedExtensionId = extensionId || firefoxExtensionId;
     const extensionOrigin = await getFirefoxExtensionOrigin(profileDir, installedExtensionId);
     console.log(`Firefox smoke: temporary extension loaded (${installedExtensionId})`);
+    console.log("Firefox smoke: feedback policy gate");
+    await runFirefoxFeedbackDefaultHiddenSmoke(webdriver, extensionOrigin);
     console.log("Firefox smoke: popup and protected-site management");
     await runFirefoxPopupAndProtectedSiteQa(webdriver, extensionOrigin, httpsServer.localOrigin);
 
