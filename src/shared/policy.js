@@ -20,6 +20,7 @@
     blockHttpSecrets: false,
     redactHttpAggressively: true,
     aiAssistEnabled: true,
+    allowFeedback: false,
     defaultAction: "redact",
     defaultDestinationAction: "allow",
     auditMode: "off",
@@ -42,6 +43,7 @@
     blockHttpSecrets: true,
     redactHttpAggressively: true,
     aiAssistEnabled: true,
+    allowFeedback: false,
     defaultAction: "block",
     defaultDestinationAction: "block",
     auditMode: "metadata-only",
@@ -262,6 +264,7 @@
     assign("blockHttpSecrets", asBoolean);
     assign("redactHttpAggressively", asBoolean);
     assign("aiAssistEnabled", asBoolean);
+    assign("allowFeedback", asBoolean);
     assign("strictPolicyLoad", asBoolean);
     assign("managedProtectedSites", asStringArray);
     assign("defaultAction", (value, fallback) => asEnum(value, fallback, VALID_DEFAULT_ACTIONS));
@@ -299,6 +302,7 @@
       blockHttpSecrets: true,
       redactHttpAggressively: true,
       aiAssistEnabled: false,
+      allowFeedback: false,
       defaultAction: "block",
       defaultDestinationAction: "block",
       auditMode: "metadata-only",
@@ -592,6 +596,10 @@
     return evaluateDestinationPolicy(policyOrSummary, url).blocked;
   }
 
+  function isFeedbackAvailable(policyOrSummary) {
+    return Boolean(policyOrSummary?.allowFeedback) && !Boolean(policyOrSummary?.strictFailure);
+  }
+
   function summarizePolicy(policy, url, meta = {}) {
     const targetUrl = String(url || "");
     const isHttp = /^http:\/\//i.test(targetUrl);
@@ -609,6 +617,7 @@
       blockHttpSecrets: Boolean(policy.blockHttpSecrets),
       redactHttpAggressively: Boolean(policy.redactHttpAggressively),
       aiAssistEnabled: Boolean(policy.aiAssistEnabled),
+      allowFeedback: Boolean(policy.allowFeedback),
       defaultAction: policy.defaultAction,
       defaultDestinationAction: policy.defaultDestinationAction,
       managedProtectedSites: Array.isArray(policy.managedProtectedSites)
@@ -682,6 +691,7 @@
   root.PWM.invalidatePolicyCache = invalidatePolicyCache;
   root.PWM.evaluateDestinationPolicy = evaluateDestinationPolicy;
   root.PWM.shouldBlockDestination = shouldBlockDestination;
+  root.PWM.isFeedbackAvailable = isFeedbackAvailable;
   root.PWM.summarizePolicy = summarizePolicy;
 
   if (typeof module !== "undefined" && module.exports) {
@@ -700,6 +710,7 @@
       matchPattern,
       evaluateDestinationPolicy,
       shouldBlockDestination,
+      isFeedbackAvailable,
       summarizePolicy,
       normalizePolicyInput,
       buildFailClosedPolicy

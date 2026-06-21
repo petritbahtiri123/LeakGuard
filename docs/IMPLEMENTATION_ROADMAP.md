@@ -309,7 +309,7 @@ Implementation target:
 - Generate a metadata-only feedback template locally.
 - Let the user review, edit, copy, or manually open the target before anything leaves the browser.
 - Do not send feedback automatically, in the background, or through a GitHub API call.
-- Land managed policy support before any visible feedback entry point ships, so enterprise and managed deployments can disable or hide feedback UI.
+- Use the `allowFeedback` managed policy gate before any visible feedback entry point ships, so enterprise and managed deployments can disable or hide feedback UI.
 
 Possible feedback modes:
 
@@ -366,7 +366,7 @@ Open questions:
 - Should feedback be public or private by default?
 - Should feedback live in the popup, options page, or both?
 - Should enterprise builds disable feedback entirely by default?
-- What managed policy field should control feedback visibility?
+- Should future feedback UI stay hidden by default until `allowFeedback: true`, or should consumer builds enable the gate in a separate reviewed phase?
 - Should safe diagnostics be opt-in for each report?
 
 ## Validation Matrix

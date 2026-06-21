@@ -41,6 +41,7 @@ If `strictPolicyLoad` is enabled in enterprise mode and managed policy cannot be
   "allowProtectionPause": false,
   "allowUserAddedSites": false,
   "allowSiteRemoval": false,
+  "allowFeedback": false,
   "auditMode": "metadata-only",
   "auditRetentionDays": 30,
   "strictPolicyLoad": true
@@ -61,6 +62,7 @@ Adjust the destination list to match the browsers and sites you have tested.
 | `protectionPauseRequiresUserAction` | boolean | `true`, `false` | Requires explicit user action for pauses. |
 | `allowUserAddedSites` | boolean | `true`, `false` | Controls whether users can add or re-enable extra protected sites. |
 | `allowSiteRemoval` | boolean | `true`, `false` | Controls whether users can delete user-managed protected-site rules. |
+| `allowFeedback` | boolean | `true`, `false` | Controls whether future feedback entry points may be visible or available. Defaults to `false`; missing, malformed, or fail-closed policy state must keep feedback unavailable. |
 | `blockHttpSecrets` | boolean | `true`, `false` | Enables stricter handling for HTTP destinations. |
 | `redactHttpAggressively` | boolean | `true`, `false` | Applies more aggressive redaction for HTTP contexts. |
 | `aiAssistEnabled` | boolean | `true`, `false` | Enables optional local ONNX AI assist. Disabling keeps deterministic detection active. |
