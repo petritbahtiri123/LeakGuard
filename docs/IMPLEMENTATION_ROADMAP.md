@@ -298,18 +298,25 @@ Acceptance criteria:
 
 ### 7A - Privacy-Preserving Feedback Loop MVP
 
-Status: Scoped for a future GitHub/manual feedback MVP. This roadmap update is docs-only; implementation still requires a later code phase.
+Status: Partially implemented behind a fail-closed policy gate. This is not fully release-ready until the final feedback target, browser-visible QA coverage, and release wording are approved.
 
 Purpose: collect user-initiated feedback without weakening LeakGuard's local-only privacy model.
 
-Implementation target:
+Implemented so far:
 
-- Build the first implementation around a metadata-only GitHub issue/discussion link or a copy-safe-report flow.
-- Keep all feedback user-initiated, with review-before-leave-browser as a hard requirement.
-- Generate a metadata-only feedback template locally.
-- Let the user review, edit, copy, or manually open the target before anything leaves the browser.
-- Do not send feedback automatically, in the background, or through a GitHub API call.
-- Use the `allowFeedback` managed policy gate before any visible feedback entry point ships, so enterprise and managed deployments can disable or hide feedback UI.
+- `allowFeedback` managed policy gate exists and defaults to `false` for consumer and enterprise builds.
+- Metadata-only feedback report builder exists.
+- Options-page `Send Feedback` entry point exists behind the policy gate.
+- Copy-safe-report flow exists after user review.
+- GitHub issue URL builder exists, but the visible GitHub open action remains disabled while the target is `TODO-OWNER/TODO-REPO`.
+
+Current behavior:
+
+- Feedback is user-initiated only.
+- The user must review and may edit the metadata-only report before copying or opening anything.
+- No feedback is sent automatically, in the background, or through a GitHub API call.
+- No telemetry, backend processing, diagnostics upload, screenshots, prompts, messages, file contents, filenames, OCR text, raw DOM text, raw URLs, or automatic logs are collected for feedback.
+- GitHub issue opening must stay disabled until a real approved public or private target replaces the placeholder.
 
 Possible feedback modes:
 
@@ -343,13 +350,14 @@ Forbidden metadata:
 - Screenshots by default.
 - Automatic logs or raw diagnostics.
 
-Explicit non-goals for the MVP:
+Current non-goals and release blockers:
 
-- No runtime behavior in this docs phase.
-- No manifest or permission changes in this docs phase.
+- No manifest or permission changes.
 - No network calls, telemetry, GitHub API calls, or background sending.
 - No backend integration.
 - No automatic diagnostics collection.
+- No release claim that feedback is fully available while `allowFeedback` defaults false and the GitHub target remains a placeholder.
+- Add browser-visible QA coverage before enabling this for release.
 
 Security notes:
 

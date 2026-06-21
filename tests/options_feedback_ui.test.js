@@ -64,10 +64,23 @@ function testFeedbackUiLoadsSafeBuilderAndRendersReviewSurface() {
 }
 
 function testFeedbackUiIsPolicyGated() {
+  const availabilitySource = extractFunctionSource(optionsSource, "isFeedbackAvailable");
   const updatePolicySource = extractFunctionSource(optionsSource, "updatePolicy");
+  const isFeedbackAvailable = Function(`"use strict"; return (${availabilitySource});`)();
 
   assert.ok(optionsSource.includes("allowFeedback: false"));
-  assert.ok(updatePolicySource.includes("allowFeedback: policy?.allowFeedback === true"));
+  assert.ok(availabilitySource.includes("policy?.allowFeedback === true"));
+  assert.ok(availabilitySource.includes("policy?.strictFailure !== true"));
+  assert.strictEqual(isFeedbackAvailable(null), false, "missing policy should hide feedback");
+  assert.strictEqual(isFeedbackAvailable({ allowFeedback: false }), false, "disabled policy should hide feedback");
+  assert.strictEqual(isFeedbackAvailable({ allowFeedback: "true" }), false, "malformed policy should hide feedback");
+  assert.strictEqual(isFeedbackAvailable({ allowFeedback: true }), true, "enabled policy should show feedback");
+  assert.strictEqual(
+    isFeedbackAvailable({ allowFeedback: true, strictFailure: true }),
+    false,
+    "strict policy failure should hide feedback even when allowFeedback is true"
+  );
+  assert.ok(updatePolicySource.includes("allowFeedback: isFeedbackAvailable(policy)"));
   assert.ok(updatePolicySource.includes("feedbackSectionEl.hidden = !currentPolicy.allowFeedback"));
   assert.ok(updatePolicySource.includes("feedbackEntryButtonEl.disabled = !currentPolicy.allowFeedback"));
   assert.ok(updatePolicySource.includes("resetFeedbackReport"));

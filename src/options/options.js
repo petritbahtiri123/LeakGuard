@@ -42,11 +42,15 @@
     feedbackActionStatusEl.textContent = text || "";
   }
 
+  function isFeedbackAvailable(policy) {
+    return policy?.allowFeedback === true && policy?.strictFailure !== true;
+  }
+
   function updatePolicy(policy) {
     currentPolicy = {
       ...currentPolicy,
       ...(policy || {}),
-      allowFeedback: policy?.allowFeedback === true
+      allowFeedback: isFeedbackAvailable(policy)
     };
 
     inputEl.disabled = !currentPolicy.allowUserAddedSites;

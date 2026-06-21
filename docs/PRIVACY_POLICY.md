@@ -34,6 +34,12 @@ LeakGuard stores only the following extension data:
 
 LeakGuard does not intentionally persist raw prompts, selected file contents, raw OCR text, raw image bytes, raw secrets, or raw public IPv4 values in long-term extension storage. File Scanner scan results stay in memory on the scanner page until you clear the scan or close the page. Protected composer file redaction uses in-memory text, chunks, OCR results, image bytes, and sanitized `File`/`Blob` objects only as needed for local redaction and handoff.
 
+## Optional Feedback
+
+LeakGuard may show an optional, user-initiated feedback entry point when feedback is enabled by policy. The feedback flow generates a metadata-only template locally and lets you review and edit it before copying it or, once configured, opening a prefilled GitHub issue link. The user-written description is controlled by you; do not paste secrets, prompts, filenames, file contents, OCR text, screenshots, or other sensitive data into it.
+
+LeakGuard does not automatically send feedback, logs, telemetry, diagnostics, screenshots, prompts, selected file contents, filenames, OCR text, raw DOM text, or raw URLs. GitHub issue opening occurs only after an explicit user action and only after an approved feedback target is configured.
+
 ## What LeakGuard Does Not Send
 
 LeakGuard does not send the following to our servers because the extension does not use a backend service:
