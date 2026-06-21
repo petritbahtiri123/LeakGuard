@@ -1,6 +1,6 @@
 # LeakGuard Implementation Roadmap
 
-Updated: 2026-06-19
+Updated: 2026-06-21
 
 This roadmap turns the open items from [deep-research-report.md](deep-research-report.md), [DOCUMENTATION_ROADMAP.md](DOCUMENTATION_ROADMAP.md), and [code-quality-audit.md](code-quality-audit.md) into an implementation sequence.
 
@@ -296,25 +296,27 @@ Acceptance criteria:
 - Each expansion starts with tests and public wording review.
 - No expansion introduces backend processing, telemetry, cloud scanning, remote model calls, or remote secret verification.
 
-### Privacy-Preserving Feedback Loop
+### 7A - Privacy-Preserving Feedback Loop MVP
 
-Status: Future planning only. Do not implement until a later scoped phase explicitly approves UI, policy, and release wording.
+Status: Scoped for a future GitHub/manual feedback MVP. This roadmap update is docs-only; implementation still requires a later code phase.
 
 Purpose: collect user-initiated feedback without weakening LeakGuard's local-only privacy model.
 
-MVP direction:
+Implementation target:
 
-- Add a future `Send Feedback` or `Report Issue` action.
+- Build the first implementation around a metadata-only GitHub issue/discussion link or a copy-safe-report flow.
+- Keep all feedback user-initiated, with review-before-leave-browser as a hard requirement.
 - Generate a metadata-only feedback template locally.
-- Let the user review and edit the report before anything leaves the browser.
-- Send manually through `mailto:` or a GitHub issue/discussion link.
+- Let the user review, edit, copy, or manually open the target before anything leaves the browser.
+- Do not send feedback automatically, in the background, or through a GitHub API call.
+- Land managed policy support before any visible feedback entry point ships, so enterprise and managed deployments can disable or hide feedback UI.
 
 Possible feedback modes:
 
-- `mailto:` feedback link with a metadata-only template.
-- Copy-safe-report button that copies only reviewed metadata.
 - GitHub issue or discussion link with user-controlled report text.
-- Optional future hosted feedback form, only if it remains metadata-only.
+- Copy-safe-report button that copies only reviewed metadata.
+- `mailto:` feedback link with a metadata-only template.
+- Optional later hosted feedback form, only if it remains metadata-only and is separately approved.
 
 Allowed metadata:
 
@@ -341,6 +343,14 @@ Forbidden metadata:
 - Screenshots by default.
 - Automatic logs or raw diagnostics.
 
+Explicit non-goals for the MVP:
+
+- No runtime behavior in this docs phase.
+- No manifest or permission changes in this docs phase.
+- No network calls, telemetry, GitHub API calls, or background sending.
+- No backend integration.
+- No automatic diagnostics collection.
+
 Security notes:
 
 - No background auto-send.
@@ -352,11 +362,11 @@ Security notes:
 
 Open questions:
 
-- Use an email alias, GitHub issues, or GitHub discussions?
+- Use GitHub issues, GitHub discussions, or an email alias for the MVP entry point?
 - Should feedback be public or private by default?
 - Should feedback live in the popup, options page, or both?
-- Should enterprise builds disable feedback entirely?
-- Should managed policy control feedback visibility?
+- Should enterprise builds disable feedback entirely by default?
+- What managed policy field should control feedback visibility?
 - Should safe diagnostics be opt-in for each report?
 
 ## Validation Matrix
