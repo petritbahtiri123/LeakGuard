@@ -50,6 +50,29 @@
         <p class="feedback" id="protected-site-ocr-feedback" aria-live="polite"></p>
       </section>
 
+      <section class="panel feedback-panel" id="feedback-section" hidden>
+        <div class="section-head">
+          <h2>Feedback</h2>
+          <p>Do not paste secrets, prompts, filenames, file contents, screenshots, OCR text, or sensitive data.</p>
+        </div>
+        <button class="btn btn-primary" id="feedback-entry" type="button">Send Feedback</button>
+        <div class="feedback-review" id="feedback-review" hidden>
+          <label class="field">
+            <span>Description</span>
+            <textarea id="feedback-description" rows="4" placeholder="Describe what happened without secrets or sensitive data."></textarea>
+          </label>
+          <label class="field">
+            <span>Safe report preview</span>
+            <textarea class="feedback-report-preview" id="feedback-report-preview" rows="12" readonly></textarea>
+          </label>
+          <div class="site-actions">
+            <button class="btn btn-primary" id="copy-feedback-report" type="button">Copy Safe Report</button>
+            <button class="btn" id="open-feedback-link" type="button">Open GitHub Issue</button>
+          </div>
+          <p class="feedback" id="feedback-action-status" aria-live="polite"></p>
+        </div>
+      </section>
+
       <section class="panel">
         <div class="section-head">
           <h2>Managed sites</h2>
@@ -77,6 +100,7 @@
     <script src="../compat/browser_api.js"></script>
     <script src="../compat/platform.js"></script>
     <script src="../shared/protected_sites.js"></script>
+    <script src="../shared/feedbackReport.js"></script>
     <script src="options.js"></script>
   </body>
 </html>

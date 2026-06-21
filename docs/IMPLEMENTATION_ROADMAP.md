@@ -363,6 +363,7 @@ Security notes:
 Open questions:
 
 - Use GitHub issues, GitHub discussions, or an email alias for the MVP entry point?
+- Replace the `TODO-OWNER/TODO-REPO` GitHub feedback URL placeholder with an approved public or private target before surfacing links in UI.
 - Should feedback be public or private by default?
 - Should feedback live in the popup, options page, or both?
 - Should enterprise builds disable feedback entirely by default?
