@@ -298,22 +298,24 @@ Acceptance criteria:
 
 ### 7A - Privacy-Preserving Feedback Loop MVP
 
-Status: Partially implemented behind a fail-closed policy gate. This is not fully release-ready until the final feedback target, browser-visible QA coverage, and release wording are approved.
+Status: Implemented behind a fail-closed policy gate. Consumer builds show feedback by default; enterprise builds and malformed managed policy keep feedback hidden.
 
 Purpose: collect user-initiated feedback without weakening LeakGuard's local-only privacy model.
 
 Implemented so far:
 
-- `allowFeedback` managed policy gate exists and defaults to `false` for consumer and enterprise builds.
+- `allowFeedback` managed policy gate exists, defaults to `true` for consumer builds, and defaults to `false` for enterprise builds.
 - Metadata-only feedback report builder exists.
 - Options-page `Send Feedback` entry point exists behind the policy gate.
 - Copy-safe-report flow exists after user review.
 - GitHub issue URL builder exists and targets the approved `petritbahtiri123/LeakGuard` issue destination.
+- Browser smoke covers the Chrome consumer default feedback review/copy path and the Firefox consumer default-visible policy gate path.
 
 Current behavior:
 
 - Feedback is user-initiated only.
 - The user must review and may edit the metadata-only report before copying or opening anything.
+- Managed `allowFeedback: false`, malformed managed feedback policy, and strict policy failure hide or disable the feedback entry point.
 - No feedback is sent automatically, in the background, or through a GitHub API call.
 - No telemetry, backend processing, diagnostics upload, screenshots, prompts, messages, file contents, filenames, OCR text, raw DOM text, raw URLs, or automatic logs are collected for feedback.
 - GitHub issue opening remains explicit user action only and must not submit through the GitHub API.
@@ -356,8 +358,8 @@ Current non-goals and release blockers:
 - No network calls, telemetry, GitHub API calls, or background sending.
 - No backend integration.
 - No automatic diagnostics collection.
-- No release claim that feedback is broadly available while `allowFeedback` defaults false.
-- Add browser-visible QA coverage before enabling this for release.
+- No enterprise release claim that feedback is available when managed policy disables it or policy loading fails closed.
+- Do not broaden feedback beyond the reviewed metadata-only GitHub/manual flow without a later release review covering policy, UI wording, store/privacy wording, and browser QA for the target build.
 
 Security notes:
 
@@ -373,8 +375,8 @@ Open questions:
 - Use GitHub issues, GitHub discussions, or an email alias for the MVP entry point?
 - Should feedback be public or private by default?
 - Should feedback live in the popup, options page, or both?
-- Should enterprise builds disable feedback entirely by default?
-- Should future feedback UI stay hidden by default until `allowFeedback: true`, or should consumer builds enable the gate in a separate reviewed phase?
+- Should enterprise builds continue to disable feedback by default?
+- Should future consumer builds add a popup entry point, or keep feedback limited to the options page?
 - Should safe diagnostics be opt-in for each report?
 
 ## Validation Matrix

@@ -1134,12 +1134,12 @@ const feedbackForbiddenCanaries = Object.freeze([
   "SMOKE_DIAGNOSTIC_SHOULD_NOT_APPEAR"
 ]);
 
-async function runFeedbackDefaultHiddenSmoke(connection, extensionId, browserName = "Chrome") {
+async function runFeedbackDefaultVisibleSmoke(connection, extensionId, browserName = "Chrome") {
   const optionsPage = await createPage(connection, `chrome-extension://${extensionId}/options/options.html`);
   await waitForEval(
     connection,
     optionsPage.sessionId,
-    "document.querySelector('#feedback-section') && document.querySelector('#feedback-entry')",
+    "document.querySelector('#feedback-section') && document.querySelector('#feedback-entry') && !document.querySelector('#feedback-section').hidden",
     `${browserName} feedback controls`
   );
 
@@ -1152,8 +1152,8 @@ async function runFeedbackDefaultHiddenSmoke(connection, extensionId, browserNam
     };
   })()`);
 
-  assert.equal(state.hidden, true, `${browserName} feedback section should be hidden by default`);
-  assert.equal(state.unavailable, true, `${browserName} feedback action should be unavailable by default`);
+  assert.equal(state.hidden, false, `${browserName} feedback section should be visible by default`);
+  assert.equal(state.unavailable, false, `${browserName} feedback action should be available by default`);
 }
 
 async function runFeedbackEnabledCopySmoke(connection, extensionId, browserName = "Chrome") {
@@ -1688,7 +1688,7 @@ async function runChromiumSmoke(options = {}) {
     console.log(`${browserName} smoke: popup`);
     const popup = await runPopupSmoke(connection, extensionId);
     console.log(`${browserName} smoke: feedback policy gate`);
-    await runFeedbackDefaultHiddenSmoke(connection, extensionId, browserName);
+    await runFeedbackDefaultVisibleSmoke(connection, extensionId, browserName);
     console.log(`${browserName} smoke: built-in protected site`);
     const builtInPage = await runBuiltInContentSmoke(connection, httpsServer.origin, browserName);
     console.log(`${browserName} smoke: composer redaction`);
@@ -1702,17 +1702,7 @@ async function runChromiumSmoke(options = {}) {
     console.log(`${browserName} smoke: file scanner`);
     await runScannerSmoke(connection, extensionId, tempDir);
     console.log(`${browserName} smoke: feedback copy-safe report`);
-    const feedbackExtensionDir = prepareSmokeExtension(tempDir, sourceExtensionDir, {
-      name: "extension-feedback-enabled",
-      allowFeedback: true
-    });
-    const feedbackExtensionId = await loadExtension(
-      connection,
-      profileDir,
-      feedbackExtensionDir,
-      browserName
-    );
-    await runFeedbackEnabledCopySmoke(connection, feedbackExtensionId, browserName);
+    await runFeedbackEnabledCopySmoke(connection, extensionId, browserName);
 
     console.log(`PASS ${browserName.toLowerCase()} extension smoke`);
   } catch (error) {

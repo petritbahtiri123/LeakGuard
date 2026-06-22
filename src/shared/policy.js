@@ -20,7 +20,7 @@
     blockHttpSecrets: false,
     redactHttpAggressively: true,
     aiAssistEnabled: true,
-    allowFeedback: false,
+    allowFeedback: true,
     defaultAction: "redact",
     defaultDestinationAction: "allow",
     auditMode: "off",
@@ -383,6 +383,10 @@
           managedApplied = true;
         } else {
           errors.push(...normalizedManaged.errors);
+          policy = {
+            ...policy,
+            allowFeedback: false
+          };
           if (buildInfo.enterprise && getStrictPreference(defaults, managed.value)) {
             policy = buildFailClosedPolicy(defaults, buildInfo);
             strictFailure = true;

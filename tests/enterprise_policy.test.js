@@ -167,8 +167,8 @@ function testAuditPolicyIsMetadataOnlyAndRetentionBounded() {
 function testFeedbackPolicyGateDefaultsAndNormalization() {
   assert.strictEqual(
     policyModule.DEFAULT_CONSUMER_POLICY.allowFeedback,
-    false,
-    "consumer feedback gate should default hidden until explicitly enabled"
+    true,
+    "consumer feedback gate should default visible unless managed policy disables it"
   );
   assert.strictEqual(
     policyModule.DEFAULT_ENTERPRISE_POLICY.allowFeedback,
@@ -223,8 +223,41 @@ function testFeedbackPolicyGateDefaultsAndNormalization() {
   assert.strictEqual(malformed.ok, false, "malformed feedback policy should be rejected");
   assert.strictEqual(
     malformed.value.allowFeedback,
-    false,
-    "malformed feedback policy should not accidentally enable feedback"
+    true,
+    "normalization alone should preserve the consumer default while reporting malformed feedback policy"
+  );
+}
+
+async function testMalformedManagedFeedbackPolicyDisablesConsumerFeedback() {
+  await withFreshPolicyModule(
+    {
+      storage: {
+        managed: {
+          get: async () => ({
+            allowFeedback: "true"
+          })
+        }
+      }
+    },
+    async (freshPolicyModule) => {
+      const buildInfo = {
+        browser: "chrome",
+        mode: "consumer",
+        enterprise: false
+      };
+      const loaded = await freshPolicyModule.loadPolicy({
+        forceReload: true,
+        buildInfo
+      });
+
+      assert.strictEqual(
+        loaded.policy.allowFeedback,
+        false,
+        "malformed managed feedback policy should fail closed even for consumer builds"
+      );
+      assert.strictEqual(loaded.meta.strictFailure, false, "consumer malformed feedback should not trigger enterprise strict failure");
+      assert.ok(loaded.meta.errors.some((error) => error.includes("allowFeedback")));
+    }
   );
 }
 
@@ -769,6 +802,7 @@ async function run() {
   await testManagedProtectedSitesCannotBeToggledOrDeleted();
   await testAuditEventsStayMetadataOnlyAndBounded();
   await testAuditRetentionPurgesOldMetadata();
+  await testMalformedManagedFeedbackPolicyDisablesConsumerFeedback();
   await testMalformedStrictEnterprisePolicyFailsClosed();
   testPolicySchemaAndUiSurfaceNewFields();
   console.log("PASS enterprise policy enforcement regressions");

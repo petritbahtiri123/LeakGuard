@@ -10,7 +10,7 @@
   "blockHttpSecrets": false,
   "redactHttpAggressively": true,
   "aiAssistEnabled": true,
-  "allowFeedback": false,
+  "allowFeedback": true,
   "defaultAction": "redact",
   "defaultDestinationAction": "allow",
   "auditMode": "off",
