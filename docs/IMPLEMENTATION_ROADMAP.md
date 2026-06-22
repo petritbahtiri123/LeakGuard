@@ -306,15 +306,15 @@ Implemented so far:
 
 - `allowFeedback` managed policy gate exists, defaults to `true` for consumer builds, and defaults to `false` for enterprise builds.
 - Metadata-only feedback report builder exists.
-- Options-page `Send Feedback` entry point exists behind the policy gate.
+- Options-page `Report an issue` entry point exists behind the policy gate.
 - Copy-safe-report flow exists after user review.
 - GitHub issue URL builder exists and targets the approved `petritbahtiri123/LeakGuard` issue destination.
-- Browser smoke covers the Chrome consumer default feedback review/copy path and the Firefox consumer default-visible policy gate path.
+- Browser smoke covers the Chrome consumer default feedback review/copy path and the Firefox consumer default feedback review path.
 
 Current behavior:
 
 - Feedback is user-initiated only.
-- The user must review and may edit the metadata-only report before copying or opening anything.
+- The user must review the generated metadata-only template and may edit their description before copying or opening anything.
 - Managed `allowFeedback: false`, malformed managed feedback policy, and strict policy failure hide or disable the feedback entry point.
 - No feedback is sent automatically, in the background, or through a GitHub API call.
 - No telemetry, backend processing, diagnostics upload, screenshots, prompts, messages, file contents, filenames, OCR text, raw DOM text, raw URLs, or automatic logs are collected for feedback.

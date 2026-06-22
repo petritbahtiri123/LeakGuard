@@ -52,18 +52,19 @@
 
       <section class="panel feedback-panel" id="feedback-section" hidden>
         <div class="section-head">
-          <h2>Feedback</h2>
-          <p>Do not paste secrets, prompts, filenames, file contents, screenshots, OCR text, or sensitive data.</p>
+          <h2>Report an issue</h2>
+          <p>LeakGuard prepares a safe metadata-only GitHub issue report for you to review first.</p>
         </div>
-        <button class="btn btn-primary" id="feedback-entry" type="button">Send Feedback</button>
+        <button class="btn btn-primary" id="feedback-entry" type="button">Prepare GitHub Issue</button>
         <div class="feedback-review" id="feedback-review" hidden>
           <label class="field">
-            <span>Description</span>
-            <textarea id="feedback-description" rows="4" placeholder="Describe what happened without secrets or sensitive data."></textarea>
+            <span>What happened?</span>
+            <textarea id="feedback-description" rows="4" aria-describedby="feedback-safety-note" placeholder="Describe the issue without secrets or sensitive data."></textarea>
           </label>
+          <p class="feedback-help" id="feedback-safety-note">Do not paste secrets, prompts, file contents, filenames, screenshots, OCR text, logs, or sensitive data.</p>
           <label class="field">
-            <span>Safe report preview</span>
-            <textarea class="feedback-report-preview" id="feedback-report-preview" rows="12" readonly></textarea>
+            <span>Generated safe report</span>
+            <textarea class="feedback-report-preview" id="feedback-report-preview" rows="12" aria-describedby="feedback-safety-note" readonly></textarea>
           </label>
           <div class="site-actions">
             <button class="btn btn-primary" id="copy-feedback-report" type="button">Copy Safe Report</button>

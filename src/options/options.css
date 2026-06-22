@@ -124,6 +124,11 @@ h1 {
   white-space: pre;
 }
 
+.feedback-help {
+  color: #bae6fd;
+  font-size: 13px;
+}
+
 .feedback {
   min-height: 22px;
   margin-top: 10px;

@@ -64,6 +64,18 @@ const firefoxSmokeSecretCanaries = Object.freeze([
   { id: "LGQA_FIREFOX_PUBLIC_IP_001", value: syntheticSecrets.publicIp, expectedPlaceholder: "[PUB_HOST_N]" },
   { id: "LGQA_FIREFOX_PRIVATE_IP_001", value: syntheticSecrets.privateIp, expectedPlaceholder: "[PRIVATE_IP_N]" }
 ]);
+const firefoxFeedbackForbiddenCanaries = Object.freeze([
+  "FIREFOX_PROMPT_SHOULD_NOT_APPEAR",
+  "FIREFOX_MESSAGE_SHOULD_NOT_APPEAR",
+  "FIREFOX_FILE_CONTENT_SHOULD_NOT_APPEAR",
+  "firefox-secret-file.env",
+  "FIREFOX_OCR_TEXT_SHOULD_NOT_APPEAR",
+  "https://example.test/path?token=FIREFOX_QUERY_SHOULD_NOT_APPEAR",
+  "FIREFOX_DOM_TEXT_SHOULD_NOT_APPEAR",
+  "FIREFOX_SCREENSHOT_SHOULD_NOT_APPEAR",
+  "FIREFOX_LOG_SHOULD_NOT_APPEAR",
+  "FIREFOX_DIAGNOSTIC_SHOULD_NOT_APPEAR"
+]);
 
 function firefoxSmokeCanaryLabel(raw) {
   return firefoxSmokeSecretCanaries.find((canary) => canary.value === raw)?.id || "raw synthetic canary";
@@ -1200,6 +1212,48 @@ async function runFirefoxFeedbackDefaultVisibleSmoke(webdriver, extensionOrigin)
 
   assert.equal(state.hidden, false, "Firefox feedback section should be visible by default");
   assert.equal(state.unavailable, false, "Firefox feedback action should be available by default");
+
+  await webdriver.execute("document.querySelector('#feedback-entry').click();");
+  await waitFor(
+    () => webdriver.execute(
+      "return Boolean(!document.querySelector('#feedback-review').hidden && document.querySelector('#feedback-report-preview').value.includes('LeakGuard Feedback Report'));"
+    ),
+    "Firefox feedback review preview"
+  );
+
+  const safeDescription = "Firefox smoke safe feedback description.";
+  const report = await webdriver.execute(`
+    const description = document.querySelector('#feedback-description');
+    description.value = ${JSON.stringify(safeDescription)};
+    description.dispatchEvent(new Event('input', { bubbles: true }));
+    return {
+      text: document.querySelector('#feedback-report-preview').value,
+      githubDisabled: document.querySelector('#open-feedback-link').disabled,
+      copyDisabled: document.querySelector('#copy-feedback-report').disabled
+    };
+  `);
+
+  assert.match(report.text, /Warning: Do not paste secrets/);
+  assert.match(report.text, /LeakGuard version:/);
+  assert.match(report.text, /Browser:/);
+  assert.match(report.text, /Extension build:/);
+  assert.match(report.text, /Extension channel:/);
+  assert.match(report.text, /Provider\/site category: options-page/);
+  assert.match(report.text, /Feature area: feedback/);
+  assert.match(report.text, /Safe reason codes: manual_feedback/);
+  assert.match(report.text, /File count: 0/);
+  assert.match(report.text, /Blocked count: 0/);
+  assert.match(report.text, /Adapter name: none/);
+  assert.match(report.text, new RegExp(safeDescription.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  for (const forbidden of firefoxFeedbackForbiddenCanaries) {
+    assert.equal(
+      report.text.includes(forbidden),
+      false,
+      `Firefox feedback report should not include forbidden canary ${forbidden}`
+    );
+  }
+  assert.equal(report.copyDisabled, false, "Firefox copy safe report should be reachable");
+  assert.equal(report.githubDisabled, false, "Firefox GitHub issue button should be enabled for configured target");
 }
 
 async function runFirefoxSmoke() {

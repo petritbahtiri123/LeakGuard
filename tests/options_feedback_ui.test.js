@@ -54,9 +54,14 @@ function testFeedbackUiLoadsSafeBuilderAndRendersReviewSurface() {
   assert.ok(optionsHtml.includes('id="feedback-report-preview"'));
   assert.ok(optionsHtml.includes('id="copy-feedback-report"'));
   assert.ok(optionsHtml.includes('id="open-feedback-link"'));
+  assert.ok(optionsHtml.includes("<h2>Report an issue</h2>"));
+  assert.ok(optionsHtml.includes("LeakGuard prepares a safe metadata-only GitHub issue report for you to review first."));
+  assert.ok(optionsHtml.includes('id="feedback-entry" type="button">Prepare GitHub Issue</button>'));
+  assert.ok(optionsHtml.includes('aria-describedby="feedback-safety-note"'));
+  assert.ok(optionsHtml.includes("Generated safe report"));
   assert.ok(
     optionsHtml.includes(
-      "Do not paste secrets, prompts, filenames, file contents, screenshots, OCR text, or sensitive data."
+      "Do not paste secrets, prompts, file contents, filenames, screenshots, OCR text, logs, or sensitive data."
     ),
     "feedback UI should show the required warning"
   );

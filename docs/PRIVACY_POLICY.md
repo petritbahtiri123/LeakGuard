@@ -36,7 +36,7 @@ LeakGuard does not intentionally persist raw prompts, selected file contents, ra
 
 ## Optional Feedback
 
-LeakGuard may show an optional, user-initiated feedback entry point when feedback is enabled by policy. Enterprise or managed deployments can disable or hide this feedback entry point through managed policy. The feedback flow generates a metadata-only template locally and lets you review and edit it before copying it or opening a prefilled GitHub issue link. The user-written description is controlled by you; do not paste secrets, prompts, filenames, file contents, OCR text, screenshots, or other sensitive data into it.
+LeakGuard may show an optional, user-initiated feedback entry point when feedback is enabled by policy. Enterprise or managed deployments can disable or hide this feedback entry point through managed policy. The feedback flow generates a metadata-only template locally. You can review the generated template and edit your description before copying it or opening a prefilled GitHub issue link. The user-written description is controlled by you; do not paste secrets, prompts, file contents, filenames, screenshots, OCR text, logs, or other sensitive data into it.
 
 LeakGuard does not automatically send feedback, logs, telemetry, diagnostics, screenshots, prompts, selected file contents, filenames, OCR text, raw DOM text, or raw URLs. GitHub issue opening occurs only after an explicit user action and only to the approved LeakGuard feedback destination.
 
