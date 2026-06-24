@@ -157,6 +157,25 @@ Pass criteria:
 - Placeholder count remains zero for harmless text.
 - Visible text and captured composer text match.
 
+## Release checklist: ChatGPT and Gemini
+
+Run this checklist in real Chrome and Firefox browsers before release. Use only the synthetic strings in this runbook or the manual fixtures, keep prompt capture local to DevTools, and do not submit captures, screenshots, or logs containing real user data. Repeat on ChatGPT (`https://chatgpt.com/`) and Gemini (`https://gemini.google.com/app`); prioritize Gemini if time is limited because its SPA editor and upload flows have the highest rehydration risk.
+
+| Scenario | Steps | Pass criteria |
+| --- | --- | --- |
+| Policy/default sanity | Load a consumer build, then an enterprise build with no explicit managed override. Confirm the active policy summary reports `liveTypedRedaction=false`. | No `[PWM_N]` placeholders appear while typing. Submit-time protection remains enabled. |
+| Harmless typing | Type `Draft a polite status update for the migration window.` slowly and quickly. | Text remains exactly user-authored; no placeholder, debug, badge, or status text enters the composer; caret remains stable. |
+| Risky synthetic typed secret | Type `API_KEY=sk-test-abcdefghijklmnopqrstuvwxyz123456`, wait at least one second, and inspect the visible/captured composer before submit. | Default mode leaves the raw synthetic value visible before submit and may warn only outside the composer; no placeholder appears before submit. |
+| Click-send enforcement | Submit the risky synthetic prompt with the site's send button. | LeakGuard redacts to `API_KEY=[PWM_N]`, verifies the exact sanitized composer state before send, and fails closed if the rewrite/verification cannot be confirmed. |
+| Enter-to-send enforcement | Repeat the risky synthetic prompt and submit with Enter or the site's keyboard shortcut. | Behavior matches click-send: redaction happens at submit, not during typing, with no duplicate placeholders or stale prompt text. |
+| Edit in middle | Type a multi-sentence prompt, move the cursor into the middle, insert `for the pilot group`, and continue typing. | Cursor does not jump to the end; the composer does not rewrite, duplicate, or wrap text. |
+| Undo/redo | Use browser/site undo and redo after harmless edits and after typing the synthetic risky prompt before submit. | Undo/redo restores only user-authored states; old sanitized text is not resurrected. |
+| Clear composer then type new prompt | Clear the composer after typing the synthetic risky prompt, wait for any delayed scan, and type `Summarize the rollout risks.` | No stale `[PWM_N]`, raw old value, or pending payload appears; the new harmless prompt remains unchanged. |
+| Route/new-chat navigation | Type harmless text, navigate to a new chat or another conversation, return, and type a new harmless prompt. | Route changes and SPA re-rendering do not replay old sanitized text or stale risk state. |
+| SPA re-render stress | Trigger a normal site re-render by resizing the window, opening/closing sidebars, or switching model/chat controls while text is present. | Visible text and captured composer text remain identical; no duplicate nodes/placeholders appear. |
+| Gemini file upload fallback, if applicable | On Gemini only, exercise the existing synthetic file fallback flow after completing normal typing checks. | File fallback/status UI stays outside the typed prompt unless the user explicitly chooses sanitized text insertion; clearing the composer clears transient state. |
+| `liveTypedRedaction=true` opt-in sanity | In a managed/dev build with explicit opt-in, repeat the synthetic risky typed-secret case. Reset policy to false after the check. | Legacy live rewrite happens at most once, with deterministic placeholder count and no duplicate DOM nodes; this confirms opt-in behavior without changing the release default. |
+
 ## Recommendation
 
 Keep observe-only typing as the default. Use `liveTypedRedaction=true` only for environments that explicitly accept pre-submit DOM mutation. Preserve fail-closed submit redaction and enterprise enforcement regardless of the live-typing setting.

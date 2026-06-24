@@ -198,6 +198,13 @@ function testRunbookDocumentsLiveTypingRiskAndQa() {
     "Undo/redo still works",
     "IME/composition safety",
     "Gemini and ChatGPT risk checks",
+    "Release checklist: ChatGPT and Gemini",
+    "Click-send enforcement",
+    "Enter-to-send enforcement",
+    "Route/new-chat navigation",
+    "SPA re-render stress",
+    "Gemini file upload fallback",
+    "`liveTypedRedaction=true` opt-in sanity",
     "Use `liveTypedRedaction=true`"
   ]);
 }
