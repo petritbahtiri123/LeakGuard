@@ -298,7 +298,9 @@ function testPanelAndManagementUiAreWired() {
     "panel toggle should stay readable and clickable without overlapping the title"
   );
   assert.ok(popupHtml.includes("Open File Scanner"), "popup should expose the file scanner");
+  assert.ok(popupHtml.includes("Report Issue"), "popup should expose the feedback report flow");
   assert.ok(popupJs.includes("scanner/scanner.html"), "popup should open the extension-owned scanner page");
+  assert.ok(popupJs.includes("PWM_OPEN_OPTIONS_PAGE"), "popup should open the existing options feedback flow");
   assert.ok(
     popupJs.includes("PWM_GET_PROTECTED_SITE_OVERVIEW") &&
       popupJs.includes("PWM_EXTENSION_REVEAL_SECRET") &&
@@ -434,7 +436,7 @@ function testDynamicSiteSupportIsDeclaredMinimally(manifest) {
 function testDocumentScannerCopyStaysV1Scoped() {
   assert.ok(
     scannerHtml.includes("text file, text PDF, DOCX, XLSX, or image") &&
-      scannerHtml.includes("Text files, text PDFs, DOCX text, XLSX spreadsheet text, and PNG/JPG/JPEG/WEBP images") &&
+      scannerHtml.includes("Text files, text PDFs, DOCX text, XLSX spreadsheet text, and PNG/JPG/JPEG/WEBP images are scanned locally") &&
       scannerHtml.includes("XLSX formulas are scanned as text only and are not executed"),
     "scanner UI should describe PDF, DOCX, XLSX, and scanner image support as scoped extraction only"
   );
@@ -445,19 +447,14 @@ function testDocumentScannerCopyStaysV1Scoped() {
       scannerHtml.includes("Protected-site upload OCR is on by default for supported image uploads") &&
       scannerHtml.includes("can be turned off in settings") &&
       scannerHtml.includes("flattened redacted PNG only when OCR box confidence is eligible") &&
-      scannerHtml.includes("Text PDF scanner results can also export a .redacted.pdf regenerated from sanitized extracted text") &&
-      scannerHtml.includes("DOCX scanner results can also export a .redacted.docx regenerated from sanitized extracted text") &&
-      scannerHtml.includes("Protected-site DOCX output can hand off a regenerated .redacted.docx when complete") &&
-      scannerHtml.includes("truncated or unsafe DOCX regeneration falls back to .redacted.txt or blocks raw upload") &&
+      scannerHtml.includes("Text PDF, DOCX, and XLSX scans can also export regenerated .redacted.pdf, .redacted.docx, or .redacted.xlsx files") &&
+      scannerHtml.includes("Protected-site PDF, DOCX, and XLSX output can hand off regenerated redacted files when complete") &&
+      scannerHtml.includes("truncated or unsafe regeneration falls back to .redacted.txt or blocks raw upload") &&
       scannerHtml.includes("does not copy original DOCX XML parts") &&
-      scannerHtml.includes("XLSX scanner results can also export a .redacted.xlsx regenerated from sanitized extracted text") &&
-      scannerHtml.includes("original XLSX XML parts are not copied") &&
-      scannerHtml.includes("formulas, charts, styles, comments, hidden sheets, metadata, custom XML, calc chains, and media are not preserved") &&
-      scannerHtml.includes("Protected-site XLSX output can hand off a regenerated .redacted.xlsx when complete") &&
-      scannerHtml.includes("truncated or unsafe XLSX regeneration falls back to .redacted.txt or blocks raw upload") &&
+      scannerHtml.includes("original XLSX XML parts are not preserved") &&
+      scannerHtml.includes("Formulas, charts, styles, comments, hidden sheets, metadata, custom XML, calc chains, media") &&
       scannerHtml.includes("not layout-preserving") &&
       scannerHtml.includes(".redacted.txt remains available as the fallback") &&
-      scannerHtml.includes("Protected-site text PDF output can hand off a regenerated .redacted.pdf when complete") &&
       scannerHtml.includes("Scanned PDF OCR") &&
       scannerHtml.includes("layout-preserving PDF/DOCX/XLSX redaction") &&
       scannerHtml.includes("legacy DOC") &&

@@ -67,6 +67,17 @@ h3 {
   color: #b6d7e5;
 }
 
+.copy-list {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.copy-list li {
+  padding-left: 2px;
+}
+
 .privacy-note {
   border: 1px solid rgba(134, 239, 172, 0.28);
   border-radius: 8px;
