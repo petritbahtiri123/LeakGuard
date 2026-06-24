@@ -665,11 +665,13 @@ function createHarnessPage() {
   <body>
     <main>
       <h1>LeakGuard Browser QA Harness</h1>
-      <textarea id="prompt-textarea" data-testid="prompt-textarea" placeholder="Message"></textarea>
-      <div id="provider-editor" contenteditable="true" role="textbox" data-testid="provider-composer" aria-label="Message"></div>
+      <form id="provider-form">
+        <textarea id="prompt-textarea" data-testid="prompt-textarea" placeholder="Message"></textarea>
+        <div id="provider-editor" contenteditable="true" role="textbox" data-testid="provider-composer" aria-label="Message"></div>
+        <button id="send-button" type="submit" data-testid="send-button" aria-label="Send message">Send</button>
+      </form>
       <input id="qa-file-input" type="file" accept="${getHarnessFileInputAccept()}">
       <div id="qa-drop-zone" role="button" aria-label="Drop files here">Drop files here</div>
-      <button id="send-button" type="button">Send</button>
       <ul id="qa-safe-controls" aria-label="Safe controls">
         ${browserQaSafeControlIds.map((id) => `<li data-lgqa-safe-control="${id}">${id}</li>`).join("\n        ")}
       </ul>
@@ -715,9 +717,11 @@ function createHarnessPage() {
         window.__leakguardQaEvents.push({ type: 'drop', defaultPrevented: event.defaultPrevented });
         await window.__leakguardQaRecordFiles('drop', event.dataTransfer?.files || []);
       });
-      document.querySelector('#send-button').addEventListener('click', () => {
+      document.querySelector('#provider-form').addEventListener('submit', (event) => {
+        event.preventDefault();
         const textarea = document.querySelector('#prompt-textarea');
         const editor = document.querySelector('#provider-editor');
+        window.__leakguardQaEvents.push({ type: 'provider-submit', trusted: Boolean(event.isTrusted) });
         window.__leakguardQaSubmissions.push({
           textarea: textarea?.value || '',
           editor: editor?.innerText || editor?.textContent || ''
@@ -1546,10 +1550,64 @@ async function waitForInputPlaceholder(connection, sessionId, selector, expressi
   }, label, 15000);
 }
 
+async function waitForProviderInputReadyForSubmit(connection, sessionId, selector, expression, label) {
+  return await waitFor(async () => {
+    await approveRedactionModalIfPresent(connection, sessionId);
+    const state = await evaluate(
+      connection,
+      sessionId,
+      `(() => {
+        const node = document.querySelector(${JSON.stringify(selector)});
+        const value = ${expression};
+        return {
+          value,
+          hasPlaceholder: /\\[PWM_\\d+\\]/.test(value),
+          hasModal: Boolean(document.querySelector('.pwm-modal-backdrop, .pwm-modal')),
+          pageText: document.body.innerText || '',
+          submissions: Array.from(window.__leakguardQaSubmissions || [])
+        };
+      })()`
+    );
+    return state && !state.hasModal ? state : null;
+  }, label, 15000);
+}
+
+async function readProviderInputState(connection, sessionId, selector, expression) {
+  return await evaluate(
+    connection,
+    sessionId,
+    `(() => {
+      const node = document.querySelector(${JSON.stringify(selector)});
+      const value = ${expression};
+      return {
+        value,
+        hasPlaceholder: /\\[PWM_\\d+\\]/.test(value),
+        hasModal: Boolean(document.querySelector('.pwm-modal-backdrop, .pwm-modal')),
+        pageText: document.body.innerText || '',
+        submissions: Array.from(window.__leakguardQaSubmissions || [])
+      };
+    })()`
+  );
+}
+
 function assertProviderSubmissionSanitized(submission, field, rawSecret, label) {
   assert.ok(submission, `${label} should create a synthetic provider submission`);
   assert.equal(String(submission[field] || "").includes(rawSecret), false, `${label} submitted raw secret`);
   assert.match(String(submission[field] || ""), /\[PWM_\d+\]/, `${label} should submit a placeholder`);
+}
+
+async function waitForLatestProviderSubmission(connection, sessionId, label) {
+  return await waitFor(async () => {
+    await approveRedactionModalIfPresent(connection, sessionId);
+    return await evaluate(
+      connection,
+      sessionId,
+      `(() => {
+        const submissions = Array.from(window.__leakguardQaSubmissions || []);
+        return submissions.length ? submissions[submissions.length - 1] : null;
+      })()`
+    );
+  }, label);
 }
 
 async function runSyntheticProviderInputInterceptionQa(connection, page) {
@@ -1560,6 +1618,7 @@ async function runSyntheticProviderInputInterceptionQa(connection, page) {
       field: "textarea",
       valueExpression: "node?.value || ''",
       rawSecret: "sk-proj-TextareaTypedBrowserQa1234567890abcdef",
+      expectPreSubmitRaw: true,
       async input() {
         await evaluate(
           connection,
@@ -1604,6 +1663,7 @@ async function runSyntheticProviderInputInterceptionQa(connection, page) {
       field: "editor",
       valueExpression: "node?.innerText || node?.textContent || ''",
       rawSecret: "sk-proj-EditorTypedBrowserQa1234567890abcdef",
+      expectPreSubmitRaw: true,
       async input() {
         await evaluate(
           connection,
@@ -1661,13 +1721,21 @@ async function runSyntheticProviderInputInterceptionQa(connection, page) {
     await testCase.input();
     let state;
     try {
-      state = await waitForInputPlaceholder(
-        connection,
-        page.sessionId,
-        testCase.selector,
-        testCase.valueExpression,
-        testCase.label
-      );
+      state = testCase.expectPreSubmitRaw
+        ? await waitForProviderInputReadyForSubmit(
+            connection,
+            page.sessionId,
+            testCase.selector,
+            testCase.valueExpression,
+            testCase.label
+          )
+        : await waitForInputPlaceholder(
+            connection,
+            page.sessionId,
+            testCase.selector,
+            testCase.valueExpression,
+            testCase.label
+          );
     } catch (error) {
       const diagnostic = await evaluate(
         connection,
@@ -1694,21 +1762,69 @@ async function runSyntheticProviderInputInterceptionQa(connection, page) {
       }
       throw new Error(sanitizeBrowserQaDiagnostic(`${error.message} Diagnostic: ${JSON.stringify(diagnostic)}`));
     }
-    assert.equal(state.value.includes(testCase.rawSecret), false, `${testCase.label} editor still contains raw secret`);
-    assert.match(state.value, /\[PWM_\d+\]/, `${testCase.label} editor should contain a placeholder`);
+    if (testCase.expectPreSubmitRaw) {
+      await delay(900);
+      state = await readProviderInputState(
+        connection,
+        page.sessionId,
+        testCase.selector,
+        testCase.valueExpression
+      );
+      assert.equal(state.value.includes(testCase.rawSecret), true, `${testCase.label} should remain observe-only before submit`);
+      assert.equal(state.hasPlaceholder, false, `${testCase.label} should not contain a placeholder before submit by default`);
+    } else {
+      assert.equal(state.value.includes(testCase.rawSecret), false, `${testCase.label} editor still contains raw secret`);
+      assert.match(state.value, /\[PWM_\d+\]/, `${testCase.label} editor should contain a placeholder`);
+    }
     await evaluate(connection, page.sessionId, "document.querySelector('#send-button')?.click()", { userGesture: true });
-    const submitted = await waitFor(
-      () =>
-        evaluate(
+    let submitted;
+    try {
+      submitted = await waitForLatestProviderSubmission(
+        connection,
+        page.sessionId,
+        `${testCase.label} synthetic provider submission`
+      );
+    } catch (error) {
+      const diagnostic = await evaluate(
+        connection,
+        page.sessionId,
+        `(() => {
+          const textarea = document.querySelector('#prompt-textarea')?.value || '';
+          const editorText = document.querySelector('#provider-editor')?.innerText ||
+            document.querySelector('#provider-editor')?.textContent || '';
+          const buttons = Array.from(
+            document.querySelectorAll('.pwm-modal-backdrop button, .pwm-modal button')
+          ).map((button) => button.textContent || '');
+          return {
+            textareaHasRaw: textarea.includes(${JSON.stringify(testCase.rawSecret)}),
+            textareaHasPlaceholder: /\\[PWM_\\d+\\]/.test(textarea),
+            editorHasRaw: editorText.includes(${JSON.stringify(testCase.rawSecret)}),
+            editorHasPlaceholder: /\\[PWM_\\d+\\]/.test(editorText),
+            modalPresent: Boolean(document.querySelector('.pwm-modal-backdrop, .pwm-modal')),
+            modalButtons: buttons,
+            badge: document.querySelector('.pwm-badge')?.textContent || '',
+            submissionCount: Array.from(window.__leakguardQaSubmissions || []).length,
+            events: Array.from(window.__leakguardQaEvents || [])
+          };
+        })()`
+      );
+      if (
+        !diagnostic.textareaHasRaw &&
+        !diagnostic.editorHasRaw &&
+        (diagnostic.textareaHasPlaceholder || diagnostic.editorHasPlaceholder) &&
+        !diagnostic.modalPresent &&
+        diagnostic.submissionCount === 0
+      ) {
+        await evaluate(connection, page.sessionId, "document.querySelector('#send-button')?.click()", { userGesture: true });
+        submitted = await waitForLatestProviderSubmission(
           connection,
           page.sessionId,
-          `(() => {
-            const submissions = Array.from(window.__leakguardQaSubmissions || []);
-            return submissions.length ? submissions[submissions.length - 1] : null;
-          })()`
-        ),
-      `${testCase.label} synthetic provider submission`
-    );
+          `${testCase.label} sanitized retry provider submission`
+        );
+      } else {
+        throw new Error(sanitizeBrowserQaDiagnostic(`${error.message} Diagnostic: ${JSON.stringify(diagnostic)}`));
+      }
+    }
     assertProviderSubmissionSanitized(submitted, testCase.field, testCase.rawSecret, testCase.label);
     const capture = await captureProviderArtifacts(connection, page.sessionId);
     assertCapturedStateHasNoRawMarkers(capture, `${testCase.label} browser raw marker sweep`, [testCase.rawSecret]);

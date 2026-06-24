@@ -641,6 +641,17 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
     "Enter-send fallback should suppress related keypress/keyup events while async submit redaction is pending"
   );
   assert.ok(
+    contentSource.includes('"form button#send-button"') &&
+      contentSource.includes('"button#send-button"'),
+    "send-button click guard should cover providers and harnesses that expose only id='send-button'"
+  );
+  assert.ok(
+    contentSource.includes("leakGuardSendButton") &&
+      contentSource.includes("submitComposer(form, input, event.leakGuardSendButton || null)") &&
+      contentSource.includes("createSyntheticSubmitInterceptionEvent(form || input, { sendButton: button })"),
+    "guarded send-button redaction should retry the exact intercepted button after verified rewrite"
+  );
+  assert.ok(
     beforeInputSource.indexOf("if (!quickRelevantFindings.length && !quickPlaceholderNormalizationChanged)") <
       beforeInputSource.lastIndexOf("consumeInterceptionEvent(event);") &&
       submitSource.indexOf("if (!analysisNeedsEventOwnership(quickAnalysis)) return;") <

@@ -113,8 +113,10 @@
     "form button[data-testid='send-button']",
     "form button[data-testid*='send']",
     "form button[aria-label*='send' i]",
+    "form button#send-button",
     "button[data-testid='send-button']",
     "button[data-testid*='send']",
+    "button#send-button",
     "button[aria-label*='send' i]"
   ];
   let currentUrl = location.href;
@@ -3630,7 +3632,7 @@
     return null;
   }
 
-  function submitComposer(form, input) {
+  function submitComposer(form, input, preferredButton = null) {
     clearAllRiskSessionState();
 
     if (form && typeof form.requestSubmit === "function") {
@@ -3638,7 +3640,9 @@
       return;
     }
 
-    const button = findSendButton(input);
+    const button = preferredButton && isVisible(preferredButton)
+      ? preferredButton
+      : findSendButton(input);
     if (button) {
       bypassNextSendButtonClick = true;
       button.click();
@@ -10054,7 +10058,7 @@
 
       queueVerifiedComposerSend(input, normalized.text, "submit", () => {
         bypassNextSubmit = true;
-        submitComposer(form, input);
+        submitComposer(form, input, event.leakGuardSendButton || null);
       });
       return;
     }
@@ -10085,7 +10089,7 @@
 
       queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
         bypassNextSubmit = true;
-        submitComposer(form, input);
+        submitComposer(form, input, event.leakGuardSendButton || null);
       });
     });
 
@@ -10112,7 +10116,7 @@
 
       queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
         bypassNextSubmit = true;
-        submitComposer(form, input);
+        submitComposer(form, input, event.leakGuardSendButton || null);
       });
       return;
     }
@@ -10120,7 +10124,7 @@
     if (analysis.findings.length && isProtectionPauseActiveAfterPolicy(policy, destinationPolicy)) {
       clearAllRiskSessionState();
       bypassNextSubmit = true;
-      submitComposer(form, input);
+      submitComposer(form, input, event.leakGuardSendButton || null);
       return;
     }
 
@@ -10139,7 +10143,7 @@
 
       queueVerifiedComposerSend(input, normalized.text, "submit", () => {
         bypassNextSubmit = true;
-        submitComposer(form, input);
+        submitComposer(form, input, event.leakGuardSendButton || null);
       });
       return;
     }
@@ -10170,7 +10174,7 @@
 
     queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
       bypassNextSubmit = true;
-      submitComposer(form, input);
+      submitComposer(form, input, event.leakGuardSendButton || null);
     });
   }
 
@@ -10197,9 +10201,10 @@
     return null;
   }
 
-  function createSyntheticSubmitInterceptionEvent(target) {
+  function createSyntheticSubmitInterceptionEvent(target, options = {}) {
     return {
       target,
+      leakGuardSendButton: options.sendButton || null,
       preventDefault() {},
       stopPropagation() {},
       stopImmediatePropagation() {}
@@ -10277,7 +10282,7 @@
 
     consumeInterceptionEvent(event);
     const form = button.closest?.("form") || input.closest?.("form") || null;
-    await maybeHandleSubmit(createSyntheticSubmitInterceptionEvent(form || input));
+    await maybeHandleSubmit(createSyntheticSubmitInterceptionEvent(form || input, { sendButton: button }));
   }
 
   async function maybeHandleFallbackSendKey(event) {
