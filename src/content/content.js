@@ -134,6 +134,7 @@
       blockHttpSecrets: false,
       redactHttpAggressively: true,
       aiAssistEnabled: true,
+      liveTypedRedaction: false,
       defaultAction: "redact",
       defaultDestinationAction: "allow",
       auditMode: "off",
@@ -2317,6 +2318,7 @@
       blockHttpSecrets: false,
       redactHttpAggressively: true,
       aiAssistEnabled: true,
+      liveTypedRedaction: false,
       defaultAction: "redact",
       defaultDestinationAction: "allow",
       auditMode: "off",
@@ -2834,6 +2836,11 @@
     if (!(secretFindings || []).length) return false;
     if ((allFindings || []).length !== secretFindings.length) return false;
     return secretFindings.every((finding) => finding?.severity === "high");
+  }
+
+  function isLiveTypedRedactionEnabled(policy) {
+    const activePolicy = policy || getActivePolicy();
+    return Boolean(activePolicy?.liveTypedRedaction === true && activePolicy?.strictFailure !== true);
   }
 
   function shouldEnforceHttpSecretPolicy(policy, secretFindings) {
@@ -3776,6 +3783,11 @@
     const originalText = getInputText(input);
     const selection = getSelectionOffsets(input);
     const next = spliceSelectionText(originalText, selection, insertedText);
+
+    if (!isLiveTypedRedactionEnabled(getActivePolicy())) {
+      return;
+    }
+
     let firefoxEarlyAnalysis = null;
     let firefoxEarlyRelevantFindings = [];
     let firefoxEarlyPlaceholderNormalizationChanged = false;
@@ -10421,6 +10433,11 @@
 
     const analysis = await analyzeTextWithAiAssist(text);
     if (scanGeneration !== typedScanGeneration) return;
+
+    if (!isLiveTypedRedactionEnabled(getActivePolicy())) {
+      lastTypedPromptText = analysis.normalizedText;
+      return;
+    }
 
     if (!analysis.findings.length) {
       if (analysis.placeholderNormalized) {

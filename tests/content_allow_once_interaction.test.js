@@ -346,13 +346,15 @@ function createHarness(options = {}) {
       allowUserOverride: true,
       allowProtectionPause: true,
       protectionPauseMaxMinutes: 15,
-      defaultAction: options.defaultAction || "redact"
+      defaultAction: options.defaultAction || "redact",
+      liveTypedRedaction: options.liveTypedRedaction === true
     }),
     getActivePolicy: () => ({
       allowUserOverride: true,
       allowProtectionPause: true,
       protectionPauseMaxMinutes: 15,
-      defaultAction: options.defaultAction || "redact"
+      defaultAction: options.defaultAction || "redact",
+      liveTypedRedaction: options.liveTypedRedaction === true
     }),
     resolveDecisionAction: (action) => (action === "redact" ? "redact" : "cancel"),
     handleDestinationPolicy: async () => ({ blocked: false }),
@@ -428,6 +430,7 @@ function createHarness(options = {}) {
       extractFunctionSource(contentSource, "promptForSensitiveContentDecision"),
       extractFunctionSource(contentSource, "getPasteTransfer"),
       extractFunctionSource(contentSource, "getPastedPlainText"),
+      extractFunctionSource(contentSource, "isLiveTypedRedactionEnabled"),
       extractFunctionSource(contentSource, "maybeHandlePaste"),
       extractFunctionSource(contentSource, "maybeHandleSubmit"),
       extractFunctionSource(contentSource, "maybeHandleTypedSecrets"),
@@ -499,7 +502,7 @@ async function testBlockDefaultActionFailsClosedWithoutDecisionModal() {
   assert.strictEqual(composer.value, "", "blocked default action should keep raw paste out of the composer");
 }
 
-async function testTypedScanAutoRedactsWithoutDecisionModal() {
+async function testTypedScanWarnsWithoutLiveRewriteByDefault() {
   const harness = createHarness();
   const { calls, composer, document } = harness;
 
@@ -512,8 +515,48 @@ async function testTypedScanAutoRedactsWithoutDecisionModal() {
   assert.strictEqual(countDecisionModals(document), 0, "typed sensitive content should not open a decision modal");
   await scanPromise;
 
-  assert.strictEqual(calls.redactions.length, 1, "typed sensitive content should request redaction automatically");
-  assert.strictEqual(composer.value, "username=[PWM_1]", "typed sensitive content should be rewritten automatically");
+  assert.strictEqual(calls.redactions.length, 0, "default typed scan should not request live redaction");
+  assert.strictEqual(composer.value, "username=wayland.dev", "default typed scan should leave the composer user-authored");
+  assert.ok(calls.refreshes >= 0, "default typed scan may refresh outside-composer warning state");
+}
+
+async function testTypedScanAutoRedactsWhenLiveTypedRedactionEnabled() {
+  const harness = createHarness({ liveTypedRedaction: true });
+  const { calls, composer, document } = harness;
+
+  composer.value = "username=wayland.dev";
+  composer.selectionStart = composer.value.length;
+  composer.selectionEnd = composer.value.length;
+  const scanPromise = harness.maybeHandleTypedSecrets();
+
+  await waitForMicrotasks();
+  assert.strictEqual(countDecisionModals(document), 0, "live typed redaction should not open a decision modal");
+  await scanPromise;
+
+  assert.strictEqual(calls.redactions.length, 1, "enabled live typed redaction should request redaction automatically");
+  assert.strictEqual(composer.value, "username=[PWM_1]", "enabled live typed redaction should rewrite automatically");
+}
+
+async function testSubmitStillRedactsWhenLiveTypedRedactionDisabled() {
+  const harness = createHarness({ liveTypedRedaction: false });
+  const { calls, composer } = harness;
+  composer.value = "username=wayland.dev";
+
+  const submit = new FakeEvent("submit", {
+    bubbles: true,
+    cancelable: true,
+    target: composer
+  });
+
+  await harness.maybeHandleSubmit(submit);
+
+  assert.strictEqual(submit.defaultPrevented, true, "submit should still be owned when typed live redaction is disabled");
+  assert.strictEqual(calls.redactions.length, 1, "submit should still request redaction");
+  assert.ok(
+    calls.rewrites.some((rewrite) => rewrite.context === "submit-redaction"),
+    "submit should still use transactional redaction"
+  );
+  assert.strictEqual(calls.submits, 1, "submit should continue after exact verified redaction");
 }
 
 async function testSubmitAllowsSanitizedPlaceholderOnlyContent() {
@@ -590,7 +633,9 @@ async function run() {
   await testSensitivePasteAutoRedactsWithoutDecisionModal();
   await testPausedBrowserInteractionKeepsRawTextWithoutPrompt();
   await testBlockDefaultActionFailsClosedWithoutDecisionModal();
-  await testTypedScanAutoRedactsWithoutDecisionModal();
+  await testTypedScanWarnsWithoutLiveRewriteByDefault();
+  await testTypedScanAutoRedactsWhenLiveTypedRedactionEnabled();
+  await testSubmitStillRedactsWhenLiveTypedRedactionDisabled();
   await testSubmitAllowsSanitizedPlaceholderOnlyContent();
   await testLegacyDecisionModalButtonsConsumeClicks();
   await testMessageModalCloseButtonConsumesClicks();

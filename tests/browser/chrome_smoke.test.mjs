@@ -173,10 +173,18 @@ function createHarnessPage(title) {
       <h1>${title}</h1>
       <div id="chat-form" role="form">
         <textarea id="prompt-textarea" data-testid="prompt-textarea" placeholder="Message"></textarea>
-        <button id="send-button" type="button">Send</button>
+        <button id="send-button" type="button" data-testid="send-button" aria-label="Send message">Send</button>
       </div>
       <section id="echo-zone"></section>
     </main>
+    <script>
+      window.__leakguardSmokeSubmissions = [];
+      document.querySelector('#send-button').addEventListener('click', () => {
+        window.__leakguardSmokeSubmissions.push({
+          textarea: document.querySelector('#prompt-textarea')?.value || ''
+        });
+      });
+    </script>
   </body>
 </html>`;
 }
@@ -1258,43 +1266,55 @@ async function runBuiltInContentSmoke(connection, chatGptOrigin, browserName = "
 
 async function runComposerRedactionSmoke(connection, page) {
   const rawSecret = chromeSmokeRawSecret;
-  const redacted = await evaluate(connection, page.sessionId, `new Promise((resolve, reject) => {
+  const preSubmit = await evaluate(connection, page.sessionId, `new Promise((resolve) => {
     const textarea = document.querySelector('#prompt-textarea');
+    const text = 'API_KEY=${rawSecret}';
     textarea.focus();
     const event = new InputEvent('beforeinput', {
       bubbles: true,
       cancelable: true,
       inputType: 'insertText',
-      data: 'API_KEY=${rawSecret}'
+      data: text
     });
     textarea.dispatchEvent(event);
-    const started = Date.now();
-    const timer = setInterval(() => {
-      if (/\\[PWM_\\d+\\]/.test(textarea.value)) {
-        const placeholder = textarea.value.match(/\\[PWM_\\d+\\]/)?.[0] || '';
-        clearInterval(timer);
-        resolve({
-          expectedRedaction: /^API_KEY=\\[PWM_\\d+\\]$/.test(textarea.value),
-          rawVisible: textarea.value.includes(${JSON.stringify(rawSecret)}),
-          placeholder,
-          badge: document.querySelector('.pwm-badge')?.textContent || '',
-          prevented: event.defaultPrevented
-        });
-        return;
-      }
-      if (Date.now() - started > 10000) {
-        clearInterval(timer);
-        reject(new Error('Timed out waiting for composer redaction: ' + JSON.stringify({
-          valueLength: textarea.value.length,
-          placeholderVisible: /\\[PWM_\\d+\\]/.test(textarea.value),
-          rawCanaryVisible: textarea.value.includes(${JSON.stringify(rawSecret)})
-        })));
-      }
-    }, 50);
+    if (!event.defaultPrevented) {
+      textarea.value = text;
+      textarea.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        inputType: 'insertText',
+        data: text
+      }));
+    }
+    setTimeout(() => resolve({
+      value: textarea.value,
+      prevented: event.defaultPrevented,
+      placeholderVisible: /\\[PWM_\\d+\\]/.test(textarea.value),
+      rawVisible: textarea.value.includes(${JSON.stringify(rawSecret)})
+    }), 250);
   })`);
 
-  assert.equal(redacted.expectedRedaction, true, "Chrome composer should rewrite API_KEY to [PWM_N]");
-  assert.equal(redacted.rawVisible, false, "Chrome composer should not retain LGQA_CHROME_SMOKE_STRIPE_001");
+  assert.equal(preSubmit.prevented, false, "Chrome live typing should not consume beforeinput by default");
+  assert.equal(preSubmit.placeholderVisible, false, "Chrome live typing should not create pre-submit [PWM_N]");
+  assert.equal(preSubmit.rawVisible, true, "Chrome typed synthetic canary should remain visible before submit");
+
+  await evaluate(connection, page.sessionId, "document.querySelector('#send-button')?.click()", { userGesture: true });
+  const redacted = await waitFor(
+    () =>
+      evaluate(connection, page.sessionId, `(() => {
+        const submissions = Array.from(window.__leakguardSmokeSubmissions || []);
+        const latest = submissions.length ? submissions[submissions.length - 1].textarea || '' : '';
+        const placeholder = latest.match(/\\[PWM_\\d+\\]/)?.[0] || '';
+        return placeholder ? {
+          expectedRedaction: /^API_KEY=\\[PWM_\\d+\\]$/.test(latest),
+          rawVisible: latest.includes(${JSON.stringify(rawSecret)}),
+          placeholder
+        } : null;
+      })()`),
+    "Chrome submit-time composer redaction"
+  );
+
+  assert.equal(redacted.expectedRedaction, true, "Chrome submit should rewrite API_KEY to [PWM_N]");
+  assert.equal(redacted.rawVisible, false, "Chrome submit should not send LGQA_CHROME_SMOKE_STRIPE_001");
 
   return { rawSecret, placeholder: redacted.placeholder || "[PWM_1]" };
 }

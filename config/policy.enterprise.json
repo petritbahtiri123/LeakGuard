@@ -10,6 +10,7 @@
   "blockHttpSecrets": true,
   "redactHttpAggressively": true,
   "aiAssistEnabled": true,
+  "liveTypedRedaction": false,
   "allowFeedback": false,
   "defaultAction": "block",
   "defaultDestinationAction": "block",
