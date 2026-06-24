@@ -164,6 +164,8 @@
   let badgeHideTimer = 0;
   let bypassNextSubmit = false;
   let bypassNextSendButtonClick = false;
+  let fallbackSendKeySuppressionUntil = 0;
+  let fallbackSendKeySuppressionInput = null;
   let inputScanTimer = 0;
   let rehydrateObserver = null;
   let modalOpen = false;
@@ -196,6 +198,7 @@
   });
   const SANITIZED_FILE_HANDOFF_SUPPRESS_MS = 30000;
   const PROGRAMMATIC_INPUT_SUPPRESS_MS = 500;
+  const FALLBACK_SEND_KEY_SUPPRESS_MS = 5000;
   const CHATGPT_LARGE_PASTE_FILE_THRESHOLD = 16 * 1024;
   const CHATGPT_SANITIZED_PASTE_FILE_NAME = "leakguard-redacted-paste.txt";
   const GEMINI_DIRECT_TEXT_INSERT_THRESHOLD = 8 * 1024;
@@ -3597,6 +3600,7 @@
       ensureExactComposerState(input, expectedText, { context })
         .then((isExact) => {
           if (!isExact) {
+            clearFallbackSendKeyRedactionPending(input);
             return showRewriteFailure(
               context,
               collectFailureDetails(input, expectedText, getInputText(input), context)
@@ -3605,6 +3609,7 @@
             });
           }
 
+          clearFallbackSendKeyRedactionPending(input);
           send();
           return null;
         })
@@ -10201,6 +10206,42 @@
     };
   }
 
+  function markFallbackSendKeyRedactionPending(input) {
+    fallbackSendKeySuppressionInput = input || null;
+    fallbackSendKeySuppressionUntil = Date.now() + FALLBACK_SEND_KEY_SUPPRESS_MS;
+  }
+
+  function clearFallbackSendKeyRedactionPending(input) {
+    if (!input || fallbackSendKeySuppressionInput === input) {
+      fallbackSendKeySuppressionInput = null;
+      fallbackSendKeySuppressionUntil = 0;
+    }
+  }
+
+  function maybeConsumeSuppressedFallbackSendKeyEvent(event) {
+    if (
+      !fallbackSendKeySuppressionInput ||
+      Date.now() > fallbackSendKeySuppressionUntil ||
+      event?.key !== "Enter" ||
+      event.shiftKey ||
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.isComposing
+    ) {
+      if (Date.now() > fallbackSendKeySuppressionUntil) {
+        clearFallbackSendKeyRedactionPending();
+      }
+      return false;
+    }
+
+    const input = findComposer(event.target);
+    if (input !== fallbackSendKeySuppressionInput) return false;
+
+    consumeInterceptionEvent(event);
+    return true;
+  }
+
   async function maybeHandleSendButtonClick(event) {
     if (!extensionRuntimeAvailable) {
       return;
@@ -10265,13 +10306,20 @@
     if (!analysisNeedsEventOwnership(quickAnalysis)) return;
 
     consumeInterceptionEvent(event);
+    markFallbackSendKeyRedactionPending(input);
 
     const analysis = await analyzeTextWithAiAssist(text);
-    if (!analysis.findings.length && !analysis.placeholderNormalized) return;
+    if (!analysis.findings.length && !analysis.placeholderNormalized) {
+      clearFallbackSendKeyRedactionPending(input);
+      return;
+    }
 
     if (analysisHasOnlySanitizedPlaceholderFindings(analysis)) {
       const normalized = await applyNormalizedComposerRewrite(input, text, "submit");
-      if (!normalized.ok) return;
+      if (!normalized.ok) {
+        clearFallbackSendKeyRedactionPending(input);
+        return;
+      }
 
       queueVerifiedComposerSend(input, normalized.text, "submit", () => {
         const button = findSendButton(input);
@@ -10288,6 +10336,7 @@
       ? await handleDestinationPolicy(analysis.findings, policy)
       : getDestinationPolicyDecision(policy);
     if (analysis.findings.length && destinationPolicy.blocked) {
+      clearFallbackSendKeyRedactionPending(input);
       return;
     }
     const destinationForceRedact = shouldForceDestinationRedaction(destinationPolicy, analysis.findings);
@@ -10301,7 +10350,10 @@
         "submit",
         analysis.secretFindings
       );
-      if (!rewritten) return;
+      if (!rewritten) {
+        clearFallbackSendKeyRedactionPending(input);
+        return;
+      }
 
       setBadge("Content redacted");
       hideBadgeSoon();
@@ -10331,7 +10383,10 @@
         "submit",
         analysis.secretFindings
       );
-      if (!rewritten) return;
+      if (!rewritten) {
+        clearFallbackSendKeyRedactionPending(input);
+        return;
+      }
 
       setBadge("Destination policy required redaction");
       hideBadgeSoon();
@@ -10349,6 +10404,7 @@
 
     if (analysis.findings.length && isProtectionPauseActiveAfterPolicy(policy, destinationPolicy)) {
       const button = findSendButton(input);
+      clearFallbackSendKeyRedactionPending(input);
       clearAllRiskSessionState();
       if (button) button.click();
       return;
@@ -10356,12 +10412,16 @@
 
     if (!analysis.findings.length) {
       const normalized = await applyNormalizedComposerRewrite(input, text, "submit");
-      if (!normalized.ok) return;
+      if (!normalized.ok) {
+        clearFallbackSendKeyRedactionPending(input);
+        return;
+      }
 
       queueMicrotask(() => {
         ensureExactComposerState(input, normalized.text)
           .then((isExact) => {
             if (!isExact) {
+              clearFallbackSendKeyRedactionPending(input);
               return showRewriteFailure(
                 "submit",
                 collectFailureDetails(input, normalized.text, getInputText(input), "submit")
@@ -10372,6 +10432,7 @@
 
             const button = findSendButton(input);
             if (button) {
+              clearFallbackSendKeyRedactionPending(input);
               clearAllRiskSessionState();
               button.click();
             }
@@ -10389,7 +10450,10 @@
       input,
       analysis.normalizedText
     );
-    if (decisionAction === "cancel") return;
+    if (decisionAction === "cancel") {
+      clearFallbackSendKeyRedactionPending(input);
+      return;
+    }
 
     const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
 
@@ -10400,7 +10464,10 @@
       "submit",
       analysis.secretFindings
     );
-    if (!rewritten) return;
+    if (!rewritten) {
+      clearFallbackSendKeyRedactionPending(input);
+      return;
+    }
 
     setBadge("Content redacted");
     hideBadgeSoon();
@@ -10919,6 +10986,30 @@
       "submit",
       (event) => {
         maybeHandleSubmit(event).catch(handleContentError);
+      },
+      true
+    );
+
+    window.addEventListener(
+      "keydown",
+      (event) => {
+        maybeHandleFallbackSendKey(event).catch(handleContentError);
+      },
+      true
+    );
+
+    window.addEventListener(
+      "keypress",
+      (event) => {
+        maybeConsumeSuppressedFallbackSendKeyEvent(event);
+      },
+      true
+    );
+
+    window.addEventListener(
+      "keyup",
+      (event) => {
+        maybeConsumeSuppressedFallbackSendKeyEvent(event);
       },
       true
     );

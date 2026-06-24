@@ -630,6 +630,17 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
     "Enter-send fallback should synchronously consume risky composer text before async AI analysis"
   );
   assert.ok(
+    contentSource.includes('window.addEventListener(\n      "keydown"') &&
+      contentSource.includes("maybeHandleFallbackSendKey(event).catch(handleContentError);"),
+    "Enter-send fallback should bind at window capture so host document-level handlers cannot submit raw text first"
+  );
+  assert.ok(
+    contentSource.includes("maybeConsumeSuppressedFallbackSendKeyEvent") &&
+      contentSource.includes('window.addEventListener(\n      "keypress"') &&
+      contentSource.includes('window.addEventListener(\n      "keyup"'),
+    "Enter-send fallback should suppress related keypress/keyup events while async submit redaction is pending"
+  );
+  assert.ok(
     beforeInputSource.indexOf("if (!quickRelevantFindings.length && !quickPlaceholderNormalizationChanged)") <
       beforeInputSource.lastIndexOf("consumeInterceptionEvent(event);") &&
       submitSource.indexOf("if (!analysisNeedsEventOwnership(quickAnalysis)) return;") <
