@@ -91,8 +91,42 @@ h1 {
   padding: 12px 14px;
 }
 
+.field textarea {
+  box-sizing: border-box;
+  width: 100%;
+  border: 1px solid rgba(125, 211, 252, 0.24);
+  border-radius: 14px;
+  background: rgba(2, 6, 23, 0.54);
+  color: #f0fdfa;
+  font: inherit;
+  min-height: 96px;
+  padding: 12px 14px;
+  resize: vertical;
+}
+
 .field input::placeholder {
   color: #64748b;
+}
+
+.field textarea::placeholder {
+  color: #64748b;
+}
+
+.feedback-review {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.feedback-report-preview {
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  min-height: 240px;
+  white-space: pre;
+}
+
+.feedback-help {
+  color: #bae6fd;
+  font-size: 13px;
 }
 
 .feedback {

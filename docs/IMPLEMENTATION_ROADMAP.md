@@ -1,6 +1,6 @@
 # LeakGuard Implementation Roadmap
 
-Updated: 2026-06-19
+Updated: 2026-06-21
 
 This roadmap turns the open items from [deep-research-report.md](deep-research-report.md), [DOCUMENTATION_ROADMAP.md](DOCUMENTATION_ROADMAP.md), and [code-quality-audit.md](code-quality-audit.md) into an implementation sequence.
 
@@ -296,25 +296,36 @@ Acceptance criteria:
 - Each expansion starts with tests and public wording review.
 - No expansion introduces backend processing, telemetry, cloud scanning, remote model calls, or remote secret verification.
 
-### Privacy-Preserving Feedback Loop
+### 7A - Privacy-Preserving Feedback Loop MVP
 
-Status: Future planning only. Do not implement until a later scoped phase explicitly approves UI, policy, and release wording.
+Status: Implemented behind a fail-closed policy gate. Consumer builds show feedback by default; enterprise builds and malformed managed policy keep feedback hidden.
 
 Purpose: collect user-initiated feedback without weakening LeakGuard's local-only privacy model.
 
-MVP direction:
+Implemented so far:
 
-- Add a future `Send Feedback` or `Report Issue` action.
-- Generate a metadata-only feedback template locally.
-- Let the user review and edit the report before anything leaves the browser.
-- Send manually through `mailto:` or a GitHub issue/discussion link.
+- `allowFeedback` managed policy gate exists, defaults to `true` for consumer builds, and defaults to `false` for enterprise builds.
+- Metadata-only feedback report builder exists.
+- Options-page `Report an issue` entry point exists behind the policy gate.
+- Copy-safe-report flow exists after user review.
+- GitHub issue URL builder exists and targets the approved `petritbahtiri123/LeakGuard` issue destination.
+- Browser smoke covers the Chrome consumer default feedback review/copy path and the Firefox consumer default feedback review path.
+
+Current behavior:
+
+- Feedback is user-initiated only.
+- The user must review the generated metadata-only template and may edit their description before copying or opening anything.
+- Managed `allowFeedback: false`, malformed managed feedback policy, and strict policy failure hide or disable the feedback entry point.
+- No feedback is sent automatically, in the background, or through a GitHub API call.
+- No telemetry, backend processing, diagnostics upload, screenshots, prompts, messages, file contents, filenames, OCR text, raw DOM text, raw URLs, or automatic logs are collected for feedback.
+- GitHub issue opening remains explicit user action only and must not submit through the GitHub API.
 
 Possible feedback modes:
 
-- `mailto:` feedback link with a metadata-only template.
-- Copy-safe-report button that copies only reviewed metadata.
 - GitHub issue or discussion link with user-controlled report text.
-- Optional future hosted feedback form, only if it remains metadata-only.
+- Copy-safe-report button that copies only reviewed metadata.
+- `mailto:` feedback link with a metadata-only template.
+- Optional later hosted feedback form, only if it remains metadata-only and is separately approved.
 
 Allowed metadata:
 
@@ -341,6 +352,15 @@ Forbidden metadata:
 - Screenshots by default.
 - Automatic logs or raw diagnostics.
 
+Current non-goals and release blockers:
+
+- No manifest or permission changes.
+- No network calls, telemetry, GitHub API calls, or background sending.
+- No backend integration.
+- No automatic diagnostics collection.
+- No enterprise release claim that feedback is available when managed policy disables it or policy loading fails closed.
+- Do not broaden feedback beyond the reviewed metadata-only GitHub/manual flow without a later release review covering policy, UI wording, store/privacy wording, and browser QA for the target build.
+
 Security notes:
 
 - No background auto-send.
@@ -352,11 +372,11 @@ Security notes:
 
 Open questions:
 
-- Use an email alias, GitHub issues, or GitHub discussions?
+- Use GitHub issues, GitHub discussions, or an email alias for the MVP entry point?
 - Should feedback be public or private by default?
 - Should feedback live in the popup, options page, or both?
-- Should enterprise builds disable feedback entirely?
-- Should managed policy control feedback visibility?
+- Should enterprise builds continue to disable feedback by default?
+- Should future consumer builds add a popup entry point, or keep feedback limited to the options page?
 - Should safe diagnostics be opt-in for each report?
 
 ## Validation Matrix

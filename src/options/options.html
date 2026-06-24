@@ -50,6 +50,30 @@
         <p class="feedback" id="protected-site-ocr-feedback" aria-live="polite"></p>
       </section>
 
+      <section class="panel feedback-panel" id="feedback-section" hidden>
+        <div class="section-head">
+          <h2>Report an issue</h2>
+          <p>LeakGuard prepares a safe metadata-only GitHub issue report for you to review first.</p>
+        </div>
+        <button class="btn btn-primary" id="feedback-entry" type="button">Prepare GitHub Issue</button>
+        <div class="feedback-review" id="feedback-review" hidden>
+          <label class="field">
+            <span>What happened?</span>
+            <textarea id="feedback-description" rows="4" aria-describedby="feedback-safety-note" placeholder="Describe the issue without secrets or sensitive data."></textarea>
+          </label>
+          <p class="feedback-help" id="feedback-safety-note">Do not paste secrets, prompts, file contents, filenames, screenshots, OCR text, logs, or sensitive data.</p>
+          <label class="field">
+            <span>Generated safe report</span>
+            <textarea class="feedback-report-preview" id="feedback-report-preview" rows="12" aria-describedby="feedback-safety-note" readonly></textarea>
+          </label>
+          <div class="site-actions">
+            <button class="btn btn-primary" id="copy-feedback-report" type="button">Copy Safe Report</button>
+            <button class="btn" id="open-feedback-link" type="button">Open GitHub Issue</button>
+          </div>
+          <p class="feedback" id="feedback-action-status" aria-live="polite"></p>
+        </div>
+      </section>
+
       <section class="panel">
         <div class="section-head">
           <h2>Managed sites</h2>
@@ -77,6 +101,7 @@
     <script src="../compat/browser_api.js"></script>
     <script src="../compat/platform.js"></script>
     <script src="../shared/protected_sites.js"></script>
+    <script src="../shared/feedbackReport.js"></script>
     <script src="options.js"></script>
   </body>
 </html>

@@ -11,13 +11,24 @@
   const feedbackEl = document.getElementById("form-feedback");
   const protectedSiteOcrToggleEl = document.getElementById("protected-site-ocr-toggle");
   const protectedSiteOcrFeedbackEl = document.getElementById("protected-site-ocr-feedback");
+  const feedbackSectionEl = document.getElementById("feedback-section");
+  const feedbackEntryButtonEl = document.getElementById("feedback-entry");
+  const feedbackReviewEl = document.getElementById("feedback-review");
+  const feedbackDescriptionEl = document.getElementById("feedback-description");
+  const feedbackReportPreviewEl = document.getElementById("feedback-report-preview");
+  const copyFeedbackReportButtonEl = document.getElementById("copy-feedback-report");
+  const openFeedbackLinkButtonEl = document.getElementById("open-feedback-link");
+  const feedbackActionStatusEl = document.getElementById("feedback-action-status");
   const managedSiteListEl = document.getElementById("managed-site-list");
   const userSiteListEl = document.getElementById("user-site-list");
   const builtinSiteListEl = document.getElementById("builtin-site-list");
+  const FeedbackReport = globalThis.PWM?.FeedbackReport;
   let currentPolicy = {
     allowUserAddedSites: true,
-    allowSiteRemoval: true
+    allowSiteRemoval: true,
+    allowFeedback: false
   };
+  let currentFeedbackReport = "";
 
   function setFeedback(text) {
     feedbackEl.textContent = text || "";
@@ -27,14 +38,28 @@
     protectedSiteOcrFeedbackEl.textContent = text || "";
   }
 
+  function setFeedbackActionStatus(text) {
+    feedbackActionStatusEl.textContent = text || "";
+  }
+
+  function isFeedbackAvailable(policy) {
+    return policy?.allowFeedback === true && policy?.strictFailure !== true;
+  }
+
   function updatePolicy(policy) {
     currentPolicy = {
       ...currentPolicy,
-      ...(policy || {})
+      ...(policy || {}),
+      allowFeedback: isFeedbackAvailable(policy)
     };
 
     inputEl.disabled = !currentPolicy.allowUserAddedSites;
     formEl.querySelector('button[type="submit"]').disabled = !currentPolicy.allowUserAddedSites;
+    feedbackSectionEl.hidden = !currentPolicy.allowFeedback;
+    feedbackEntryButtonEl.disabled = !currentPolicy.allowFeedback;
+    if (!currentPolicy.allowFeedback) {
+      resetFeedbackReport();
+    }
   }
 
   function createPill(text) {
@@ -250,6 +275,105 @@
     }
   }
 
+  function getBrowserNameAndVersion() {
+    const userAgent = String(navigator.userAgent || "");
+    const firefox = /Firefox\/([0-9.]+)/.exec(userAgent);
+    const edge = /Edg\/([0-9.]+)/.exec(userAgent);
+    const chrome = /Chrome\/([0-9.]+)/.exec(userAgent);
+
+    if (firefox) return { name: "Firefox", version: firefox[1] };
+    if (edge) return { name: "Edge", version: edge[1] };
+    if (chrome) return { name: "Chrome", version: chrome[1] };
+    return { name: "Browser", version: "unspecified" };
+  }
+
+  function buildOptionsFeedbackReportInput() {
+    const browser = getBrowserNameAndVersion();
+    const manifest = ext.runtime.getManifest ? ext.runtime.getManifest() : {};
+    const buildInfo = globalThis.PWM_BUILD_INFO || {};
+
+    return {
+      leakGuardVersion: manifest.version || "unspecified",
+      browserName: browser.name,
+      browserVersion: browser.version,
+      extensionBuild: buildInfo.mode || "consumer",
+      extensionChannel: buildInfo.channel || "local",
+      providerCategory: "options-page",
+      featureArea: "feedback",
+      safeReasonCodes: ["manual_feedback"],
+      fileCount: 0,
+      blockedCount: 0,
+      adapterName: "none",
+      description: feedbackDescriptionEl.value
+    };
+  }
+
+  function isFeedbackGithubTargetConfigured() {
+    return /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(FeedbackReport.DEFAULT_FEEDBACK_GITHUB_REPOSITORY || "");
+  }
+
+  function updateFeedbackReportPreview() {
+    if (!currentPolicy.allowFeedback || !FeedbackReport) {
+      currentFeedbackReport = "";
+      feedbackReportPreviewEl.value = "";
+      copyFeedbackReportButtonEl.disabled = true;
+      openFeedbackLinkButtonEl.disabled = true;
+      return;
+    }
+
+    const report = FeedbackReport.buildFeedbackReport(buildOptionsFeedbackReportInput());
+    currentFeedbackReport = FeedbackReport.formatFeedbackReport(report);
+    feedbackReportPreviewEl.value = currentFeedbackReport;
+    copyFeedbackReportButtonEl.disabled = currentFeedbackReport.length === 0;
+    openFeedbackLinkButtonEl.disabled = !isFeedbackGithubTargetConfigured();
+    openFeedbackLinkButtonEl.title = isFeedbackGithubTargetConfigured()
+      ? ""
+      : "GitHub feedback target is unavailable.";
+  }
+
+  function resetFeedbackReport() {
+    currentFeedbackReport = "";
+    feedbackReviewEl.hidden = true;
+    feedbackDescriptionEl.value = "";
+    feedbackReportPreviewEl.value = "";
+    copyFeedbackReportButtonEl.disabled = true;
+    openFeedbackLinkButtonEl.disabled = true;
+    setFeedbackActionStatus("");
+  }
+
+  function showFeedbackReview() {
+    if (!currentPolicy.allowFeedback) return;
+    feedbackReviewEl.hidden = false;
+    setFeedbackActionStatus("");
+    updateFeedbackReportPreview();
+  }
+
+  async function handleCopyFeedbackReport() {
+    updateFeedbackReportPreview();
+    if (!currentFeedbackReport) return;
+
+    await navigator.clipboard.writeText(currentFeedbackReport);
+    setFeedbackActionStatus("Safe feedback report copied.");
+  }
+
+  function handleOpenFeedbackLink() {
+    updateFeedbackReportPreview();
+    if (!isFeedbackGithubTargetConfigured()) {
+      setFeedbackActionStatus("GitHub feedback target is unavailable. Copy the safe report instead.");
+      return;
+    }
+
+    const url = FeedbackReport.buildGitHubFeedbackIssueUrl(buildOptionsFeedbackReportInput(), {
+      title: "LeakGuard feedback"
+    });
+    if (!url) {
+      setFeedbackActionStatus("LeakGuard could not build a safe feedback link.");
+      return;
+    }
+
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+
   async function handleSubmit(event) {
     event.preventDefault();
     setFeedback("");
@@ -305,6 +429,24 @@
       protectedSiteOcrToggleEl.checked = !event.target.checked;
       setProtectedSiteOcrFeedback(error?.message || "LeakGuard could not save protected-site OCR settings.");
     });
+  });
+
+  feedbackEntryButtonEl.addEventListener("click", () => {
+    showFeedbackReview();
+  });
+
+  feedbackDescriptionEl.addEventListener("input", () => {
+    updateFeedbackReportPreview();
+  });
+
+  copyFeedbackReportButtonEl.addEventListener("click", () => {
+    handleCopyFeedbackReport().catch((error) => {
+      setFeedbackActionStatus(error?.message || "LeakGuard could not copy the feedback report.");
+    });
+  });
+
+  openFeedbackLinkButtonEl.addEventListener("click", () => {
+    handleOpenFeedbackLink();
   });
 
   refresh().catch((error) => {

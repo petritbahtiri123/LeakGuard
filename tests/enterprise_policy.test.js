@@ -164,6 +164,146 @@ function testAuditPolicyIsMetadataOnlyAndRetentionBounded() {
   assert.strictEqual(invalidRetention.ok, false, "audit retention should stay bounded");
 }
 
+function testFeedbackPolicyGateDefaultsAndNormalization() {
+  assert.strictEqual(
+    policyModule.DEFAULT_CONSUMER_POLICY.allowFeedback,
+    true,
+    "consumer feedback gate should default visible unless managed policy disables it"
+  );
+  assert.strictEqual(
+    policyModule.DEFAULT_ENTERPRISE_POLICY.allowFeedback,
+    false,
+    "enterprise feedback gate should default hidden until explicitly enabled"
+  );
+
+  const enabled = policyModule.normalizePolicyInput(
+    {
+      allowFeedback: true
+    },
+    {
+      buildInfo: {
+        browser: "chrome",
+        mode: "consumer",
+        enterprise: false
+      },
+      basePolicy: policyModule.DEFAULT_CONSUMER_POLICY
+    }
+  );
+  const disabled = policyModule.normalizePolicyInput(
+    {
+      allowFeedback: false
+    },
+    {
+      buildInfo: {
+        browser: "chrome",
+        mode: "enterprise",
+        enterprise: true
+      },
+      basePolicy: policyModule.DEFAULT_ENTERPRISE_POLICY
+    }
+  );
+  const malformed = policyModule.normalizePolicyInput(
+    {
+      allowFeedback: "true"
+    },
+    {
+      buildInfo: {
+        browser: "chrome",
+        mode: "consumer",
+        enterprise: false
+      },
+      basePolicy: policyModule.DEFAULT_CONSUMER_POLICY
+    }
+  );
+
+  assert.strictEqual(enabled.ok, true);
+  assert.strictEqual(enabled.value.allowFeedback, true);
+  assert.strictEqual(disabled.ok, true);
+  assert.strictEqual(disabled.value.allowFeedback, false);
+  assert.strictEqual(malformed.ok, false, "malformed feedback policy should be rejected");
+  assert.strictEqual(
+    malformed.value.allowFeedback,
+    true,
+    "normalization alone should preserve the consumer default while reporting malformed feedback policy"
+  );
+}
+
+async function testMalformedManagedFeedbackPolicyDisablesConsumerFeedback() {
+  await withFreshPolicyModule(
+    {
+      storage: {
+        managed: {
+          get: async () => ({
+            allowFeedback: "true"
+          })
+        }
+      }
+    },
+    async (freshPolicyModule) => {
+      const buildInfo = {
+        browser: "chrome",
+        mode: "consumer",
+        enterprise: false
+      };
+      const loaded = await freshPolicyModule.loadPolicy({
+        forceReload: true,
+        buildInfo
+      });
+
+      assert.strictEqual(
+        loaded.policy.allowFeedback,
+        false,
+        "malformed managed feedback policy should fail closed even for consumer builds"
+      );
+      assert.strictEqual(loaded.meta.strictFailure, false, "consumer malformed feedback should not trigger enterprise strict failure");
+      assert.ok(loaded.meta.errors.some((error) => error.includes("allowFeedback")));
+    }
+  );
+}
+
+function testFeedbackAvailabilityHelperFailsClosed() {
+  const enabledSummary = policyModule.summarizePolicy(
+    {
+      ...policyModule.DEFAULT_CONSUMER_POLICY,
+      allowFeedback: true
+    },
+    "https://chatgpt.com/"
+  );
+  const disabledSummary = policyModule.summarizePolicy(
+    {
+      ...policyModule.DEFAULT_CONSUMER_POLICY,
+      allowFeedback: false
+    },
+    "https://chatgpt.com/"
+  );
+  const strictFailureSummary = {
+    ...enabledSummary,
+    strictFailure: true
+  };
+
+  assert.strictEqual(enabledSummary.allowFeedback, true, "policy summaries should expose feedback gate state");
+  assert.strictEqual(
+    policyModule.isFeedbackAvailable(enabledSummary),
+    true,
+    "explicitly enabled feedback policy should make future feedback UI available"
+  );
+  assert.strictEqual(
+    policyModule.isFeedbackAvailable(disabledSummary),
+    false,
+    "disabled feedback policy should hide and block future feedback UI"
+  );
+  assert.strictEqual(
+    policyModule.isFeedbackAvailable(strictFailureSummary),
+    false,
+    "strict policy failures should fail closed for feedback availability"
+  );
+  assert.strictEqual(
+    policyModule.isFeedbackAvailable(null),
+    false,
+    "missing policy should fail closed for feedback availability"
+  );
+}
+
 function createStorageArea(store) {
   return {
     async get(key) {
@@ -602,6 +742,7 @@ function testPolicySchemaAndUiSurfaceNewFields() {
   assert.strictEqual(managedPolicySchema.properties.allowProtectionPause.type, "boolean");
   assert.strictEqual(managedPolicySchema.properties.protectionPauseMaxMinutes.type, "number");
   assert.strictEqual(managedPolicySchema.properties.protectionPauseRequiresUserAction.type, "boolean");
+  assert.strictEqual(managedPolicySchema.properties.allowFeedback.type, "boolean");
   assert.strictEqual(managedPolicySchema.properties.allowSiteRemoval.type, "boolean");
   assert.strictEqual(managedPolicySchema.properties.managedProtectedSites.type, "array");
   assert.strictEqual(managedPolicySchema.properties.auditRetentionDays.type, "number");
@@ -651,6 +792,8 @@ async function run() {
   testDestinationPoliciesSupportAllowRedactAndBlock();
   testProtectionPauseDefaultsAndUiHooksExist();
   testAuditPolicyIsMetadataOnlyAndRetentionBounded();
+  testFeedbackPolicyGateDefaultsAndNormalization();
+  testFeedbackAvailabilityHelperFailsClosed();
   await testAllowSiteRemovalTrueAllowsDeletion();
   await testAllowSiteRemovalFalseBlocksDeletion();
   await testProtectedSiteRegistryKeepsStableDynamicScriptIds();
@@ -659,6 +802,7 @@ async function run() {
   await testManagedProtectedSitesCannotBeToggledOrDeleted();
   await testAuditEventsStayMetadataOnlyAndBounded();
   await testAuditRetentionPurgesOldMetadata();
+  await testMalformedManagedFeedbackPolicyDisablesConsumerFeedback();
   await testMalformedStrictEnterprisePolicyFailsClosed();
   testPolicySchemaAndUiSurfaceNewFields();
   console.log("PASS enterprise policy enforcement regressions");

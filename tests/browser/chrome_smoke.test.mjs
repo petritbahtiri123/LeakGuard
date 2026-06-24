@@ -373,8 +373,17 @@ async function startHttpsChatGptServer(_tempDir) {
     close: () => new Promise((resolve) => server.close(resolve))
   };
 }
-function prepareSmokeExtension(tempDir, sourceExtensionDir = extensionDir) {
-  const smokeExtensionDir = path.join(tempDir, "extension");
+function writeFeedbackPolicyDefault(smokeExtensionDir, allowFeedback) {
+  if (allowFeedback !== true) return;
+
+  const policyPath = path.join(smokeExtensionDir, "config", "policy.consumer.json");
+  const policy = JSON.parse(fs.readFileSync(policyPath, "utf8"));
+  policy.allowFeedback = true;
+  fs.writeFileSync(policyPath, `${JSON.stringify(policy, null, 2)}\n`);
+}
+
+function prepareSmokeExtension(tempDir, sourceExtensionDir = extensionDir, options = {}) {
+  const smokeExtensionDir = path.join(tempDir, options.name || "extension");
   fs.cpSync(sourceExtensionDir, smokeExtensionDir, { recursive: true });
 
   const manifestPath = path.join(smokeExtensionDir, "manifest.json");
@@ -385,6 +394,7 @@ function prepareSmokeExtension(tempDir, sourceExtensionDir = extensionDir) {
   );
 
   fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  writeFeedbackPolicyDefault(smokeExtensionDir, options.allowFeedback);
   return smokeExtensionDir;
 }
 class CdpPipeConnection {
@@ -1111,6 +1121,115 @@ async function runPopupSmoke(connection, extensionId) {
   return popup;
 }
 
+const feedbackForbiddenCanaries = Object.freeze([
+  "SMOKE_PROMPT_SHOULD_NOT_APPEAR",
+  "SMOKE_MESSAGE_SHOULD_NOT_APPEAR",
+  "SMOKE_FILE_CONTENT_SHOULD_NOT_APPEAR",
+  "smoke-secret-file.env",
+  "SMOKE_OCR_TEXT_SHOULD_NOT_APPEAR",
+  "https://example.test/path?token=SMOKE_QUERY_SHOULD_NOT_APPEAR",
+  "SMOKE_DOM_TEXT_SHOULD_NOT_APPEAR",
+  "SMOKE_SCREENSHOT_SHOULD_NOT_APPEAR",
+  "SMOKE_LOG_SHOULD_NOT_APPEAR",
+  "SMOKE_DIAGNOSTIC_SHOULD_NOT_APPEAR"
+]);
+
+async function runFeedbackDefaultVisibleSmoke(connection, extensionId, browserName = "Chrome") {
+  const optionsPage = await createPage(connection, `chrome-extension://${extensionId}/options/options.html`);
+  await waitForEval(
+    connection,
+    optionsPage.sessionId,
+    "document.querySelector('#feedback-section') && document.querySelector('#feedback-entry') && !document.querySelector('#feedback-section').hidden",
+    `${browserName} feedback controls`
+  );
+
+  const state = await evaluate(connection, optionsPage.sessionId, `(() => {
+    const section = document.querySelector('#feedback-section');
+    const entry = document.querySelector('#feedback-entry');
+    return {
+      hidden: Boolean(section?.hidden),
+      unavailable: Boolean(entry?.disabled || section?.hidden)
+    };
+  })()`);
+
+  assert.equal(state.hidden, false, `${browserName} feedback section should be visible by default`);
+  assert.equal(state.unavailable, false, `${browserName} feedback action should be available by default`);
+}
+
+async function runFeedbackEnabledCopySmoke(connection, extensionId, browserName = "Chrome") {
+  const optionsPage = await createPage(connection, `chrome-extension://${extensionId}/options/options.html`);
+  await waitForEval(
+    connection,
+    optionsPage.sessionId,
+    "document.querySelector('#feedback-section') && document.querySelector('#feedback-entry') && !document.querySelector('#feedback-section').hidden",
+    `${browserName} policy-enabled feedback section`
+  );
+
+  await evaluate(
+    connection,
+    optionsPage.sessionId,
+    "document.querySelector('#feedback-entry').click()",
+    { userGesture: true }
+  );
+  await waitForEval(
+    connection,
+    optionsPage.sessionId,
+    "!document.querySelector('#feedback-review').hidden && document.querySelector('#feedback-report-preview').value.includes('LeakGuard Feedback Report')",
+    `${browserName} feedback review preview`
+  );
+
+  const safeDescription = "Browser smoke safe feedback description.";
+  const report = await evaluate(
+    connection,
+    optionsPage.sessionId,
+    `(async () => {
+      const description = document.querySelector('#feedback-description');
+      description.value = ${JSON.stringify(safeDescription)};
+      description.dispatchEvent(new Event('input', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      return {
+        text: document.querySelector('#feedback-report-preview').value,
+        githubDisabled: document.querySelector('#open-feedback-link').disabled,
+        copyDisabled: document.querySelector('#copy-feedback-report').disabled
+      };
+    })()`
+  );
+
+  assert.match(report.text, /Warning: Do not paste secrets/);
+  assert.match(report.text, /LeakGuard version:/);
+  assert.match(report.text, /Browser:/);
+  assert.match(report.text, /Extension build:/);
+  assert.match(report.text, /Extension channel:/);
+  assert.match(report.text, /Provider\/site category: options-page/);
+  assert.match(report.text, /Feature area: feedback/);
+  assert.match(report.text, /Safe reason codes: manual_feedback/);
+  assert.match(report.text, /File count: 0/);
+  assert.match(report.text, /Blocked count: 0/);
+  assert.match(report.text, /Adapter name: none/);
+  assert.match(report.text, new RegExp(safeDescription.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  for (const forbidden of feedbackForbiddenCanaries) {
+    assert.equal(
+      report.text.includes(forbidden),
+      false,
+      `${browserName} feedback report should not include forbidden canary ${forbidden}`
+    );
+  }
+  assert.equal(report.copyDisabled, false, `${browserName} copy safe report should be reachable`);
+  assert.equal(report.githubDisabled, false, `${browserName} GitHub issue button should be enabled for configured target`);
+
+  const copyResult = await evaluate(
+    connection,
+    optionsPage.sessionId,
+    `(async () => {
+      document.querySelector('#copy-feedback-report').click();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return document.querySelector('#feedback-action-status').textContent;
+    })()`,
+    { userGesture: true }
+  );
+  assert.match(copyResult, /copied/i, `${browserName} copy safe report action should complete`);
+}
+
 async function runBuiltInContentSmoke(connection, chatGptOrigin, browserName = "Chrome") {
   const page = await createPage(connection);
   const startedAt = Date.now();
@@ -1568,6 +1687,8 @@ async function runChromiumSmoke(options = {}) {
     console.log(`${browserName} smoke: extension loaded (${extensionId})`);
     console.log(`${browserName} smoke: popup`);
     const popup = await runPopupSmoke(connection, extensionId);
+    console.log(`${browserName} smoke: feedback policy gate`);
+    await runFeedbackDefaultVisibleSmoke(connection, extensionId, browserName);
     console.log(`${browserName} smoke: built-in protected site`);
     const builtInPage = await runBuiltInContentSmoke(connection, httpsServer.origin, browserName);
     console.log(`${browserName} smoke: composer redaction`);
@@ -1580,6 +1701,8 @@ async function runChromiumSmoke(options = {}) {
     await runOcrWasmProbeSmoke(connection, extensionId, browserName);
     console.log(`${browserName} smoke: file scanner`);
     await runScannerSmoke(connection, extensionId, tempDir);
+    console.log(`${browserName} smoke: feedback copy-safe report`);
+    await runFeedbackEnabledCopySmoke(connection, extensionId, browserName);
 
     console.log(`PASS ${browserName.toLowerCase()} extension smoke`);
   } catch (error) {
