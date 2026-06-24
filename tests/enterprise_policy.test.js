@@ -228,6 +228,68 @@ function testFeedbackPolicyGateDefaultsAndNormalization() {
   );
 }
 
+function testLiveTypedRedactionPolicyGateDefaultsAndNormalization() {
+  assert.strictEqual(
+    policyModule.DEFAULT_CONSUMER_POLICY.liveTypedRedaction,
+    false,
+    "consumer live typed redaction should default off so AI chat typing is observe-only"
+  );
+  assert.strictEqual(
+    policyModule.DEFAULT_ENTERPRISE_POLICY.liveTypedRedaction,
+    false,
+    "enterprise live typed redaction should default off unless explicitly enabled"
+  );
+
+  const enabled = policyModule.normalizePolicyInput(
+    {
+      liveTypedRedaction: true
+    },
+    {
+      buildInfo: {
+        browser: "chrome",
+        mode: "enterprise",
+        enterprise: true
+      },
+      basePolicy: policyModule.DEFAULT_ENTERPRISE_POLICY
+    }
+  );
+  const malformed = policyModule.normalizePolicyInput(
+    {
+      liveTypedRedaction: "true"
+    },
+    {
+      buildInfo: {
+        browser: "chrome",
+        mode: "consumer",
+        enterprise: false
+      },
+      basePolicy: policyModule.DEFAULT_CONSUMER_POLICY
+    }
+  );
+  const failClosed = policyModule.buildFailClosedPolicy(policyModule.DEFAULT_ENTERPRISE_POLICY, {
+    browser: "chrome",
+    mode: "enterprise",
+    enterprise: true
+  });
+
+  assert.strictEqual(enabled.ok, true);
+  assert.strictEqual(enabled.value.liveTypedRedaction, true, "managed policy may explicitly opt into live typed redaction");
+  assert.strictEqual(malformed.ok, false, "malformed live typed redaction policy should be rejected");
+  assert.strictEqual(
+    malformed.value.liveTypedRedaction,
+    false,
+    "malformed live typed redaction should preserve safe default off"
+  );
+  assert.strictEqual(failClosed.liveTypedRedaction, false, "fail-closed policy should disable live typed redaction");
+  assert.strictEqual(
+    policyModule.summarizePolicy({ ...policyModule.DEFAULT_ENTERPRISE_POLICY, liveTypedRedaction: true }, "https://chatgpt.com/", {
+      strictFailure: true
+    }).liveTypedRedaction,
+    false,
+    "strict failure summary should not expose live typed redaction as enabled"
+  );
+}
+
 async function testMalformedManagedFeedbackPolicyDisablesConsumerFeedback() {
   await withFreshPolicyModule(
     {
@@ -743,6 +805,7 @@ function testPolicySchemaAndUiSurfaceNewFields() {
   assert.strictEqual(managedPolicySchema.properties.protectionPauseMaxMinutes.type, "number");
   assert.strictEqual(managedPolicySchema.properties.protectionPauseRequiresUserAction.type, "boolean");
   assert.strictEqual(managedPolicySchema.properties.allowFeedback.type, "boolean");
+  assert.strictEqual(managedPolicySchema.properties.liveTypedRedaction.type, "boolean");
   assert.strictEqual(managedPolicySchema.properties.allowSiteRemoval.type, "boolean");
   assert.strictEqual(managedPolicySchema.properties.managedProtectedSites.type, "array");
   assert.strictEqual(managedPolicySchema.properties.auditRetentionDays.type, "number");
@@ -793,6 +856,7 @@ async function run() {
   testProtectionPauseDefaultsAndUiHooksExist();
   testAuditPolicyIsMetadataOnlyAndRetentionBounded();
   testFeedbackPolicyGateDefaultsAndNormalization();
+  testLiveTypedRedactionPolicyGateDefaultsAndNormalization();
   testFeedbackAvailabilityHelperFailsClosed();
   await testAllowSiteRemovalTrueAllowsDeletion();
   await testAllowSiteRemovalFalseBlocksDeletion();

@@ -6,8 +6,8 @@ This note covers normal typed text only. It excludes paste, drag/drop, file uplo
 
 | Event/path | Normal typing role | Mutates composer before submit? | Notes |
 | --- | --- | --- | --- |
-| `beforeinput` / `maybeHandleBeforeInput` | Synchronously inspects the proposed insertion before the site commits it. | Only for risky typed input or placeholder normalization. Harmless text returns before event consumption or rewrite. | Uses selection offsets to build the candidate text. In Firefox it can consume immediately for deterministic risky input. |
-| `input` / `scheduleInputScan` | Delayed scan after the site has already updated the composer. | Harmless text: no rewrite. Risky text: current behavior can live-redact before submit. | Uses a 220 ms timer and generation counters to avoid stale scans. |
+| `beforeinput` / `maybeHandleBeforeInput` | Synchronously inspects the proposed insertion before the site commits it. | Default: no composer rewrite because `liveTypedRedaction` is false. If `liveTypedRedaction=true`, risky typed input or placeholder normalization may be rewritten. | Uses selection offsets to build the candidate text. Firefox early consumption is also gated by `liveTypedRedaction`. |
+| `input` / `scheduleInputScan` | Delayed scan after the site has already updated the composer. | Default: warning/status only. If `liveTypedRedaction=true`, risky text can live-redact before submit. | Uses a 220 ms timer and generation counters to avoid stale scans. |
 | `keydown` / `maybeHandleFallbackSendKey` | Enter-to-send fallback. | Submit-boundary path only. | Plain typing keydown is ignored unless it is Enter without modifiers in a composer without a form. |
 | `paste` / `maybeHandlePaste` | Dedicated paste/file path. | Out of scope for normal typing. | Handled separately to block raw file/paste races. |
 | `submit` / `maybeHandleSubmit` | Final submit boundary. | Yes, transactional sanitized rewrite before send. | Uses exact composer-state verification before submitting. |
@@ -17,14 +17,14 @@ This note covers normal typed text only. It excludes paste, drag/drop, file uplo
 
 ## Current architecture finding
 
-LeakGuard is **not strictly submit-only** for all text mutation. The normal harmless typing path is observe-only plus outside-composer badge/status updates. However, typed interception and the delayed typed scan can live-redact high-confidence risky typed text before submit. That behavior is intended as a fail-closed protection against typed secrets reaching protected composers, but it is also the main live-editor risk surface for Gemini and React-style composers.
+LeakGuard's default AI-chat typing phase is now observe-only: `liveTypedRedaction` defaults to `false` for consumer and enterprise policy. Harmless and risky typed text may still be scanned so LeakGuard can warn outside the composer, but the composer should not be rewritten until submit. If an environment explicitly sets `liveTypedRedaction=true`, typed interception and the delayed typed scan can live-redact high-confidence risky typed text before submit. That opt-in mode is the main live-editor risk surface for Gemini and React-style composers.
 
 Recommended safety split for future work:
 
 1. Typing phase: observe harmless text only; do not touch the composer.
 2. Warning phase: show badges or panels outside the composer.
-3. Risky live-redaction phase: keep current behavior only when policy explicitly requires fail-closed typed protection or a future live-redaction mode is enabled.
-4. Submit phase: transactional sanitized rewrite and exact-state verification.
+3. Risky live-redaction phase: keep previous live mutation behavior only when `liveTypedRedaction=true`.
+4. Submit phase: transactional sanitized rewrite and exact-state verification regardless of `liveTypedRedaction`.
 5. Post-submit phase: clear transient risk and pending handoff state.
 
 ## Manual QA checklist for normal typing
@@ -131,11 +131,15 @@ Synthetic input:
 API_KEY=sk-test-abcdefghijklmnopqrstuvwxyz123456
 ```
 
-Expected current behavior:
+Expected default behavior:
 
-- LeakGuard may live-redact this before submit because typed high-confidence secrets are protected pre-submit.
-- If live redaction occurs, the final composer should be `API_KEY=[PWM_N]` once, with no raw synthetic value and no duplicate text.
-- If a future policy disables live redaction, the submit path must still redact before send.
+- With `liveTypedRedaction=false`, LeakGuard should warn outside the composer but leave the typed composer text unchanged until submit.
+- No `[PWM_N]` placeholder should appear during typing.
+- On submit, LeakGuard must still redact to `API_KEY=[PWM_N]`, verify the exact sanitized composer state, and fail closed if rewrite/verification fails.
+
+Opt-in behavior:
+
+- With `liveTypedRedaction=true`, LeakGuard may live-redact this before submit. The final composer should be `API_KEY=[PWM_N]` once, with no raw synthetic value and no duplicate text.
 
 ## Gemini and ChatGPT risk checks
 
@@ -155,4 +159,4 @@ Pass criteria:
 
 ## Recommendation
 
-Keep current behavior for now, but document that LeakGuard is not purely submit-only because typed high-confidence secrets can be redacted before submit. If model-comprehension or editor-stability complaints continue, create a future Phase to make live typed redaction policy-gated while preserving fail-closed submit redaction and enterprise enforcement.
+Keep observe-only typing as the default. Use `liveTypedRedaction=true` only for environments that explicitly accept pre-submit DOM mutation. Preserve fail-closed submit redaction and enterprise enforcement regardless of the live-typing setting.

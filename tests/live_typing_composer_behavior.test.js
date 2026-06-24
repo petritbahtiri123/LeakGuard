@@ -112,7 +112,7 @@ function testCompositionBeforeInputIsNotIntercepted() {
   );
 }
 
-function testSecretLikeTypingIsCurrentLiveRedactionSurface() {
+function testSecretLikeTypingIsGatedLiveRedactionSurface() {
   const originalText = "API_KEY=";
   const insertedText = "sk-test-abcdefghijklmnopqrstuvwxyz123456";
   const selection = { start: originalText.length, end: originalText.length };
@@ -122,15 +122,22 @@ function testSecretLikeTypingIsCurrentLiveRedactionSurface() {
 
   assert.ok(relevant.length > 0, "typed synthetic secret should be recognized before submit");
   assert.ok(
-    contentSource.includes("applyTypedInterceptionRewrite(") && contentSource.includes("maybeHandleTypedSecrets"),
-    "current architecture includes a pre-submit typed redaction surface for risky text"
+    contentSource.includes("isLiveTypedRedactionEnabled(getActivePolicy())") &&
+      contentSource.includes("applyTypedInterceptionRewrite("),
+    "pre-submit typed redaction should exist only behind the live typed redaction gate"
   );
 }
 
 function testHarmlessBeforeInputReturnsBeforeConsumingOrRewriting() {
   const beforeInputSource = extractFunctionSource(contentSource, "maybeHandleBeforeInput");
   const noRiskReturn = "if (!quickRelevantFindings.length && !quickPlaceholderNormalizationChanged) {\n      return;\n    }";
-  assert.ok(beforeInputSource.includes(noRiskReturn), "beforeinput should return for harmless typed text");
+  assert.ok(beforeInputSource.includes("if (!isLiveTypedRedactionEnabled(getActivePolicy()))"), "beforeinput should check the live typed redaction gate");
+  assert.ok(
+    beforeInputSource.indexOf("if (!isLiveTypedRedactionEnabled(getActivePolicy()))") <
+      beforeInputSource.indexOf("consumeInterceptionEvent(event);"),
+    "default liveTypedRedaction=false should return before event consumption"
+  );
+  assert.ok(beforeInputSource.includes(noRiskReturn), "beforeinput should return for harmless typed text when live redaction is enabled");
   assert.ok(
     beforeInputSource.indexOf(noRiskReturn) < beforeInputSource.indexOf("if (!event.defaultPrevented)"),
     "non-Firefox harmless beforeinput return should occur before event consumption"
@@ -146,6 +153,15 @@ function testDelayedTypedScanGuardsAgainstStaleComposerOverwrite() {
   assert.ok(
     typedScanSource.includes("if (scanGeneration !== typedScanGeneration) return;"),
     "delayed typed scan should abandon stale scan generations before decisions"
+  );
+  assert.ok(
+    typedScanSource.includes("if (!isLiveTypedRedactionEnabled(getActivePolicy()))"),
+    "delayed typed scan should skip composer rewrites when live typed redaction is disabled"
+  );
+  assert.ok(
+    typedScanSource.indexOf("if (!isLiveTypedRedactionEnabled(getActivePolicy()))") <
+      typedScanSource.indexOf("applyComposerText(latestInput"),
+    "disabled live typed redaction gate should run before delayed composer rewrite"
   );
   assert.ok(
     typedScanSource.includes("const latestText = getInputText(latestInput);") &&
@@ -174,22 +190,22 @@ function testNormalTypingDoesNotCreateFilePendingPayloads() {
 function testRunbookDocumentsLiveTypingRiskAndQa() {
   assertIncludesAll("live typing runbook", typingRunbook, [
     "Normal typing role",
-    "Harmless text: no rewrite",
-    "not strictly submit-only",
-    "typed high-confidence secrets can be redacted before submit",
+    "Default: warning/status only",
+    "observe-only",
+    "liveTypedRedaction",
     "Cursor remains where the user left it",
     "Mid-paragraph insertion",
     "Undo/redo still works",
     "IME/composition safety",
     "Gemini and ChatGPT risk checks",
-    "policy-gated"
+    "Use `liveTypedRedaction=true`"
   ]);
 }
 
 function run() {
   testHarmlessTypingHasNoRelevantFindingsOrPlaceholders();
   testCompositionBeforeInputIsNotIntercepted();
-  testSecretLikeTypingIsCurrentLiveRedactionSurface();
+  testSecretLikeTypingIsGatedLiveRedactionSurface();
   testHarmlessBeforeInputReturnsBeforeConsumingOrRewriting();
   testDelayedTypedScanGuardsAgainstStaleComposerOverwrite();
   testNormalTypingDoesNotCreateFilePendingPayloads();
