@@ -630,6 +630,10 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
     "Enter-send fallback should synchronously consume risky composer text before async AI analysis"
   );
   assert.ok(
+    !fallbackSendSource.includes('input.closest("form")'),
+    "Enter-send fallback should protect form-wrapped ChatGPT composers before host submit handlers can send raw text"
+  );
+  assert.ok(
     contentSource.includes('window.addEventListener(\n      "keydown"') &&
       contentSource.includes("maybeHandleFallbackSendKey(event).catch(handleContentError);"),
     "Enter-send fallback should bind at window capture so host document-level handlers cannot submit raw text first"

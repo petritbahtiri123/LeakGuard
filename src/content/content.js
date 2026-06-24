@@ -10301,7 +10301,7 @@
     }
 
     const input = findComposer(event.target);
-    if (!input || input.closest("form")) return;
+    if (!input) return;
     noteActiveRiskEditor(input);
 
     const text = getInputText(input);

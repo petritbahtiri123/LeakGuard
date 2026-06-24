@@ -1213,7 +1213,7 @@ function testPlaceholderRehydrationStaysBoundedOnLargeDomMutations() {
   assert.ok(
     responseObserverSource.includes(".pwm-modal-backdrop, .pwm-secret, form, textarea") &&
       responseObserverSource.includes("[role='textbox']") &&
-      responseObserverSource.includes("[contenteditable='true']"),
+      responseObserverSource.includes("[contenteditable]:not([contenteditable='false'])"),
     "already hydrated placeholders and editable composers should be excluded from page-DOM rehydration"
   );
   assert.ok(

@@ -141,7 +141,7 @@ function matchesSkipSelector(element) {
     element.tagName === "FORM" ||
     element.tagName === "TEXTAREA" ||
     element.attrs.role === "textbox" ||
-    element.attrs.contenteditable === "true"
+    (Object.prototype.hasOwnProperty.call(element.attrs, "contenteditable") && element.attrs.contenteditable !== "false")
   );
 }
 
@@ -204,7 +204,8 @@ function testShouldSkipHydration() {
     ["form", element("form", {}, [])],
     ["textarea", element("textarea", {}, [])],
     ["textbox", element("div", { role: "textbox" }, [])],
-    ["contenteditable", element("div", { contenteditable: "true" }, [])]
+    ["contenteditable", element("div", { contenteditable: "true" }, [])],
+    ["plaintext-only contenteditable", element("div", { contenteditable: "plaintext-only" }, [])]
   ]) {
     const node = text("[PWM_1]");
     parent.appendChild(node);
@@ -289,6 +290,7 @@ function testTrustedTypedPlaceholdersInComposerNodesRemainSkipped() {
   for (const [label, parent] of [
     ["textarea", element("textarea", {}, [])],
     ["contenteditable", element("div", { contenteditable: "true" }, [])],
+    ["plaintext-only contenteditable", element("div", { contenteditable: "plaintext-only" }, [])],
     ["textbox", element("div", { role: "textbox" }, [])]
   ]) {
     const node = text("[EMAIL_1]");
