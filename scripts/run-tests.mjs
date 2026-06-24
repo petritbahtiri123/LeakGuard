@@ -35,6 +35,7 @@ const testFiles = [
   "tests/reveal_controller.test.js",
   "tests/typed_interception.test.js",
   "tests/prompt_pollution.test.js",
+  "tests/live_typing_composer_behavior.test.js",
   "tests/adapter_contracts.test.js",
   "tests/content_event_bindings.test.js",
   "tests/file_debug_metadata.test.js",
