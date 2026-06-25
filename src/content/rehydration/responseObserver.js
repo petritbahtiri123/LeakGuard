@@ -3,7 +3,7 @@
   root.PWM = root.PWM || {};
 
   const SKIP_HYDRATION_SELECTOR =
-    ".pwm-modal-backdrop, .pwm-secret, form, textarea, [role='textbox'], [contenteditable='true']";
+    ".pwm-modal-backdrop, .pwm-secret, form, textarea, [role='textbox'], [contenteditable]:not([contenteditable='false'])";
 
   function getDocument(options = {}) {
     return options.document || root.document;

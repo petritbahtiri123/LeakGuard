@@ -630,6 +630,36 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
     "Enter-send fallback should synchronously consume risky composer text before async AI analysis"
   );
   assert.ok(
+    !fallbackSendSource.includes('input.closest("form")'),
+    "Enter-send fallback should protect form-wrapped ChatGPT composers before host submit handlers can send raw text"
+  );
+  assert.ok(
+    contentSource.includes('window.addEventListener(\n      "keydown"') &&
+      contentSource.includes("maybeHandleFallbackSendKey(event).catch(handleContentError);"),
+    "Enter-send fallback should bind at window capture so host document-level handlers cannot submit raw text first"
+  );
+  assert.ok(
+    contentSource.includes("maybeConsumeSuppressedFallbackSendKeyEvent") &&
+      contentSource.includes('window.addEventListener(\n      "keypress"') &&
+      contentSource.includes('window.addEventListener(\n      "keyup"'),
+    "Enter-send fallback should suppress related keypress/keyup events while async submit redaction is pending"
+  );
+  assert.ok(
+    contentSource.includes('"form button#send-button"') &&
+      contentSource.includes('"button#send-button"'),
+    "send-button click guard should cover providers and harnesses that expose only id='send-button'"
+  );
+  assert.ok(
+    contentSource.includes("leakGuardSendButton") &&
+      contentSource.includes("leakGuardReplayViaClick") &&
+      contentSource.includes('const nativeSubmitEvent = event.type === "submit" && !event.leakGuardSendButton;') &&
+      contentSource.includes("event.submitter || (nativeSubmitEvent ? findSendButton(input) : null)") &&
+      contentSource.includes("function replayVerifiedSend") &&
+      contentSource.includes("replayVerifiedSend(input, form, submitter, replayOptions)") &&
+      contentSource.includes("replayViaClick: true"),
+    "guarded send-button redaction should retry the exact intercepted button after verified rewrite"
+  );
+  assert.ok(
     beforeInputSource.indexOf("if (!quickRelevantFindings.length && !quickPlaceholderNormalizationChanged)") <
       beforeInputSource.lastIndexOf("consumeInterceptionEvent(event);") &&
       submitSource.indexOf("if (!analysisNeedsEventOwnership(quickAnalysis)) return;") <
@@ -644,6 +674,13 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
       beforeInputSource.indexOf("event?.isTrusted === false") <
         beforeInputSource.indexOf("shouldInterceptBeforeInput(event)"),
     "programmatic ChatGPT rewrite events should not be re-intercepted as typed user input"
+  );
+  assert.ok(
+    contentSource.includes("function waitForAnimationFrameOrTimeout") &&
+      contentSource.includes("window.setTimeout(finish, timeoutMs)") &&
+      contentSource.includes("window.requestAnimationFrame(finish)") &&
+      extractFunctionSource(contentSource, "settleComposer").includes("waitForAnimationFrameOrTimeout();"),
+    "composer settling should not hang indefinitely when requestAnimationFrame is throttled"
   );
   assert.ok(
     contentSource.includes("shouldAutoRedactTypedSecrets"),

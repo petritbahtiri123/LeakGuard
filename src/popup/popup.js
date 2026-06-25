@@ -19,6 +19,7 @@
   const protectBtn = document.getElementById("protect-btn");
   const manageBtn = document.getElementById("manage-btn");
   const fileScannerBtn = document.getElementById("file-scanner-btn");
+  const feedbackBtn = document.getElementById("feedback-btn");
 
   const sitesBackBtn = document.getElementById("sites-back-btn");
   const formEl = document.getElementById("add-site-form");
@@ -46,6 +47,7 @@
     protectionPauseMaxMinutes: 15,
     allowUserAddedSites: true,
     allowSiteRemoval: true,
+    allowFeedback: false,
     enterpriseMode: false,
     managedAvailable: false,
     managedApplied: false,
@@ -115,6 +117,8 @@
 
     inputEl.disabled = !currentPolicy.allowUserAddedSites;
     formEl.querySelector('button[type="submit"]').disabled = !currentPolicy.allowUserAddedSites;
+    feedbackBtn.hidden = !currentPolicy.allowFeedback || currentPolicy.strictFailure;
+    feedbackBtn.disabled = !currentPolicy.allowFeedback || currentPolicy.strictFailure;
     renderPolicyWarning();
   }
 
@@ -234,22 +238,10 @@
   async function loadOverview() {
     await resolveActiveTab();
 
-    if (!activeTab?.url) {
-      renderOverview({
-        currentSite: {
-          eligible: false,
-          canProtect: false,
-          rule: null,
-          message: "LeakGuard can only protect normal web tabs."
-        }
-      });
-      return;
-    }
-
     const response = await ext.runtime.sendMessage({
       type: "PWM_GET_PROTECTED_SITE_OVERVIEW",
-      url: activeTab.url,
-      tabId: activeTab.id
+      url: activeTab?.url || "",
+      tabId: activeTab?.id
     });
 
     if (!response?.ok) {
@@ -294,6 +286,18 @@
     await ext.tabs.create({
       url: ext.runtime.getURL("scanner/scanner.html")
     });
+  }
+
+  async function openFeedbackOptions() {
+    if (!currentPolicy.allowFeedback || currentPolicy.strictFailure) return;
+
+    const response = await ext.runtime.sendMessage({
+      type: "PWM_OPEN_OPTIONS_PAGE"
+    });
+
+    if (!response?.ok) {
+      throw new Error(response?.error || "LeakGuard could not open feedback.");
+    }
   }
 
   function activeTabContext() {
@@ -707,6 +711,12 @@
   fileScannerBtn.addEventListener("click", () => {
     openFileScanner().catch((error) => {
       setFeedback(error?.message || "LeakGuard could not open the file scanner.");
+    });
+  });
+
+  feedbackBtn.addEventListener("click", () => {
+    openFeedbackOptions().catch((error) => {
+      setFeedback(error?.message || "LeakGuard could not open feedback.");
     });
   });
 
