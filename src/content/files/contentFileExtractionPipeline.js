@@ -157,10 +157,34 @@
     return kind === "image_metadata" || kind === "image_ocr";
   }
 
+  function hasOcrTextFindings(scan, ocrExtraction) {
+    const hasFindings = Number(scan?.summary?.findingsCount || 0) > 0;
+    if (!hasFindings) return false;
+
+    const findings = Array.isArray(scan?.findings) ? scan.findings : [];
+    if (!findings.length) return true;
+
+    const ocrText = String(ocrExtraction?.ocr?.text || "");
+    if (!ocrText) return false;
+
+    const scanText = String(ocrExtraction?.text || "");
+    const ocrStart = scanText.indexOf(ocrText);
+    if (ocrStart < 0) return true;
+    const ocrEnd = ocrStart + ocrText.length;
+
+    return findings.some((finding) => {
+      const start = Number(finding?.start);
+      const end = Number(finding?.end);
+      return Number.isFinite(start) && Number.isFinite(end) && start < ocrEnd && end > ocrStart;
+    });
+  }
+
   function createImageBlockedResult(reason, options = {}) {
     const code = reason || "image_redaction_file_unavailable";
     return createEmptyResult("blocked", {
-      originalName: options.originalName,
+      originalName: Object.prototype.hasOwnProperty.call(options, "safeOriginalName")
+        ? options.safeOriginalName
+        : "",
       mimeType: options.mimeType,
       sizeBytes: options.sizeBytes,
       metadataOriginalName: "",
@@ -331,7 +355,14 @@
     };
   }
 
-  async function createProtectedSiteRedactedImage({ imageBytes, ocrExtraction, scan, originalName, mimeType } = {}) {
+  async function createProtectedSiteRedactedImage({
+    imageBytes,
+    ocrExtraction,
+    scan,
+    originalName,
+    safeOriginalName,
+    mimeType
+  } = {}) {
     const scannerOcr = getScannerOcr();
     const imageRedactor = getImageRedactor();
     if (typeof imageRedactor.createRedactedPng !== "function") {
@@ -350,8 +381,8 @@
       warnings: [],
       boxes: []
     };
-    const hasFindings = Number(scan?.summary?.findingsCount || 0) > 0;
-    if (hasFindings) {
+    const hasVisualFindings = hasOcrTextFindings(scan, ocrExtraction);
+    if (hasVisualFindings) {
       if (typeof scannerOcr.redactionBoxesForOcrFindings !== "function") {
         return {
           ok: false,
@@ -387,9 +418,9 @@
     const redactedImage = await imageRedactor.createRedactedPng({
       imageBytes,
       mimeType,
-      fileName: originalName,
+      fileName: normalizeFileName(safeOriginalName) || originalName,
       boxes: boxMapping.boxes,
-      allowNoBoxes: !hasFindings
+      allowNoBoxes: !hasVisualFindings
     });
     if (!redactedImage?.ok || !redactedImage.blob) {
       return {
@@ -602,6 +633,7 @@
       mode: options.mode || "hide_public"
     });
     const sanitizedText = String(scan.redactedText || "");
+    const safeOriginalName = normalizeFileName(scan.file?.name || originalName);
 
     if (extractedKind === "pdf") {
       const pdfRedactor = getPdfRedactor();
@@ -801,12 +833,14 @@
         ocrExtraction: protectedSiteImageOcrExtraction,
         scan,
         originalName,
+        safeOriginalName,
         mimeType
       });
 
       if (!redactedImage.ok) {
         return createImageBlockedResult(redactedImage.status || "image_redaction_failed", {
           originalName,
+          safeOriginalName,
           mimeType,
           sizeBytes,
           extractedKind,
@@ -817,7 +851,7 @@
 
       return {
         status: "ready",
-        originalName,
+        originalName: safeOriginalName,
         outputName: redactedImage.outputName,
         outputKind: redactedImage.outputKind,
         extractedKind,

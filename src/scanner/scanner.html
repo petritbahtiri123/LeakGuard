@@ -25,9 +25,11 @@
             <li>Text files, text PDFs, DOCX text, XLSX spreadsheet text, and PNG/JPG/JPEG/WEBP images are scanned locally.</li>
             <li>Exports redacted text copies. Text PDF, DOCX, and XLSX scans can also export regenerated .redacted.pdf, .redacted.docx, or .redacted.xlsx files.</li>
             <li>Regenerated PDF/DOCX/XLSX files are not layout-preserving; .redacted.txt remains available as the fallback.</li>
-            <li>DOCX regeneration does not copy original DOCX XML parts and does not preserve styles, images, comments, or metadata.</li>
+            <li>DOCX exports are regenerated from sanitized extracted text; original styles, images, comments, and metadata are not preserved.</li>
+            <li>DOCX regeneration does not copy original DOCX XML parts and does not redact embedded images. For DOCX, .doc, .docm, and macros are unsupported.</li>
             <li>XLSX formulas are scanned as text only and are not executed. Formulas, charts, styles, comments, hidden sheets, metadata, custom XML, calc chains, media, and original XLSX XML parts are not preserved.</li>
             <li>Protected-site PDF, DOCX, and XLSX output can hand off regenerated redacted files when complete; truncated or unsafe regeneration falls back to .redacted.txt or blocks raw upload.</li>
+            <li>Protected-site DOCX output can hand off a regenerated .redacted.docx when complete; truncated or unsafe DOCX regeneration falls back to .redacted.txt or blocks raw upload.</li>
             <li>Image OCR is English-only, runs only after you select an image and click Scan File, and is limited to image files on this scanner page.</li>
             <li>Scanner image visual redaction outputs a flattened PNG when OCR boxes are available. JPG, JPEG, and WEBP inputs are not preserved as their original format.</li>
             <li>Protected-site upload OCR is on by default for supported image uploads, can be turned off in settings, and exports a flattened redacted PNG only when OCR box confidence is eligible.</li>

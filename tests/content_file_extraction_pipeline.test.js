@@ -653,6 +653,48 @@ async function testProtectedSiteImageOcrNoFindingsStillProducesImageFile() {
   }
 }
 
+async function testProtectedSiteImageOcrMetadataOnlyFilenameFindingProducesSanitizedImageFile() {
+  const originalHelper = globalThis.PWM.isProtectedSiteOcrEnabled;
+  const rawSecret = "sk-proj-MetadataOnlyFilenameSecret1234567890abcdef";
+  globalThis.PWM.isProtectedSiteOcrEnabled = async () => true;
+  globalThis.PWM.OcrRuntime = makeProtectedSiteOcrRuntime(
+    {
+      text: "diagram title only",
+      layout: {
+        source: "word",
+        boxes: []
+      }
+    },
+    []
+  );
+  const redactorCalls = [];
+  const restoreRedactor = installProtectedSiteImageRedactor(redactorCalls);
+
+  try {
+    const file = fileFromBuffer(`diagram-${rawSecret}.png`, "image/png", bufferFromText("pixel bytes"));
+    const result = await processFileForAdapterHandoff({ file, context: "drop" });
+    const serialized = JSON.stringify(result);
+
+    assert.strictEqual(result.status, "ready");
+    assert.strictEqual(result.safeForUpload, true);
+    assert.strictEqual(result.outputKind, "redacted_image_file");
+    assert.strictEqual(result.fileOnlyUpload, true);
+    assert.strictEqual(result.skipTextFallback, true);
+    assert.strictEqual(redactorCalls.length, 1);
+    assert.deepStrictEqual(redactorCalls[0].boxes, []);
+    assert.strictEqual(redactorCalls[0].fileName.includes(rawSecret), false);
+    assert.strictEqual(result.outputName.includes(rawSecret), false);
+    assert.strictEqual(result.sanitizedFile.name.includes(rawSecret), false);
+    assert.ok(/\[PWM_\d+\]/.test(result.outputName));
+    assert.strictEqual(serialized.includes(rawSecret), false);
+    assert.strictEqual(result.sanitizedText.includes(rawSecret), false);
+  } finally {
+    globalThis.PWM.isProtectedSiteOcrEnabled = originalHelper;
+    delete globalThis.PWM.OcrRuntime;
+    restoreRedactor();
+  }
+}
+
 function makeProtectedSiteOcrRuntime({ text, layout, status = "ocr_recognition_ready", warnings = [] }, calls) {
   return {
     recognizeImageBytes(payload) {
@@ -675,6 +717,10 @@ function installProtectedSiteImageRedactor(calls) {
   const original = globalThis.PWM.ImageRedactor;
   globalThis.PWM.ImageRedactor = {
     createRedactedPng(options = {}) {
+      const name = String(options.fileName || "photo.png").split(/[\\/]/).pop() || "photo.png";
+      const index = name.lastIndexOf(".");
+      const base = index > 0 ? name.slice(0, index).replace(/^\.+/, "") || "photo" : name;
+      const outputName = `${base}.redacted.png`;
       calls.push({
         fileName: options.fileName,
         mimeType: options.mimeType,
@@ -684,9 +730,9 @@ function installProtectedSiteImageRedactor(calls) {
       return Promise.resolve({
         ok: true,
         status: "image_redacted_png_ready",
-        fileName: "photo.redacted.png",
-        blob: new TestFile(["redacted png bytes"], "photo.redacted.png", { type: "image/png" }),
-        file: new TestFile(["redacted png bytes"], "photo.redacted.png", { type: "image/png" })
+        fileName: outputName,
+        blob: new TestFile(["redacted png bytes"], outputName, { type: "image/png" }),
+        file: new TestFile(["redacted png bytes"], outputName, { type: "image/png" })
       });
     }
   };
@@ -1041,17 +1087,12 @@ async function testProtectedSiteImageBlockedMetadataDoesNotExposeRawFilenameSecr
       bufferFromText("pixel bytes")
     );
     const result = await processFileForAdapterHandoff({ file, context: "drop" });
-    const serializedMetadata = JSON.stringify({
-      metadata: result.metadata,
-      warnings: result.warnings,
-      outputName: result.outputName,
-      fallbackReason: result.fallbackReason
-    });
+    const serialized = JSON.stringify(result);
 
     assert.strictEqual(result.status, "blocked");
     assert.strictEqual(result.fallbackReason, "protected_site_image_ocr_disabled");
-    assert.strictEqual(serializedMetadata.includes(RAW_SECRET), false);
-    assert.strictEqual(serializedMetadata.includes("secret-filename"), false);
+    assert.strictEqual(serialized.includes(RAW_SECRET), false);
+    assert.strictEqual(serialized.includes("secret-filename"), false);
   } finally {
     globalThis.PWM.isProtectedSiteOcrEnabled = originalHelper;
   }
@@ -1575,6 +1616,7 @@ async function run() {
   await testImageMetadataAttemptsProtectedSiteOcrByDefault();
   await testProtectedSiteOcrEnabledByDefaultAndLocalOptOutPersistence();
   await testProtectedSiteImageOcrNoFindingsStillProducesImageFile();
+  await testProtectedSiteImageOcrMetadataOnlyFilenameFindingProducesSanitizedImageFile();
   await testProtectedSiteImageAttachBlocksWhenOcrDisabled();
   await testProtectedSiteImageOcrEnabledWithSafeBoxesProducesRedactedPng();
   await testProtectedSiteImageOcrRejectsEmptyGeneratedPngWithoutRawFallback();
