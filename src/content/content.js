@@ -3245,11 +3245,33 @@
     });
   }
 
+  function waitForAnimationFrameOrTimeout(timeoutMs = 50) {
+    return new Promise((resolve) => {
+      let settled = false;
+      let timeoutId = 0;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        if (timeoutId) {
+          window.clearTimeout(timeoutId);
+        }
+        resolve();
+      };
+
+      timeoutId = window.setTimeout(finish, timeoutMs);
+      try {
+        window.requestAnimationFrame(finish);
+      } catch {
+        finish();
+      }
+    });
+  }
+
   async function settleComposer() {
     await new Promise((resolve) => window.setTimeout(resolve, 0));
-    await new Promise((resolve) => window.requestAnimationFrame(resolve));
-    await new Promise((resolve) => window.requestAnimationFrame(resolve));
-    await new Promise((resolve) => window.requestAnimationFrame(resolve));
+    await waitForAnimationFrameOrTimeout();
+    await waitForAnimationFrameOrTimeout();
+    await waitForAnimationFrameOrTimeout();
   }
 
   async function readStableComposerText(input, maxPasses = 4) {
@@ -3644,26 +3666,76 @@
     return false;
   }
 
-  function clickSendButtonWithBypass(button) {
+  function dispatchSubmitEventWithBypass(form, submitter = null) {
+    if (!form || typeof form.dispatchEvent !== "function") return false;
+    let event = null;
+    try {
+      if (typeof SubmitEvent === "function") {
+        event = new SubmitEvent("submit", {
+          bubbles: true,
+          cancelable: true,
+          submitter
+        });
+      }
+    } catch {
+      event = null;
+    }
+
+    if (!event) {
+      event = new Event("submit", { bubbles: true, cancelable: true });
+      if (submitter && !("submitter" in event)) {
+        try {
+          Object.defineProperty(event, "submitter", { value: submitter });
+        } catch {
+          // Older engines may expose a non-configurable Event shape.
+        }
+      }
+    }
+
+    form.dispatchEvent(event);
+    return true;
+  }
+
+  function clickSendButtonWithBypass(button, options = {}) {
     if (!button) return false;
+    const fallbackForm = options.fallbackForm || null;
+    let submitObserved = false;
+    const markSubmitObserved = () => {
+      submitObserved = true;
+    };
+    if (fallbackForm && typeof fallbackForm.addEventListener === "function") {
+      fallbackForm.addEventListener("submit", markSubmitObserved, true);
+    }
+
     bypassNextSendButtonClick = true;
     button.click();
     queueMicrotask(() => {
       bypassNextSendButtonClick = false;
+      if (fallbackForm && typeof fallbackForm.removeEventListener === "function") {
+        fallbackForm.removeEventListener("submit", markSubmitObserved, true);
+      }
+      if (fallbackForm && !submitObserved) {
+        dispatchSubmitEventWithBypass(fallbackForm, button);
+      }
     });
     return true;
   }
 
-  function submitComposer(form, input, preferredButton = null) {
+  function submitComposer(form, input, preferredButton = null, options = {}) {
     clearAllRiskSessionState();
+    const preferButtonClick = Boolean(options.preferButtonClick);
 
     if (form && typeof form.requestSubmit === "function") {
+      if (preferButtonClick && isPreferredSubmitterForForm(form, preferredButton)) {
+        if (clickSendButtonWithBypass(preferredButton, { fallbackForm: form })) return;
+      }
+
       if (isPreferredSubmitterForForm(form, preferredButton)) {
         try {
           form.requestSubmit(preferredButton);
           return;
         } catch {
-          if (clickSendButtonWithBypass(preferredButton)) return;
+          if (clickSendButtonWithBypass(preferredButton, { fallbackForm: form })) return;
         }
       }
 
@@ -3679,16 +3751,21 @@
       ? preferredButton
       : findSendButton(input);
     if (button) {
-      clickSendButtonWithBypass(button);
+      clickSendButtonWithBypass(button, { fallbackForm: form || button.form || button.closest?.("form") || null });
     }
   }
 
-  function replayVerifiedSend(input, form = null, preferredButton = null) {
+  function replayVerifiedSend(input, form = null, preferredButton = null, options = {}) {
     const targetForm = form || preferredButton?.closest?.("form") || input?.closest?.("form") || null;
     if (targetForm) {
       bypassNextSubmit = true;
     }
-    submitComposer(targetForm, input, preferredButton);
+    submitComposer(targetForm, input, preferredButton, options);
+    if (targetForm) {
+      queueMicrotask(() => {
+        bypassNextSubmit = false;
+      });
+    }
   }
 
   async function applyPasteDecision(input, originalText, selection, insertedText, context, options) {
@@ -10079,6 +10156,11 @@
 
     if (!input) return;
     noteActiveRiskEditor(input);
+    const nativeSubmitEvent = event.type === "submit" && !event.leakGuardSendButton;
+    const submitter = event.leakGuardSendButton || event.submitter || (nativeSubmitEvent ? findSendButton(input) : null);
+    const replayOptions = {
+      preferButtonClick: Boolean(event.leakGuardReplayViaClick || event.submitter || nativeSubmitEvent)
+    };
 
     const text = getInputText(input);
     if (!text || !text.trim()) return;
@@ -10096,7 +10178,7 @@
       if (!normalized.ok) return;
 
       queueVerifiedComposerSend(input, normalized.text, "submit", () => {
-        replayVerifiedSend(input, form, event.leakGuardSendButton || null);
+        replayVerifiedSend(input, form, submitter, replayOptions);
       });
       return;
     }
@@ -10126,7 +10208,7 @@
       refreshBadgeFromCurrentInput();
 
       queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
-        replayVerifiedSend(input, form, event.leakGuardSendButton || null);
+        replayVerifiedSend(input, form, submitter, replayOptions);
       });
     });
 
@@ -10152,14 +10234,14 @@
       refreshBadgeFromCurrentInput();
 
       queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
-        replayVerifiedSend(input, form, event.leakGuardSendButton || null);
+        replayVerifiedSend(input, form, submitter, replayOptions);
       });
       return;
     }
 
     if (analysis.findings.length && isProtectionPauseActiveAfterPolicy(policy, destinationPolicy)) {
       clearAllRiskSessionState();
-      replayVerifiedSend(input, form, event.leakGuardSendButton || null);
+      replayVerifiedSend(input, form, submitter, replayOptions);
       return;
     }
 
@@ -10177,7 +10259,7 @@
       }
 
       queueVerifiedComposerSend(input, normalized.text, "submit", () => {
-        replayVerifiedSend(input, form, event.leakGuardSendButton || null);
+        replayVerifiedSend(input, form, submitter, replayOptions);
       });
       return;
     }
@@ -10207,7 +10289,7 @@
     refreshBadgeFromCurrentInput();
 
     queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
-      replayVerifiedSend(input, form, event.leakGuardSendButton || null);
+      replayVerifiedSend(input, form, submitter, replayOptions);
     });
   }
 
@@ -10238,6 +10320,7 @@
     return {
       target,
       leakGuardSendButton: options.sendButton || null,
+      leakGuardReplayViaClick: Boolean(options.replayViaClick),
       preventDefault() {},
       stopPropagation() {},
       stopImmediatePropagation() {}
@@ -10315,7 +10398,10 @@
 
     consumeInterceptionEvent(event);
     const form = button.closest?.("form") || input.closest?.("form") || null;
-    await maybeHandleSubmit(createSyntheticSubmitInterceptionEvent(form || input, { sendButton: button }));
+    await maybeHandleSubmit(createSyntheticSubmitInterceptionEvent(form || input, {
+      sendButton: button,
+      replayViaClick: true
+    }));
   }
 
   async function maybeHandleFallbackSendKey(event) {

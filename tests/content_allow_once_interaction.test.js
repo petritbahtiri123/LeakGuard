@@ -527,6 +527,7 @@ function createHarness(options = {}) {
       extractFunctionSource(contentSource, "isLiveTypedRedactionEnabled"),
       extractFunctionSource(contentSource, "findSendButton"),
       extractFunctionSource(contentSource, "isPreferredSubmitterForForm"),
+      extractFunctionSource(contentSource, "dispatchSubmitEventWithBypass"),
       extractFunctionSource(contentSource, "clickSendButtonWithBypass"),
       extractFunctionSource(contentSource, "submitComposer"),
       extractFunctionSource(contentSource, "replayVerifiedSend"),
@@ -796,6 +797,104 @@ async function testPreferredSubmitterRequestSubmitThrowFallsBackToSameButtonClic
   assert.strictEqual(calls.submits, 1, "fallback click should submit exactly once");
 }
 
+async function testClickedSendButtonReplayUsesProviderVisibleClickAfterVerifiedRedaction() {
+  const harness = createHarness({ withForm: true });
+  const { calls, composer, defaultSendButton, form } = harness;
+  form.requestSubmit = (submitter) => {
+    calls.requestSubmitters.push(submitter || null);
+  };
+  defaultSendButton.listeners.set("click", []);
+  let guardPromise = null;
+  let providerClicks = 0;
+  defaultSendButton.addEventListener("click", (event) => {
+    guardPromise = harness.maybeHandleSendButtonClick(event);
+    if (!event.defaultPrevented) {
+      providerClicks += 1;
+      calls.submits += 1;
+    }
+  });
+  composer.value = "username=wayland.dev";
+
+  const click = defaultSendButton.clickEvent();
+  await guardPromise;
+  await waitForMicrotasks();
+  await waitForMicrotasks();
+
+  assert.strictEqual(click.defaultPrevented, true, "raw click should be intercepted before provider submit");
+  assert.strictEqual(calls.redactions.length, 1, "click should trigger exactly one redaction request");
+  assert.strictEqual(composer.value, "username=[PWM_1]", "click should rewrite before replay");
+  assert.strictEqual(providerClicks, 1, "verified replay should reach the provider-visible click handler once");
+  assert.strictEqual(calls.submits, 1, "verified click replay should submit exactly once");
+  assert.deepStrictEqual(
+    calls.requestSubmitters,
+    [],
+    "click-originated replay should not rely on isolated requestSubmit for provider-visible submission"
+  );
+}
+
+async function testNativeSubmitterReplayUsesProviderVisibleClickAfterVerifiedRedaction() {
+  const harness = createHarness({ withForm: true });
+  const { calls, composer, defaultSendButton, form } = harness;
+  form.requestSubmit = (submitter) => {
+    calls.requestSubmitters.push(submitter || null);
+  };
+  defaultSendButton.listeners.set("click", []);
+  form.addEventListener("submit", (event) => {
+    if (!event.defaultPrevented) calls.submits += 1;
+  });
+  composer.value = "username=wayland.dev";
+
+  const submit = new FakeEvent("submit", {
+    bubbles: true,
+    cancelable: true,
+    target: form,
+    submitter: defaultSendButton
+  });
+
+  await harness.maybeHandleSubmit(submit);
+
+  assert.strictEqual(submit.defaultPrevented, true, "native submitter event should be intercepted before provider submit");
+  assert.strictEqual(calls.redactions.length, 1, "native submitter should trigger exactly one redaction request");
+  assert.strictEqual(composer.value, "username=[PWM_1]", "native submitter should rewrite before replay");
+  assert.strictEqual(calls.submits, 1, "verified native submitter replay should submit exactly once");
+  assert.deepStrictEqual(
+    calls.requestSubmitters,
+    [],
+    "native submitter replay should not rely on isolated requestSubmit for provider-visible submission"
+  );
+}
+
+async function testNativeSubmitWithoutSubmitterReplayUsesVisibleSendButtonAfterVerifiedRedaction() {
+  const harness = createHarness({ withForm: true });
+  const { calls, composer, defaultSendButton, form } = harness;
+  form.requestSubmit = (submitter) => {
+    calls.requestSubmitters.push(submitter || null);
+  };
+  defaultSendButton.listeners.set("click", []);
+  form.addEventListener("submit", (event) => {
+    if (!event.defaultPrevented) calls.submits += 1;
+  });
+  composer.value = "username=wayland.dev";
+
+  const submit = new FakeEvent("submit", {
+    bubbles: true,
+    cancelable: true,
+    target: form
+  });
+
+  await harness.maybeHandleSubmit(submit);
+
+  assert.strictEqual(submit.defaultPrevented, true, "native submit should be intercepted before provider submit");
+  assert.strictEqual(calls.redactions.length, 1, "native submit should trigger exactly one redaction request");
+  assert.strictEqual(composer.value, "username=[PWM_1]", "native submit should rewrite before replay");
+  assert.strictEqual(calls.submits, 1, "verified native submit replay should submit exactly once");
+  assert.deepStrictEqual(
+    calls.requestSubmitters,
+    [],
+    "native submit replay should use the visible send button when no submitter is exposed"
+  );
+}
+
 async function testFallbackEnterFormlessComposerRedactsAndClicksOnce() {
   const harness = createHarness();
   const { calls, composer, defaultSendButton } = harness;
@@ -914,6 +1013,9 @@ async function run() {
   await testClickedFormSubmitterIsReplayedAfterVerifiedRedaction();
   await testNonSubmitFormButtonIsNotUsedAsRequestSubmitter();
   await testPreferredSubmitterRequestSubmitThrowFallsBackToSameButtonClick();
+  await testClickedSendButtonReplayUsesProviderVisibleClickAfterVerifiedRedaction();
+  await testNativeSubmitterReplayUsesProviderVisibleClickAfterVerifiedRedaction();
+  await testNativeSubmitWithoutSubmitterReplayUsesVisibleSendButtonAfterVerifiedRedaction();
   await testFallbackEnterFormlessComposerRedactsAndClicksOnce();
   await testFallbackEnterFormComposerRedactsAndRequestSubmitsOnce();
   await testFallbackEnterSanitizedPlaceholderOnlyDoesNotLoop();

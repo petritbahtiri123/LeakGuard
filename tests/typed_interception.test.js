@@ -651,9 +651,12 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   );
   assert.ok(
     contentSource.includes("leakGuardSendButton") &&
+      contentSource.includes("leakGuardReplayViaClick") &&
+      contentSource.includes('const nativeSubmitEvent = event.type === "submit" && !event.leakGuardSendButton;') &&
+      contentSource.includes("event.submitter || (nativeSubmitEvent ? findSendButton(input) : null)") &&
       contentSource.includes("function replayVerifiedSend") &&
-      contentSource.includes("replayVerifiedSend(input, form, event.leakGuardSendButton || null)") &&
-      contentSource.includes("createSyntheticSubmitInterceptionEvent(form || input, { sendButton: button })"),
+      contentSource.includes("replayVerifiedSend(input, form, submitter, replayOptions)") &&
+      contentSource.includes("replayViaClick: true"),
     "guarded send-button redaction should retry the exact intercepted button after verified rewrite"
   );
   assert.ok(
@@ -671,6 +674,13 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
       beforeInputSource.indexOf("event?.isTrusted === false") <
         beforeInputSource.indexOf("shouldInterceptBeforeInput(event)"),
     "programmatic ChatGPT rewrite events should not be re-intercepted as typed user input"
+  );
+  assert.ok(
+    contentSource.includes("function waitForAnimationFrameOrTimeout") &&
+      contentSource.includes("window.setTimeout(finish, timeoutMs)") &&
+      contentSource.includes("window.requestAnimationFrame(finish)") &&
+      extractFunctionSource(contentSource, "settleComposer").includes("waitForAnimationFrameOrTimeout();"),
+    "composer settling should not hang indefinitely when requestAnimationFrame is throttled"
   );
   assert.ok(
     contentSource.includes("shouldAutoRedactTypedSecrets"),
