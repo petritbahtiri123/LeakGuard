@@ -50,9 +50,9 @@
   },
   "devDependencies": {
     "eslint": "^10.5.0",
+    "sharp": "^0.35.2",
     "globals": "^17.7.0",
     "knip": "^6.20.0",
-    "sharp": "^0.35.1",
     "yazl": "^3.3.1"
   },
   "dependencies": {
