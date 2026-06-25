@@ -20,6 +20,7 @@
     blockHttpSecrets: false,
     redactHttpAggressively: true,
     aiAssistEnabled: true,
+    liveTypedRedaction: false,
     allowFeedback: true,
     defaultAction: "redact",
     defaultDestinationAction: "allow",
@@ -43,6 +44,7 @@
     blockHttpSecrets: true,
     redactHttpAggressively: true,
     aiAssistEnabled: true,
+    liveTypedRedaction: false,
     allowFeedback: false,
     defaultAction: "block",
     defaultDestinationAction: "block",
@@ -264,6 +266,7 @@
     assign("blockHttpSecrets", asBoolean);
     assign("redactHttpAggressively", asBoolean);
     assign("aiAssistEnabled", asBoolean);
+    assign("liveTypedRedaction", asBoolean);
     assign("allowFeedback", asBoolean);
     assign("strictPolicyLoad", asBoolean);
     assign("managedProtectedSites", asStringArray);
@@ -302,6 +305,7 @@
       blockHttpSecrets: true,
       redactHttpAggressively: true,
       aiAssistEnabled: false,
+      liveTypedRedaction: false,
       allowFeedback: false,
       defaultAction: "block",
       defaultDestinationAction: "block",
@@ -621,6 +625,7 @@
       blockHttpSecrets: Boolean(policy.blockHttpSecrets),
       redactHttpAggressively: Boolean(policy.redactHttpAggressively),
       aiAssistEnabled: Boolean(policy.aiAssistEnabled),
+      liveTypedRedaction: Boolean(policy.liveTypedRedaction) && !Boolean(meta.strictFailure),
       allowFeedback: Boolean(policy.allowFeedback),
       defaultAction: policy.defaultAction,
       defaultDestinationAction: policy.defaultDestinationAction,

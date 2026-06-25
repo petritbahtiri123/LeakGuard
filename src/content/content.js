@@ -113,8 +113,10 @@
     "form button[data-testid='send-button']",
     "form button[data-testid*='send']",
     "form button[aria-label*='send' i]",
+    "form button#send-button",
     "button[data-testid='send-button']",
     "button[data-testid*='send']",
+    "button#send-button",
     "button[aria-label*='send' i]"
   ];
   let currentUrl = location.href;
@@ -134,6 +136,7 @@
       blockHttpSecrets: false,
       redactHttpAggressively: true,
       aiAssistEnabled: true,
+      liveTypedRedaction: false,
       defaultAction: "redact",
       defaultDestinationAction: "allow",
       auditMode: "off",
@@ -163,6 +166,8 @@
   let badgeHideTimer = 0;
   let bypassNextSubmit = false;
   let bypassNextSendButtonClick = false;
+  let fallbackSendKeySuppressionUntil = 0;
+  let fallbackSendKeySuppressionInput = null;
   let inputScanTimer = 0;
   let rehydrateObserver = null;
   let modalOpen = false;
@@ -195,6 +200,7 @@
   });
   const SANITIZED_FILE_HANDOFF_SUPPRESS_MS = 30000;
   const PROGRAMMATIC_INPUT_SUPPRESS_MS = 500;
+  const FALLBACK_SEND_KEY_SUPPRESS_MS = 5000;
   const CHATGPT_LARGE_PASTE_FILE_THRESHOLD = 16 * 1024;
   const CHATGPT_SANITIZED_PASTE_FILE_NAME = "leakguard-redacted-paste.txt";
   const GEMINI_DIRECT_TEXT_INSERT_THRESHOLD = 8 * 1024;
@@ -2317,6 +2323,7 @@
       blockHttpSecrets: false,
       redactHttpAggressively: true,
       aiAssistEnabled: true,
+      liveTypedRedaction: false,
       defaultAction: "redact",
       defaultDestinationAction: "allow",
       auditMode: "off",
@@ -2836,6 +2843,11 @@
     return secretFindings.every((finding) => finding?.severity === "high");
   }
 
+  function isLiveTypedRedactionEnabled(policy) {
+    const activePolicy = policy || getActivePolicy();
+    return Boolean(activePolicy?.liveTypedRedaction === true && activePolicy?.strictFailure !== true);
+  }
+
   function shouldEnforceHttpSecretPolicy(policy, secretFindings) {
     return Boolean(policy.blockHttpSecrets && policy.http && (secretFindings || []).length > 0);
   }
@@ -3233,11 +3245,33 @@
     });
   }
 
+  function waitForAnimationFrameOrTimeout(timeoutMs = 50) {
+    return new Promise((resolve) => {
+      let settled = false;
+      let timeoutId = 0;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        if (timeoutId) {
+          window.clearTimeout(timeoutId);
+        }
+        resolve();
+      };
+
+      timeoutId = window.setTimeout(finish, timeoutMs);
+      try {
+        window.requestAnimationFrame(finish);
+      } catch {
+        finish();
+      }
+    });
+  }
+
   async function settleComposer() {
     await new Promise((resolve) => window.setTimeout(resolve, 0));
-    await new Promise((resolve) => window.requestAnimationFrame(resolve));
-    await new Promise((resolve) => window.requestAnimationFrame(resolve));
-    await new Promise((resolve) => window.requestAnimationFrame(resolve));
+    await waitForAnimationFrameOrTimeout();
+    await waitForAnimationFrameOrTimeout();
+    await waitForAnimationFrameOrTimeout();
   }
 
   async function readStableComposerText(input, maxPasses = 4) {
@@ -3590,6 +3624,7 @@
       ensureExactComposerState(input, expectedText, { context })
         .then((isExact) => {
           if (!isExact) {
+            clearFallbackSendKeyRedactionPending(input);
             return showRewriteFailure(
               context,
               collectFailureDetails(input, expectedText, getInputText(input), context)
@@ -3598,6 +3633,7 @@
             });
           }
 
+          clearFallbackSendKeyRedactionPending(input);
           send();
           return null;
         })
@@ -3618,20 +3654,116 @@
     return null;
   }
 
-  function submitComposer(form, input) {
-    clearAllRiskSessionState();
+  function isPreferredSubmitterForForm(form, button) {
+    if (!form || !button || !isVisible(button) || button.disabled) return false;
+    const ownerForm = button.form || button.closest?.("form") || null;
+    if (ownerForm !== form) return false;
 
-    if (form && typeof form.requestSubmit === "function") {
-      form.requestSubmit();
-      return;
+    const tagName = String(button.tagName || "").toLowerCase();
+    const type = String(button.type || button.getAttribute?.("type") || (tagName === "button" ? "submit" : "")).toLowerCase();
+    if (tagName === "button") return type === "submit" || type === "";
+    if (tagName === "input") return type === "submit" || type === "image";
+    return false;
+  }
+
+  function dispatchSubmitEventWithBypass(form, submitter = null) {
+    if (!form || typeof form.dispatchEvent !== "function") return false;
+    let event = null;
+    try {
+      if (typeof SubmitEvent === "function") {
+        event = new SubmitEvent("submit", {
+          bubbles: true,
+          cancelable: true,
+          submitter
+        });
+      }
+    } catch {
+      event = null;
     }
 
-    const button = findSendButton(input);
+    if (!event) {
+      event = new Event("submit", { bubbles: true, cancelable: true });
+      if (submitter && !("submitter" in event)) {
+        try {
+          Object.defineProperty(event, "submitter", { value: submitter });
+        } catch {
+          // Older engines may expose a non-configurable Event shape.
+        }
+      }
+    }
+
+    form.dispatchEvent(event);
+    return true;
+  }
+
+  function clickSendButtonWithBypass(button, options = {}) {
+    if (!button) return false;
+    const fallbackForm = options.fallbackForm || null;
+    let submitObserved = false;
+    const markSubmitObserved = () => {
+      submitObserved = true;
+    };
+    if (fallbackForm && typeof fallbackForm.addEventListener === "function") {
+      fallbackForm.addEventListener("submit", markSubmitObserved, true);
+    }
+
+    bypassNextSendButtonClick = true;
+    button.click();
+    queueMicrotask(() => {
+      bypassNextSendButtonClick = false;
+      if (fallbackForm && typeof fallbackForm.removeEventListener === "function") {
+        fallbackForm.removeEventListener("submit", markSubmitObserved, true);
+      }
+      if (fallbackForm && !submitObserved) {
+        dispatchSubmitEventWithBypass(fallbackForm, button);
+      }
+    });
+    return true;
+  }
+
+  function submitComposer(form, input, preferredButton = null, options = {}) {
+    clearAllRiskSessionState();
+    const preferButtonClick = Boolean(options.preferButtonClick);
+
+    if (form && typeof form.requestSubmit === "function") {
+      if (preferButtonClick && isPreferredSubmitterForForm(form, preferredButton)) {
+        if (clickSendButtonWithBypass(preferredButton, { fallbackForm: form })) return;
+      }
+
+      if (isPreferredSubmitterForForm(form, preferredButton)) {
+        try {
+          form.requestSubmit(preferredButton);
+          return;
+        } catch {
+          if (clickSendButtonWithBypass(preferredButton, { fallbackForm: form })) return;
+        }
+      }
+
+      try {
+        form.requestSubmit();
+        return;
+      } catch {
+        // Fall back to a verified button replay when requestSubmit is unavailable for this form state.
+      }
+    }
+
+    const button = preferredButton && isVisible(preferredButton)
+      ? preferredButton
+      : findSendButton(input);
     if (button) {
-      bypassNextSendButtonClick = true;
-      button.click();
+      clickSendButtonWithBypass(button, { fallbackForm: form || button.form || button.closest?.("form") || null });
+    }
+  }
+
+  function replayVerifiedSend(input, form = null, preferredButton = null, options = {}) {
+    const targetForm = form || preferredButton?.closest?.("form") || input?.closest?.("form") || null;
+    if (targetForm) {
+      bypassNextSubmit = true;
+    }
+    submitComposer(targetForm, input, preferredButton, options);
+    if (targetForm) {
       queueMicrotask(() => {
-        bypassNextSendButtonClick = false;
+        bypassNextSubmit = false;
       });
     }
   }
@@ -3776,6 +3908,11 @@
     const originalText = getInputText(input);
     const selection = getSelectionOffsets(input);
     const next = spliceSelectionText(originalText, selection, insertedText);
+
+    if (!isLiveTypedRedactionEnabled(getActivePolicy())) {
+      return;
+    }
+
     let firefoxEarlyAnalysis = null;
     let firefoxEarlyRelevantFindings = [];
     let firefoxEarlyPlaceholderNormalizationChanged = false;
@@ -10019,6 +10156,11 @@
 
     if (!input) return;
     noteActiveRiskEditor(input);
+    const nativeSubmitEvent = event.type === "submit" && !event.leakGuardSendButton;
+    const submitter = event.leakGuardSendButton || event.submitter || (nativeSubmitEvent ? findSendButton(input) : null);
+    const replayOptions = {
+      preferButtonClick: Boolean(event.leakGuardReplayViaClick || event.submitter || nativeSubmitEvent)
+    };
 
     const text = getInputText(input);
     if (!text || !text.trim()) return;
@@ -10036,8 +10178,7 @@
       if (!normalized.ok) return;
 
       queueVerifiedComposerSend(input, normalized.text, "submit", () => {
-        bypassNextSubmit = true;
-        submitComposer(form, input);
+        replayVerifiedSend(input, form, submitter, replayOptions);
       });
       return;
     }
@@ -10067,8 +10208,7 @@
       refreshBadgeFromCurrentInput();
 
       queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
-        bypassNextSubmit = true;
-        submitComposer(form, input);
+        replayVerifiedSend(input, form, submitter, replayOptions);
       });
     });
 
@@ -10094,16 +10234,14 @@
       refreshBadgeFromCurrentInput();
 
       queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
-        bypassNextSubmit = true;
-        submitComposer(form, input);
+        replayVerifiedSend(input, form, submitter, replayOptions);
       });
       return;
     }
 
     if (analysis.findings.length && isProtectionPauseActiveAfterPolicy(policy, destinationPolicy)) {
       clearAllRiskSessionState();
-      bypassNextSubmit = true;
-      submitComposer(form, input);
+      replayVerifiedSend(input, form, submitter, replayOptions);
       return;
     }
 
@@ -10121,8 +10259,7 @@
       }
 
       queueVerifiedComposerSend(input, normalized.text, "submit", () => {
-        bypassNextSubmit = true;
-        submitComposer(form, input);
+        replayVerifiedSend(input, form, submitter, replayOptions);
       });
       return;
     }
@@ -10152,8 +10289,7 @@
     refreshBadgeFromCurrentInput();
 
     queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
-      bypassNextSubmit = true;
-      submitComposer(form, input);
+      replayVerifiedSend(input, form, submitter, replayOptions);
     });
   }
 
@@ -10180,13 +10316,51 @@
     return null;
   }
 
-  function createSyntheticSubmitInterceptionEvent(target) {
+  function createSyntheticSubmitInterceptionEvent(target, options = {}) {
     return {
       target,
+      leakGuardSendButton: options.sendButton || null,
+      leakGuardReplayViaClick: Boolean(options.replayViaClick),
       preventDefault() {},
       stopPropagation() {},
       stopImmediatePropagation() {}
     };
+  }
+
+  function markFallbackSendKeyRedactionPending(input) {
+    fallbackSendKeySuppressionInput = input || null;
+    fallbackSendKeySuppressionUntil = Date.now() + FALLBACK_SEND_KEY_SUPPRESS_MS;
+  }
+
+  function clearFallbackSendKeyRedactionPending(input) {
+    if (!input || fallbackSendKeySuppressionInput === input) {
+      fallbackSendKeySuppressionInput = null;
+      fallbackSendKeySuppressionUntil = 0;
+    }
+  }
+
+  function maybeConsumeSuppressedFallbackSendKeyEvent(event) {
+    if (
+      !fallbackSendKeySuppressionInput ||
+      Date.now() > fallbackSendKeySuppressionUntil ||
+      event?.key !== "Enter" ||
+      event.shiftKey ||
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.isComposing
+    ) {
+      if (Date.now() > fallbackSendKeySuppressionUntil) {
+        clearFallbackSendKeyRedactionPending();
+      }
+      return false;
+    }
+
+    const input = findComposer(event.target);
+    if (input !== fallbackSendKeySuppressionInput) return false;
+
+    consumeInterceptionEvent(event);
+    return true;
   }
 
   async function maybeHandleSendButtonClick(event) {
@@ -10224,7 +10398,10 @@
 
     consumeInterceptionEvent(event);
     const form = button.closest?.("form") || input.closest?.("form") || null;
-    await maybeHandleSubmit(createSyntheticSubmitInterceptionEvent(form || input));
+    await maybeHandleSubmit(createSyntheticSubmitInterceptionEvent(form || input, {
+      sendButton: button,
+      replayViaClick: true
+    }));
   }
 
   async function maybeHandleFallbackSendKey(event) {
@@ -10243,7 +10420,7 @@
     }
 
     const input = findComposer(event.target);
-    if (!input || input.closest("form")) return;
+    if (!input) return;
     noteActiveRiskEditor(input);
 
     const text = getInputText(input);
@@ -10253,19 +10430,25 @@
     if (!analysisNeedsEventOwnership(quickAnalysis)) return;
 
     consumeInterceptionEvent(event);
+    markFallbackSendKeyRedactionPending(input);
 
     const analysis = await analyzeTextWithAiAssist(text);
-    if (!analysis.findings.length && !analysis.placeholderNormalized) return;
+    if (!analysis.findings.length && !analysis.placeholderNormalized) {
+      clearFallbackSendKeyRedactionPending(input);
+      return;
+    }
 
     if (analysisHasOnlySanitizedPlaceholderFindings(analysis)) {
       const normalized = await applyNormalizedComposerRewrite(input, text, "submit");
-      if (!normalized.ok) return;
+      if (!normalized.ok) {
+        clearFallbackSendKeyRedactionPending(input);
+        return;
+      }
 
       queueVerifiedComposerSend(input, normalized.text, "submit", () => {
         const button = findSendButton(input);
         if (button) {
-          clearAllRiskSessionState();
-          button.click();
+          replayVerifiedSend(input, null, button);
         }
       });
       return;
@@ -10276,6 +10459,7 @@
       ? await handleDestinationPolicy(analysis.findings, policy)
       : getDestinationPolicyDecision(policy);
     if (analysis.findings.length && destinationPolicy.blocked) {
+      clearFallbackSendKeyRedactionPending(input);
       return;
     }
     const destinationForceRedact = shouldForceDestinationRedaction(destinationPolicy, analysis.findings);
@@ -10289,7 +10473,10 @@
         "submit",
         analysis.secretFindings
       );
-      if (!rewritten) return;
+      if (!rewritten) {
+        clearFallbackSendKeyRedactionPending(input);
+        return;
+      }
 
       setBadge("Content redacted");
       hideBadgeSoon();
@@ -10298,8 +10485,7 @@
       queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
         const button = findSendButton(input);
         if (button) {
-          clearAllRiskSessionState();
-          button.click();
+          replayVerifiedSend(input, null, button);
         }
       });
     });
@@ -10319,7 +10505,10 @@
         "submit",
         analysis.secretFindings
       );
-      if (!rewritten) return;
+      if (!rewritten) {
+        clearFallbackSendKeyRedactionPending(input);
+        return;
+      }
 
       setBadge("Destination policy required redaction");
       hideBadgeSoon();
@@ -10328,8 +10517,7 @@
       queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
         const button = findSendButton(input);
         if (button) {
-          clearAllRiskSessionState();
-          button.click();
+          replayVerifiedSend(input, null, button);
         }
       });
       return;
@@ -10337,19 +10525,23 @@
 
     if (analysis.findings.length && isProtectionPauseActiveAfterPolicy(policy, destinationPolicy)) {
       const button = findSendButton(input);
-      clearAllRiskSessionState();
-      if (button) button.click();
+      clearFallbackSendKeyRedactionPending(input);
+      replayVerifiedSend(input, null, button);
       return;
     }
 
     if (!analysis.findings.length) {
       const normalized = await applyNormalizedComposerRewrite(input, text, "submit");
-      if (!normalized.ok) return;
+      if (!normalized.ok) {
+        clearFallbackSendKeyRedactionPending(input);
+        return;
+      }
 
       queueMicrotask(() => {
         ensureExactComposerState(input, normalized.text)
           .then((isExact) => {
             if (!isExact) {
+              clearFallbackSendKeyRedactionPending(input);
               return showRewriteFailure(
                 "submit",
                 collectFailureDetails(input, normalized.text, getInputText(input), "submit")
@@ -10360,8 +10552,8 @@
 
             const button = findSendButton(input);
             if (button) {
-              clearAllRiskSessionState();
-              button.click();
+              clearFallbackSendKeyRedactionPending(input);
+              replayVerifiedSend(input, null, button);
             }
             return null;
           })
@@ -10377,7 +10569,10 @@
       input,
       analysis.normalizedText
     );
-    if (decisionAction === "cancel") return;
+    if (decisionAction === "cancel") {
+      clearFallbackSendKeyRedactionPending(input);
+      return;
+    }
 
     const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
 
@@ -10388,7 +10583,10 @@
       "submit",
       analysis.secretFindings
     );
-    if (!rewritten) return;
+    if (!rewritten) {
+      clearFallbackSendKeyRedactionPending(input);
+      return;
+    }
 
     setBadge("Content redacted");
     hideBadgeSoon();
@@ -10397,8 +10595,7 @@
     queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
       const button = findSendButton(input);
       if (button) {
-        clearAllRiskSessionState();
-        button.click();
+        replayVerifiedSend(input, null, button);
       }
     });
   }
@@ -10421,6 +10618,11 @@
 
     const analysis = await analyzeTextWithAiAssist(text);
     if (scanGeneration !== typedScanGeneration) return;
+
+    if (!isLiveTypedRedactionEnabled(getActivePolicy())) {
+      lastTypedPromptText = analysis.normalizedText;
+      return;
+    }
 
     if (!analysis.findings.length) {
       if (analysis.placeholderNormalized) {
@@ -10902,6 +11104,30 @@
       "submit",
       (event) => {
         maybeHandleSubmit(event).catch(handleContentError);
+      },
+      true
+    );
+
+    window.addEventListener(
+      "keydown",
+      (event) => {
+        maybeHandleFallbackSendKey(event).catch(handleContentError);
+      },
+      true
+    );
+
+    window.addEventListener(
+      "keypress",
+      (event) => {
+        maybeConsumeSuppressedFallbackSendKeyEvent(event);
+      },
+      true
+    );
+
+    window.addEventListener(
+      "keyup",
+      (event) => {
+        maybeConsumeSuppressedFallbackSendKeyEvent(event);
       },
       true
     );

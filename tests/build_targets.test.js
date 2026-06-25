@@ -1280,18 +1280,13 @@ async function run() {
       scannerHtml.includes("Protected-site upload OCR is on by default for supported image uploads") &&
       scannerHtml.includes("can be turned off in settings") &&
       scannerHtml.includes("flattened redacted PNG only when OCR box confidence is eligible") &&
-      scannerHtml.includes("Text PDF scanner results can also export a .redacted.pdf regenerated from sanitized extracted text") &&
-      scannerHtml.includes("DOCX scanner results can also export a .redacted.docx regenerated from sanitized extracted text") &&
+      scannerHtml.includes("Text PDF, DOCX, and XLSX scans can also export regenerated .redacted.pdf, .redacted.docx, or .redacted.xlsx files") &&
       scannerHtml.includes("not layout-preserving") &&
       scannerHtml.includes(".redacted.txt remains available as the fallback") &&
-      scannerHtml.includes("Protected-site DOCX output can hand off a regenerated .redacted.docx when complete") &&
-      scannerHtml.includes("truncated or unsafe DOCX regeneration falls back to .redacted.txt or blocks raw upload") &&
-      scannerHtml.includes("Protected-site XLSX output can hand off a regenerated .redacted.xlsx when complete") &&
-      scannerHtml.includes("truncated or unsafe XLSX regeneration falls back to .redacted.txt or blocks raw upload") &&
-      scannerHtml.includes("Protected-site text PDF output can hand off a regenerated .redacted.pdf when complete") &&
+      scannerHtml.includes("Protected-site PDF, DOCX, and XLSX output can hand off regenerated redacted files when complete") &&
+      scannerHtml.includes("truncated or unsafe regeneration falls back to .redacted.txt or blocks raw upload") &&
       scannerHtml.includes("Scanned PDF OCR") &&
-      scannerHtml.includes("XLSX scanner results can also export a .redacted.xlsx regenerated from sanitized extracted text") &&
-      scannerHtml.includes("original XLSX XML parts are not copied") &&
+      scannerHtml.includes("original XLSX XML parts are not preserved") &&
       scannerHtml.includes("layout-preserving PDF/DOCX/XLSX redaction") &&
       scannerHtml.includes("image format preservation"),
     "scanner UI should scope OCR to local English image scanning, scanner/protected-site PNG visual redaction, settings-controlled protected-site OCR, and explicitly exclude scanned PDFs, rebuilds, and format preservation"

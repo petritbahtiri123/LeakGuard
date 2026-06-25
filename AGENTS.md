@@ -62,6 +62,13 @@ regex/provider deterministic rules
 - Keep extension UI compatible with MV3 CSP. Do not add inline JavaScript.
 - Do not edit `dist/`, `node_modules/`, `ai/models/`, generated artifacts, or `package-lock.json` unless explicitly required.
 
+## LeakGuard Lean Code / Ponytail Rules
+- Use the `lean-extension-engineer` skill for LeakGuard runtime, adapter, policy, redaction, file-processing, UI, and test changes.
+- Prefer minimal patches.
+- Do not add code unless the requirement truly needs it.
+- Do not introduce broad refactors or future-proof abstractions during bugfixes.
+- Preserve security-sensitive behavior.
+
 ## Runtime Order Rules
 - Dependencies must load before consumers.
 - Keep `src/shared/runtime_scripts.js`, `manifests/base.json`, `manifests/firefox.json`, and `src/background/service_worker.js` aligned.

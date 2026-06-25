@@ -36,6 +36,9 @@
     "aiAssistEnabled": {
       "type": "boolean"
     },
+    "liveTypedRedaction": {
+      "type": "boolean"
+    },
     "allowFeedback": {
       "type": "boolean"
     },
