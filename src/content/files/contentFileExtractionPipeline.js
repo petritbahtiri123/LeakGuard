@@ -181,15 +181,22 @@
 
   function createImageBlockedResult(reason, options = {}) {
     const code = reason || "image_redaction_file_unavailable";
+    const safeOriginalName = Object.prototype.hasOwnProperty.call(options, "safeOriginalName")
+      ? normalizeFileName(options.safeOriginalName)
+      : "";
+    const extractionMetadata = options.extractionMetadata
+      ? {
+          ...options.extractionMetadata,
+          fileName: safeOriginalName
+        }
+      : options.extractionMetadata;
     return createEmptyResult("blocked", {
-      originalName: Object.prototype.hasOwnProperty.call(options, "safeOriginalName")
-        ? options.safeOriginalName
-        : "",
+      originalName: safeOriginalName,
       mimeType: options.mimeType,
       sizeBytes: options.sizeBytes,
       metadataOriginalName: "",
       extractedKind: options.extractedKind || "image_ocr",
-      extractionMetadata: options.extractionMetadata,
+      extractionMetadata,
       warnings: listWarnings(options.warnings, [`image-redaction:${code}`]),
       fallbackReason: code
     });
@@ -485,6 +492,13 @@
       typeof extractors.prepareFileExtractionAsync !== "function" ||
       typeof scanner.scanTextContent !== "function"
     ) {
+      if (protectedSiteImageCandidate) {
+        return createImageBlockedResult("content_file_pipeline_unavailable", {
+          mimeType,
+          sizeBytes,
+          extractedKind: "image_metadata"
+        });
+      }
       return createEmptyResult("failed", {
         originalName,
         mimeType,
@@ -552,6 +566,13 @@
     try {
       buffer = await readFileBuffer(file);
     } catch {
+      if (protectedSiteImageCandidate) {
+        return createImageBlockedResult("file_read_failed", {
+          mimeType,
+          sizeBytes,
+          extractedKind: "image_metadata"
+        });
+      }
       return createEmptyResult("failed", {
         originalName,
         mimeType,
@@ -593,6 +614,15 @@
 
     if (!extraction?.safeForScan) {
       const status = extraction?.status === "unsupported" ? "unsupported" : "blocked";
+      if (protectedSiteImageCandidate) {
+        return createImageBlockedResult(extraction?.reason || extraction?.status || "file_extraction_failed", {
+          mimeType,
+          sizeBytes,
+          extractedKind,
+          extractionMetadata,
+          warnings: extraction?.warnings
+        });
+      }
       return createEmptyResult(status, {
         originalName,
         mimeType,
@@ -607,14 +637,12 @@
     if (protectedSiteOcrEnabled && extractedKind === "image_metadata") {
       const ocrExtraction = await runProtectedSiteImageOcr(file, extraction, options);
       if (!ocrExtraction.ok) {
-        return createEmptyResult("blocked", {
-          originalName,
+        return createImageBlockedResult(ocrExtraction.status || "ocr_failed", {
           mimeType,
           sizeBytes,
           extractedKind: "image_ocr",
           extractionMetadata,
-          warnings: ocrExtraction.warnings,
-          fallbackReason: ocrExtraction.status || "ocr_failed"
+          warnings: ocrExtraction.warnings
         });
       }
       extractedKind = ocrExtraction.kind;

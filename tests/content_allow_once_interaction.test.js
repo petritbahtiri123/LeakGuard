@@ -58,6 +58,7 @@ class FakeElement {
     this.attributes = new Map();
     this.dataset = {};
     this.className = "";
+    this.id = "";
     this.textContent = "";
     this.value = "";
     this.selectionStart = 0;
@@ -88,7 +89,11 @@ class FakeElement {
   }
 
   setAttribute(name, value) {
-    this.attributes.set(String(name), String(value));
+    const key = String(name);
+    const text = String(value);
+    this.attributes.set(key, text);
+    if (key === "id") this.id = text;
+    if (key === "class") this.className = text;
   }
 
   getAttribute(name) {
@@ -138,12 +143,27 @@ class FakeElement {
     return this.childNodes.some((child) => child.contains?.(node));
   }
 
+  matches(selector) {
+    return matchesFakeSelector(this, selector);
+  }
+
   closest(selector) {
-    if (selector === "form") return null;
-    if (selector.includes(".pwm-modal-backdrop") && this.className.includes("pwm-modal-backdrop")) {
-      return this;
+    let current = this;
+    while (current) {
+      if (current.matches?.(selector)) return current;
+      current = current.parentElement;
     }
-    return this.parentElement?.closest?.(selector) || null;
+    return null;
+  }
+
+  querySelector(selector) {
+    let found = null;
+    walk(this, (node) => {
+      if (!found && node !== this && node.matches?.(selector)) {
+        found = node;
+      }
+    });
+    return found;
   }
 
   setSelectionRange(start, end) {
@@ -180,12 +200,49 @@ class FakeDocument {
       listeners.filter((candidate) => candidate !== listener)
     );
   }
+
+  querySelector(selector) {
+    return this.documentElement.querySelector(selector);
+  }
 }
 
 function walk(node, visitor) {
   if (!node) return;
   visitor(node);
   (node.childNodes || []).forEach((child) => walk(child, visitor));
+}
+
+function matchesFakeSelector(element, selector) {
+  if (!element) return false;
+  const selectors = String(selector || "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (selectors.length > 1) {
+    return selectors.some((part) => matchesFakeSelector(element, part));
+  }
+  const single = selectors[0] || String(selector || "").trim();
+  if (!single) return false;
+  if (single.startsWith("form ")) {
+    return Boolean(element.closest("form")) && matchesFakeSelector(element, single.slice(5));
+  }
+  if (single === "form") return element.tagName === "FORM";
+  if (single === "textarea") return element.tagName === "TEXTAREA";
+  if (single === "button") return element.tagName === "BUTTON";
+  if (single === ".pwm-modal-backdrop") return String(element.className || "").split(/\s+/).includes("pwm-modal-backdrop");
+  if (single === ".pwm-modal") return String(element.className || "").split(/\s+/).includes("pwm-modal");
+  if (/^\[contenteditable/.test(single)) return element.getAttribute("contenteditable") === "true";
+  if (single === "button#send-button") return element.tagName === "BUTTON" && element.id === "send-button";
+  if (single === "button[data-testid='send-button']") {
+    return element.tagName === "BUTTON" && element.getAttribute("data-testid") === "send-button";
+  }
+  if (single === "button[data-testid*='send']") {
+    return element.tagName === "BUTTON" && /send/i.test(element.getAttribute("data-testid") || "");
+  }
+  if (single === "button[aria-label*='send' i]") {
+    return element.tagName === "BUTTON" && /send/i.test(element.getAttribute("aria-label") || "");
+  }
+  return false;
 }
 
 function findButtonByText(document, text) {
@@ -262,12 +319,31 @@ function createHarness(options = {}) {
     rewrites: [],
     badges: [],
     refreshes: 0,
-    submits: 0
+    submits: 0,
+    ownedClicks: 0,
+    requestSubmitters: []
   };
   const composer = new FakeElement(document, "textarea");
   composer.selectionStart = 0;
   composer.selectionEnd = 0;
-  document.body.appendChild(composer);
+  const form = options.withForm ? new FakeElement(document, "form") : null;
+  const defaultSendButton = new FakeElement(document, "button");
+  defaultSendButton.setAttribute("id", "send-button");
+  defaultSendButton.setAttribute("aria-label", "Send");
+  defaultSendButton.textContent = "Send";
+  defaultSendButton.addEventListener("click", (event) => {
+    if (!event.defaultPrevented) calls.submits += 1;
+  });
+  if (form) {
+    form.requestSubmit = (submitter) => {
+      calls.requestSubmitters.push(submitter || null);
+      calls.submits += 1;
+    };
+    document.body.appendChild(form);
+    form.append(composer, defaultSendButton);
+  } else {
+    document.body.append(composer, defaultSendButton);
+  }
 
   const window = {
     top: null,
@@ -299,9 +375,24 @@ function createHarness(options = {}) {
     Event: FakeEvent,
     InputEvent: FakeEvent,
     queueMicrotask,
+    Node: { ELEMENT_NODE: 1 },
+    SEND_BUTTON_SELECTORS: [
+      "form button[data-testid='send-button']",
+      "form button[data-testid*='send']",
+      "form button[aria-label*='send' i]",
+      "form button#send-button",
+      "button[data-testid='send-button']",
+      "button[data-testid*='send']",
+      "button#send-button",
+      "button[aria-label*='send' i]"
+    ],
+    FALLBACK_SEND_KEY_SUPPRESS_MS: 300,
     extensionRuntimeAvailable: true,
     modalOpen: false,
     bypassNextSubmit: false,
+    bypassNextSendButtonClick: false,
+    fallbackSendKeySuppressionUntil: 0,
+    fallbackSendKeySuppressionInput: null,
     lastTypedPromptText: "",
     typedScanGeneration: 0,
     activeRiskEditor: null,
@@ -330,6 +421,8 @@ function createHarness(options = {}) {
     maybeHandleLocalFileInsert: async () => false,
     maybeHandleChatGptLargeTextPaste: async () => false,
     findComposer: () => composer,
+    isVisible: () => true,
+    normalizeTarget: (target) => target,
     analyzeText: analyzeInteractionText,
     analyzeTextWithAiAssist: async (text) => analyzeInteractionText(text),
     getInputText: (input) => input.value,
@@ -391,18 +484,19 @@ function createHarness(options = {}) {
       changed: false,
       text
     }),
-    applySubmitRedactionTransactionally: async () => {
+    applySubmitRedactionTransactionally: async (input, _originalText, redactedText) => {
       calls.rewrites.push({ context: "submit-redaction" });
+      input.value = redactedText;
+      input.selectionStart = redactedText.length;
+      input.selectionEnd = redactedText.length;
       return true;
     },
     queueVerifiedComposerSend: (_input, expectedText, context, send) => {
       calls.rewrites.push({ insertedText: expectedText, context });
       send();
     },
-    submitComposer: () => {
-      calls.submits += 1;
-    },
     consumeInterceptionEvent: (event) => {
+      if (event.type === "click") calls.ownedClicks += 1;
       event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation();
@@ -431,10 +525,22 @@ function createHarness(options = {}) {
       extractFunctionSource(contentSource, "getPasteTransfer"),
       extractFunctionSource(contentSource, "getPastedPlainText"),
       extractFunctionSource(contentSource, "isLiveTypedRedactionEnabled"),
+      extractFunctionSource(contentSource, "findSendButton"),
+      extractFunctionSource(contentSource, "isPreferredSubmitterForForm"),
+      extractFunctionSource(contentSource, "clickSendButtonWithBypass"),
+      extractFunctionSource(contentSource, "submitComposer"),
+      extractFunctionSource(contentSource, "replayVerifiedSend"),
       extractFunctionSource(contentSource, "maybeHandlePaste"),
       extractFunctionSource(contentSource, "maybeHandleSubmit"),
+      extractFunctionSource(contentSource, "findSendButtonClickTarget"),
+      extractFunctionSource(contentSource, "createSyntheticSubmitInterceptionEvent"),
+      extractFunctionSource(contentSource, "markFallbackSendKeyRedactionPending"),
+      extractFunctionSource(contentSource, "clearFallbackSendKeyRedactionPending"),
+      extractFunctionSource(contentSource, "maybeConsumeSuppressedFallbackSendKeyEvent"),
+      extractFunctionSource(contentSource, "maybeHandleSendButtonClick"),
+      extractFunctionSource(contentSource, "maybeHandleFallbackSendKey"),
       extractFunctionSource(contentSource, "maybeHandleTypedSecrets"),
-      "return { maybeHandlePaste, maybeHandleSubmit, maybeHandleTypedSecrets, showDecisionModal, showMessageModal };"
+      "return { maybeHandlePaste, maybeHandleSubmit, maybeHandleSendButtonClick, maybeHandleFallbackSendKey, maybeHandleTypedSecrets, showDecisionModal, showMessageModal, submitComposer };"
     ].join("\n")
   );
 
@@ -442,6 +548,8 @@ function createHarness(options = {}) {
     ...factory(...Object.values(dependencies)),
     calls,
     composer,
+    form,
+    defaultSendButton,
     document
   };
 }
@@ -456,6 +564,15 @@ function createPasteEvent(text, target) {
         return type === "text/plain" || type === "text" ? text : "";
       }
     }
+  });
+}
+
+function createEnterEvent(target) {
+  return new FakeEvent("keydown", {
+    bubbles: true,
+    cancelable: true,
+    target,
+    key: "Enter"
   });
 }
 
@@ -584,6 +701,163 @@ async function testSubmitAllowsSanitizedPlaceholderOnlyContent() {
   assert.strictEqual(countDecisionModals(document), 0, "sanitized placeholder-only submit should not open a modal");
 }
 
+async function testClickedFormSubmitterIsReplayedAfterVerifiedRedaction() {
+  const harness = createHarness({ withForm: true });
+  const { calls, composer, form, document } = harness;
+  const secondary = document.createElement("button");
+  secondary.setAttribute("aria-label", "Send alternate");
+  secondary.textContent = "Send alternate";
+  form.appendChild(secondary);
+  composer.value = "username=wayland.dev";
+
+  const submit = new FakeEvent("submit", {
+    bubbles: true,
+    cancelable: true,
+    target: form,
+    leakGuardSendButton: secondary
+  });
+
+  await harness.maybeHandleSubmit(submit);
+
+  assert.strictEqual(submit.defaultPrevented, true, "risky submit should be intercepted before provider submit");
+  assert.strictEqual(calls.redactions.length, 1, "submit should request exactly one redaction");
+  assert.strictEqual(composer.value, "username=[PWM_1]", "submit should rewrite before replay");
+  assert.strictEqual(calls.submits, 1, "verified submit should be replayed once");
+  assert.deepStrictEqual(
+    calls.requestSubmitters,
+    [secondary],
+    "form requestSubmit should replay the originally clicked send button"
+  );
+}
+
+async function testNonSubmitFormButtonIsNotUsedAsRequestSubmitter() {
+  const harness = createHarness({ withForm: true });
+  const { calls, composer, form, document } = harness;
+  const nonSubmit = document.createElement("button");
+  nonSubmit.setAttribute("type", "button");
+  nonSubmit.setAttribute("aria-label", "Send alternate");
+  nonSubmit.textContent = "Send alternate";
+  form.appendChild(nonSubmit);
+  composer.value = "username=wayland.dev";
+
+  const submit = new FakeEvent("submit", {
+    bubbles: true,
+    cancelable: true,
+    target: form,
+    leakGuardSendButton: nonSubmit
+  });
+
+  await harness.maybeHandleSubmit(submit);
+
+  assert.strictEqual(calls.submits, 1, "verified submit should still replay once");
+  assert.deepStrictEqual(
+    calls.requestSubmitters,
+    [null],
+    "non-submit buttons must not be passed to form.requestSubmit as submitters"
+  );
+}
+
+async function testPreferredSubmitterRequestSubmitThrowFallsBackToSameButtonClick() {
+  const harness = createHarness({ withForm: true });
+  const { calls, composer, form, document } = harness;
+  const secondary = document.createElement("button");
+  secondary.setAttribute("aria-label", "Send alternate");
+  secondary.textContent = "Send alternate";
+  let fallbackClicks = 0;
+  secondary.addEventListener("click", (event) => {
+    fallbackClicks += 1;
+    if (!event.defaultPrevented) calls.submits += 1;
+  });
+  form.appendChild(secondary);
+  form.requestSubmit = (submitter) => {
+    calls.requestSubmitters.push(submitter || null);
+    if (submitter === secondary) {
+      throw new Error("preferred submitter rejected");
+    }
+    calls.submits += 1;
+  };
+  composer.value = "username=wayland.dev";
+
+  const submit = new FakeEvent("submit", {
+    bubbles: true,
+    cancelable: true,
+    target: form,
+    leakGuardSendButton: secondary
+  });
+
+  await harness.maybeHandleSubmit(submit);
+
+  assert.deepStrictEqual(
+    calls.requestSubmitters,
+    [secondary],
+    "requestSubmit should first try the original submit button"
+  );
+  assert.strictEqual(fallbackClicks, 1, "failed preferred requestSubmit should fall back to clicking the same button");
+  assert.strictEqual(calls.submits, 1, "fallback click should submit exactly once");
+}
+
+async function testFallbackEnterFormlessComposerRedactsAndClicksOnce() {
+  const harness = createHarness();
+  const { calls, composer, defaultSendButton } = harness;
+  defaultSendButton.listeners.set("click", []);
+  defaultSendButton.addEventListener("click", (event) => {
+    harness.maybeHandleSendButtonClick(event).catch((error) => {
+      throw error;
+    });
+    if (!event.defaultPrevented) calls.submits += 1;
+  });
+  composer.value = "username=wayland.dev";
+
+  const enter = createEnterEvent(composer);
+  await harness.maybeHandleFallbackSendKey(enter);
+
+  assert.strictEqual(enter.defaultPrevented, true, "Enter should be intercepted before raw provider send");
+  assert.strictEqual(calls.redactions.length, 1, "Enter should trigger exactly one redaction request");
+  assert.strictEqual(composer.value, "username=[PWM_1]", "Enter should submit-time redact before replay");
+  assert.strictEqual(calls.submits, 1, "Enter replay should submit once without a second user click");
+  assert.strictEqual(calls.ownedClicks, 0, "programmatic replay click should not be treated as a fresh user click");
+}
+
+async function testFallbackEnterFormComposerRedactsAndRequestSubmitsOnce() {
+  const harness = createHarness({ withForm: true });
+  const { calls, composer, defaultSendButton } = harness;
+  composer.value = "username=wayland.dev";
+
+  const enter = createEnterEvent(composer);
+  await harness.maybeHandleFallbackSendKey(enter);
+
+  assert.strictEqual(enter.defaultPrevented, true, "form Enter should be intercepted before raw provider submit");
+  assert.strictEqual(calls.redactions.length, 1, "form Enter should trigger exactly one redaction request");
+  assert.strictEqual(composer.value, "username=[PWM_1]", "form Enter should submit-time redact before replay");
+  assert.strictEqual(calls.submits, 1, "form Enter replay should submit once");
+  assert.deepStrictEqual(
+    calls.requestSubmitters,
+    [defaultSendButton],
+    "form Enter replay should use requestSubmit with the resolved send button"
+  );
+}
+
+async function testFallbackEnterSanitizedPlaceholderOnlyDoesNotLoop() {
+  const harness = createHarness();
+  const { calls, composer, defaultSendButton } = harness;
+  defaultSendButton.listeners.set("click", []);
+  defaultSendButton.addEventListener("click", (event) => {
+    harness.maybeHandleSendButtonClick(event).catch((error) => {
+      throw error;
+    });
+    if (!event.defaultPrevented) calls.submits += 1;
+  });
+  composer.value = "GCP project_number: [GCP_PROJECT_NUMBER_1]";
+
+  const enter = createEnterEvent(composer);
+  await harness.maybeHandleFallbackSendKey(enter);
+
+  assert.strictEqual(enter.defaultPrevented, true, "placeholder-only Enter should still be owned before host send");
+  assert.strictEqual(calls.redactions.length, 0, "trusted placeholder normalization should not request redaction");
+  assert.strictEqual(calls.submits, 1, "placeholder-only Enter replay should submit once");
+  assert.strictEqual(calls.ownedClicks, 0, "placeholder-only replay should not loop through click interception");
+}
+
 async function testLegacyDecisionModalButtonsConsumeClicks() {
   const harness = createHarness();
   const { document, showDecisionModal } = harness;
@@ -637,6 +911,12 @@ async function run() {
   await testTypedScanAutoRedactsWhenLiveTypedRedactionEnabled();
   await testSubmitStillRedactsWhenLiveTypedRedactionDisabled();
   await testSubmitAllowsSanitizedPlaceholderOnlyContent();
+  await testClickedFormSubmitterIsReplayedAfterVerifiedRedaction();
+  await testNonSubmitFormButtonIsNotUsedAsRequestSubmitter();
+  await testPreferredSubmitterRequestSubmitThrowFallsBackToSameButtonClick();
+  await testFallbackEnterFormlessComposerRedactsAndClicksOnce();
+  await testFallbackEnterFormComposerRedactsAndRequestSubmitsOnce();
+  await testFallbackEnterSanitizedPlaceholderOnlyDoesNotLoop();
   await testLegacyDecisionModalButtonsConsumeClicks();
   await testMessageModalCloseButtonConsumesClicks();
   console.log("PASS content strict protection browser interaction regressions");

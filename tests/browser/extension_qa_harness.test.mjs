@@ -1596,6 +1596,28 @@ function assertProviderSubmissionSanitized(submission, field, rawSecret, label) 
   assert.match(String(submission[field] || ""), /\[PWM_\d+\]/, `${label} should submit a placeholder`);
 }
 
+function classifyOneClickSubmitFailure(diagnostic) {
+  if (diagnostic?.modalPresent) return "modal present";
+  if (diagnostic?.textareaHasRaw || diagnostic?.editorHasRaw) return "raw still present";
+  if (
+    !diagnostic?.textareaHasRaw &&
+    !diagnostic?.editorHasRaw &&
+    (diagnostic?.textareaHasPlaceholder || diagnostic?.editorHasPlaceholder) &&
+    Number(diagnostic?.submissionCount || 0) === 0
+  ) {
+    return "placeholder present but no submission";
+  }
+  if (
+    !diagnostic?.textareaHasRaw &&
+    !diagnostic?.editorHasRaw &&
+    !diagnostic?.textareaHasPlaceholder &&
+    !diagnostic?.editorHasPlaceholder
+  ) {
+    return "no placeholder and no raw";
+  }
+  return "one-click-submit-missing-provider-submission";
+}
+
 async function waitForLatestProviderSubmission(connection, sessionId, label) {
   return await waitFor(async () => {
     await approveRedactionModalIfPresent(connection, sessionId);
@@ -1808,22 +1830,9 @@ async function runSyntheticProviderInputInterceptionQa(connection, page) {
           };
         })()`
       );
-      if (
-        !diagnostic.textareaHasRaw &&
-        !diagnostic.editorHasRaw &&
-        (diagnostic.textareaHasPlaceholder || diagnostic.editorHasPlaceholder) &&
-        !diagnostic.modalPresent &&
-        diagnostic.submissionCount === 0
-      ) {
-        await evaluate(connection, page.sessionId, "document.querySelector('#send-button')?.click()", { userGesture: true });
-        submitted = await waitForLatestProviderSubmission(
-          connection,
-          page.sessionId,
-          `${testCase.label} sanitized retry provider submission`
-        );
-      } else {
-        throw new Error(sanitizeBrowserQaDiagnostic(`${error.message} Diagnostic: ${JSON.stringify(diagnostic)}`));
-      }
+      diagnostic.failure = classifyOneClickSubmitFailure(diagnostic);
+      diagnostic.stage = "one-click-submit-missing-provider-submission";
+      throw new Error(sanitizeBrowserQaDiagnostic(`${error.message} Diagnostic: ${JSON.stringify(diagnostic)}`));
     }
     assertProviderSubmissionSanitized(submitted, testCase.field, testCase.rawSecret, testCase.label);
     const capture = await captureProviderArtifacts(connection, page.sessionId);

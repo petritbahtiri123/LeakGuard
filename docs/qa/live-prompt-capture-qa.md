@@ -10,7 +10,8 @@ Use this runbook when browser smoke tests are unavailable or when validating rea
 - Captured text must stay in the local browser DevTools session or a local QA notes file. Do not send it to a model, paste it into an issue, or upload it.
 - The capture separates these fields in QA notes:
   - `userAuthoredPrompt`: the synthetic text typed/pasted by the tester before LeakGuard rewriting.
-  - `sanitizedPrompt`: the exact visible composer text after LeakGuard redaction and immediately before submit.
+  - `preSubmitObservedPrompt`: the exact visible composer text before pressing Send.
+  - `sanitizedPrompt`: the exact submitted or post-submit composer text after LeakGuard submit-time redaction.
   - `uiStatusText`: visible LeakGuard badges, overlays, modals, or pending attach prompts outside the composer.
   - `fileHandoffMetadata`: file count, safe file names, safe placeholder counts, and attach/fallback state only.
   - `adapterInternalState`: safe booleans/reason codes only, such as pending attach present/cleared.
@@ -58,10 +59,22 @@ Run this snippet in the page DevTools console after loading the local extension 
 })();
 ```
 
-Pass criteria for every capture:
+## Two-phase pass criteria
 
-- Choose the composer entry that would be submitted. Its `text` equals the expected sanitized prompt for the fixture case.
-- `text` contains no raw synthetic sensitive values from the fixture.
+Pre-submit observe-only capture:
+
+- Choose the composer entry that would be submitted. With default `liveTypedRedaction=false`, typed risky synthetic values may remain visible before Send.
+- For newly typed risky synthetic values, no placeholder should appear before submit unless `liveTypedRedaction=true` was explicitly enabled for that run.
+- `text` contains none of: `LeakGuard`, `debug`, `metadata`, `placeholderCount`, `file-handoff`, `pending attach`, `diagnostic`, `status:` unless the user intentionally typed that word as part of the prompt.
+- `uiStatusText` may contain LeakGuard status copy, but that copy must not appear inside the selected composer `text`.
+- Capture must stay local in the browser DevTools session or local QA notes only.
+
+Submit/post-submit capture:
+
+- The submitted content must be sanitized and equal the expected sanitized prompt for the fixture case.
+- All raw synthetic sensitive values must be absent from the submitted content.
+- Visible placeholders are expected for redacted values.
+- The exact-state verification and fail-closed behavior must be validated: if LeakGuard cannot verify the rewritten composer, nothing raw should submit.
 - `text` contains none of: `LeakGuard`, `debug`, `metadata`, `placeholderCount`, `file-handoff`, `pending attach`, `diagnostic`, `status:` unless the user intentionally typed that word as part of the prompt.
 - `uiStatusText` may contain LeakGuard status copy, but that copy must not appear inside the selected composer `text`.
 - Re-running the snippet after an SPA re-render shows the same composer text and placeholder count.
@@ -84,11 +97,12 @@ For each adapter and each case, record:
 
 1. Browser, extension build, adapter, URL, and fixture case ID.
 2. `userAuthoredPrompt` copied from the fixture.
-3. Captured `sanitizedPrompt` from the selected composer entry.
-4. Placeholder count and visible placeholder families.
-5. Whether UI/status/debug text appeared only outside the composer.
-6. Whether repeated capture after re-render or repeated submit attempt changed the prompt.
-7. Whether all raw synthetic sensitive values were absent.
+3. Captured `preSubmitObservedPrompt` from the selected composer entry before pressing Send.
+4. Captured `sanitizedPrompt` from the provider submission, submitted draft, or post-submit selected composer entry.
+5. Placeholder count and visible placeholder families.
+6. Whether UI/status/debug text appeared only outside the composer.
+7. Whether repeated capture after re-render or repeated submit attempt changed the prompt.
+8. Whether all raw synthetic sensitive values were absent.
 
 ## Gemini-focused procedure
 
@@ -112,11 +126,14 @@ Browser/build:
 Fixture case:
 User-authored prompt source: tests/fixtures/manual/live-site-qa/prompt-comprehension-cases.md
 Selected composer index:
+Pre-submit observed prompt length:
 Sanitized prompt length:
 Placeholder count/families:
 UI status text present outside composer: yes/no
 Debug/status/metadata text inside composer: no/yes (fail if yes)
-Raw synthetic sensitive values inside composer: no/yes (fail if yes)
+Raw synthetic sensitive values before submit: yes/no (allowed only for observe-only default liveTypedRedaction=false)
+Raw synthetic sensitive values submitted/post-submit: no/yes (fail if yes)
+Exact-state verification/fail-closed behavior validated: yes/no
 Repeated capture changed prompt: no/yes (fail if yes)
 Repeated submit mutated prompt: no/yes (fail if yes)
 Gemini pending attach stale payload reused: no/yes/not applicable

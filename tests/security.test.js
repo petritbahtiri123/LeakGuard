@@ -1663,7 +1663,7 @@ function testProtectedSiteOcrOptInStaysLocalAndGateBound() {
   );
   assert.ok(
     contentFileExtractionPipelineSource.includes("safeForUpload: false") &&
-      contentFileExtractionPipelineSource.includes("fallbackReason: ocrExtraction.status"),
+      contentFileExtractionPipelineSource.includes('createImageBlockedResult(ocrExtraction.status || "ocr_failed"'),
     "failed protected-site OCR attempts should return a blocked result rather than raw upload fallback"
   );
   assert.ok(

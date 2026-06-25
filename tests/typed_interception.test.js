@@ -651,7 +651,8 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   );
   assert.ok(
     contentSource.includes("leakGuardSendButton") &&
-      contentSource.includes("submitComposer(form, input, event.leakGuardSendButton || null)") &&
+      contentSource.includes("function replayVerifiedSend") &&
+      contentSource.includes("replayVerifiedSend(input, form, event.leakGuardSendButton || null)") &&
       contentSource.includes("createSyntheticSubmitInterceptionEvent(form || input, { sendButton: button })"),
     "guarded send-button redaction should retry the exact intercepted button after verified rewrite"
   );

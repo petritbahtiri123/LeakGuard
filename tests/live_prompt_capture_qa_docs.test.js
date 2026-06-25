@@ -51,8 +51,15 @@ function testAdapterCoverageAndGeminiPriority() {
 
 function testPromptCapturePassCriteria() {
   assertIncludesAll("pass criteria", runbook, [
-    "equals the expected sanitized prompt",
-    "contains no raw synthetic sensitive values",
+    "Pre-submit observe-only capture",
+    "typed risky synthetic values may remain visible",
+    "no placeholder should appear before submit",
+    "Submit/post-submit capture",
+    "submitted content must be sanitized",
+    "raw synthetic sensitive values must be absent",
+    "placeholders are expected",
+    "exact-state verification",
+    "fail-closed",
     "UI/status/debug text appeared only outside the composer",
     "Repeated capture changed prompt",
     "Repeated submit mutated prompt",

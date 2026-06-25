@@ -1206,8 +1206,13 @@ async function testProtectedSiteImageOcrFailureFailsClosedWithoutCachingRawText(
 
   try {
     ExtractionCache.clear();
+    const unsafeNameSegment = "customer-alpha-internal";
     const result = await processFileForAdapterHandoff({
-      file: fileFromBuffer("broken.png", "image/png", bufferFromText(rawSecret)),
+      file: fileFromBuffer(
+        `${unsafeNameSegment}-${rawSecret}.png`,
+        "image/png",
+        bufferFromText(rawSecret)
+      ),
       context: "drop"
     });
     const serialized = JSON.stringify(result);
@@ -1219,6 +1224,8 @@ async function testProtectedSiteImageOcrFailureFailsClosedWithoutCachingRawText(
     assert.strictEqual(result.sanitizedText, "");
     assert.strictEqual(result.fallbackReason, "ocr_failed");
     assert.strictEqual(serialized.includes(rawSecret), false);
+    assert.strictEqual(serialized.includes(unsafeNameSegment), false);
+    assert.strictEqual(serialized.includes("ProtectedSiteOcrFailureSecret"), false);
     assert.strictEqual(JSON.stringify(ExtractionCache.debugSnapshot()).includes(rawSecret), false);
   } finally {
     globalThis.PWM.isProtectedSiteOcrEnabled = originalHelper;

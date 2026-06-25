@@ -340,6 +340,33 @@ function testScreenshotNamesAndConsoleSummariesAreSafe() {
   assertNoRawCanaries(summary, "console summary");
 }
 
+function testExtensionHarnessRequiresOneClickSubmitDiagnostics() {
+  const harnessSource = fs.readFileSync(
+    path.join(__dirname, "browser", "extension_qa_harness.test.mjs"),
+    "utf8"
+  );
+
+  assert.strictEqual(
+    harnessSource.includes("sanitized retry provider submission"),
+    false,
+    "browser QA harness must not accept a second click after sanitized first-click failure"
+  );
+  assert.strictEqual(
+    harnessSource.includes("document.querySelector('#send-button')?.click()\", { userGesture: true });\n        submitted ="),
+    false,
+    "browser QA harness must not retry Send after a missing first-click submission"
+  );
+  for (const diagnostic of [
+    "raw still present",
+    "placeholder present but no submission",
+    "modal present",
+    "no placeholder and no raw",
+    "one-click-submit-missing-provider-submission"
+  ]) {
+    assert.ok(harnessSource.includes(diagnostic), `missing one-click failure diagnostic: ${diagnostic}`);
+  }
+}
+
 async function run() {
   testFailureCodesAreStable();
   testSanitizesRawCanariesButKeepsIds();
@@ -350,6 +377,7 @@ async function run() {
   testFileAndDebugAssertionsStayMetadataOnly();
   await testStepWrapperWritesSafeFailureReport();
   testScreenshotNamesAndConsoleSummariesAreSafe();
+  testExtensionHarnessRequiresOneClickSubmitDiagnostics();
   console.log("PASS browser QA assertion helper regressions");
 }
 
