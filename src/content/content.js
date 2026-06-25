@@ -3658,13 +3658,12 @@
     clearAllRiskSessionState();
 
     if (form && typeof form.requestSubmit === "function") {
-      const preferredSubmitter = isPreferredSubmitterForForm(form, preferredButton) ? preferredButton : null;
-      if (preferredSubmitter) {
+      if (isPreferredSubmitterForForm(form, preferredButton)) {
         try {
-          form.requestSubmit(preferredSubmitter);
+          form.requestSubmit(preferredButton);
           return;
         } catch {
-          if (clickSendButtonWithBypass(preferredSubmitter)) return;
+          if (clickSendButtonWithBypass(preferredButton)) return;
         }
       }
 
