@@ -215,10 +215,18 @@ function createHarnessPage() {
       <h1>LeakGuard Firefox Smoke Harness</h1>
       <div id="chat-form" role="form">
         <textarea id="prompt-textarea" data-testid="prompt-textarea" placeholder="Message"></textarea>
-        <button id="send-button" type="button">Send</button>
+        <button id="send-button" type="button" data-testid="send-button" aria-label="Send message">Send</button>
       </div>
       <section id="echo-zone"></section>
     </main>
+    <script>
+      window.__leakguardSmokeSubmissions = [];
+      document.querySelector('#send-button').addEventListener('click', () => {
+        window.__leakguardSmokeSubmissions.push({
+          textarea: document.querySelector('#prompt-textarea')?.value || ''
+        });
+      });
+    </script>
   </body>
 </html>`;
 }
@@ -837,22 +845,48 @@ async function openFirefoxLocalProtectedHarness(webdriver, localOrigin) {
 }
 
 async function runFirefoxPromptRedactionQa(webdriver) {
-  await webdriver.execute(`const payload = arguments[0];
+  const preSubmit = await webdriver.execute(`const payload = arguments[0];
     const textarea = document.querySelector('#prompt-textarea');
     textarea.focus();
 
-    textarea.dispatchEvent(new InputEvent('beforeinput', {
+    const beforeInput = new InputEvent('beforeinput', {
       bubbles: true,
       cancelable: true,
       inputType: 'insertText',
       data: payload
-    }));
-    return true;`, [promptPayload]);
+    });
+    textarea.dispatchEvent(beforeInput);
+    if (!beforeInput.defaultPrevented) {
+      textarea.value = payload;
+      textarea.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        inputType: 'insertText',
+        data: payload
+      }));
+    }
+    return {
+      value: textarea.value || '',
+      prevented: beforeInput.defaultPrevented,
+      secretPlaceholderVisible: /^OPENAI_API_KEY=\\[PWM_\\d+\\]$/m.test(textarea.value || '') ||
+        /^ANTHROPIC_API_KEY=\\[PWM_\\d+\\]$/m.test(textarea.value || '') ||
+        /^GITHUB_TOKEN=\\[PWM_\\d+\\]$/m.test(textarea.value || '') ||
+        /^STRIPE_SECRET_KEY=\\[PWM_\\d+\\]$/m.test(textarea.value || '') ||
+        /^DATABASE_URL=postgres:\\/\\/admin:\\[PWM_\\d+\\]@/m.test(textarea.value || ''),
+      existingPlaceholderPreserved: /^PLACEHOLDER_ALREADY=\\[PWM_1\\]$/m.test(textarea.value || ''),
+      hasAnyRaw: arguments[1].some((raw) => (textarea.value || '').includes(raw))
+    };`, [promptPayload, rawValues]);
+
+  assert.equal(preSubmit.prevented, false, "Firefox live typing should not consume beforeinput by default");
+  assert.equal(preSubmit.secretPlaceholderVisible, false, "Firefox live typing should not create pre-submit secret placeholders");
+  assert.equal(preSubmit.existingPlaceholderPreserved, true, "Firefox pre-submit typing should preserve trusted placeholder text");
+  assert.equal(preSubmit.hasAnyRaw, true, "Firefox typed synthetic canaries should remain visible before submit");
+
+  await webdriver.clickElement("#send-button");
 
   const result = await waitFor(async () => {
     const state = await webdriver.execute(`const rawValues = arguments[0];
-      const textarea = document.querySelector('#prompt-textarea');
-      const value = textarea.value || '';
+      const submissions = Array.from(window.__leakguardSmokeSubmissions || []);
+      const value = submissions.length ? submissions[submissions.length - 1].textarea || '' : '';
       const first = /^OPENAI_API_KEY=(\\[PWM_\\d+\\])$/m.exec(value)?.[1] || '';
       const repeat = /^OPENAI_API_KEY_REPEAT=(\\[PWM_\\d+\\])$/m.exec(value)?.[1] || '';
       const ready = /\\[PWM_\\d+\\]/.test(value) &&

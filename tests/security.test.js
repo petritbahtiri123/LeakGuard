@@ -1213,7 +1213,7 @@ function testPlaceholderRehydrationStaysBoundedOnLargeDomMutations() {
   assert.ok(
     responseObserverSource.includes(".pwm-modal-backdrop, .pwm-secret, form, textarea") &&
       responseObserverSource.includes("[role='textbox']") &&
-      responseObserverSource.includes("[contenteditable='true']"),
+      responseObserverSource.includes("[contenteditable]:not([contenteditable='false'])"),
     "already hydrated placeholders and editable composers should be excluded from page-DOM rehydration"
   );
   assert.ok(
@@ -1663,7 +1663,7 @@ function testProtectedSiteOcrOptInStaysLocalAndGateBound() {
   );
   assert.ok(
     contentFileExtractionPipelineSource.includes("safeForUpload: false") &&
-      contentFileExtractionPipelineSource.includes("fallbackReason: ocrExtraction.status"),
+      contentFileExtractionPipelineSource.includes('createImageBlockedResult(ocrExtraction.status || "ocr_failed"'),
     "failed protected-site OCR attempts should return a blocked result rather than raw upload fallback"
   );
   assert.ok(
