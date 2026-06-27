@@ -339,6 +339,48 @@
     return selection;
   }
 
+  function collectEditableTextNodes(node, output = []) {
+    if (!node) return output;
+    if (isTextNode(node)) {
+      output.push(node);
+      return output;
+    }
+
+    for (const child of Array.from(node.childNodes || [])) {
+      collectEditableTextNodes(child, output);
+    }
+    return output;
+  }
+
+  function selectContentEditableTextNodeRange(el) {
+    if (
+      !isContentEditable(el) ||
+      typeof window === "undefined" ||
+      typeof document === "undefined" ||
+      typeof document.createRange !== "function"
+    ) {
+      return null;
+    }
+
+    const textNodes = collectEditableTextNodes(el).filter((node) => node.nodeValue != null);
+    if (!textNodes.length) return null;
+
+    const selection = window.getSelection();
+    if (!selection) return null;
+
+    const first = textNodes[0];
+    const last = textNodes[textNodes.length - 1];
+    const range = document.createRange();
+    range.setStart(first, 0);
+    range.setEnd(last, String(last.nodeValue || "").length);
+
+    el.focus();
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    return selection;
+  }
+
   function runEditableCommand(command, value) {
     if (typeof document === "undefined" || typeof document.execCommand !== "function") {
       return false;
@@ -470,7 +512,9 @@
 
   function insertContentEditableTextCommand(el, value, options = {}) {
     const normalized = normalizeComposerText(value);
-    const selection = selectContentEditableContents(el);
+    const selection = options.selectTextNodeRange
+      ? selectContentEditableTextNodeRange(el) || selectContentEditableContents(el)
+      : selectContentEditableContents(el);
     if (!selection) return false;
 
     if (!runEditableCommand("delete", null)) return false;

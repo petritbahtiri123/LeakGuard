@@ -145,6 +145,87 @@ async function testFallbackOrder() {
   assert.deepStrictEqual(calls, ["direct-dom", "composer-helper"]);
 }
 
+async function testDefaultContentEditableExecCommandKeepsDocumentSelectionBehavior() {
+  const calls = [];
+  installComposerHelperStubs(calls);
+  const input = makeInput({ contentEditable: true });
+  input.textContent = "my password is synthetic1234";
+  const commands = [];
+  let selected = false;
+  const originalExecCommand = globalThis.document.execCommand;
+  globalThis.PWM.ComposerHelpers.insertContentEditableTextCommand = (target, text) => {
+    calls.push("scoped-insert-command");
+    target.textContent = text;
+    return true;
+  };
+  globalThis.document.execCommand = (command, _showUi, value) => {
+    commands.push(command);
+    if (command === "selectAll") {
+      selected = true;
+      return true;
+    }
+    if (command === "insertText") {
+      input.textContent = selected ? value : `${input.textContent}${value}`;
+      selected = false;
+      return true;
+    }
+    return false;
+  };
+  const { dependencies, strategies } = makeDependencies();
+
+  try {
+    const result = await globalThis.PWM.ChatGptComposerSync.applyChatGptSyncedComposerText(input, "my password is [PWM_1]", {
+      rawInsertedText: "my password is synthetic1234",
+      dependencies
+    });
+
+    assert.strictEqual(result.ok, true);
+    assert.deepStrictEqual(strategies, ["exec-command"], "contenteditable sync should still use the exec-command strategy");
+    assert.deepStrictEqual(calls, [], "default contenteditable sync should not use the WhatsApp scoped helper");
+    assert.deepStrictEqual(commands, ["selectAll", "insertText"], "default contenteditable sync should preserve document execCommand behavior");
+    assert.strictEqual(input.textContent, "my password is [PWM_1]");
+  } finally {
+    globalThis.document.execCommand = originalExecCommand;
+  }
+}
+
+async function testStrictContentEditableSyncDoesNotUseAppendProneFallbacks() {
+  const calls = [];
+  installComposerHelperStubs(calls);
+  const input = makeInput({ contentEditable: true });
+  const rawText = "my password is synthetic1234";
+  const redactedText = "my password is [PWM_1]";
+  input.textContent = rawText;
+  globalThis.PWM.ComposerHelpers.insertContentEditableTextCommand = (target, text) => {
+    calls.push("scoped-insert-command");
+    target.textContent += text;
+    return true;
+  };
+  globalThis.PWM.ComposerHelpers.setInputTextDirect = (target, text) => {
+    calls.push("direct-dom");
+    target.textContent += text;
+    return true;
+  };
+  const { dependencies, strategies } = makeDependencies({
+    verify: ({ actualText, expectedText }) => ({
+      ok: actualText === expectedText && !actualText.includes(rawText),
+      actual: actualText
+    })
+  });
+
+  const result = await globalThis.PWM.ChatGptComposerSync.applyChatGptSyncedComposerText(input, redactedText, {
+    rawInsertedText: rawText,
+    restoreText: rawText,
+    strictContentEditableSync: true,
+    dependencies
+  });
+
+  assert.strictEqual(result.ok, false);
+  assert.deepStrictEqual(strategies, ["exec-command"], "strict contenteditable sync should try only the scoped command path");
+  assert.deepStrictEqual(calls, ["scoped-insert-command"], "strict contenteditable sync must not use direct DOM or restore fallbacks");
+  assert.strictEqual(input.textContent, `${rawText}${redactedText}`);
+}
+
 async function testLargePayloadOmitsInputEventData() {
   const calls = [];
   installComposerHelperStubs(calls);
@@ -166,6 +247,8 @@ async function testLargePayloadOmitsInputEventData() {
   await testRuntimeScriptOrder();
   await testVerificationBlocksRawSecretLeakage();
   await testFallbackOrder();
+  await testDefaultContentEditableExecCommandKeepsDocumentSelectionBehavior();
+  await testStrictContentEditableSyncDoesNotUseAppendProneFallbacks();
   await testLargePayloadOmitsInputEventData();
   console.log("PASS ChatGPT composer sync regressions");
 })();

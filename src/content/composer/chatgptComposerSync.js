@@ -150,13 +150,35 @@
     await new Promise((resolve) => root.window.setTimeout(resolve, CHATGPT_SYNC_VERIFY_DELAY_MS));
   }
 
-  function tryChatGptExecCommandWrite(input, writeText) {
+  function tryChatGptExecCommandWrite(input, writeText, options = {}) {
     if (!isContentEditable(input)) return false;
     if (writeText.length > CHATGPT_SYNC_EVENT_DATA_MAX_CHARS) return false;
-    if (typeof root.document?.execCommand !== "function") return false;
 
     focusChatGptComposer(input);
     dispatchChatGptComposerBeforeInput(input, "insertReplacementText", writeText);
+
+    if (options.strictContentEditableSync) {
+      const scopedCommandWrite = getComposerHelpers().insertContentEditableTextCommand;
+      if (typeof scopedCommandWrite !== "function") return false;
+
+      let scopedInserted = false;
+      try {
+        scopedInserted = Boolean(scopedCommandWrite(input, writeText, {
+          caretOffset: options.caretOffset,
+          selectTextNodeRange: Boolean(options.selectTextNodeRange)
+        }));
+      } catch {
+        scopedInserted = false;
+      }
+      if (!scopedInserted) return false;
+
+      placeChatGptCaretAtEnd(input);
+      dispatchChatGptComposerInputEvent(input, "insertReplacementText", writeText);
+      dispatchChatGptComposerChange(input);
+      return true;
+    }
+
+    if (typeof root.document?.execCommand !== "function") return false;
 
     let selected = false;
     try {
@@ -260,8 +282,11 @@
     debugChatGptSync(options, "chatgpt-sync:before-write", input, plan.canonical, null, { context: options.context || "" });
 
     const writeText = plan.writeText;
+    const strictContentEditableSync = Boolean(options.strictContentEditableSync && isContentEditable(input));
     const attempts =
-      isContentEditable(input) && writeText.length <= CHATGPT_SYNC_EVENT_DATA_MAX_CHARS
+      strictContentEditableSync && writeText.length <= CHATGPT_SYNC_EVENT_DATA_MAX_CHARS
+        ? ["exec-command"]
+        : isContentEditable(input) && writeText.length <= CHATGPT_SYNC_EVENT_DATA_MAX_CHARS
         ? ["exec-command", "direct-dom"]
         : writeText.length <= CHATGPT_SYNC_EVENT_DATA_MAX_CHARS
           ? ["direct-dom", "composer-helper"]
@@ -273,7 +298,7 @@
       if (lastResult.ok) return lastResult;
     }
 
-    if (typeof options.restoreText === "string") {
+    if (!strictContentEditableSync && typeof options.restoreText === "string") {
       tryChatGptDirectWrite(input, normalizeText(options.restoreText), {
         caretOffset: options.restoreCaretOffset,
         suppressMs: options.suppressMs,

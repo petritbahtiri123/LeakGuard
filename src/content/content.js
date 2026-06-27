@@ -3390,6 +3390,34 @@
     };
   }
 
+  function debugWhatsAppComposerSync(label, input, expectedText = "", actualText = null, extra = {}) {
+    if (!isWhatsAppHost()) return;
+    debugReveal(String(label || "").replace(/^chatgpt-sync/, "whatsapp-sync"), {
+      ...getChatGptComposerSyncDebug(input, expectedText, actualText),
+      ...(extra || {})
+    });
+  }
+
+  function getWhatsAppComposerSyncDependencies() {
+    return {
+      debugChatGptSync: debugWhatsAppComposerSync,
+      isChatGptHost: isWhatsAppHost,
+      readStableComposerText,
+      suppressFollowupInputScan,
+      verifyComposerRewriteSafe
+    };
+  }
+
+  function applyWhatsAppSyncedComposerText(input, expectedText, options = {}) {
+    return ChatGptComposerSync.applyChatGptSyncedComposerText(input, expectedText, {
+      ...options,
+      context: options.context || "composer-rewrite",
+      strictContentEditableSync: true,
+      selectTextNodeRange: true,
+      dependencies: getWhatsAppComposerSyncDependencies()
+    });
+  }
+
   async function applyComposerText(input, expectedText, options) {
     options = options || {};
     if (typeof isChatGptHost === "function" && isChatGptHost()) {
@@ -3407,55 +3435,18 @@
       typeof options.rawInsertedText === "string"
         ? normalizeComposerText(options.rawInsertedText)
         : "";
-    const useDirectContentEditableRewrite =
+    const useWhatsAppSyncedRewrite =
       typeof isWhatsAppHost === "function" &&
       isWhatsAppHost() &&
       isContentEditable(input);
 
-    if (useDirectContentEditableRewrite) {
-      let actual = "";
-
-      suppressFollowupInputScan();
-      if (setInputTextDirect(input, writeText, { caretOffset: options.caretOffset })) {
-        actual = await readStableComposerText(input);
-        debugLogSnapshot("rewrite:direct-contenteditable-rewrite", input, expected, writeText);
-
-        const directPlanMatched = matchesComposerPlan(plan, actual);
-        const directVerification = await verifyComposerRewriteSafe({
-          input,
-          expectedText: expected,
-          originalText: options.originalText || rawInsertedText || options.restoreText || "",
-          redactedText: expected,
-          findings: options.findings,
-          context: options.context || "composer-rewrite",
-          caretOffset: options.caretOffset,
-          actualText: actual
-        });
-        if (directVerification.ok) {
-          return {
-            ok: true,
-            actual: directVerification.actual || actual,
-            strategy: directPlanMatched
-              ? "direct-contenteditable-rewrite"
-              : `direct-contenteditable-rewrite-${directVerification.strategy}`
-          };
-        }
-      } else {
-        actual = await readStableComposerText(input, 2);
-      }
-
-      if (typeof options.restoreText === "string") {
-        suppressFollowupInputScan();
-        setInputTextDirect(input, options.restoreText, {
-          caretOffset: options.restoreCaretOffset
-        });
-        await readStableComposerText(input, 2);
-      }
-
-      return {
-        ok: false,
-        actual
-      };
+    if (useWhatsAppSyncedRewrite) {
+      return applyWhatsAppSyncedComposerText(input, expected, {
+        ...options,
+        originalText: options.originalText || rawInsertedText || options.restoreText || "",
+        redactedText: expected,
+        rawInsertedText
+      });
     }
 
     suppressFollowupInputScan();
@@ -3558,12 +3549,29 @@
     const normalizedRedacted = normalizeComposerText(redactedText);
     const plan = buildComposerWritePlan(input, normalizedRedacted);
     const acceptableTexts = Array.isArray(plan.acceptableTexts) ? plan.acceptableTexts : [plan.canonical];
+    const isWhatsAppContentEditable =
+      typeof isWhatsAppHost === "function" &&
+      isWhatsAppHost() &&
+      isContentEditable(input);
     const hasRawLeak = (actual) =>
       Boolean(
         normalizedOriginal &&
           normalizeComposerText(actual).includes(normalizedOriginal) &&
           !acceptableTexts.includes(normalizeComposerText(actual))
       );
+
+    if (
+      isWhatsAppContentEditable &&
+      containsVisiblePlaceholderToken(normalizedOriginal) &&
+      hasUnsafeVisibleSecret(normalizedOriginal)
+    ) {
+      return {
+        ok: false,
+        actual: normalizedOriginal,
+        strategy: "whatsapp-corrupted-composer-blocked"
+      };
+    }
+
     const applied = await applyComposerText(input, normalizedRedacted, {
       ...options,
       originalText: normalizedOriginal,
@@ -3573,6 +3581,14 @@
 
     if (applied.ok && !hasRawLeak(applied.actual)) {
       return applied;
+    }
+
+    if (isWhatsAppContentEditable) {
+      return {
+        ok: false,
+        actual: applied.actual || getInputText(input),
+        strategy: applied.strategy || "whatsapp-synced-rewrite-failed"
+      };
     }
 
     suppressFollowupInputScan();

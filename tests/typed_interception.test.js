@@ -1259,14 +1259,25 @@ async function testTransactionalRewriteFallbackRemovesRawDuplicate() {
   assert.strictEqual(calls.directWrites, 1, "raw+redacted duplicate should force one direct rewrite");
 }
 
-async function testWhatsAppRewriteUsesDirectClearingPathBeforeAppendProneStrategies() {
+async function testWhatsAppRewriteUsesSyncedComposerPathBeforeAppendProneStrategies() {
   const factory = new Function(
     "normalizeComposerText",
     [
-      "const calls = { genericWrites: 0, forcedWrites: 0, directWrites: 0 };",
+      "const calls = { genericWrites: 0, forcedWrites: 0, directWrites: 0, syncedWrites: 0 };",
+      "const ChatGptComposerSync = {",
+      "  applyChatGptSyncedComposerText: async (input, text, options) => {",
+      "    calls.syncedWrites += 1;",
+      "    calls.hostAllowed = options.dependencies.isChatGptHost();",
+      "    calls.strictSync = options.strictContentEditableSync === true;",
+      "    calls.selectTextNodeRange = options.selectTextNodeRange === true;",
+      "    input.text = normalizeComposerText(text);",
+      "    return { ok: true, actual: input.text, strategy: 'whatsapp-synced-test' };",
+      "  }",
+      "};",
       "function isChatGptHost() { return false; }",
       "function isWhatsAppHost() { return true; }",
       "function isContentEditable(input) { return input?.contentEditable === true; }",
+      "function getWhatsAppComposerSyncDependencies() { return { isChatGptHost: isWhatsAppHost }; }",
       "function buildComposerWritePlan(_input, text) { const canonical = normalizeComposerText(text); return { canonical, writeText: canonical }; }",
       "function matchesComposerPlan(plan, actual) { return normalizeComposerText(actual) === plan.canonical; }",
       "function suppressFollowupInputScan() {}",
@@ -1276,6 +1287,7 @@ async function testWhatsAppRewriteUsesDirectClearingPathBeforeAppendProneStrateg
       "async function readStableComposerText(input) { return normalizeComposerText(input.text); }",
       "async function verifyComposerRewriteSafe({ input, expectedText, actualText }) { const actual = normalizeComposerText(actualText == null ? input.text : actualText); return { ok: actual === normalizeComposerText(expectedText), actual, strategy: 'test' }; }",
       "function debugLogSnapshot() {}",
+      extractFunctionSource(contentSource, "applyWhatsAppSyncedComposerText"),
       extractFunctionSource(contentSource, "applyComposerText"),
       "return { applyComposerText, calls };"
     ].join("\n\n")
@@ -1295,19 +1307,30 @@ async function testWhatsAppRewriteUsesDirectClearingPathBeforeAppendProneStrateg
 
   assert.strictEqual(result.ok, true);
   assert.strictEqual(input.text, "my password is [PWM_1]");
-  assert.strictEqual(calls.directWrites, 1, "WhatsApp composer should use one direct clearing rewrite");
+  assert.strictEqual(calls.syncedWrites, 1, "WhatsApp composer should use one synced composer rewrite");
+  assert.strictEqual(calls.hostAllowed, true, "WhatsApp synced rewrite should pass the host gate through dependencies");
+  assert.strictEqual(calls.strictSync, true, "WhatsApp synced rewrite should disable append-prone internal fallbacks");
+  assert.strictEqual(calls.selectTextNodeRange, true, "WhatsApp synced rewrite should replace Lexical paragraph text instead of appending");
+  assert.strictEqual(calls.directWrites, 0, "WhatsApp composer should not use direct DOM before synced rewrite");
   assert.strictEqual(calls.genericWrites, 0, "WhatsApp composer should skip append-prone generic rewrite");
   assert.strictEqual(calls.forcedWrites, 0, "WhatsApp composer should skip append-prone forced rewrite");
 }
 
-async function testWhatsAppRewriteFailureDoesNotRestoreThroughAppendProneFallback() {
+async function testWhatsAppSyncedRewriteFailureDoesNotRestoreThroughAppendProneFallback() {
   const factory = new Function(
     "normalizeComposerText",
     [
-      "const calls = { genericWrites: 0, forcedWrites: 0, directWrites: 0 };",
+      "const calls = { genericWrites: 0, forcedWrites: 0, directWrites: 0, syncedWrites: 0 };",
+      "const ChatGptComposerSync = {",
+      "  applyChatGptSyncedComposerText: async (input) => {",
+      "    calls.syncedWrites += 1;",
+      "    return { ok: false, actual: input.text, strategy: 'whatsapp-synced-test-failed' };",
+      "  }",
+      "};",
       "function isChatGptHost() { return false; }",
       "function isWhatsAppHost() { return true; }",
       "function isContentEditable(input) { return input?.contentEditable === true; }",
+      "function getWhatsAppComposerSyncDependencies() { return { isChatGptHost: isWhatsAppHost }; }",
       "function buildComposerWritePlan(_input, text) { const canonical = normalizeComposerText(text); return { canonical, writeText: canonical }; }",
       "function matchesComposerPlan(plan, actual) { return normalizeComposerText(actual) === plan.canonical; }",
       "function suppressFollowupInputScan() {}",
@@ -1317,6 +1340,7 @@ async function testWhatsAppRewriteFailureDoesNotRestoreThroughAppendProneFallbac
       "async function readStableComposerText(input) { return normalizeComposerText(input.text); }",
       "async function verifyComposerRewriteSafe({ input, expectedText, actualText }) { const actual = normalizeComposerText(actualText == null ? input.text : actualText); return { ok: actual === normalizeComposerText(expectedText), actual, strategy: 'test' }; }",
       "function debugLogSnapshot() {}",
+      extractFunctionSource(contentSource, "applyWhatsAppSyncedComposerText"),
       extractFunctionSource(contentSource, "applyComposerText"),
       "return { applyComposerText, calls };"
     ].join("\n\n")
@@ -1336,9 +1360,119 @@ async function testWhatsAppRewriteFailureDoesNotRestoreThroughAppendProneFallbac
 
   assert.strictEqual(result.ok, false);
   assert.strictEqual(input.text, "my password is rawsecret123");
-  assert.strictEqual(calls.directWrites, 2, "WhatsApp failed rewrite may use direct restore only");
+  assert.strictEqual(calls.syncedWrites, 1, "WhatsApp failed rewrite should return the synced writer failure");
+  assert.strictEqual(calls.directWrites, 0, "WhatsApp failed rewrite should leave restore handling to the synced writer");
   assert.strictEqual(calls.genericWrites, 0, "WhatsApp failed rewrite should not append generic text");
   assert.strictEqual(calls.forcedWrites, 0, "WhatsApp failed rewrite should not append restored text");
+}
+
+async function testWhatsAppTransactionalSyncedFailureDoesNotAppendFallbackCopies() {
+  const factory = new Function(
+    "normalizeComposerText",
+    [
+      "const calls = { genericWrites: 0, forcedWrites: 0, directWrites: 0, syncedWrites: 0 };",
+      "const ChatGptComposerSync = {",
+      "  applyChatGptSyncedComposerText: async (input, text) => {",
+      "    calls.syncedWrites += 1;",
+      "    input.text = `${input.text}${normalizeComposerText(text)}`;",
+      "    return { ok: false, actual: input.text, strategy: 'whatsapp-synced-test-failed' };",
+      "  }",
+      "};",
+      "function isChatGptHost() { return false; }",
+      "function isWhatsAppHost() { return true; }",
+      "function isContentEditable(input) { return input?.contentEditable === true; }",
+      "function containsVisiblePlaceholderToken(text) { return /\\[PWM_\\d+\\]/.test(String(text || '')); }",
+      "function hasUnsafeVisibleSecret() { return false; }",
+      "function getWhatsAppComposerSyncDependencies() { return { isChatGptHost: isWhatsAppHost }; }",
+      "function buildComposerWritePlan(_input, text) { const canonical = normalizeComposerText(text); return { canonical, writeText: canonical, acceptableTexts: [canonical] }; }",
+      "function matchesComposerPlan(plan, actual) { return normalizeComposerText(actual) === plan.canonical; }",
+      "function suppressFollowupInputScan() {}",
+      "function setInputText(input, text) { calls.genericWrites += 1; input.text = `${input.text}${normalizeComposerText(text)}`; }",
+      "function forceRewriteInputText(input, text) { calls.forcedWrites += 1; input.text = `${input.text}${normalizeComposerText(text)}`; }",
+      "function setInputTextDirect(input, text) { calls.directWrites += 1; input.text = `${input.text}${normalizeComposerText(text)}`; return true; }",
+      "async function readStableComposerText(input) { return normalizeComposerText(input.text); }",
+      "async function verifyComposerRewriteSafe({ input, expectedText, actualText }) { const actual = normalizeComposerText(actualText == null ? input.text : actualText); return { ok: actual === normalizeComposerText(expectedText), actual, strategy: 'test' }; }",
+      "function debugLogSnapshot() {}",
+      extractFunctionSource(contentSource, "applyWhatsAppSyncedComposerText"),
+      extractFunctionSource(contentSource, "applyComposerText"),
+      extractFunctionSource(contentSource, "rewriteComposerTransactionally"),
+      "return { rewriteComposerTransactionally, calls };"
+    ].join("\n\n")
+  );
+  const { rewriteComposerTransactionally, calls } = factory(ComposerHelpers.normalizeComposerText);
+  const rawText = "my password is synthetic1234";
+  const redactedText = "my password is [PWM_1]";
+  const input = {
+    contentEditable: true,
+    text: rawText
+  };
+
+  const result = await rewriteComposerTransactionally(input, rawText, redactedText, "submit", {
+    restoreText: rawText,
+    restoreCaretOffset: rawText.length
+  });
+
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(input.text, `${rawText}${redactedText}`);
+  assert.strictEqual(calls.syncedWrites, 1, "WhatsApp transactional rewrite should try the synced writer once");
+  assert.strictEqual(calls.directWrites, 0, "WhatsApp synced failure should not fall through to direct DOM append");
+  assert.strictEqual(calls.genericWrites, 0, "WhatsApp synced failure should not fall through to generic append");
+  assert.strictEqual(calls.forcedWrites, 0, "WhatsApp synced failure should not force another appended copy");
+}
+
+async function testWhatsAppTransactionalCorruptedDraftDoesNotAttemptAnotherRewrite() {
+  const factory = new Function(
+    "normalizeComposerText",
+    [
+      "const calls = { syncedWrites: 0, directWrites: 0, forcedWrites: 0 };",
+      "const ChatGptComposerSync = {",
+      "  applyChatGptSyncedComposerText: async (input, text) => {",
+      "    calls.syncedWrites += 1;",
+      "    input.text = `${input.text}${normalizeComposerText(text)}`;",
+      "    return { ok: false, actual: input.text, strategy: 'whatsapp-synced-test-failed' };",
+      "  }",
+      "};",
+      "function isChatGptHost() { return false; }",
+      "function isWhatsAppHost() { return true; }",
+      "function isContentEditable(input) { return input?.contentEditable === true; }",
+      "function containsVisiblePlaceholderToken(text) { return /\\[PWM_\\d+\\]/.test(String(text || '')); }",
+      "function hasUnsafeVisibleSecret(text) { return /synthetic1234/.test(String(text || '')); }",
+      "function getWhatsAppComposerSyncDependencies() { return { isChatGptHost: isWhatsAppHost }; }",
+      "function buildComposerWritePlan(_input, text) { const canonical = normalizeComposerText(text); return { canonical, writeText: canonical, acceptableTexts: [canonical] }; }",
+      "function matchesComposerPlan(plan, actual) { return normalizeComposerText(actual) === plan.canonical; }",
+      "function suppressFollowupInputScan() {}",
+      "function setInputText(input, text) { input.text = `${input.text}${normalizeComposerText(text)}`; }",
+      "function forceRewriteInputText(input, text) { calls.forcedWrites += 1; input.text = `${input.text}${normalizeComposerText(text)}`; }",
+      "function setInputTextDirect(input, text) { calls.directWrites += 1; input.text = `${input.text}${normalizeComposerText(text)}`; return true; }",
+      "function getInputText(input) { return normalizeComposerText(input.text); }",
+      "async function readStableComposerText(input) { return normalizeComposerText(input.text); }",
+      "async function verifyComposerRewriteSafe({ input, expectedText, actualText }) { const actual = normalizeComposerText(actualText == null ? input.text : actualText); return { ok: actual === normalizeComposerText(expectedText), actual, strategy: 'test' }; }",
+      "function debugLogSnapshot() {}",
+      extractFunctionSource(contentSource, "applyWhatsAppSyncedComposerText"),
+      extractFunctionSource(contentSource, "applyComposerText"),
+      extractFunctionSource(contentSource, "rewriteComposerTransactionally"),
+      "return { rewriteComposerTransactionally, calls };"
+    ].join("\n\n")
+  );
+  const { rewriteComposerTransactionally, calls } = factory(ComposerHelpers.normalizeComposerText);
+  const rawText = "my password is synthetic1234";
+  const corruptedText = `${rawText}my password is [PWM_1]`;
+  const input = {
+    contentEditable: true,
+    text: corruptedText
+  };
+
+  const result = await rewriteComposerTransactionally(input, corruptedText, "my password is [PWM_2]", "submit", {
+    restoreText: corruptedText,
+    restoreCaretOffset: corruptedText.length
+  });
+
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.strategy, "whatsapp-corrupted-composer-blocked");
+  assert.strictEqual(input.text, corruptedText);
+  assert.strictEqual(calls.syncedWrites, 0, "corrupted WhatsApp drafts should fail closed before another append-prone rewrite");
+  assert.strictEqual(calls.directWrites, 0);
+  assert.strictEqual(calls.forcedWrites, 0);
 }
 
 async function testSubmitTransactionalHelperFailsClosedOnRawRestore() {
@@ -1508,8 +1642,10 @@ function run() {
     .then(() => testRewriteVerificationFailClosedCases())
     .then(() => testRewriteFailureModalSuppression())
     .then(() => testTransactionalRewriteFallbackRemovesRawDuplicate())
-    .then(() => testWhatsAppRewriteUsesDirectClearingPathBeforeAppendProneStrategies())
-    .then(() => testWhatsAppRewriteFailureDoesNotRestoreThroughAppendProneFallback())
+    .then(() => testWhatsAppRewriteUsesSyncedComposerPathBeforeAppendProneStrategies())
+    .then(() => testWhatsAppSyncedRewriteFailureDoesNotRestoreThroughAppendProneFallback())
+    .then(() => testWhatsAppTransactionalSyncedFailureDoesNotAppendFallbackCopies())
+    .then(() => testWhatsAppTransactionalCorruptedDraftDoesNotAttemptAnotherRewrite())
     .then(() => testSubmitTransactionalHelperFailsClosedOnRawRestore())
     .then(() => testStaleTypedRewriteFailureKeepsSanitizedEditorUsable())
     .then(() => {
