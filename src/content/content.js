@@ -88,6 +88,7 @@
     ".ql-editor[contenteditable]:not([contenteditable='false'])",
     "[contenteditable]:not([contenteditable='false'])[data-lexical-editor='true']",
     "[contenteditable]:not([contenteditable='false'])[aria-multiline='true']",
+    "[data-testid='conversation-compose-box-input'][contenteditable]:not([contenteditable='false'])",
     "[data-testid*='composer'] textarea",
     "[data-testid*='composer'] [contenteditable='true']",
     "[data-testid*='composer'] [contenteditable]:not([contenteditable='false'])",
@@ -2664,6 +2665,7 @@
     if (el.contains(document.activeElement)) score += 32;
     if (id === "prompt-textarea") score += 80;
     if (/prompt/i.test(dataTestId)) score += 60;
+    if (dataTestId === "conversation-compose-box-input") score += 70;
     if (/composer/i.test(dataTestId)) score += 45;
     if (isTextArea(el)) score += 36;
     if (isContentEditable(el)) score += 28;
@@ -3405,6 +3407,56 @@
       typeof options.rawInsertedText === "string"
         ? normalizeComposerText(options.rawInsertedText)
         : "";
+    const useDirectContentEditableRewrite =
+      typeof isWhatsAppHost === "function" &&
+      isWhatsAppHost() &&
+      isContentEditable(input);
+
+    if (useDirectContentEditableRewrite) {
+      let actual = "";
+
+      suppressFollowupInputScan();
+      if (setInputTextDirect(input, writeText, { caretOffset: options.caretOffset })) {
+        actual = await readStableComposerText(input);
+        debugLogSnapshot("rewrite:direct-contenteditable-rewrite", input, expected, writeText);
+
+        const directPlanMatched = matchesComposerPlan(plan, actual);
+        const directVerification = await verifyComposerRewriteSafe({
+          input,
+          expectedText: expected,
+          originalText: options.originalText || rawInsertedText || options.restoreText || "",
+          redactedText: expected,
+          findings: options.findings,
+          context: options.context || "composer-rewrite",
+          caretOffset: options.caretOffset,
+          actualText: actual
+        });
+        if (directVerification.ok) {
+          return {
+            ok: true,
+            actual: directVerification.actual || actual,
+            strategy: directPlanMatched
+              ? "direct-contenteditable-rewrite"
+              : `direct-contenteditable-rewrite-${directVerification.strategy}`
+          };
+        }
+      } else {
+        actual = await readStableComposerText(input, 2);
+      }
+
+      if (typeof options.restoreText === "string") {
+        suppressFollowupInputScan();
+        setInputTextDirect(input, options.restoreText, {
+          caretOffset: options.restoreCaretOffset
+        });
+        await readStableComposerText(input, 2);
+      }
+
+      return {
+        ok: false,
+        actual
+      };
+    }
 
     suppressFollowupInputScan();
     setInputText(input, writeText, {
@@ -4472,6 +4524,10 @@
 
   function isXHost() {
     return globalThis.PWM.HostMatching.isXHost(location.hostname);
+  }
+
+  function isWhatsAppHost() {
+    return globalThis.PWM.HostMatching.isWhatsAppHost(location.hostname);
   }
 
   const FILE_HANDOFF_ADAPTERS = globalThis.PWM.SiteAdapters.createFileHandoffAdapters({

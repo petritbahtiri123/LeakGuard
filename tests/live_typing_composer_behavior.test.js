@@ -187,6 +187,20 @@ function testNormalTypingDoesNotCreateFilePendingPayloads() {
   assert.strictEqual(typedScanSource.includes("pendingSanitizedFileHandoff"), false);
 }
 
+function testWhatsAppComposerContractDoesNotDependOnLocalizedMessageLabel() {
+  const composerSelectors = contentSource.match(/const COMPOSER_SELECTORS = \[[\s\S]*?\n  \];/)?.[0] || "";
+  const scoreSource = extractFunctionSource(contentSource, "scoreComposerCandidate");
+
+  assert.ok(
+    composerSelectors.includes("[data-testid='conversation-compose-box-input']"),
+    "WhatsApp Web composer should be selected by stable data-testid, not only aria-label text"
+  );
+  assert.ok(
+    scoreSource.includes("conversation-compose-box-input"),
+    "WhatsApp Web composer should receive an explicit score boost over generic editables"
+  );
+}
+
 function testRunbookDocumentsLiveTypingRiskAndQa() {
   assertIncludesAll("live typing runbook", typingRunbook, [
     "Normal typing role",
@@ -216,6 +230,7 @@ function run() {
   testHarmlessBeforeInputReturnsBeforeConsumingOrRewriting();
   testDelayedTypedScanGuardsAgainstStaleComposerOverwrite();
   testNormalTypingDoesNotCreateFilePendingPayloads();
+  testWhatsAppComposerContractDoesNotDependOnLocalizedMessageLabel();
   testRunbookDocumentsLiveTypingRiskAndQa();
   console.log("PASS live typing composer behavior regressions");
 }

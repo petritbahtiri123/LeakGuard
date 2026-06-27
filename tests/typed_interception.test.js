@@ -1259,6 +1259,88 @@ async function testTransactionalRewriteFallbackRemovesRawDuplicate() {
   assert.strictEqual(calls.directWrites, 1, "raw+redacted duplicate should force one direct rewrite");
 }
 
+async function testWhatsAppRewriteUsesDirectClearingPathBeforeAppendProneStrategies() {
+  const factory = new Function(
+    "normalizeComposerText",
+    [
+      "const calls = { genericWrites: 0, forcedWrites: 0, directWrites: 0 };",
+      "function isChatGptHost() { return false; }",
+      "function isWhatsAppHost() { return true; }",
+      "function isContentEditable(input) { return input?.contentEditable === true; }",
+      "function buildComposerWritePlan(_input, text) { const canonical = normalizeComposerText(text); return { canonical, writeText: canonical }; }",
+      "function matchesComposerPlan(plan, actual) { return normalizeComposerText(actual) === plan.canonical; }",
+      "function suppressFollowupInputScan() {}",
+      "function setInputText(input, text) { calls.genericWrites += 1; input.text = `${input.text}${text}`; }",
+      "function forceRewriteInputText(input, text) { calls.forcedWrites += 1; input.text = `${input.text}${text}`; }",
+      "function setInputTextDirect(input, text) { calls.directWrites += 1; input.text = normalizeComposerText(text); return true; }",
+      "async function readStableComposerText(input) { return normalizeComposerText(input.text); }",
+      "async function verifyComposerRewriteSafe({ input, expectedText, actualText }) { const actual = normalizeComposerText(actualText == null ? input.text : actualText); return { ok: actual === normalizeComposerText(expectedText), actual, strategy: 'test' }; }",
+      "function debugLogSnapshot() {}",
+      extractFunctionSource(contentSource, "applyComposerText"),
+      "return { applyComposerText, calls };"
+    ].join("\n\n")
+  );
+  const { applyComposerText, calls } = factory(ComposerHelpers.normalizeComposerText);
+  const input = {
+    contentEditable: true,
+    text: "my password is rawsecret123"
+  };
+
+  const result = await applyComposerText(input, "my password is [PWM_1]", {
+    context: "submit",
+    originalText: input.text,
+    rawInsertedText: input.text,
+    restoreText: input.text
+  });
+
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(input.text, "my password is [PWM_1]");
+  assert.strictEqual(calls.directWrites, 1, "WhatsApp composer should use one direct clearing rewrite");
+  assert.strictEqual(calls.genericWrites, 0, "WhatsApp composer should skip append-prone generic rewrite");
+  assert.strictEqual(calls.forcedWrites, 0, "WhatsApp composer should skip append-prone forced rewrite");
+}
+
+async function testWhatsAppRewriteFailureDoesNotRestoreThroughAppendProneFallback() {
+  const factory = new Function(
+    "normalizeComposerText",
+    [
+      "const calls = { genericWrites: 0, forcedWrites: 0, directWrites: 0 };",
+      "function isChatGptHost() { return false; }",
+      "function isWhatsAppHost() { return true; }",
+      "function isContentEditable(input) { return input?.contentEditable === true; }",
+      "function buildComposerWritePlan(_input, text) { const canonical = normalizeComposerText(text); return { canonical, writeText: canonical }; }",
+      "function matchesComposerPlan(plan, actual) { return normalizeComposerText(actual) === plan.canonical; }",
+      "function suppressFollowupInputScan() {}",
+      "function setInputText(input, text) { calls.genericWrites += 1; input.text = `${input.text}${text}`; }",
+      "function forceRewriteInputText(input, text) { calls.forcedWrites += 1; input.text = `${input.text}${text}`; }",
+      "function setInputTextDirect(_input, _text) { calls.directWrites += 1; return false; }",
+      "async function readStableComposerText(input) { return normalizeComposerText(input.text); }",
+      "async function verifyComposerRewriteSafe({ input, expectedText, actualText }) { const actual = normalizeComposerText(actualText == null ? input.text : actualText); return { ok: actual === normalizeComposerText(expectedText), actual, strategy: 'test' }; }",
+      "function debugLogSnapshot() {}",
+      extractFunctionSource(contentSource, "applyComposerText"),
+      "return { applyComposerText, calls };"
+    ].join("\n\n")
+  );
+  const { applyComposerText, calls } = factory(ComposerHelpers.normalizeComposerText);
+  const input = {
+    contentEditable: true,
+    text: "my password is rawsecret123"
+  };
+
+  const result = await applyComposerText(input, "my password is [PWM_1]", {
+    context: "submit",
+    originalText: input.text,
+    rawInsertedText: input.text,
+    restoreText: input.text
+  });
+
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(input.text, "my password is rawsecret123");
+  assert.strictEqual(calls.directWrites, 2, "WhatsApp failed rewrite may use direct restore only");
+  assert.strictEqual(calls.genericWrites, 0, "WhatsApp failed rewrite should not append generic text");
+  assert.strictEqual(calls.forcedWrites, 0, "WhatsApp failed rewrite should not append restored text");
+}
+
 async function testSubmitTransactionalHelperFailsClosedOnRawRestore() {
   const factory = new Function(
     [
@@ -1426,6 +1508,8 @@ function run() {
     .then(() => testRewriteVerificationFailClosedCases())
     .then(() => testRewriteFailureModalSuppression())
     .then(() => testTransactionalRewriteFallbackRemovesRawDuplicate())
+    .then(() => testWhatsAppRewriteUsesDirectClearingPathBeforeAppendProneStrategies())
+    .then(() => testWhatsAppRewriteFailureDoesNotRestoreThroughAppendProneFallback())
     .then(() => testSubmitTransactionalHelperFailsClosedOnRawRestore())
     .then(() => testStaleTypedRewriteFailureKeepsSanitizedEditorUsable())
     .then(() => {
