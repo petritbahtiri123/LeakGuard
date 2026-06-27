@@ -18,6 +18,9 @@
     "test": "npm run lint:unused && npm run deadcode && npm run prepare:build && node scripts/run-tests.mjs",
     "test:fast": "npm test && node tests/productization.test.js && node tests/security.test.js && node tests/build_targets.test.js",
     "test:ci": "npm run test:fast",
+    "test:e2e": "playwright test --config=playwright.e2e.config.mjs",
+    "test:e2e:headed": "playwright test --config=playwright.e2e.config.mjs --headed",
+    "test:e2e:debug": "playwright test --config=playwright.e2e.config.mjs --debug",
     "qa:browser": "npm run build:chrome && node tests/browser/extension_qa_harness.test.mjs && node tests/browser/chrome_smoke.test.mjs && node tests/browser/edge_smoke.test.mjs && npm run build:firefox && node tests/browser/firefox_smoke.test.mjs",
     "qa:browser:full": "npm run build:chrome && node tests/browser/extension_qa_harness.test.mjs --full-matrix && node tests/browser/chrome_smoke.test.mjs && node tests/browser/edge_smoke.test.mjs && npm run build:firefox && node tests/browser/firefox_smoke.test.mjs",
     "preflight:browser": "node scripts/check-browser-environment.mjs",
@@ -49,10 +52,11 @@
     "validate:codex-release-env": "node scripts/validate-codex-cloud-release-env.mjs"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "eslint": "^10.5.0",
-    "sharp": "^0.35.2",
     "globals": "^17.7.0",
     "knip": "^6.20.0",
+    "sharp": "^0.35.2",
     "yazl": "^3.3.1"
   },
   "dependencies": {

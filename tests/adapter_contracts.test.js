@@ -11,7 +11,7 @@ const pendingAttachEnabled = Object.freeze({
   claude: true,
   openai: true,
   x: true,
-  whatsapp: true
+  whatsapp: false
 });
 
 require(path.join(repoRoot, "src/content/adapters/hostMatching.js"));
@@ -135,7 +135,7 @@ function testAdapterParityCapabilitiesStayStable() {
     grok: { directFileInput: true, directDropReplay: true, pendingAttach: true, multiFile: true },
     claude: { directFileInput: true, directDropReplay: false, pendingAttach: true, multiFile: true },
     x: { directFileInput: true, directDropReplay: false, pendingAttach: true, multiFile: true },
-    whatsapp: { directFileInput: true, directDropReplay: false, pendingAttach: true, multiFile: true }
+    whatsapp: { directFileInput: false, directDropReplay: false, pendingAttach: false, multiFile: false }
   };
 
   for (const [id, expected] of Object.entries(expectedCapabilities)) {
@@ -162,8 +162,8 @@ function testAdapterParityCapabilitiesStayStable() {
     );
     assert.strictEqual(
       description.supportsTrustedAttachButton,
-      true,
-      `${id} trusted attach button capability should stay declared`
+      id !== "whatsapp",
+      `${id} trusted attach button capability should stay declared only for file-capable adapters`
     );
   }
 }
@@ -171,7 +171,7 @@ function testAdapterParityCapabilitiesStayStable() {
 function testPendingAttachIsEnabledForBuiltInProviders() {
   const adapters = createAdapters();
 
-  expectedProviderIds.forEach((id) => {
+  expectedProviderIds.filter((id) => id !== "whatsapp").forEach((id) => {
     assert.strictEqual(adapters[id].pendingAttachEnabled, true, `${id} pending attach should stay enabled`);
     assert.strictEqual(
       hostMatching.isFileHandoffAdapterPendingAttachEnabled(adapters[id]),
@@ -179,12 +179,19 @@ function testPendingAttachIsEnabledForBuiltInProviders() {
       `${id} pending attach gate should stay enabled`
     );
   });
+
+  assert.strictEqual(adapters.whatsapp.pendingAttachEnabled, false, "WhatsApp pending attach should stay disabled");
+  assert.strictEqual(
+    hostMatching.isFileHandoffAdapterPendingAttachEnabled(adapters.whatsapp),
+    false,
+    "WhatsApp pending attach gate should stay disabled"
+  );
 }
 
 function testUploadAndUnsafeClickPredicatesStayPresent() {
   const adapters = createAdapters();
 
-  expectedProviderIds.forEach((id) => {
+  expectedProviderIds.filter((id) => id !== "whatsapp").forEach((id) => {
     const adapter = adapters[id];
     assert.ok(adapter.uploadButtonSelectors.length > 0, `${id} should keep upload trigger selectors`);
     assert.ok(adapter.fileInputSelectors.length > 0, `${id} should keep file input selectors`);
@@ -198,6 +205,13 @@ function testUploadAndUnsafeClickPredicatesStayPresent() {
       `${id} should expose trusted attach activation`
     );
   });
+
+  const whatsapp = adapters.whatsapp;
+  assert.deepStrictEqual(whatsapp.uploadButtonSelectors, [], "WhatsApp text-only adapter should not expose upload triggers");
+  assert.deepStrictEqual(whatsapp.fileInputSelectors, [], "WhatsApp text-only adapter should not expose file inputs");
+  assert.strictEqual(whatsapp.resolveUploadTrigger(), null, "WhatsApp upload trigger resolution should stay disabled");
+  assert.strictEqual(whatsapp.resolveFileInput(), null, "WhatsApp file input resolution should stay disabled");
+  assert.strictEqual(whatsapp.isUploadClickTarget(), false, "WhatsApp upload click detection should stay disabled");
 
   ["gemini", "grok"].forEach((id) => {
     assert.strictEqual(

@@ -26,6 +26,7 @@ Use this checklist for release candidates and tagged release builds. Do not comm
 - [ ] OSV dependency scan result recorded.
 - [ ] `npm run docs:check-links` result recorded.
 - [ ] `npm test` result recorded.
+- [ ] `npm run test:e2e` result recorded after `npm run build:chrome`.
 - [ ] `npm run smoke:chrome` result recorded.
 - [ ] Manual release QA checklist result recorded.
 

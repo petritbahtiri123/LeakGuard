@@ -49,9 +49,14 @@
       tryFirefoxGeminiFileInputBridge = async () => ({ handled: false, ok: false }),
       tryGeminiSanitizedFileAttach = async () => false
     } = deps;
+    const WHATSAPP_FILE_ATTACH_UNSUPPORTED_REASON = "whatsapp_file_attachments_unsupported";
 
     function isFileOnlySanitizedPayload(payload) {
       return Boolean(payload?.allowFileOnlyHandoff && !String(payload?.redactedText || "").trim());
+    }
+
+    function isWhatsAppDriver(id) {
+      return String(id || "").toLowerCase() === "whatsapp";
     }
 
     function isSafeSanitizedPayload(payload) {
@@ -250,6 +255,15 @@
       const driver = context?.driver || getCurrentHandoffDriver();
       const adapter = context?.adapter || driver.adapter || getFileHandoffAdapterForLocation();
       debugFileHandoffAdapterSelected(adapter, "handoff");
+      if (isWhatsAppDriver(driver?.id)) {
+        setDmzOverlayState("Raw file blocked", "failed");
+        return {
+          ok: false,
+          stage: "failed",
+          reason: WHATSAPP_FILE_ATTACH_UNSUPPORTED_REASON,
+          message: "LeakGuard blocks WhatsApp Web file attachments in this text-only phase. No raw file was uploaded."
+        };
+      }
       if (!driver?.canHandle?.(locationRef, documentRef)) {
         return { ok: false, stage: "driver-unavailable" };
       }

@@ -342,7 +342,7 @@ function createAdapterRegistryForTest() {
       claude: true,
       openai: true,
       x: true,
-      whatsapp: true
+      whatsapp: false
     },
     hooks: noopHooks
   });
@@ -1269,6 +1269,9 @@ function createHarness(overrides = {}) {
       "const LARGE_TEXT_STREAMING_MAX_BYTES = 50 * 1024 * 1024;",
       'const LOCAL_FILE_STREAMING_REQUIRED_MESSAGE = "LeakGuard will stream-redact this large text file locally before upload.";',
       'const LOCAL_FILE_UNSUPPORTED_WARNING = "LeakGuard did not scan or redact this unsupported file. Supported text, text PDF, DOCX, XLSX, and PNG/JPG/JPEG/WEBP image paths are protected where available. Unsupported archives, executables, legacy Office files, unsupported images, and binary files are blocked on protected sites when LeakGuard cannot safely replace them.";',
+      'const WHATSAPP_FILE_ATTACH_UNSUPPORTED_REASON = "whatsapp_file_attachments_unsupported";',
+      'const WHATSAPP_FILE_ATTACH_BLOCK_TITLE = "WhatsApp file upload blocked";',
+      'const WHATSAPP_FILE_ATTACH_BLOCK_MESSAGE = "LeakGuard blocks WhatsApp Web file attachments in this text-only phase. No raw file was uploaded.";',
       'const UNSUPPORTED_PROTECTED_IMAGE_BLOCKED_TITLE = "Raw image upload blocked";',
       'const UNSUPPORTED_PROTECTED_IMAGE_BLOCKED_MESSAGE = "Raw image upload blocked. This image type is not supported for safe redaction.";',
       'const SUPPORTED_IMAGE_REDACTION_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);',
@@ -1349,6 +1352,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "shouldBlockUnsupportedFileTransfer"),
       extractFunctionSource(contentSource, "getUnsupportedFileBlockedMessage"),
       extractFunctionSource(contentSource, "getUnsupportedFileBlockedTitle"),
+      extractFunctionSource(contentSource, "blockWhatsAppFileAttachment"),
       extractFunctionSource(contentSource, "getContentExtractionBlockedMessage"),
       extractFunctionSource(contentSource, "getLocalTextPayloadByteLength"),
       extractFunctionSource(contentSource, "classifyLocalTextPayloadSize"),
@@ -1369,6 +1373,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "isGrokHost"),
       extractFunctionSource(contentSource, "isOpenAiChatHost"),
       extractFunctionSource(contentSource, "isXHost"),
+      extractFunctionSource(contentSource, "isWhatsAppHost"),
       extractFunctionSource(contentSource, "getCurrentHandoffDriverId"),
       extractFunctionSource(contentSource, "getActiveProtection"),
       extractFunctionSource(contentSource, "isProtectedFileDropDriver"),
@@ -5582,13 +5587,18 @@ function testFileHandoffAdapterRegistryCoversSupportedSites() {
   assert.strictEqual(adapters.claude.pendingAttachEnabled, true);
   assert.strictEqual(adapters.openai.pendingAttachEnabled, true);
   assert.strictEqual(adapters.x.pendingAttachEnabled, true);
-  assert.strictEqual(adapters.whatsapp.pendingAttachEnabled, true);
-  for (const id of ["gemini", "grok", "chatgpt", "claude", "openai", "x", "whatsapp"]) {
+  assert.strictEqual(adapters.whatsapp.pendingAttachEnabled, false);
+  for (const id of ["gemini", "grok", "chatgpt", "claude", "openai", "x"]) {
     assert.ok(
       adapterRegistrySource.includes(`pendingAttachEnabled: pendingAttachEnabled?.${id}`),
       `expected ${id} pending attach to stay wired to the content-script gate`
     );
   }
+  assert.strictEqual(
+    adapterRegistrySource.includes("pendingAttachEnabled: pendingAttachEnabled?.whatsapp"),
+    false,
+    "WhatsApp text-only adapter should not wire pending attach recovery"
+  );
 }
 
 function testFileAttachDebugMetadataSchemaFiltersUnsafePayloads() {
@@ -6821,6 +6831,8 @@ function testBuiltInAdaptersEnablePendingAttachRecovery() {
     assert.strictEqual(adapters[id].supportsPendingAttach, true, `${id} should keep its adapter capability shape`);
     assert.strictEqual(adapters[id].pendingAttachEnabled, true, `${id} pending attach should stay enabled`);
   }
+  assert.strictEqual(adapters.whatsapp.supportsPendingAttach, false, "WhatsApp text-only adapter should not recover pending file attach");
+  assert.strictEqual(adapters.whatsapp.pendingAttachEnabled, false, "WhatsApp text-only adapter should keep pending attach disabled");
   assert.ok(
     contentSource.includes("if (id === \"chatgpt\" || id === \"claude\" || id === \"openai\" || id === \"x\" || id === \"generic\")"),
     "existing direct file-input path should stay available for ChatGPT/Claude/OpenAI/X"
@@ -10853,6 +10865,66 @@ async function testSupportedTextFileHandoffFailureFallsBackToSanitizedText() {
   assert.ok(composer.text.includes("API_KEY=[PWM_1]"));
   assert.strictEqual(calls.modals.some(([title]) => title === "Raw file upload blocked"), false);
   assert.strictEqual(calls.modals.flat().join("\n").includes(rawSecret), false);
+}
+
+async function testWhatsAppFileHandoffFailsClosedWithoutTextFallback() {
+  const calls = {
+    textFallbacks: 0,
+    downloads: 0,
+    pending: 0,
+    dmzStates: []
+  };
+  const flow = globalThis.PWM.createFileHandoffFlow({
+    applySanitizedTextFallback: async () => {
+      calls.textFallbacks += 1;
+      return true;
+    },
+    createSanitizedDataTransfer: () => ({ files: [{ name: "sanitized.env" }] }),
+    createSanitizedDataTransferForHandoff: () => ({ files: [{ name: "sanitized.env" }] }),
+    createSanitizedFileHandoffDetails: () => ({}),
+    createSanitizedPayload: (sanitizedFile, redactedText) => ({ sanitizedFile, redactedText }),
+    describeFileForDebug: () => ({ extension: ".env", sizeBytes: 10 }),
+    describeFileHandoffAdapter: (adapter) => ({ id: adapter?.id || "" }),
+    downloadGeminiSanitizedFileFallback: async () => false,
+    getCurrentHandoffDriverId: () => "whatsapp",
+    getFileHandoffAdapterForLocation: () => ({ id: "whatsapp", supportsPendingAttach: false }),
+    handOffSanitizedFileInput: () => {
+      throw new Error("WhatsApp must not attempt sanitized file input assignment");
+    },
+    isFileHandoffAdapterPendingAttachEnabled: () => false,
+    isProtectedFileDropDriver: () => true,
+    queuePendingSanitizedFileHandoff: () => {
+      calls.pending += 1;
+      return true;
+    },
+    readSanitizedFileTextForFallback: async () => {
+      calls.downloads += 1;
+      return "API_KEY=[PWM_1]";
+    },
+    sendRuntimeMessage: async () => ({ ok: true }),
+    setDmzOverlayState: (message, state) => calls.dmzStates.push({ message, state })
+  });
+  const driver = flow.getCurrentHandoffDriver();
+  const result = await driver.handoff(
+    {
+      sanitizedFile: { name: "sanitized.env" },
+      redactedText: "API_KEY=[PWM_1]"
+    },
+    {
+      event: { type: "drop" },
+      input: { tagName: "TEXTAREA", text: "" },
+      context: "drop",
+      driver,
+      composerResolved: true
+    }
+  );
+
+  assert.strictEqual(result.ok, false, "WhatsApp file handoff should fail closed");
+  assert.strictEqual(result.reason, "whatsapp_file_attachments_unsupported");
+  assert.strictEqual(calls.textFallbacks, 0, "WhatsApp should not insert sanitized file text into a message");
+  assert.strictEqual(calls.downloads, 0, "WhatsApp should not offer file download fallback from composer handoff");
+  assert.strictEqual(calls.pending, 0, "WhatsApp should not queue pending sanitized attachment replay");
+  assert.deepStrictEqual(calls.dmzStates.at(-1), { message: "Raw file blocked", state: "failed" });
 }
 
 function testProtectedDriversShowDmzOverlayOnFileDrag() {
@@ -15031,6 +15103,7 @@ function testMultiFileProtectedUploadStaticGuards() {
   await testGeminiTextLikeFileExtensionsAreSanitized();
   await testGeminiTextLikeSanitizerFailureBlocksRawFile();
   await testSupportedTextFileHandoffFailureFallsBackToSanitizedText();
+  await testWhatsAppFileHandoffFailsClosedWithoutTextFallback();
   testProtectedDriversShowDmzOverlayOnFileDrag();
   testNonProtectedGenericSiteDoesNotShowDmzOverlayOnFileDrag();
   await testDmzOverlayStatesDuringSanitizedTextFallback();

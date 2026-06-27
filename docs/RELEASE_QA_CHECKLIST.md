@@ -7,6 +7,7 @@
 - Confirm the popup still renders correctly on a smaller laptop display.
 - Confirm Tier A fast validation passes: `npm run test:fast`.
 - Confirm Tier B release validation passes before publishing packages: `npm run test:release-gates`.
+- Confirm deterministic Chromium E2E passes on local fixtures: `npm run build:chrome` followed by `npm run test:e2e`.
 - Confirm the built manifest includes `content_security_policy.extension_pages` with LeakGuard's restrictive extension-page CSP.
 - Confirm the built manifest does not add new host permissions for File Scanner.
 - Confirm protected-site image OCR is settings-controlled, enabled by default for supported image uploads, and can be turned off.
@@ -16,8 +17,10 @@
 
 - PR-required validation is Tier A: `npm run test:ci`, which maps to `npm run test:fast`.
 - Release/manual validation is Tier A plus Tier B: `npm run test:fast` and `npm run test:release-gates`.
+- Deterministic local-fixture E2E is account-free and may run in CI after `npm run build:chrome`: `npm run test:e2e`.
 - Nightly/browser validation is Tier A plus Tier B plus Tier C: `npm run test:nightly`.
 - Tier C browser validation is heavy and environment-sensitive: `npm run preflight:browser` followed by `npm run test:browser-gates`.
+- Live-site E2E against ChatGPT, Gemini, WhatsApp, or other logged-in providers remains manual/headed only and is not required for CI.
 - A browser startup failure before extension load, such as Chrome/Edge GPU/CDP startup failure or Firefox geckodriver status timeout, is a local or CI environment failure until rerun evidence shows the extension loaded and failed product assertions.
 - Product failures are failures after the extension loads and a LeakGuard behavior assertion fails, such as missing popup controls, missing protected-site panel, raw marker leakage, failed redaction, or missing scanner export behavior.
 

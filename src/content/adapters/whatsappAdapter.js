@@ -3,31 +3,20 @@
   root.PWM = root.PWM || {};
   root.PWM.SiteAdapters = root.PWM.SiteAdapters || {};
 
-  function createWhatsAppAdapter({ pendingAttachEnabled, hooks = {} } = {}) {
+  function createWhatsAppAdapter() {
     return {
       id: "whatsapp",
       siteLabel: "WhatsApp",
       hosts: ["web.whatsapp.com"],
-      supportsDirectFileInputAssignment: true,
-      supportsMultiFileHandoff: true,
+      supportsDirectFileInputAssignment: false,
+      supportsMultiFileHandoff: false,
       supportsDirectDropReplay: false,
-      supportsPendingAttach: true,
-      supportsTrustedAttachButton: true,
-      pendingAttachEnabled: pendingAttachEnabled?.whatsapp,
-      uploadButtonSelectors: [
-        'input[type="file"]',
-        '[data-testid*="attach" i]',
-        '[data-testid*="clip" i]',
-        '[aria-label*="attach" i]',
-        '[aria-label*="upload" i]',
-        '[title*="attach" i]'
-      ],
+      supportsPendingAttach: false,
+      supportsTrustedAttachButton: false,
+      pendingAttachEnabled: false,
+      uploadButtonSelectors: [],
       uploadMenuItemSelectors: [],
-      fileInputSelectors: [
-        'input[type="file"][multiple]',
-        'input[type="file"][accept]',
-        'input[type="file"]'
-      ],
+      fileInputSelectors: [],
       unsafeClickSelectors: [
         '[aria-label*="send" i]',
         '[data-testid*="send" i]',
@@ -38,11 +27,11 @@
         '[aria-label*="remove" i]',
         '[aria-label*="delete" i]'
       ],
-      resolveUploadTrigger: (event, input, adapter) => hooks.findGenericAdapterUploadTrigger(adapter, event, input),
+      resolveUploadTrigger: () => null,
       resolveUploadMenuItem: () => null,
-      resolveFileInput: (event, input, adapter) => hooks.resolveGenericAdapterFileInput(adapter, event, input),
-      isUploadClickTarget: (eventOrTarget, adapter) => hooks.isLikelyGenericUploadClickTarget(adapter, eventOrTarget),
-      attachWithTrustedActivation: (pending, adapter) => hooks.attachGenericPendingWithTrustedActivation(adapter, pending)
+      resolveFileInput: () => null,
+      isUploadClickTarget: () => false,
+      attachWithTrustedActivation: async () => false
     };
   }
 

@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>LeakGuard E2E Protected Chat Fixture</title>
+    <style>
+      body {
+        margin: 0;
+        font: 16px/1.5 system-ui, sans-serif;
+        color: #111827;
+        background: #f8fafc;
+      }
+
+      main {
+        max-width: 860px;
+        margin: 0 auto;
+        padding: 32px 20px;
+      }
+
+      form,
+      section {
+        margin-block: 20px;
+      }
+
+      textarea,
+      [contenteditable="true"] {
+        box-sizing: border-box;
+        width: 100%;
+        min-height: 120px;
+        padding: 12px;
+        border: 1px solid #94a3b8;
+        border-radius: 6px;
+        background: #fff;
+        color: #111827;
+        font: inherit;
+        white-space: pre-wrap;
+      }
+
+      button,
+      input::file-selector-button {
+        border: 1px solid #0f766e;
+        border-radius: 6px;
+        background: #0f766e;
+        color: #fff;
+        font: inherit;
+        padding: 8px 12px;
+      }
+
+      [hidden] {
+        display: none !important;
+      }
+
+      #drop-zone {
+        min-height: 96px;
+        border: 2px dashed #64748b;
+        border-radius: 6px;
+        background: #fff;
+        display: grid;
+        place-items: center;
+      }
+
+      #sent-messages,
+      #file-events {
+        min-height: 64px;
+        padding: 12px;
+        border: 1px solid #cbd5e1;
+        border-radius: 6px;
+        background: #fff;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Protected Chat Fixture</h1>
+
+      <form id="chat-form">
+        <label id="textarea-shell">
+          Textarea composer
+          <textarea id="prompt-textarea" data-testid="prompt-textarea" placeholder="Message"></textarea>
+        </label>
+
+        <label id="editable-shell" hidden>
+          Contenteditable composer
+          <div
+            id="editable-composer"
+            data-testid="prompt-textarea"
+            role="textbox"
+            aria-label="Message"
+            aria-multiline="true"
+            contenteditable="true"
+          ></div>
+        </label>
+
+        <button id="send-button" data-testid="send-button" aria-label="Send message" type="submit">Send</button>
+      </form>
+
+      <section>
+        <label>
+          File input
+          <input id="file-input" type="file">
+        </label>
+      </section>
+
+      <section>
+        <div id="drop-zone" data-testid="drop-zone">Drop files here</div>
+      </section>
+
+      <section aria-label="Sent messages">
+        <h2>Sent messages</h2>
+        <div id="sent-messages" data-testid="sent-messages"></div>
+      </section>
+
+      <section aria-label="File events">
+        <h2>File events</h2>
+        <div id="file-events" data-testid="file-events"></div>
+      </section>
+    </main>
+
+    <script>
+      (() => {
+        const params = new URLSearchParams(location.search);
+        const mode = params.get("mode") === "contenteditable" ? "contenteditable" : "textarea";
+        const textareaShell = document.querySelector("#textarea-shell");
+        const editableShell = document.querySelector("#editable-shell");
+        const textarea = document.querySelector("#prompt-textarea");
+        const editable = document.querySelector("#editable-composer");
+        const form = document.querySelector("#chat-form");
+        const sendButton = document.querySelector("#send-button");
+        const sentMessages = document.querySelector("#sent-messages");
+        const fileInput = document.querySelector("#file-input");
+        const fileEvents = document.querySelector("#file-events");
+        const dropZone = document.querySelector("#drop-zone");
+
+        const state = {
+          mode,
+          submissions: [],
+          fileEvents: [],
+          emptySendIgnored: 0
+        };
+
+        function normalizeText(value) {
+          return String(value || "")
+            .replace(/\r\n?/g, "\n")
+            .replace(/\u00a0/g, " ")
+            .replace(/[\u200B-\u200D\uFEFF]/g, "");
+        }
+
+        function escapeHtml(value) {
+          return String(value || "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;");
+        }
+
+        function textToEditableHtml(value) {
+          const lines = normalizeText(value).split("\n");
+          return lines.map((line) => `<div>${line ? escapeHtml(line) : "<br>"}</div>`).join("");
+        }
+
+        function readEditableText() {
+          return normalizeText(editable.innerText || editable.textContent || "");
+        }
+
+        function activeComposer() {
+          return mode === "contenteditable" ? editable : textarea;
+        }
+
+        function getComposerText() {
+          return mode === "contenteditable" ? readEditableText() : normalizeText(textarea.value);
+        }
+
+        function setComposerText(value) {
+          if (mode === "contenteditable") {
+            editable.innerHTML = textToEditableHtml(value);
+          } else {
+            textarea.value = normalizeText(value);
+          }
+          activeComposer().focus();
+          activeComposer().dispatchEvent(new InputEvent("input", {
+            bubbles: true,
+            composed: true,
+            inputType: "insertText",
+            data: normalizeText(value)
+          }));
+        }
+
+        function clearComposer() {
+          if (mode === "contenteditable") {
+            editable.innerHTML = "";
+          } else {
+            textarea.value = "";
+          }
+        }
+
+        function appendSent(text, source) {
+          const entry = { text: normalizeText(text), source };
+          state.submissions.push(entry);
+          const line = document.createElement("div");
+          line.className = "sent-message";
+          line.dataset.source = source;
+          line.textContent = entry.text;
+          sentMessages.appendChild(line);
+        }
+
+        function submitActive(source) {
+          const text = getComposerText();
+          if (!text.trim()) {
+            state.emptySendIgnored += 1;
+            return;
+          }
+          appendSent(text, source);
+          clearComposer();
+        }
+
+        async function recordFiles(source, files) {
+          const details = [];
+          for (const file of Array.from(files || [])) {
+            details.push({
+              source,
+              name: file.name,
+              type: file.type,
+              size: file.size,
+              text: typeof file.text === "function" ? await file.text() : ""
+            });
+          }
+          state.fileEvents.push(...details);
+          fileEvents.textContent = state.fileEvents
+            .map((entry) => `${entry.source}:${entry.name}:${entry.text}`)
+            .join("\n");
+        }
+
+        textareaShell.hidden = mode !== "textarea";
+        editableShell.hidden = mode !== "contenteditable";
+        activeComposer().focus();
+
+        form.addEventListener("submit", (event) => {
+          event.preventDefault();
+          submitActive("submit");
+        });
+
+        sendButton.addEventListener("click", () => {
+          submitActive("click");
+        });
+
+        form.addEventListener("keydown", (event) => {
+          if (event.key !== "Enter") return;
+          if (event.shiftKey) return;
+          event.preventDefault();
+          submitActive("enter");
+        });
+
+        fileInput.addEventListener("change", (event) => {
+          recordFiles("input", event.target.files);
+        });
+
+        dropZone.addEventListener("dragover", (event) => {
+          event.preventDefault();
+        });
+
+        dropZone.addEventListener("drop", (event) => {
+          event.preventDefault();
+          recordFiles("drop", event.dataTransfer.files);
+        });
+
+        window.__leakguardE2E = {
+          state,
+          activeComposer,
+          getComposerText,
+          setComposerText,
+          submissions: state.submissions,
+          fileEvents: state.fileEvents
+        };
+      })();
+    </script>
+  </body>
+</html>
