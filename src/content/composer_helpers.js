@@ -518,6 +518,9 @@
     if (!selection) return false;
 
     if (!runEditableCommand("delete", null)) return false;
+    if (options.syncClearBeforeInsert) {
+      dispatchInput(el, null, "deleteContentBackward");
+    }
     if (normalized && !runEditableCommand("insertText", normalized)) return false;
 
     if (Number.isFinite(options.caretOffset)) {

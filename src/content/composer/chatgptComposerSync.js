@@ -165,7 +165,8 @@
       try {
         scopedInserted = Boolean(scopedCommandWrite(input, writeText, {
           caretOffset: options.caretOffset,
-          selectTextNodeRange: Boolean(options.selectTextNodeRange)
+          selectTextNodeRange: Boolean(options.selectTextNodeRange),
+          syncClearBeforeInsert: Boolean(options.syncClearBeforeInsert)
         }));
       } catch {
         scopedInserted = false;

@@ -3451,6 +3451,7 @@
       context: options.context || "composer-rewrite",
       strictContentEditableSync: true,
       selectTextNodeRange: true,
+      syncClearBeforeInsert: true,
       dependencies: getWhatsAppComposerSyncDependencies()
     });
   }

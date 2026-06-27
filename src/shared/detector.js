@@ -1211,7 +1211,7 @@
   }
 
   function isSafeValidationMarker(value) {
-    return /^(?:DUPLICATE_CHECK_(?:BEGIN|END)_\d+|LEAKGUARD_PERFORMANCE_TEST_END_MARKER_\d+)$/i.test(
+    return /^(?:DUPLICATE_CHECK_(?:BEGIN|END)_\d+|LEAKGUARD_PERFORMANCE_TEST_END_MARKER_\d+|LGQA(?:_[A-Z0-9]+)+)$/i.test(
       String(value || "").trim()
     );
   }

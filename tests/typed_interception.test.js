@@ -1644,6 +1644,7 @@ async function testWhatsAppRewriteUsesSyncedComposerPathBeforeAppendProneStrateg
       "    calls.hostAllowed = options.dependencies.isChatGptHost();",
       "    calls.strictSync = options.strictContentEditableSync === true;",
       "    calls.selectTextNodeRange = options.selectTextNodeRange === true;",
+      "    calls.syncClearBeforeInsert = options.syncClearBeforeInsert === true;",
       "    input.text = normalizeComposerText(text);",
       "    return { ok: true, actual: input.text, strategy: 'whatsapp-synced-test' };",
       "  }",
@@ -1685,6 +1686,7 @@ async function testWhatsAppRewriteUsesSyncedComposerPathBeforeAppendProneStrateg
   assert.strictEqual(calls.hostAllowed, true, "WhatsApp synced rewrite should pass the host gate through dependencies");
   assert.strictEqual(calls.strictSync, true, "WhatsApp synced rewrite should disable append-prone internal fallbacks");
   assert.strictEqual(calls.selectTextNodeRange, true, "WhatsApp synced rewrite should replace Lexical paragraph text instead of appending");
+  assert.strictEqual(calls.syncClearBeforeInsert, true, "WhatsApp synced rewrite should clear and sync stale state before inserting sanitized text");
   assert.strictEqual(calls.directWrites, 0, "WhatsApp composer should not use direct DOM before synced rewrite");
   assert.strictEqual(calls.genericWrites, 0, "WhatsApp composer should skip append-prone generic rewrite");
   assert.strictEqual(calls.forcedWrites, 0, "WhatsApp composer should skip append-prone forced rewrite");
