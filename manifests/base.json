@@ -11,7 +11,8 @@
     "https://gemini.google.com/*",
     "https://claude.ai/*",
     "https://grok.com/*",
-    "https://x.com/*"
+    "https://x.com/*",
+    "https://web.whatsapp.com/*"
   ],
   "background": {
     "service_worker": "background/service_worker.js"
@@ -42,7 +43,8 @@
         "https://gemini.google.com/*",
         "https://claude.ai/*",
         "https://grok.com/*",
-        "https://x.com/*"
+        "https://x.com/*",
+        "https://web.whatsapp.com/*"
       ],
       "js": [
         "content/file_drag_guard.js",
@@ -125,6 +127,7 @@
         "content/adapters/claudeAdapter.js",
         "content/adapters/grokAdapter.js",
         "content/adapters/xAdapter.js",
+        "content/adapters/whatsappAdapter.js",
         "content/adapters/index.js",
         "content/adapters/geminiFallbackWriter.js",
         "content/diagnostics/safeSnapshots.js",
@@ -158,7 +161,8 @@
         "https://gemini.google.com/*",
         "https://claude.ai/*",
         "https://grok.com/*",
-        "https://x.com/*"
+        "https://x.com/*",
+        "https://web.whatsapp.com/*"
       ]
     },
     {

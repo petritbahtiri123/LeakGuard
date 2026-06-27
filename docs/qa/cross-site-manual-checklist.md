@@ -1,6 +1,6 @@
 # Cross-Site Manual QA Checklist
 
-Use this checklist for manual LeakGuard verification on protected AI composer sites.
+Use this checklist for manual LeakGuard verification on protected chat composer sites.
 
 For the focused post-PR 4I file attach checkpoint, use `docs/qa/file-attach-manual-checkpoint-after-pr4i.md`.
 
@@ -147,6 +147,7 @@ For each browser, run all checklist sections on each site:
 | Gemini | `https://gemini.google.com/` |
 | Claude | `https://claude.ai/` |
 | Grok | `https://grok.com/` |
+| WhatsApp Web | `https://web.whatsapp.com/` |
 
 ## 1. Typing
 

@@ -1,6 +1,6 @@
 # Live Prompt Capture QA Runbook
 
-Use this runbook when browser smoke tests are unavailable or when validating real SPA composer behavior on protected AI sites. It verifies the exact local prompt text that LeakGuard is about to submit without transmitting captured QA data anywhere.
+Use this runbook when browser smoke tests are unavailable or when validating real SPA composer behavior on protected chat sites. It verifies the exact local prompt text that LeakGuard is about to submit without transmitting captured QA data anywhere.
 
 ## Safety and scope
 
@@ -91,7 +91,9 @@ Run the text-paste cases from `tests/fixtures/manual/live-site-qa/prompt-compreh
 | Gemini | `https://gemini.google.com/app` | Highest priority: paste, rejected file fallback, pending attach clear, multi-file handoff, SPA rehydration. |
 | Claude | `https://claude.ai/` | Paste and supported text-file upload; verify status cards stay outside composer. |
 | Grok | `https://grok.com/` | Paste and direct drop replay path; verify no duplicate DOM text nodes. |
-| X/generic | `https://x.com/compose/post` or a configured protected test site | Verify generic protected-site flow does not submit file summaries as prompt text. |
+| X | `https://x.com/compose/post` | Verify generic protected-site flow does not submit file summaries as prompt text. |
+| WhatsApp Web | `https://web.whatsapp.com/` | Verify drafts and sanitized attachments are protected without sending messages. |
+| Generic | Configured protected test site | Verify generic protected-site flow does not submit file summaries as prompt text. |
 
 For each adapter and each case, record:
 

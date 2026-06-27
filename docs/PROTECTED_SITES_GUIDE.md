@@ -12,6 +12,7 @@ The current built-in list is:
 - `https://gemini.google.com/*`
 - `https://grok.com/*`
 - `https://x.com/*`
+- `https://web.whatsapp.com/*`
 
 Built-in sites are packaged in the extension manifest and are enabled by default.
 

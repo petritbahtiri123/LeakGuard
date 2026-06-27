@@ -103,6 +103,7 @@
     "src/content/adapters/claudeAdapter.js",
     "src/content/adapters/grokAdapter.js",
     "src/content/adapters/xAdapter.js",
+    "src/content/adapters/whatsappAdapter.js",
     "src/content/adapters/index.js",
     "src/content/adapters/geminiFallbackWriter.js",
     "src/content/diagnostics/safeSnapshots.js",

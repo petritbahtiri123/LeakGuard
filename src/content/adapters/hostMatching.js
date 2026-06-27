@@ -39,6 +39,10 @@
     );
   }
 
+  function isWhatsAppHost(hostname) {
+    return normalizeHostname(hostname) === "web.whatsapp.com";
+  }
+
   function getFileHandoffAdapterById(adapters, id) {
     return (adapters || {})[String(id || "").toLowerCase()] || null;
   }
@@ -81,6 +85,7 @@
     if (isClaudeHost(hostname)) return "claude";
     if (isGrokHost(hostname)) return "grok";
     if (isXHost(hostname)) return "x";
+    if (isWhatsAppHost(hostname)) return "whatsapp";
     return "generic";
   }
 
@@ -92,6 +97,7 @@
     isClaudeHost,
     isGrokHost,
     isXHost,
+    isWhatsAppHost,
     getFileHandoffAdapterById,
     hostMatchesFileHandoffAdapter,
     getFileHandoffAdapterForLocation,

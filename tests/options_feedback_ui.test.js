@@ -169,7 +169,8 @@ function testManifestPermissionsAndCspStayRestrictive() {
     "https://gemini.google.com/*",
     "https://claude.ai/*",
     "https://grok.com/*",
-    "https://x.com/*"
+    "https://x.com/*",
+    "https://web.whatsapp.com/*"
   ]);
   assert.deepStrictEqual(
     manifest.content_security_policy.extension_pages,

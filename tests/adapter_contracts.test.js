@@ -3,14 +3,15 @@ const fs = require("fs");
 const path = require("path");
 
 const repoRoot = path.join(__dirname, "..");
-const expectedProviderIds = ["chatgpt", "openai", "gemini", "claude", "grok", "x"];
+const expectedProviderIds = ["chatgpt", "openai", "gemini", "claude", "grok", "x", "whatsapp"];
 const pendingAttachEnabled = Object.freeze({
   gemini: true,
   grok: true,
   chatgpt: true,
   claude: true,
   openai: true,
-  x: true
+  x: true,
+  whatsapp: true
 });
 
 require(path.join(repoRoot, "src/content/adapters/hostMatching.js"));
@@ -21,6 +22,7 @@ require(path.join(repoRoot, "src/content/adapters/geminiAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/claudeAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/grokAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/xAdapter.js"));
+require(path.join(repoRoot, "src/content/adapters/whatsappAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/index.js"));
 require(path.join(repoRoot, "src/shared/runtime_scripts.js"));
 
@@ -78,7 +80,8 @@ function testHostMatchingRoutesExpectedUrlsToAdapters() {
     ["https://gemini.google.com/app", "gemini"],
     ["https://claude.ai/new", "claude"],
     ["https://console.grok.com/chat", "grok"],
-    ["https://x.com/compose/post", "x"]
+    ["https://x.com/compose/post", "x"],
+    ["https://web.whatsapp.com/", "whatsapp"]
   ];
 
   cases.forEach(([url, expectedId]) => {
@@ -103,6 +106,8 @@ function testUnsupportedHostnamesDoNotReceiveSpecialAdapterBehavior() {
     "https://claude.ai.evil.test/new",
     "https://grok.example.test/chat",
     "https://x.example.test/compose/post",
+    "https://web.whatsapp.com.evil.test/",
+    "https://whatsapp.com/",
     "https://example.test/"
   ];
 
@@ -129,7 +134,8 @@ function testAdapterParityCapabilitiesStayStable() {
     gemini: { directFileInput: true, directDropReplay: false, pendingAttach: true, multiFile: true },
     grok: { directFileInput: true, directDropReplay: true, pendingAttach: true, multiFile: true },
     claude: { directFileInput: true, directDropReplay: false, pendingAttach: true, multiFile: true },
-    x: { directFileInput: true, directDropReplay: false, pendingAttach: true, multiFile: true }
+    x: { directFileInput: true, directDropReplay: false, pendingAttach: true, multiFile: true },
+    whatsapp: { directFileInput: true, directDropReplay: false, pendingAttach: true, multiFile: true }
   };
 
   for (const [id, expected] of Object.entries(expectedCapabilities)) {

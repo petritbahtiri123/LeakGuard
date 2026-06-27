@@ -20,6 +20,7 @@ const adapterSourceFiles = [
   "src/content/adapters/claudeAdapter.js",
   "src/content/adapters/grokAdapter.js",
   "src/content/adapters/xAdapter.js",
+  "src/content/adapters/whatsappAdapter.js",
   "src/content/adapters/index.js"
 ];
 const adapterRegistrySource = adapterSourceFiles
@@ -76,6 +77,7 @@ require(path.join(repoRoot, "src/content/adapters/geminiAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/claudeAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/grokAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/xAdapter.js"));
+require(path.join(repoRoot, "src/content/adapters/whatsappAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/index.js"));
 require(path.join(repoRoot, "src/content/adapters/geminiFallbackWriter.js"));
 require(path.join(repoRoot, "src/content/diagnostics/safeSnapshots.js"));
@@ -339,7 +341,8 @@ function createAdapterRegistryForTest() {
       chatgpt: true,
       claude: true,
       openai: true,
-      x: true
+      x: true,
+      whatsapp: true
     },
     hooks: noopHooks
   });
@@ -5401,7 +5404,8 @@ async function testPendingAttachGateBehaviorForAdapters() {
     ["chatgpt.com", "chatgpt", true],
     ["claude.ai", "claude", true],
     ["chat.openai.com", "openai", true],
-    ["x.com", "x", true]
+    ["x.com", "x", true],
+    ["web.whatsapp.com", "whatsapp", true]
   ]) {
     const harness = createHandoffHarness({ hostname });
     const adapter = harness.getFileHandoffAdapterForLocation({ hostname });
@@ -5565,7 +5569,8 @@ function testFileHandoffAdapterRegistryCoversSupportedSites() {
     ["chatgpt", "chatgpt.com"],
     ["claude", "claude.ai"],
     ["openai", "chat.openai.com"],
-    ["x", "x.com"]
+    ["x", "x.com"],
+    ["whatsapp", "web.whatsapp.com"]
   ]) {
     assert.ok(adapters[id], `expected ${id} adapter`);
     assert.strictEqual(adapters[id].id, id, `expected ${id} adapter id`);
@@ -5577,7 +5582,8 @@ function testFileHandoffAdapterRegistryCoversSupportedSites() {
   assert.strictEqual(adapters.claude.pendingAttachEnabled, true);
   assert.strictEqual(adapters.openai.pendingAttachEnabled, true);
   assert.strictEqual(adapters.x.pendingAttachEnabled, true);
-  for (const id of ["gemini", "grok", "chatgpt", "claude", "openai", "x"]) {
+  assert.strictEqual(adapters.whatsapp.pendingAttachEnabled, true);
+  for (const id of ["gemini", "grok", "chatgpt", "claude", "openai", "x", "whatsapp"]) {
     assert.ok(
       adapterRegistrySource.includes(`pendingAttachEnabled: pendingAttachEnabled?.${id}`),
       `expected ${id} pending attach to stay wired to the content-script gate`
@@ -7126,6 +7132,7 @@ async function testSupportedImageFileInputAttachesSanitizedImageAcrossAdapters()
     "grok.com",
     "claude.ai",
     "x.com",
+    "web.whatsapp.com",
     "local.example"
   ];
 
@@ -10151,7 +10158,8 @@ async function testGenericStreamingDropWithoutFileInputQueuesPendingWithoutReadi
     ["chatgpt", "chatgpt.com"],
     ["claude", "claude.ai"],
     ["openai", "chat.openai.com"],
-    ["x", "x.com"]
+    ["x", "x.com"],
+    ["whatsapp", "web.whatsapp.com"]
   ];
 
   for (const [adapterId, hostname] of adapterHosts) {

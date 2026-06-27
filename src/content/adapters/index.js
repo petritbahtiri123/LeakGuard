@@ -10,7 +10,8 @@
       chatgpt: adapters.createChatGptAdapter({ pendingAttachEnabled, hooks }),
       claude: adapters.createClaudeAdapter({ pendingAttachEnabled, hooks }),
       openai: adapters.createOpenAiAdapter({ pendingAttachEnabled, hooks }),
-      x: adapters.createXAdapter({ pendingAttachEnabled, hooks })
+      x: adapters.createXAdapter({ pendingAttachEnabled, hooks }),
+      whatsapp: adapters.createWhatsAppAdapter({ pendingAttachEnabled, hooks })
     };
   }
 

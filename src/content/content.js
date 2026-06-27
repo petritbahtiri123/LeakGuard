@@ -316,7 +316,8 @@
     chatgpt: true,
     claude: true,
     openai: true,
-    x: true
+    x: true,
+    whatsapp: true
   });
   let dmzOverlayEl = null;
   let dmzOverlayStatusEl = null;
@@ -4535,7 +4536,8 @@
       id === "claude" ||
       id === "grok" ||
       id === "openai" ||
-      id === "x"
+      id === "x" ||
+      id === "whatsapp"
     ) {
       return true;
     }
