@@ -5,7 +5,6 @@ import {
   expectComposerTextExactly,
   expectNoFileEvents,
   expectNoRawSecretVisible,
-  getComposerText,
   getSentMessages,
   test,
   typeIntoComposer,
