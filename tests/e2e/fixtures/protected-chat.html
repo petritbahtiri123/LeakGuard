@@ -224,6 +224,17 @@
           return editable;
         }
 
+        function placeCaretAtEnd(element) {
+          if (!element || !element.isContentEditable) return;
+          const selection = window.getSelection();
+          const range = document.createRange();
+          if (!selection || !range) return;
+          range.selectNodeContents(element);
+          range.collapse(false);
+          selection.removeAllRanges();
+          selection.addRange(range);
+        }
+
         function readEditableText(element) {
           const text = normalizeText(element.innerText || element.textContent || "");
           return text.trim() ? text : "";
@@ -270,9 +281,7 @@
           if (inlineBuffer || !lines.length) {
             flushInlineBuffer();
           }
-          while (lines.length > 1 && lines[lines.length - 1] === "") {
-            lines.pop();
-          }
+          if (lines.length === 1 && lines[0] === "") return "";
           const text = normalizeText(lines.join("\n"));
           return text.trim() ? text : "";
         }
@@ -304,6 +313,9 @@
           }
           state.renderCount += 1;
           renderAppState();
+          if (document.activeElement === activeComposer()) {
+            placeCaretAtEnd(activeComposer());
+          }
         }
 
         function setComposerText(value) {
@@ -336,13 +348,15 @@
             const end = Number.isFinite(composer.selectionEnd) ? composer.selectionEnd : composer.value.length;
             composer.value = `${composer.value.slice(0, start)}${value}${composer.value.slice(end)}`;
             composer.selectionStart = composer.selectionEnd = start + value.length;
+          } else if (modeUsesWhatsAppComposer() && value === "\n") {
+            renderComposerText(`${getComposerText()}\n`);
           } else {
             document.execCommand("insertText", false, value);
           }
           composer.dispatchEvent(new InputEvent("input", {
             bubbles: true,
             composed: true,
-            inputType: "insertFromPaste",
+            inputType: value === "\n" ? "insertLineBreak" : "insertFromPaste",
             data: value
           }));
         }
@@ -452,7 +466,13 @@
 
         form.addEventListener("keydown", (event) => {
           if (event.key !== "Enter") return;
-          if (event.shiftKey) return;
+          if (event.shiftKey) {
+            if (modeUsesWhatsAppComposer()) {
+              event.preventDefault();
+              insertTextAtCursor("\n");
+            }
+            return;
+          }
           event.preventDefault();
           submitActive("enter");
         });

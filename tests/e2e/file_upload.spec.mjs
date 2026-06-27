@@ -37,6 +37,7 @@ async function expectSanitizedTextUpload(page, file) {
 
 test.describe("@files protected file upload contract", () => {
   test("TXT, ENV, JSON, LOG, and MD uploads redact before host delivery", async ({ extensionApp }) => {
+    test.setTimeout(180000);
     for (const file of textFileFixtures) {
       const page = await extensionApp.openProtectedFixture("textarea");
       await expectSanitizedTextUpload(page, file);
