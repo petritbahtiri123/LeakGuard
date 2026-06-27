@@ -2109,6 +2109,21 @@ function createHandoffHarness({
     FilePasteHelpers: globalThis.PWM.FilePasteHelpers,
     navigator: { userAgent },
     location: { hostname },
+    currentPublicState: {
+      transformMode: "hide_public",
+      placeholderCount: 0,
+      trustedPlaceholders: [],
+      policy: {
+        allowProtectionPause: true,
+        strictFailure: false
+      },
+      protection: {
+        paused: false,
+        pausedUntil: 0,
+        allowProtectionPause: true,
+        protectionEnforced: false
+      }
+    },
     window: {
       addEventListener(type, handler, options) {
         listenerEvents.push({ target: "window", action: "add", type, capture: options === true || Boolean(options?.capture) });
@@ -2241,6 +2256,7 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "isChatGptHost"),
       extractFunctionSource(contentSource, "isClaudeHost"),
       extractFunctionSource(contentSource, "getCurrentHandoffDriverId"),
+      extractFunctionSource(contentSource, "getActiveProtection"),
       extractFunctionSource(contentSource, "isProtectedFileDropDriver"),
       extractFunctionSource(contentSource, "isFileInputElement"),
       extractFunctionSource(contentSource, "describeFileForDebug"),
@@ -7583,6 +7599,103 @@ async function testProtectedLegacyOfficeFileInputBlocksRawUpload() {
     assert.ok(calls.modals.some(([title]) => title === "Raw file upload blocked"), `${testCase.label} should show block modal`);
     assert.strictEqual(JSON.stringify(calls).includes(rawSecret), false, `${testCase.label} debug state leaked raw marker`);
   }
+}
+
+async function testPausedBuiltInProviderFileInputLetsPageHandleRawFile() {
+  const rawSecret = "sk-proj-PausedBuiltInFileInputUnitQa1234567890abcdef";
+  const rawFile = createTextFile({
+    name: "paused-legacy.doc",
+    type: "application/msword",
+    text: `DOC_API_KEY=${rawSecret}`
+  });
+  const fileInput = createFileInput();
+  fileInput.files = [rawFile];
+  fileInput.value = "C:\\fakepath\\paused-legacy.doc";
+  const { maybeHandleFileInputChange, resolveFileDragGuardPolicy, calls } = createHarness({
+    location: { hostname: "chatgpt.com" },
+    currentPublicState: {
+      currentSite: { protected: true },
+      protection: {
+        paused: true,
+        allowProtectionPause: true,
+        protectionEnforced: false
+      }
+    },
+    findComposer: () => null,
+    readLocalTextFileFromDataTransfer: async () => {
+      throw new Error("paused built-in provider file input should not read raw files");
+    },
+    handOffSanitizedLocalFile() {
+      throw new Error("paused built-in provider file input should not hand off sanitized files");
+    }
+  });
+  const dragPolicy = resolveFileDragGuardPolicy({
+    types: ["Files"],
+    files: [rawFile],
+    items: []
+  });
+  const { event, calls: eventCalls } = createEvent({
+    type: "change",
+    target: fileInput
+  });
+
+  const result = await maybeHandleFileInputChange(event);
+
+  assert.strictEqual(dragPolicy.action, "allow");
+  assert.strictEqual(result, undefined);
+  assert.strictEqual(event.defaultPrevented, false);
+  assert.strictEqual(eventCalls.stopImmediatePropagation, 0);
+  assert.strictEqual(fileInput.value, "C:\\fakepath\\paused-legacy.doc");
+  assert.strictEqual(calls.reads.length, 0);
+  assert.strictEqual(calls.redactions.length, 0);
+  assert.strictEqual(calls.createdFiles.length, 0);
+  assert.strictEqual(calls.handoffs.length, 0);
+  assert.strictEqual(calls.modals.length, 0);
+}
+
+async function testEnforcedPauseStillBlocksBuiltInProviderRawFileInput() {
+  const rawFile = createTextFile({
+    name: "enforced-legacy.doc",
+    type: "application/msword",
+    text: "DOC_API_KEY=sk-proj-EnforcedPausedFileInputUnitQa1234567890abcdef"
+  });
+  const fileInput = createFileInput();
+  fileInput.files = [rawFile];
+  fileInput.value = "C:\\fakepath\\enforced-legacy.doc";
+  const { maybeHandleFileInputChange, resolveFileDragGuardPolicy, calls } = createHarness({
+    location: { hostname: "chatgpt.com" },
+    currentPublicState: {
+      currentSite: { protected: true },
+      protection: {
+        paused: true,
+        allowProtectionPause: true,
+        protectionEnforced: true
+      }
+    },
+    findComposer: () => null,
+    readLocalTextFileFromDataTransfer: async () => {
+      throw new Error("enforced file input should be blocked before the raw reader");
+    }
+  });
+  const dragPolicy = resolveFileDragGuardPolicy({
+    types: ["Files"],
+    files: [rawFile],
+    items: []
+  });
+  const { event, calls: eventCalls } = createEvent({
+    type: "change",
+    target: fileInput
+  });
+
+  await maybeHandleFileInputChange(event);
+
+  assert.strictEqual(dragPolicy.action, "block");
+  assert.strictEqual(dragPolicy.reason, "unsupported_protected_file_blocked");
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(eventCalls.stopImmediatePropagation, 1);
+  assert.strictEqual(fileInput.value, "");
+  assert.strictEqual(calls.reads.length, 0);
+  assert.ok(calls.modals.some(([title]) => title === "Raw file upload blocked"));
 }
 
 async function testProtectedUnknownBinaryFileInputBlocksRawUpload() {
@@ -14840,6 +14953,8 @@ function testMultiFileProtectedUploadStaticGuards() {
   await testSupportedDocumentDropUsesContentExtractionPipelineBeforeUnsupportedNotice();
   await testScannedPdfFileInputExplainsFailClosedReason();
   await testProtectedLegacyOfficeFileInputBlocksRawUpload();
+  await testPausedBuiltInProviderFileInputLetsPageHandleRawFile();
+  await testEnforcedPauseStillBlocksBuiltInProviderRawFileInput();
   await testProtectedUnknownBinaryFileInputBlocksRawUpload();
   await testUnsupportedFileReadFailureHidesProcessingUi();
   await testFileProcessingUiClearsAfterException();

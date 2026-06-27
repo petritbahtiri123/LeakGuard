@@ -89,19 +89,21 @@ function testPauseMessagesAndStorageScopeAreTabScoped() {
   assert.ok(backgroundPauseSource.includes("return toPublicState(nextState, policySummary)"));
 }
 
-function testPauseDoesNotBypassEnforcedPolicyOrBuiltInFileSafety() {
+function testPauseDoesNotBypassEnforcedPolicyButPausesFileSafety() {
   const pauseGateSource = extractFunctionSource(contentSource, "isProtectionPauseActiveAfterPolicy");
   assert.ok(pauseGateSource.includes("if (protection.protectionEnforced) return false"));
   assert.ok(pauseGateSource.includes("if (policy?.strictFailure) return false"));
   assert.ok(pauseGateSource.includes("if (destinationPolicy?.blocked || destinationPolicy?.requiresRedaction) return false"));
 
   const fileDriverSource = extractFunctionSource(contentSource, "isProtectedFileDropDriver");
+  const enforcedIndex = fileDriverSource.indexOf("if (protection.protectionEnforced === true) return true");
+  const pausedIndex = fileDriverSource.indexOf("if (protection.paused === true && protection.allowProtectionPause === true) return false");
   const builtinIndex = fileDriverSource.indexOf('id === "gemini"');
-  const genericPauseIndex = fileDriverSource.indexOf("return getActiveProtection().paused !== true");
-  assert.ok(builtinIndex >= 0 && genericPauseIndex > builtinIndex);
+  assert.ok(enforcedIndex >= 0, "enforced policy should still protect file flows");
+  assert.ok(pausedIndex > enforcedIndex, "policy enforcement should win before pause is honored");
   assert.ok(
-    fileDriverSource.includes("return true") && genericPauseIndex > fileDriverSource.indexOf("return true"),
-    "built-in protected-site file safety should be recognized before the generic pause fallback"
+    builtinIndex > pausedIndex,
+    "paused protection should disable built-in protected-site file interception"
   );
 }
 
@@ -117,7 +119,7 @@ function testDisabledSavedSiteOverviewStillReturnsProtectionState() {
 
 testPauseButtonVisibleOnlyForProtectedOrPausedTab();
 testPauseMessagesAndStorageScopeAreTabScoped();
-testPauseDoesNotBypassEnforcedPolicyOrBuiltInFileSafety();
+testPauseDoesNotBypassEnforcedPolicyButPausesFileSafety();
 testDisabledSavedSiteOverviewStillReturnsProtectionState();
 
 console.log("PASS popup UI pause protection regressions");

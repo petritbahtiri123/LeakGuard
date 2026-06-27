@@ -4525,6 +4525,10 @@
   }
 
   function isProtectedFileDropDriver(id) {
+    const protection = getActiveProtection();
+    if (protection.protectionEnforced === true) return true;
+    if (protection.paused === true && protection.allowProtectionPause === true) return false;
+
     if (
       id === "gemini" ||
       id === "chatgpt" ||
@@ -4540,9 +4544,9 @@
     }
     if (currentPublicState.currentSite?.protected === true) return true;
     if (currentPublicState.currentSite?.protected === false) {
-      return getActiveProtection().protectionEnforced === true;
+      return false;
     }
-    return getActiveProtection().paused !== true;
+    return true;
   }
 
   function shouldHandleChatGptLargeTextPaste(pasted, quickAnalysis) {
