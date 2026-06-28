@@ -19,6 +19,11 @@
     getFileScanner().UNSUPPORTED_COMPOSER_FILE_MESSAGE ||
     FileLimits.UNSUPPORTED_COMPOSER_FILE_MESSAGE ||
     "LeakGuard did not scan or redact this unsupported file. Supported text, text PDF, DOCX, XLSX, and PNG/JPG/JPEG/WEBP image paths are protected where available. Unsupported archives, executables, legacy Office files, unsupported images, and binary files are blocked on protected sites when LeakGuard cannot safely replace them.";
+  const SUPPORTED_CLIPBOARD_IMAGE_MIME_TYPES = new Map([
+    ["image/png", "png"],
+    ["image/jpeg", "jpg"],
+    ["image/webp", "webp"]
+  ]);
 
   function getFileScanner() {
     return root.PWM.FileScanner || {};
@@ -50,6 +55,109 @@
       )
       .map((item) => item.getAsFile())
       .filter(Boolean);
+  }
+
+  function normalizeMimeType(mimeType) {
+    return String(mimeType || "").split(";")[0].trim().toLowerCase();
+  }
+
+  function isSupportedClipboardImageMimeType(mimeType) {
+    return SUPPORTED_CLIPBOARD_IMAGE_MIME_TYPES.has(normalizeMimeType(mimeType));
+  }
+
+  function createSafeClipboardImageName(mimeType) {
+    const extension = SUPPORTED_CLIPBOARD_IMAGE_MIME_TYPES.get(normalizeMimeType(mimeType)) || "png";
+    return `clipboard-image.${extension}`;
+  }
+
+  function cloneClipboardImageFile(file, mimeType) {
+    const normalizedType = normalizeMimeType(mimeType || file?.type);
+    if (!file || !isSupportedClipboardImageMimeType(normalizedType)) return file;
+
+    const safeName = createSafeClipboardImageName(normalizedType);
+    if (String(file.name || "") === safeName && normalizeMimeType(file.type) === normalizedType) {
+      return file;
+    }
+
+    const lastModified = Number(file.lastModified || Date.now());
+    if (typeof root.File === "function" && typeof root.Blob === "function" && file instanceof root.Blob) {
+      try {
+        return new root.File([file], safeName, {
+          type: normalizedType,
+          lastModified
+        });
+      } catch {
+        // Fall through to a metadata wrapper; the underlying bytes remain the original clipboard blob.
+      }
+    }
+
+    const wrapped = {
+      name: safeName,
+      type: normalizedType,
+      size: Number(file.size || 0),
+      lastModified
+    };
+    if (typeof file.arrayBuffer === "function") {
+      wrapped.arrayBuffer = () => file.arrayBuffer();
+    }
+    if (typeof file.text === "function") {
+      wrapped.text = () => file.text();
+    }
+    if (typeof file.stream === "function") {
+      wrapped.stream = () => file.stream();
+    }
+    if (typeof file.slice === "function") {
+      wrapped.slice = (...args) => file.slice(...args);
+    }
+    return wrapped;
+  }
+
+  function listClipboardTransferFiles(dataTransfer) {
+    const itemFiles = Array.from(dataTransfer?.items || [])
+      .filter(
+        (item) =>
+          String(item?.kind || "").toLowerCase() === "file" &&
+          typeof item.getAsFile === "function"
+      )
+      .map((item) => {
+        const file = item.getAsFile();
+        if (!file) return null;
+        const itemType = normalizeMimeType(item.type);
+        return isSupportedClipboardImageMimeType(itemType)
+          ? cloneClipboardImageFile(file, itemType)
+          : cloneClipboardImageFile(file, file.type);
+      })
+      .filter(Boolean);
+    if (itemFiles.length) return itemFiles;
+
+    return Array.from(dataTransfer?.files || [])
+      .filter(Boolean)
+      .map((file) => cloneClipboardImageFile(file, file.type));
+  }
+
+  function normalizeClipboardImageDataTransfer(dataTransfer) {
+    if (!dataTransferHasFiles(dataTransfer)) return dataTransfer;
+
+    const files = listClipboardTransferFiles(dataTransfer);
+    if (!files.length) return dataTransfer;
+    const hasClipboardImage = files.some((file) => isSupportedClipboardImageMimeType(file?.type));
+    if (!hasClipboardImage) return dataTransfer;
+
+    const types = Array.from(dataTransfer?.types || []);
+    if (!types.includes("Files")) types.push("Files");
+
+    return {
+      files,
+      types,
+      items: files.map((file) => ({
+        kind: "file",
+        type: file?.type || "",
+        getAsFile: () => file
+      })),
+      getData: (...args) => dataTransfer?.getData?.(...args) || "",
+      dropEffect: dataTransfer?.dropEffect || "none",
+      effectAllowed: dataTransfer?.effectAllowed || "all"
+    };
   }
 
   function countFileItems(dataTransfer) {
@@ -326,6 +434,7 @@
     dataTransferHasFiles,
     listDataTransferFiles,
     dataTransferHasUnavailableFileItems,
+    normalizeClipboardImageDataTransfer,
     readLocalTextFileFromDataTransfer,
     createSanitizedTextFile,
     redactSensitiveFileName

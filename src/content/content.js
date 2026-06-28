@@ -47,6 +47,7 @@
   } = ComposerHelpers;
   const {
     dataTransferHasFiles,
+    normalizeClipboardImageDataTransfer,
     readLocalTextFileFromDataTransfer,
     createSanitizedTextFile,
     redactSensitiveFileName
@@ -3522,6 +3523,41 @@
     }
   }
 
+  function createWhatsAppPlainTextTransfer(text) {
+    if (typeof DataTransfer !== "function") return null;
+    try {
+      const transfer = new DataTransfer();
+      transfer.setData("text/plain", text);
+      transfer.setData("text", text);
+      return transfer;
+    } catch {
+      return null;
+    }
+  }
+
+  function dispatchWhatsAppEditorPasteEvent(input, text) {
+    if (!input || typeof ClipboardEvent !== "function") return false;
+    const transfer = createWhatsAppPlainTextTransfer(text);
+    if (!transfer) return false;
+
+    try {
+      const event = new ClipboardEvent("paste", {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        clipboardData: transfer
+      });
+      const hasClipboardText =
+        event.clipboardData?.getData?.("text/plain") === text ||
+        attachEventDataTransfer(event, "clipboardData", transfer);
+      if (!hasClipboardText) return false;
+      const dispatched = input.dispatchEvent(event);
+      return dispatched && !event.defaultPrevented;
+    } catch {
+      return false;
+    }
+  }
+
   async function waitForWhatsAppComposerText(input, expectedText, options = {}) {
     const expected = normalizeComposerText(expectedText);
     const timeoutMs = Math.max(WHATSAPP_REWRITE_POLL_MS, Number(options.timeoutMs) || WHATSAPP_REWRITE_INSERT_TIMEOUT_MS);
@@ -3570,7 +3606,11 @@
     const normalized = normalizeComposerText(text);
     if (!selectWhatsAppComposerContents(input)) return false;
 
-    const inserted = !normalized || runWhatsAppEditorCommand("insertText", normalized);
+    const inserted = !normalized || (
+      normalized.includes("\n")
+        ? dispatchWhatsAppEditorPasteEvent(input, normalized)
+        : runWhatsAppEditorCommand("insertText", normalized)
+    );
     if (!inserted) return false;
 
     if (Number.isFinite(options.caretOffset)) {
@@ -4465,7 +4505,11 @@
       return;
     }
 
-    const pasteTransfer = getPasteTransfer(event);
+    const rawPasteTransfer = getPasteTransfer(event);
+    const pasteTransfer =
+      typeof normalizeClipboardImageDataTransfer === "function"
+        ? normalizeClipboardImageDataTransfer(rawPasteTransfer)
+        : rawPasteTransfer;
     if (
       typeof dataTransferHasFiles === "function" &&
       dataTransferHasFiles(pasteTransfer) &&

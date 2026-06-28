@@ -416,6 +416,12 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
       contentSource.includes("createSanitizedTextFile"),
     "content script should intercept local file paste/drop/file-input before host pages receive raw files"
   );
+  assert.ok(
+    fallbackSendSource.includes('event.key !== "Enter"') &&
+      !/\bevent\.key\s*={2,3}\s*["']v["']/i.test(fallbackSendSource) &&
+      !fallbackSendSource.includes("clipboardData"),
+    "keydown guards should not block Ctrl+V/Ctrl+Alt+V before paste clipboardData can be inspected"
+  );
   assert.strictEqual(
     manifestScripts[0],
     "content/file_drag_guard.js",
@@ -1642,8 +1648,10 @@ function testWhatsAppEditorActionEmitsSingleDataBearingInsert() {
       "const selection = { removeAllRanges() {}, addRange() {} };",
       "const range = { selectNodeContents() {} };",
       "const window = { getSelection: () => selection };",
-      "class Event { constructor(type, init = {}) { this.type = type; this.bubbles = Boolean(init.bubbles); this.composed = Boolean(init.composed); } }",
+      "class Event { constructor(type, init = {}) { this.type = type; this.bubbles = Boolean(init.bubbles); this.composed = Boolean(init.composed); this.defaultPrevented = false; } preventDefault() { this.defaultPrevented = true; } }",
       "class InputEvent extends Event { constructor(type, init = {}) { super(type, init); this.cancelable = Boolean(init.cancelable); this.inputType = init.inputType || ''; this.data = init.data == null ? null : String(init.data); } }",
+      "class DataTransfer { constructor() { this.store = new Map(); this.types = []; } setData(type, value) { this.store.set(type, String(value || '')); this.types = Array.from(this.store.keys()); } getData(type) { return this.store.get(type) || ''; } }",
+      "class ClipboardEvent extends Event { constructor(type, init = {}) { super(type, init); this.cancelable = Boolean(init.cancelable); this.clipboardData = init.clipboardData || null; } }",
       "const document = {",
       "  createRange: () => range,",
       "  dispatchEvent: () => true,",
@@ -1656,7 +1664,8 @@ function testWhatsAppEditorActionEmitsSingleDataBearingInsert() {
       "const input = {",
       "  focus() {},",
       "  dispatchEvent(event) {",
-      "    calls.events.push({ type: event.type, inputType: event.inputType || '', data: event.data == null ? null : String(event.data) });",
+      "    calls.events.push({ type: event.type, inputType: event.inputType || '', data: event.data == null ? null : String(event.data), clipboardText: event.clipboardData?.getData?.('text/plain') || '' });",
+      "    if (event.type === 'paste') { modelText += event.clipboardData?.getData?.('text/plain') || ''; return true; }",
       "    if ((event.type === 'beforeinput' || event.type === 'input') && event.data && /^insert/.test(event.inputType || '')) {",
       "      modelText += event.data;",
       "    }",
@@ -1669,6 +1678,9 @@ function testWhatsAppEditorActionEmitsSingleDataBearingInsert() {
       extractFunctionSource(contentSource, "focusWhatsAppComposer"),
       extractFunctionSource(contentSource, "selectWhatsAppComposerContents"),
       extractFunctionSource(contentSource, "runWhatsAppEditorCommand"),
+      extractFunctionSource(contentSource, "attachEventDataTransfer"),
+      extractFunctionSource(contentSource, "createWhatsAppPlainTextTransfer"),
+      extractFunctionSource(contentSource, "dispatchWhatsAppEditorPasteEvent"),
       extractFunctionSource(contentSource, "insertWhatsAppComposerTextThroughEditor"),
       "return { input, calls, insertWhatsAppComposerTextThroughEditor, getText: () => modelText };"
     ].join("\n\n")
@@ -1685,6 +1697,36 @@ function testWhatsAppEditorActionEmitsSingleDataBearingInsert() {
     "WhatsApp sanitized editor write should not duplicate text through data-bearing beforeinput/input events"
   );
   assert.deepStrictEqual(harness.calls.commands, [{ command: "insertText", value: text }]);
+
+  const multilineHarness = factory(ComposerHelpers.normalizeComposerText);
+  const multilineText = [
+    "LGQA_WHATSAPP_SINGLE_WRITE first [PWM_1]",
+    "LGQA_WHATSAPP_SINGLE_WRITE second [PWM_2]",
+    "LGQA_WHATSAPP_SINGLE_WRITE third"
+  ].join("\n");
+
+  const multilineInserted = multilineHarness.insertWhatsAppComposerTextThroughEditor(
+    multilineHarness.input,
+    multilineText
+  );
+
+  assert.strictEqual(multilineInserted, true);
+  assert.strictEqual(
+    multilineHarness.getText(),
+    multilineText,
+    "WhatsApp sanitized editor write should preserve multiline shape without duplicating text"
+  );
+  assert.deepStrictEqual(multilineHarness.calls.commands, []);
+  assert.deepStrictEqual(
+    multilineHarness.calls.events.filter((event) => event.type === "paste").map((event) => event.clipboardText),
+    [multilineText],
+    "WhatsApp multiline rewrite should hand sanitized text to the editor paste path"
+  );
+  assert.deepStrictEqual(
+    multilineHarness.calls.events.filter((event) => event.data),
+    [],
+    "WhatsApp multiline rewrite should not dispatch extra data-bearing synthetic input events"
+  );
 }
 
 async function testWhatsAppRewriteUsesSyncedComposerPathBeforeAppendProneStrategies() {

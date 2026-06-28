@@ -1089,6 +1089,7 @@ function createHarness(overrides = {}) {
     collectFailureDetails: () => ({}),
     showRewriteFailure: async () => {},
     dataTransferHasFiles,
+    normalizeClipboardImageDataTransfer: globalThis.PWM.FilePasteHelpers.normalizeClipboardImageDataTransfer,
     readLocalTextFileFromDataTransfer: async (transfer) => {
       calls.reads.push(transfer);
       return {
@@ -7308,6 +7309,280 @@ async function testUnnamedClipboardImagePasteUsesContentExtractionPipeline() {
   assert.notStrictEqual(calls.handoffs[0].sanitizedFile, rawFile);
   assert.strictEqual(calls.textFallbacks.length, 0, "pasted image must not insert OCR text");
   assert.strictEqual(JSON.stringify(calls).includes("sk-proj-ShouldNotReachProvider"), false);
+}
+
+async function testClipboardImagePasteItemsOnlyRoutesSupportedImagesToPipeline() {
+  const cases = [
+    {
+      mimeType: "image/png",
+      expectedName: "clipboard-image.png",
+      sanitizedName: "clipboard-image.redacted.png",
+      target: createChatGptContentEditableComposer("")
+    },
+    {
+      mimeType: "image/jpeg",
+      expectedName: "clipboard-image.jpg",
+      sanitizedName: "clipboard-image.redacted.png",
+      target: { tagName: "TEXTAREA", text: "", selection: { start: 0, end: 0 } }
+    },
+    {
+      mimeType: "image/webp",
+      expectedName: "clipboard-image.webp",
+      sanitizedName: "clipboard-image.redacted.png",
+      target: { tagName: "TEXTAREA", text: "", selection: { start: 0, end: 0 } }
+    }
+  ];
+
+  for (const item of cases) {
+    const rawFile = createReadableTextFile({
+      name: "",
+      type: "",
+      text: `LGQA fake ${item.mimeType} clipboard bytes with sk-proj-RawClipboardImageShouldNotUpload1234567890`
+    });
+    const sanitizedImage = {
+      name: item.sanitizedName,
+      type: "image/png",
+      size: 256,
+      async text() {
+        throw new Error(`${item.mimeType} pasted image must not be inserted as OCR text`);
+      }
+    };
+    const pipelineCalls = [];
+    const { maybeHandlePaste, calls } = createHarness({
+      location: { hostname: "chatgpt.com" },
+      findComposer: () => item.target,
+      canExtractForAdapterHandoff: globalThis.PWM.ContentFileExtractionPipeline.canExtractForAdapterHandoff,
+      processFileForAdapterHandoff: async ({ file, context }) => {
+        pipelineCalls.push({ file, context });
+        assert.strictEqual(file.name, item.expectedName);
+        assert.strictEqual(file.type, item.mimeType);
+        return {
+          status: "ready",
+          originalName: item.expectedName,
+          outputName: item.sanitizedName,
+          outputKind: "redacted_image_file",
+          extractedKind: "image_ocr",
+          sanitizedText: "API_KEY=[PWM_1]",
+          sanitizedFile: sanitizedImage,
+          sanitizedImageFile: sanitizedImage,
+          metadata: {
+            original: {
+              name: item.expectedName,
+              type: item.mimeType,
+              size: rawFile.size
+            },
+            scan: {
+              findingsCount: 1
+            }
+          },
+          warnings: [],
+          safeForUpload: true,
+          fileOnlyUpload: true,
+          skipTextFallback: true,
+          fallbackReason: ""
+        };
+      },
+      readLocalTextFileFromDataTransfer: async () => {
+        throw new Error("clipboard image paste should not use the text-file reader");
+      }
+    });
+    const clipboardData = {
+      types: ["text/html"],
+      files: [],
+      items: [
+        {
+          kind: "string",
+          type: "text/html",
+          getAsFile: () => null
+        },
+        {
+          kind: "file",
+          type: item.mimeType,
+          getAsFile: () => rawFile
+        }
+      ],
+      getData(type) {
+        if (type === "text/html") return "<img alt=\"LGQA fake clipboard image\">";
+        if (type === "text/plain") return "API_KEY=LeakGuardPasteApiKey1234567890";
+        return "";
+      }
+    };
+    const { event } = createClipboardEvent({
+      clipboardData,
+      target: item.target
+    });
+
+    await maybeHandlePaste(event);
+
+    assert.strictEqual(event.defaultPrevented, true, `${item.mimeType} raw clipboard image paste should be consumed`);
+    assert.strictEqual(pipelineCalls.length, 1, `${item.mimeType} should use content extraction pipeline`);
+    assert.strictEqual(pipelineCalls[0].context, "paste");
+    assert.strictEqual(calls.redactions.length, 0, `${item.mimeType} should not run text paste redaction`);
+    assert.strictEqual(calls.handoffs.length, 1, `${item.mimeType} should hand off sanitized image`);
+    assert.strictEqual(calls.handoffs[0].sanitizedFile, sanitizedImage);
+    assert.notStrictEqual(calls.handoffs[0].sanitizedFile, rawFile);
+    assert.strictEqual(calls.textFallbacks.length, 0, `${item.mimeType} must not insert OCR text`);
+    assert.strictEqual(JSON.stringify(calls).includes("sk-proj-RawClipboardImageShouldNotUpload"), false);
+  }
+}
+
+async function testClipboardImagePasteUnsafeOriginalFilenameStaysInternal() {
+  const rawFileName = "sk-proj-ClipboardImageFileNameSecret1234567890abcdef.png";
+  const rawFile = createReadableTextFile({
+    name: rawFileName,
+    type: "image/png",
+    text: "LGQA fake clipboard image bytes"
+  });
+  const sanitizedImage = {
+    name: "clipboard-image.redacted.png",
+    type: "image/png",
+    size: 256,
+    async text() {
+      throw new Error("pasted image handoff must not read sanitized image as text");
+    }
+  };
+  const pipelineCalls = [];
+  const { maybeHandlePaste, calls } = createHarness({
+    location: { hostname: "chatgpt.com" },
+    findComposer: () => ({ tagName: "TEXTAREA", text: "", selection: { start: 0, end: 0 } }),
+    canExtractForAdapterHandoff: globalThis.PWM.ContentFileExtractionPipeline.canExtractForAdapterHandoff,
+    processFileForAdapterHandoff: async ({ file, context }) => {
+      pipelineCalls.push({ file, context });
+      return {
+        status: "ready",
+        originalName: file.name,
+        outputName: sanitizedImage.name,
+        outputKind: "redacted_image_file",
+        extractedKind: "image_ocr",
+        sanitizedText: "",
+        sanitizedFile: sanitizedImage,
+        metadata: { scan: { findingsCount: 0 } },
+        warnings: [],
+        safeForUpload: true,
+        fileOnlyUpload: true,
+        skipTextFallback: true,
+        fallbackReason: ""
+      };
+    }
+  });
+  const { event } = createClipboardEvent({
+    clipboardData: {
+      types: ["Files"],
+      files: [rawFile],
+      items: [
+        {
+          kind: "file",
+          type: "image/png",
+          getAsFile: () => rawFile
+        }
+      ],
+      getData: () => ""
+    }
+  });
+
+  await maybeHandlePaste(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(pipelineCalls.length, 1);
+  assert.strictEqual(pipelineCalls[0].file.name, "clipboard-image.png");
+  assert.strictEqual(calls.handoffs.length, 1);
+  assert.strictEqual(JSON.stringify(calls).includes(rawFileName), false);
+}
+
+async function testClipboardImagePasteOcrFailureBlocksRawImage() {
+  const rawFile = createReadableTextFile({
+    name: "",
+    type: "",
+    text: "LGQA fake clipboard PNG bytes"
+  });
+  const { maybeHandlePaste, calls } = createHarness({
+    location: { hostname: "chatgpt.com" },
+    findComposer: () => ({ tagName: "TEXTAREA", text: "", selection: { start: 0, end: 0 } }),
+    canExtractForAdapterHandoff: globalThis.PWM.ContentFileExtractionPipeline.canExtractForAdapterHandoff,
+    processFileForAdapterHandoff: async () => ({
+      status: "blocked",
+      originalName: "",
+      outputName: "",
+      outputKind: "",
+      extractedKind: "image_ocr",
+      sanitizedText: "",
+      sanitizedFile: null,
+      metadata: {
+        original: {
+          name: "",
+          type: "image/png",
+          size: rawFile.size
+        }
+      },
+      warnings: ["image-redaction:ocr_failed"],
+      safeForUpload: false,
+      fallbackReason: "ocr_failed"
+    }),
+    readLocalTextFileFromDataTransfer: async () => {
+      throw new Error("failed clipboard image OCR must not fall back to text-file read");
+    }
+  });
+  const { event } = createClipboardEvent({
+    clipboardData: {
+      types: ["Files"],
+      files: [],
+      items: [
+        {
+          kind: "file",
+          type: "image/png",
+          getAsFile: () => rawFile
+        }
+      ],
+      getData: () => ""
+    }
+  });
+
+  const result = await maybeHandlePaste(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(calls.handoffs.length, 0);
+  assert.strictEqual(calls.textFallbacks.length, 0);
+  assert.ok(calls.modals.some(([title]) => title === "Raw image upload blocked"));
+}
+
+async function testWhatsAppClipboardImagePasteRemainsUnsupported() {
+  const rawFile = createReadableTextFile({
+    name: "",
+    type: "",
+    text: "LGQA fake WhatsApp clipboard image bytes"
+  });
+  const { maybeHandlePaste, calls } = createHarness({
+    location: { hostname: "web.whatsapp.com" },
+    findComposer: () => ({ tagName: "DIV", isContentEditable: true, text: "", selection: { start: 0, end: 0 } }),
+    processFileForAdapterHandoff: async () => {
+      throw new Error("WhatsApp image paste must not enter image handoff in text-only phase");
+    },
+    readLocalTextFileFromDataTransfer: async () => {
+      throw new Error("WhatsApp image paste must not read raw image as text");
+    }
+  });
+  const { event } = createClipboardEvent({
+    clipboardData: {
+      types: ["Files"],
+      files: [],
+      items: [
+        {
+          kind: "file",
+          type: "image/png",
+          getAsFile: () => rawFile
+        }
+      ],
+      getData: () => ""
+    }
+  });
+
+  const result = await maybeHandlePaste(event);
+
+  assert.strictEqual(event.defaultPrevented, true);
+  assert.strictEqual(result.reason, "whatsapp_file_attachments_unsupported");
+  assert.strictEqual(calls.handoffs.length, 0);
+  assert.ok(calls.modals.some(([title]) => title === "WhatsApp file upload blocked"));
 }
 
 async function testProtectedSiteImageOcrFailureBlocksRawUpload() {
@@ -15028,6 +15303,10 @@ function testMultiFileProtectedUploadStaticGuards() {
   await testDocumentAndImageFileInputUseContentExtractionPipelineForSanitizedHandoff();
   await testSupportedImageFileInputAttachesSanitizedImageAcrossAdapters();
   await testUnnamedClipboardImagePasteUsesContentExtractionPipeline();
+  await testClipboardImagePasteItemsOnlyRoutesSupportedImagesToPipeline();
+  await testClipboardImagePasteUnsafeOriginalFilenameStaysInternal();
+  await testClipboardImagePasteOcrFailureBlocksRawImage();
+  await testWhatsAppClipboardImagePasteRemainsUnsupported();
   await testProtectedSiteImageOcrFailureBlocksRawUpload();
   await testProtectedSiteImageHandoffFailureDoesNotTextFallback();
   await testSupportedDocumentDropUsesContentExtractionPipelineBeforeUnsupportedNotice();

@@ -15,6 +15,7 @@ const {
   dataTransferHasFiles,
   listDataTransferFiles,
   dataTransferHasUnavailableFileItems,
+  normalizeClipboardImageDataTransfer,
   readLocalTextFileFromDataTransfer,
   createSanitizedTextFile
 } = globalThis.PWM.FilePasteHelpers;
@@ -54,6 +55,7 @@ function createDataTransfer(files, options = {}) {
     files: options.omitFiles ? [] : files,
     items: files.map((file) => ({
       kind: options.uppercaseKind ? "FILE" : "file",
+      type: options.itemType || file.type || "",
       getAsFile: () => (options.getAsFileReturnsNull ? null : file)
     }))
   };
@@ -201,6 +203,47 @@ async function testFirefoxItemsOnlyNullFileFailsClosed() {
   assert.strictEqual(result.code, "firefox_data_transfer_file_unavailable");
 }
 
+async function testClipboardImageItemsNormalizeSafeSyntheticNames() {
+  for (const [mimeType, expectedName] of [
+    ["image/png", "clipboard-image.png"],
+    ["image/jpeg", "clipboard-image.jpg"],
+    ["image/webp", "clipboard-image.webp"]
+  ]) {
+    const rawText = `LGQA fake clipboard ${mimeType} bytes`;
+    const rawFile = createFile({ name: "", type: "", text: rawText });
+    const dataTransfer = {
+      types: ["text/html"],
+      files: [],
+      items: [
+        {
+          kind: "string",
+          type: "text/html",
+          getAsFile: () => null
+        },
+        {
+          kind: "file",
+          type: mimeType,
+          getAsFile: () => rawFile
+        }
+      ],
+      getData(type) {
+        return type === "text/html" ? "<img alt=\"LGQA fake image\">" : "";
+      }
+    };
+
+    const normalized = normalizeClipboardImageDataTransfer(dataTransfer);
+    const [file] = listDataTransferFiles(normalized);
+    const normalizedText = new TextDecoder().decode(await file.arrayBuffer());
+
+    assert.strictEqual(dataTransferHasFiles(dataTransfer), true);
+    assert.notStrictEqual(file, rawFile, `${mimeType} clipboard image should be wrapped internally`);
+    assert.strictEqual(file.name, expectedName);
+    assert.strictEqual(file.type, mimeType);
+    assert.strictEqual(normalized.getData("text/html"), "<img alt=\"LGQA fake image\">");
+    assert.strictEqual(normalizedText, rawText);
+  }
+}
+
 async function testMultipleFilesRejectedWithoutReading() {
   const first = createFile({ name: "one.env", text: "API_KEY=LeakGuardOne1234567890" });
   const second = createFile({ name: "two.env", text: "API_KEY=LeakGuardTwo1234567890" });
@@ -310,6 +353,7 @@ async function testOversizedTextFileRequiresStreamingWithoutWholeFileRead() {
   await testClipboardItemsFilePathDecodesLocally();
   await testFirefoxItemsOnlyFilePathDecodesLocally();
   await testFirefoxItemsOnlyNullFileFailsClosed();
+  await testClipboardImageItemsNormalizeSafeSyntheticNames();
   await testMultipleFilesRejectedWithoutReading();
   await testUnsupportedFilesPassThroughAndTextBinaryFilesRejected();
   await testNoFileTransferIgnored();
