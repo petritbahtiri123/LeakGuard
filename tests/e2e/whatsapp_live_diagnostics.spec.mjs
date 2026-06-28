@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { launchExtensionContext } from "./helpers/extensionFixture.mjs";
+import { shouldAbortForInitialComposer } from "./helpers/whatsappLiveDiagnostics.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "../..");
@@ -307,7 +308,7 @@ test.describe("@live @whatsapp manual WhatsApp Web diagnostics", () => {
       }, { fakeValues: fakeRawValues });
 
       artifact.initial = await page.evaluate(() => window.__LGQA_WHATSAPP_LIVE_DIAG__.capture("initial"));
-      if (artifact.initial.rawLength > 0 && !String(artifact.initial.normalizedText || "").includes("LGQA_")) {
+      if (shouldAbortForInitialComposer(artifact.initial)) {
         artifact.aborted = "Composer contained non-LGQA text before diagnostic input; clear the safe test chat composer and rerun.";
         artifact.path = await writeArtifact("aborted", artifact);
         expect(artifact.aborted).toBe("");

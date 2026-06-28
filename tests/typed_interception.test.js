@@ -1633,6 +1633,60 @@ async function testWhatsAppSecondSubmitOrEnterWhilePendingDoesNotStartRetryPath(
   assert.strictEqual(enterPath.calls.blocks, 0, "pending WhatsApp Enter retry should not show a false block");
 }
 
+function testWhatsAppEditorActionEmitsSingleDataBearingInsert() {
+  const factory = new Function(
+    "normalizeComposerText",
+    [
+      "const calls = { commands: [], events: [] };",
+      "let modelText = '';",
+      "const selection = { removeAllRanges() {}, addRange() {} };",
+      "const range = { selectNodeContents() {} };",
+      "const window = { getSelection: () => selection };",
+      "class Event { constructor(type, init = {}) { this.type = type; this.bubbles = Boolean(init.bubbles); this.composed = Boolean(init.composed); } }",
+      "class InputEvent extends Event { constructor(type, init = {}) { super(type, init); this.cancelable = Boolean(init.cancelable); this.inputType = init.inputType || ''; this.data = init.data == null ? null : String(init.data); } }",
+      "const document = {",
+      "  createRange: () => range,",
+      "  dispatchEvent: () => true,",
+      "  execCommand(command, _showUi, value) {",
+      "    calls.commands.push({ command, value: value == null ? null : String(value) });",
+      "    if (command === 'insertText') { modelText += String(value || ''); return true; }",
+      "    return false;",
+      "  }",
+      "};",
+      "const input = {",
+      "  focus() {},",
+      "  dispatchEvent(event) {",
+      "    calls.events.push({ type: event.type, inputType: event.inputType || '', data: event.data == null ? null : String(event.data) });",
+      "    if ((event.type === 'beforeinput' || event.type === 'input') && event.data && /^insert/.test(event.inputType || '')) {",
+      "      modelText += event.data;",
+      "    }",
+      "    return true;",
+      "  }",
+      "};",
+      "function getInputText() { return modelText; }",
+      extractFunctionSource(contentSource, "dispatchWhatsAppEditorInputEvent"),
+      extractFunctionSource(contentSource, "dispatchWhatsAppEditorChange"),
+      extractFunctionSource(contentSource, "focusWhatsAppComposer"),
+      extractFunctionSource(contentSource, "selectWhatsAppComposerContents"),
+      extractFunctionSource(contentSource, "runWhatsAppEditorCommand"),
+      extractFunctionSource(contentSource, "insertWhatsAppComposerTextThroughEditor"),
+      "return { input, calls, insertWhatsAppComposerTextThroughEditor, getText: () => modelText };"
+    ].join("\n\n")
+  );
+  const harness = factory(ComposerHelpers.normalizeComposerText);
+  const text = "LGQA_WHATSAPP_SINGLE_WRITE my password is [PWM_1]";
+
+  const inserted = harness.insertWhatsAppComposerTextThroughEditor(harness.input, text);
+
+  assert.strictEqual(inserted, true);
+  assert.strictEqual(
+    harness.getText(),
+    text,
+    "WhatsApp sanitized editor write should not duplicate text through data-bearing beforeinput/input events"
+  );
+  assert.deepStrictEqual(harness.calls.commands, [{ command: "insertText", value: text }]);
+}
+
 async function testWhatsAppRewriteUsesSyncedComposerPathBeforeAppendProneStrategies() {
   const factory = new Function(
     "normalizeComposerText",
@@ -2040,6 +2094,7 @@ function run() {
     .then(() => testWhatsAppUntrustedTextExtractionFailsClosed())
     .then(() => testWhatsAppSafeTextVariantsUseVerifiedReplayWithoutRedaction())
     .then(() => testWhatsAppSecondSubmitOrEnterWhilePendingDoesNotStartRetryPath())
+    .then(() => testWhatsAppEditorActionEmitsSingleDataBearingInsert())
     .then(() => testWhatsAppRewriteUsesSyncedComposerPathBeforeAppendProneStrategies())
     .then(() => testWhatsAppSyncedRewriteFailureDoesNotRestoreThroughAppendProneFallback())
     .then(() => testWhatsAppTransactionalSyncedFailureDoesNotAppendFallbackCopies())

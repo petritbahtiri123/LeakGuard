@@ -3570,7 +3570,6 @@
     const normalized = normalizeComposerText(text);
     if (!selectWhatsAppComposerContents(input)) return false;
 
-    dispatchWhatsAppEditorInputEvent(input, "insertText", normalized, { beforeInput: true });
     const inserted = !normalized || runWhatsAppEditorCommand("insertText", normalized);
     if (!inserted) return false;
 
@@ -3581,8 +3580,7 @@
         focusWhatsAppComposer(input);
       }
     }
-    dispatchWhatsAppEditorInputEvent(input, "insertText", normalized);
-    dispatchWhatsAppEditorInputEvent(input, "insertReplacementText", normalized);
+    dispatchWhatsAppEditorInputEvent(input, "insertReplacementText", null);
     dispatchWhatsAppEditorChange(input);
     return true;
   }
