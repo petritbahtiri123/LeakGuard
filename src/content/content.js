@@ -205,6 +205,9 @@
   const PROGRAMMATIC_INPUT_SUPPRESS_MS = 500;
   const FALLBACK_SEND_KEY_SUPPRESS_MS = 5000;
   const WHATSAPP_TEXT_SEND_GUARD_MS = 5000;
+  const WHATSAPP_REWRITE_CLEAR_TIMEOUT_MS = 500;
+  const WHATSAPP_REWRITE_INSERT_TIMEOUT_MS = 700;
+  const WHATSAPP_REWRITE_POLL_MS = 50;
   const WHATSAPP_FILE_ATTACH_UNSUPPORTED_REASON = "whatsapp_file_attachments_unsupported";
   const WHATSAPP_FILE_ATTACH_BLOCK_TITLE = "WhatsApp file upload blocked";
   const WHATSAPP_FILE_ATTACH_BLOCK_MESSAGE =
@@ -3435,24 +3438,241 @@
     });
   }
 
-  function getWhatsAppComposerSyncDependencies() {
+  function dispatchWhatsAppEditorInputEvent(input, inputType, data, options = {}) {
+    if (!input?.dispatchEvent) return false;
+    let event = null;
+    try {
+      event = new InputEvent(options.beforeInput ? "beforeinput" : "input", {
+        bubbles: true,
+        cancelable: Boolean(options.beforeInput),
+        composed: true,
+        inputType,
+        data: data == null ? null : String(data)
+      });
+    } catch {
+      event = new Event(options.beforeInput ? "beforeinput" : "input", {
+        bubbles: true,
+        cancelable: Boolean(options.beforeInput),
+        composed: true
+      });
+    }
+
+    try {
+      input.dispatchEvent(event);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function dispatchWhatsAppEditorChange(input) {
+    try {
+      input?.dispatchEvent?.(new Event("change", { bubbles: true, composed: true }));
+      document.dispatchEvent?.(new Event("selectionchange", { bubbles: true }));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function focusWhatsAppComposer(input) {
+    try {
+      input?.focus?.({ preventScroll: true });
+      return;
+    } catch {
+      try {
+        input?.focus?.();
+      } catch {
+        // Focus is best-effort; verification below decides whether the rewrite worked.
+      }
+    }
+  }
+
+  function selectWhatsAppComposerContents(input) {
+    if (
+      !input ||
+      typeof window === "undefined" ||
+      typeof document === "undefined" ||
+      typeof window.getSelection !== "function" ||
+      typeof document.createRange !== "function"
+    ) {
+      return false;
+    }
+
+    try {
+      focusWhatsAppComposer(input);
+      const selection = window.getSelection();
+      const range = document.createRange();
+      if (!selection || !range) return false;
+      range.selectNodeContents(input);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function runWhatsAppEditorCommand(command, value = null) {
+    if (typeof document?.execCommand !== "function") return false;
+    try {
+      return Boolean(document.execCommand(command, false, value));
+    } catch {
+      return false;
+    }
+  }
+
+  async function waitForWhatsAppComposerText(input, expectedText, options = {}) {
+    const expected = normalizeComposerText(expectedText);
+    const timeoutMs = Math.max(WHATSAPP_REWRITE_POLL_MS, Number(options.timeoutMs) || WHATSAPP_REWRITE_INSERT_TIMEOUT_MS);
+    const stablePasses = Math.max(1, Number(options.stablePasses) || 2);
+    const deadline = Date.now() + timeoutMs;
+    let actual = normalizeComposerText(getInputText(input));
+    let matchedPasses = actual === expected ? 1 : 0;
+
+    while (Date.now() <= deadline) {
+      await new Promise((resolve) => window.setTimeout(resolve, WHATSAPP_REWRITE_POLL_MS));
+      actual = normalizeComposerText(getInputText(input));
+      matchedPasses = actual === expected ? matchedPasses + 1 : 0;
+      if (matchedPasses >= stablePasses) {
+        return { ok: true, actual };
+      }
+    }
+
+    return { ok: false, actual };
+  }
+
+  async function clearWhatsAppComposerThroughEditor(input) {
+    if (!selectWhatsAppComposerContents(input)) {
+      return { ok: false, actual: normalizeComposerText(getInputText(input)), strategy: "whatsapp-select-failed" };
+    }
+
+    dispatchWhatsAppEditorInputEvent(input, "deleteContentBackward", null, { beforeInput: true });
+    const deleted = runWhatsAppEditorCommand("delete");
+    dispatchWhatsAppEditorInputEvent(input, "deleteContentBackward", null);
+    dispatchWhatsAppEditorChange(input);
+
+    if (!deleted) {
+      return { ok: false, actual: normalizeComposerText(getInputText(input)), strategy: "whatsapp-delete-failed" };
+    }
+
+    const cleared = await waitForWhatsAppComposerText(input, "", {
+      timeoutMs: WHATSAPP_REWRITE_CLEAR_TIMEOUT_MS,
+      stablePasses: 2
+    });
     return {
-      debugChatGptSync: debugWhatsAppComposerSync,
-      isChatGptHost: isWhatsAppHost,
-      readStableComposerText,
-      suppressFollowupInputScan,
-      verifyComposerRewriteSafe
+      ...cleared,
+      strategy: cleared.ok ? "whatsapp-clear-synced" : "whatsapp-clear-not-empty"
+    };
+  }
+
+  function insertWhatsAppComposerTextThroughEditor(input, text, options = {}) {
+    const normalized = normalizeComposerText(text);
+    if (!selectWhatsAppComposerContents(input)) return false;
+
+    dispatchWhatsAppEditorInputEvent(input, "insertText", normalized, { beforeInput: true });
+    const inserted = !normalized || runWhatsAppEditorCommand("insertText", normalized);
+    if (!inserted) return false;
+
+    if (Number.isFinite(options.caretOffset)) {
+      try {
+        input.focus({ preventScroll: true });
+      } catch {
+        focusWhatsAppComposer(input);
+      }
+    }
+    dispatchWhatsAppEditorInputEvent(input, "insertText", normalized);
+    dispatchWhatsAppEditorInputEvent(input, "insertReplacementText", normalized);
+    dispatchWhatsAppEditorChange(input);
+    return true;
+  }
+
+  async function applyWhatsAppEditorActionComposerText(input, expectedText, options = {}) {
+    const plan = buildComposerWritePlan(input, expectedText);
+    const expected = plan.canonical;
+    const writeText = plan.writeText;
+    const rawInsertedText =
+      typeof options.rawInsertedText === "string"
+        ? normalizeComposerText(options.rawInsertedText)
+        : "";
+
+    debugWhatsAppComposerSync("whatsapp-sync:before-editor-action", input, expected, null, {
+      context: options.context || "composer-rewrite"
+    });
+
+    suppressFollowupInputScan();
+    const cleared = await clearWhatsAppComposerThroughEditor(input);
+    debugWhatsAppComposerSync("whatsapp-sync:after-clear", input, expected, cleared.actual, {
+      clearOk: cleared.ok,
+      strategy: cleared.strategy
+    });
+    if (!cleared.ok) {
+      return {
+        ok: false,
+        actual: cleared.actual,
+        strategy: cleared.strategy || "whatsapp-clear-failed"
+      };
+    }
+
+    suppressFollowupInputScan();
+    const inserted = insertWhatsAppComposerTextThroughEditor(input, writeText, {
+      caretOffset: options.caretOffset
+    });
+    if (!inserted) {
+      return {
+        ok: false,
+        actual: normalizeComposerText(getInputText(input)),
+        strategy: "whatsapp-insert-failed"
+      };
+    }
+
+    const settled = await waitForWhatsAppComposerText(input, expected, {
+      timeoutMs: WHATSAPP_REWRITE_INSERT_TIMEOUT_MS,
+      stablePasses: 2
+    });
+    debugWhatsAppComposerSync("whatsapp-sync:after-insert-settle", input, expected, settled.actual, {
+      insertOk: inserted,
+      exactMatch: settled.actual === expected
+    });
+    if (!settled.ok || settled.actual !== expected) {
+      return {
+        ok: false,
+        actual: settled.actual,
+        strategy: "whatsapp-insert-verification-failed"
+      };
+    }
+
+    const verification = await verifyComposerRewriteSafe({
+      input,
+      expectedText: expected,
+      originalText: options.originalText || rawInsertedText || options.restoreText || "",
+      redactedText: expected,
+      findings: options.findings,
+      context: options.context || "composer-rewrite",
+      caretOffset: options.caretOffset,
+      actualText: settled.actual,
+      allowMultilineRetry: false
+    });
+
+    if (!verification.ok || normalizeComposerText(verification.actual || settled.actual) !== expected) {
+      return {
+        ok: false,
+        actual: verification.actual || settled.actual,
+        strategy: `whatsapp-${verification.strategy || "rewrite-verification-failed"}`
+      };
+    }
+
+    return {
+      ok: true,
+      actual: verification.actual || settled.actual,
+      strategy: "whatsapp-editor-action"
     };
   }
 
   function applyWhatsAppSyncedComposerText(input, expectedText, options = {}) {
-    return ChatGptComposerSync.applyChatGptSyncedComposerText(input, expectedText, {
+    return applyWhatsAppEditorActionComposerText(input, expectedText, {
       ...options,
-      context: options.context || "composer-rewrite",
-      strictContentEditableSync: true,
-      selectTextNodeRange: true,
-      syncClearBeforeInsert: true,
-      dependencies: getWhatsAppComposerSyncDependencies()
+      context: options.context || "composer-rewrite"
     });
   }
 

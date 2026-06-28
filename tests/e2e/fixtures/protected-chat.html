@@ -41,6 +41,18 @@
         min-height: 88px;
       }
 
+      [data-shell="whatsapp"] [data-wa-editor-shell] {
+        border: 1px solid #94a3b8;
+        border-radius: 6px;
+        background: #fff;
+        padding: 8px;
+      }
+
+      [data-shell="whatsapp"] [data-wa-editor-shell] [contenteditable="true"] {
+        border: 0;
+        padding: 4px;
+      }
+
       button,
       input::file-selector-button {
         border: 1px solid #0f766e;
@@ -101,15 +113,23 @@
 
         <label id="whatsapp-shell" data-shell="whatsapp" hidden>
           WhatsApp-like nested composer
-          <div
-            id="whatsapp-composer"
-            data-testid="prompt-textarea"
-            role="textbox"
-            aria-label="Type a message"
-            aria-multiline="true"
-            contenteditable="true"
-          >
-            <p><span data-text-node="true"><br></span></p>
+          <div data-wa-editor-shell="true">
+            <div
+              id="whatsapp-composer"
+              class="selectable-text copyable-text x1hx0egp"
+              data-testid="prompt-textarea"
+              data-wa-testid="conversation-compose-box-input"
+              data-lexical-editor="true"
+              data-tab="10"
+              role="textbox"
+              aria-label="Type a message"
+              aria-placeholder="Type a message"
+              aria-multiline="true"
+              spellcheck="true"
+              contenteditable="true"
+            >
+              <p class="selectable-text copyable-text"><span data-lexical-text="true"><br></span></p>
+            </div>
           </div>
         </label>
 
@@ -176,7 +196,13 @@
           fileEvents: [],
           emptySendIgnored: 0,
           internalText: "",
-          renderCount: 0
+          renderCount: 0,
+          whatsappDeletePrimed: false,
+          whatsappClearAccepted: false,
+          whatsappClearRejected: false,
+          whatsappStaleResurrections: 0,
+          whatsappDuplicateSanitizedWrites: 0,
+          whatsappInputTypes: []
         };
 
         function normalizeText(value) {
@@ -202,7 +228,9 @@
         function textToWhatsAppHtml(value) {
           const lines = normalizeText(value).split("\n");
           return lines
-            .map((line) => `<p><span data-text-node="true">${line ? escapeHtml(line) : "<br>"}</span></p>`)
+            .map((line) => (
+              `<p class="selectable-text copyable-text"><span data-lexical-text="true">${line ? escapeHtml(line) : "<br>"}</span></p>`
+            ))
             .join("");
         }
 
@@ -297,6 +325,11 @@
             mode: state.mode,
             internalText: state.internalText,
             renderCount: state.renderCount,
+            whatsappClearAccepted: state.whatsappClearAccepted,
+            whatsappClearRejected: state.whatsappClearRejected,
+            whatsappStaleResurrections: state.whatsappStaleResurrections,
+            whatsappDuplicateSanitizedWrites: state.whatsappDuplicateSanitizedWrites,
+            whatsappInputTypes: state.whatsappInputTypes,
             submissions: state.submissions.length,
             fileEvents: state.fileEvents.length
           }, null, 2);
@@ -361,10 +394,41 @@
           }));
         }
 
+        function syncWhatsAppBeforeInputState(event) {
+          if (!modeUsesWhatsAppComposer()) return;
+          const inputType = String(event?.inputType || "");
+          if (/^delete/.test(inputType)) {
+            state.whatsappDeletePrimed = true;
+          }
+        }
+
         function syncStateFromDom(event) {
           if (!modeUsesStateMirror()) return;
           const text = getComposerText();
-          if (mode === "whatsapp" && /\[PWM_\d+\]/.test(text) && state.internalText && state.internalText !== text) {
+          const inputType = String(event?.inputType || "");
+          if (mode === "whatsapp") {
+            state.whatsappInputTypes.push(inputType || "input");
+            state.whatsappInputTypes = state.whatsappInputTypes.slice(-12);
+          }
+
+          if (mode === "whatsapp" && /^delete/.test(inputType)) {
+            if (state.whatsappDeletePrimed || (text === "" && state.internalText === "")) {
+              state.whatsappDeletePrimed = false;
+              state.internalText = text;
+              state.whatsappClearAccepted = text === "";
+              state.whatsappClearRejected = text !== "";
+            } else {
+              state.whatsappClearRejected = true;
+              state.whatsappStaleResurrections += 1;
+              const staleText = state.internalText;
+              renderAppState();
+              window.setTimeout(() => {
+                renderComposerText(staleText);
+              }, 35);
+              return;
+            }
+          } else if (mode === "whatsapp" && /\[PWM_\d+\]/.test(text) && state.internalText && state.internalText !== text) {
+            state.whatsappDuplicateSanitizedWrites += 1;
             state.internalText = `${text}\n${text}`;
           } else {
             state.internalText = text;
@@ -453,6 +517,7 @@
         renderAppState();
         activeComposer().focus();
 
+        activeComposer().addEventListener("beforeinput", syncWhatsAppBeforeInputState);
         activeComposer().addEventListener("input", syncStateFromDom);
 
         form.addEventListener("submit", (event) => {

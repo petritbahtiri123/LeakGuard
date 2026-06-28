@@ -4,8 +4,12 @@ import {
   expectBlocked,
   expectComposerTextExactly,
   expectNoFileEvents,
+  expectNoDoubleSend,
   expectNoRawSecretVisible,
   getSentMessages,
+  getComposerText,
+  pressEnterToSend,
+  pressShiftEnter,
   test,
   typeIntoComposer,
   uploadFile
@@ -35,8 +39,24 @@ const rawSecrets = [
   "FakePass123"
 ];
 
+const multilineInput = [
+  "LGQA_WA_MULTILINE",
+  "my password is LGQA_WA_MULTILINE_FakePassword123456789!",
+  "my backup password is LGQA_WA_MULTILINE_SecondFakePassword123456789!"
+].join("\n");
+
+const multilineExpected = [
+  "LGQA_WA_MULTILINE",
+  "my password is [PWM_1]",
+  "my backup password is [PWM_2]"
+].join("\n");
+
 function countOccurrences(text, needle) {
   return String(text || "").split(needle).length - 1;
+}
+
+async function getFixtureState(page) {
+  return await page.evaluate(() => ({ ...window.__leakguardE2E.state }));
 }
 
 test.describe("@whatsapp @text WhatsApp-like reproduction contract", () => {
@@ -82,6 +102,113 @@ test.describe("@whatsapp @text WhatsApp-like reproduction contract", () => {
     const messagesBeforeRetry = await getSentMessages(page);
     await clickSend(page);
     await expect.poll(() => getSentMessages(page)).toEqual(messagesBeforeRetry);
+  });
+
+  test("Enter-send redacts exactly once", async ({ extensionApp }) => {
+    const page = await extensionApp.openProtectedFixture("whatsapp");
+
+    await typeIntoComposer(page, whatsappInput);
+    await pressEnterToSend(page);
+
+    await expect.poll(() => getSentMessages(page)).toEqual([expectedSanitized]);
+    await expectNoDoubleSend(page, "LGQA_WA_DUPLICATE_1");
+    await expectComposerTextExactly(page, "");
+  });
+
+  test("multiline block redacts exactly once", async ({ extensionApp }) => {
+    const page = await extensionApp.openProtectedFixture("whatsapp");
+
+    await typeIntoComposer(page, multilineInput);
+    await clickSend(page);
+
+    await expect.poll(() => getSentMessages(page)).toEqual([multilineExpected]);
+    const [sentText] = await getSentMessages(page);
+    expect(countOccurrences(sentText, "LGQA_WA_MULTILINE"), "multiline block should not duplicate").toBe(1);
+    expect(countOccurrences(sentText, "[PWM_1]"), "first placeholder should appear once").toBe(1);
+    expect(countOccurrences(sentText, "[PWM_2]"), "second placeholder should appear once").toBe(1);
+    await expectNoRawSecretVisible(page, "LGQA_WA_MULTILINE_FakePassword123456789!");
+    await expectNoRawSecretVisible(page, "LGQA_WA_MULTILINE_SecondFakePassword123456789!");
+  });
+
+  test("clear step syncs empty before sanitized insert", async ({ extensionApp }) => {
+    const page = await extensionApp.openProtectedFixture("whatsapp");
+
+    await typeIntoComposer(page, whatsappInput);
+    await clickSend(page);
+
+    await expect.poll(() => getSentMessages(page)).toEqual([expectedSanitized]);
+    await expect.poll(async () => {
+      const state = await getFixtureState(page);
+      return {
+        clearAccepted: state.whatsappClearAccepted,
+        clearRejected: state.whatsappClearRejected,
+        staleResurrections: state.whatsappStaleResurrections,
+        duplicateSanitizedWrites: state.whatsappDuplicateSanitizedWrites
+      };
+    }).toEqual({
+      clearAccepted: true,
+      clearRejected: false,
+      staleResurrections: 0,
+      duplicateSanitizedWrites: 0
+    });
+  });
+
+  test("stale raw text cannot reappear after async settle", async ({ extensionApp }) => {
+    const page = await extensionApp.openProtectedFixture("whatsapp");
+
+    await typeIntoComposer(page, whatsappInput);
+    await clickSend(page);
+
+    await expect.poll(() => getSentMessages(page)).toEqual([expectedSanitized]);
+    await page.waitForTimeout(750);
+    for (const secret of rawSecrets) {
+      await expectNoRawSecretVisible(page, secret);
+    }
+    await expectComposerTextExactly(page, "");
+  });
+
+  test("already-redacted placeholders do not redetect", async ({ extensionApp }) => {
+    const page = await extensionApp.openProtectedFixture("whatsapp");
+    const text = "LGQA_WA_PLACEHOLDERS already redacted [PWM_1] and [PWM_2]";
+
+    await typeIntoComposer(page, text);
+    await clickSend(page);
+
+    await expect.poll(() => getSentMessages(page)).toEqual([text]);
+    await expectNoDoubleSend(page, "LGQA_WA_PLACEHOLDERS");
+  });
+
+  test("Shift+Enter creates newline and does not send", async ({ extensionApp }) => {
+    const page = await extensionApp.openProtectedFixture("whatsapp");
+
+    await typeIntoComposer(page, "LGQA_WA_SHIFT line one");
+    await pressShiftEnter(page);
+    await page.locator("[data-testid='prompt-textarea']:visible").first().pressSequentially("line two");
+
+    await expect.poll(() => getComposerText(page)).toBe("LGQA_WA_SHIFT line one\nline two");
+    await expect.poll(() => getSentMessages(page)).toEqual([]);
+  });
+
+  test("programmatic replay does not recurse", async ({ extensionApp }) => {
+    const page = await extensionApp.openProtectedFixture("whatsapp");
+
+    await typeIntoComposer(page, whatsappInput);
+    await clickSend(page);
+
+    await expect.poll(() => getSentMessages(page)).toEqual([expectedSanitized]);
+    await page.waitForTimeout(500);
+    await expect.poll(() => getSentMessages(page)).toEqual([expectedSanitized]);
+  });
+
+  test("second-click retry is not accepted", async ({ extensionApp }) => {
+    const page = await extensionApp.openProtectedFixture("whatsapp");
+
+    await typeIntoComposer(page, whatsappInput);
+    await clickSend(page);
+    await clickSend(page);
+
+    await expect.poll(() => getSentMessages(page)).toEqual([expectedSanitized]);
+    await expectComposerTextExactly(page, "");
   });
 
   test("@files @images image attachment remains unsupported", async ({ extensionApp }) => {

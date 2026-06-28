@@ -251,7 +251,9 @@ export async function launchExtensionContext(options = {}) {
   });
 
   const extensionId = await getExtensionId(context);
-  await routeWhatsAppFixture(context);
+  if (options.routeWhatsAppFixture !== false) {
+    await routeWhatsAppFixture(context);
+  }
   const fixtureOrigins = unique([
     options.fixtureOrigin,
     ...(Array.isArray(options.fixtureOrigins) ? options.fixtureOrigins : [])

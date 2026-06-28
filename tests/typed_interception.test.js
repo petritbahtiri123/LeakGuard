@@ -1637,18 +1637,19 @@ async function testWhatsAppRewriteUsesSyncedComposerPathBeforeAppendProneStrateg
   const factory = new Function(
     "normalizeComposerText",
     [
-      "const calls = { genericWrites: 0, forcedWrites: 0, directWrites: 0, syncedWrites: 0 };",
+      "const calls = { genericWrites: 0, forcedWrites: 0, directWrites: 0, syncedWrites: 0, editorActionWrites: 0 };",
       "const ChatGptComposerSync = {",
-      "  applyChatGptSyncedComposerText: async (input, text, options) => {",
+      "  applyChatGptSyncedComposerText: async () => {",
       "    calls.syncedWrites += 1;",
-      "    calls.hostAllowed = options.dependencies.isChatGptHost();",
-      "    calls.strictSync = options.strictContentEditableSync === true;",
-      "    calls.selectTextNodeRange = options.selectTextNodeRange === true;",
-      "    calls.syncClearBeforeInsert = options.syncClearBeforeInsert === true;",
-      "    input.text = normalizeComposerText(text);",
-      "    return { ok: true, actual: input.text, strategy: 'whatsapp-synced-test' };",
+      "    return { ok: false, actual: '', strategy: 'unexpected-chatgpt-sync' };",
       "  }",
       "};",
+      "async function applyWhatsAppEditorActionComposerText(input, text, options) {",
+      "  calls.editorActionWrites += 1;",
+      "  calls.context = options.context;",
+      "  input.text = normalizeComposerText(text);",
+      "  return { ok: true, actual: input.text, strategy: 'whatsapp-editor-action-test' };",
+      "}",
       "function isChatGptHost() { return false; }",
       "function isWhatsAppHost() { return true; }",
       "function isContentEditable(input) { return input?.contentEditable === true; }",
@@ -1682,11 +1683,9 @@ async function testWhatsAppRewriteUsesSyncedComposerPathBeforeAppendProneStrateg
 
   assert.strictEqual(result.ok, true);
   assert.strictEqual(input.text, "my password is [PWM_1]");
-  assert.strictEqual(calls.syncedWrites, 1, "WhatsApp composer should use one synced composer rewrite");
-  assert.strictEqual(calls.hostAllowed, true, "WhatsApp synced rewrite should pass the host gate through dependencies");
-  assert.strictEqual(calls.strictSync, true, "WhatsApp synced rewrite should disable append-prone internal fallbacks");
-  assert.strictEqual(calls.selectTextNodeRange, true, "WhatsApp synced rewrite should replace Lexical paragraph text instead of appending");
-  assert.strictEqual(calls.syncClearBeforeInsert, true, "WhatsApp synced rewrite should clear and sync stale state before inserting sanitized text");
+  assert.strictEqual(calls.editorActionWrites, 1, "WhatsApp composer should use one editor-action rewrite");
+  assert.strictEqual(calls.context, "submit", "WhatsApp editor-action rewrite should receive submit context");
+  assert.strictEqual(calls.syncedWrites, 0, "WhatsApp composer should not reuse the ChatGPT synced writer");
   assert.strictEqual(calls.directWrites, 0, "WhatsApp composer should not use direct DOM before synced rewrite");
   assert.strictEqual(calls.genericWrites, 0, "WhatsApp composer should skip append-prone generic rewrite");
   assert.strictEqual(calls.forcedWrites, 0, "WhatsApp composer should skip append-prone forced rewrite");
@@ -1696,13 +1695,17 @@ async function testWhatsAppSyncedRewriteFailureDoesNotRestoreThroughAppendProneF
   const factory = new Function(
     "normalizeComposerText",
     [
-      "const calls = { genericWrites: 0, forcedWrites: 0, directWrites: 0, syncedWrites: 0 };",
+      "const calls = { genericWrites: 0, forcedWrites: 0, directWrites: 0, syncedWrites: 0, editorActionWrites: 0 };",
       "const ChatGptComposerSync = {",
       "  applyChatGptSyncedComposerText: async (input) => {",
       "    calls.syncedWrites += 1;",
       "    return { ok: false, actual: input.text, strategy: 'whatsapp-synced-test-failed' };",
       "  }",
       "};",
+      "async function applyWhatsAppEditorActionComposerText(input) {",
+      "  calls.editorActionWrites += 1;",
+      "  return { ok: false, actual: input.text, strategy: 'whatsapp-editor-action-test-failed' };",
+      "}",
       "function isChatGptHost() { return false; }",
       "function isWhatsAppHost() { return true; }",
       "function isContentEditable(input) { return input?.contentEditable === true; }",
@@ -1736,8 +1739,9 @@ async function testWhatsAppSyncedRewriteFailureDoesNotRestoreThroughAppendProneF
 
   assert.strictEqual(result.ok, false);
   assert.strictEqual(input.text, "my password is rawsecret123");
-  assert.strictEqual(calls.syncedWrites, 1, "WhatsApp failed rewrite should return the synced writer failure");
-  assert.strictEqual(calls.directWrites, 0, "WhatsApp failed rewrite should leave restore handling to the synced writer");
+  assert.strictEqual(calls.editorActionWrites, 1, "WhatsApp failed rewrite should return the editor-action failure");
+  assert.strictEqual(calls.syncedWrites, 0, "WhatsApp failed rewrite should not call the ChatGPT synced writer");
+  assert.strictEqual(calls.directWrites, 0, "WhatsApp failed rewrite should leave restore handling to the editor-action writer");
   assert.strictEqual(calls.genericWrites, 0, "WhatsApp failed rewrite should not append generic text");
   assert.strictEqual(calls.forcedWrites, 0, "WhatsApp failed rewrite should not append restored text");
 }
@@ -1746,7 +1750,7 @@ async function testWhatsAppTransactionalSyncedFailureDoesNotAppendFallbackCopies
   const factory = new Function(
     "normalizeComposerText",
     [
-      "const calls = { genericWrites: 0, forcedWrites: 0, directWrites: 0, syncedWrites: 0 };",
+      "const calls = { genericWrites: 0, forcedWrites: 0, directWrites: 0, syncedWrites: 0, editorActionWrites: 0 };",
       "const ChatGptComposerSync = {",
       "  applyChatGptSyncedComposerText: async (input, text) => {",
       "    calls.syncedWrites += 1;",
@@ -1754,6 +1758,11 @@ async function testWhatsAppTransactionalSyncedFailureDoesNotAppendFallbackCopies
       "    return { ok: false, actual: input.text, strategy: 'whatsapp-synced-test-failed' };",
       "  }",
       "};",
+      "async function applyWhatsAppEditorActionComposerText(input, text) {",
+      "  calls.editorActionWrites += 1;",
+      "  input.text = `${input.text}${normalizeComposerText(text)}`;",
+      "  return { ok: false, actual: input.text, strategy: 'whatsapp-editor-action-test-failed' };",
+      "}",
       "function isChatGptHost() { return false; }",
       "function isWhatsAppHost() { return true; }",
       "function isContentEditable(input) { return input?.contentEditable === true; }",
@@ -1790,10 +1799,11 @@ async function testWhatsAppTransactionalSyncedFailureDoesNotAppendFallbackCopies
 
   assert.strictEqual(result.ok, false);
   assert.strictEqual(input.text, `${rawText}${redactedText}`);
-  assert.strictEqual(calls.syncedWrites, 1, "WhatsApp transactional rewrite should try the synced writer once");
-  assert.strictEqual(calls.directWrites, 0, "WhatsApp synced failure should not fall through to direct DOM append");
-  assert.strictEqual(calls.genericWrites, 0, "WhatsApp synced failure should not fall through to generic append");
-  assert.strictEqual(calls.forcedWrites, 0, "WhatsApp synced failure should not force another appended copy");
+  assert.strictEqual(calls.editorActionWrites, 1, "WhatsApp transactional rewrite should try the editor-action writer once");
+  assert.strictEqual(calls.syncedWrites, 0, "WhatsApp transactional rewrite should not call the ChatGPT synced writer");
+  assert.strictEqual(calls.directWrites, 0, "WhatsApp editor-action failure should not fall through to direct DOM append");
+  assert.strictEqual(calls.genericWrites, 0, "WhatsApp editor-action failure should not fall through to generic append");
+  assert.strictEqual(calls.forcedWrites, 0, "WhatsApp editor-action failure should not force another appended copy");
 }
 
 async function testWhatsAppTransactionalCorruptedDraftDoesNotAttemptAnotherRewrite() {
@@ -1808,6 +1818,11 @@ async function testWhatsAppTransactionalCorruptedDraftDoesNotAttemptAnotherRewri
       "    return { ok: false, actual: input.text, strategy: 'whatsapp-synced-test-failed' };",
       "  }",
       "};",
+      "async function applyWhatsAppEditorActionComposerText(input, text) {",
+      "  calls.syncedWrites += 1;",
+      "  input.text = `${input.text}${normalizeComposerText(text)}`;",
+      "  return { ok: false, actual: input.text, strategy: 'whatsapp-editor-action-test-failed' };",
+      "}",
       "function isChatGptHost() { return false; }",
       "function isWhatsAppHost() { return true; }",
       "function isContentEditable(input) { return input?.contentEditable === true; }",

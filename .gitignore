@@ -29,6 +29,7 @@ lerna-debug.log*
 # temp directory
 .temp
 .tmp
+/test-results
 
 # Google Drive shortcut files
 *.gdoc
