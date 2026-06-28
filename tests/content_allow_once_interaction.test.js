@@ -455,6 +455,12 @@ function createHarness(options = {}) {
     isProtectionPauseActiveAfterPolicy: () => Boolean(options.paused),
     handleHttpSecretPolicy: async () => false,
     shouldAutoRedactTypedSecrets: () => false,
+    isWhatsAppHost: () => false,
+    shouldOwnWhatsAppTextSend: () => false,
+    markWhatsAppTextSendPending: () => true,
+    createWhatsAppVerifiedSendOptions: () => ({}),
+    clearWhatsAppTextSendPending: () => {},
+    blockWhatsAppTextSend: async () => {},
     requestRedaction: async (text, findings) => {
       calls.redactions.push({ text, findings });
       return {

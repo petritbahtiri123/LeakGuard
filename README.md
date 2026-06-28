@@ -15,12 +15,12 @@ LeakGuard does not use a backend service, cloud processing, telemetry, or remote
 
 ## What LeakGuard Is
 
-- A local-first browser privacy guard for supported AI chat composers
+- A local-first browser privacy guard for supported chat composers
 - A deterministic-first redaction layer for likely secrets, email addresses, and sensitive public IPv4 data
 - A session-scoped placeholder system for replacing raw values with tokens such as `[PWM_1]`, `[PUB_HOST_1]`, and `[NET_1]`
 - A local text-file scanner for selected text files
-- Local text-file paste/drop redaction for supported UTF-8 text files in protected AI composers
-- Streaming local redaction for larger supported text-file uploads in protected AI composers
+- Local text-file paste/drop redaction for supported UTF-8 text files in protected chat composers
+- Streaming local redaction for larger supported text-file uploads in protected chat composers
 - An optional local AI assist layer over leftover suspicious candidate windows after deterministic detection
 
 ## What LeakGuard Is Not
@@ -53,10 +53,10 @@ https://ko-fi.com/petritbahtiri
 
 ## v2.2.1 Snapshot
 
-- Built-in protection for `chatgpt.com`, `chat.openai.com`, `claude.ai`, `gemini.google.com`, `grok.com`, and `x.com`
+- Built-in protection for `chatgpt.com`, `chat.openai.com`, `claude.ai`, `gemini.google.com`, `grok.com`, `x.com`, and `web.whatsapp.com`
 - User-managed protection for additional exact `http://` or `https://` origins
 - Local-only detection and redaction in the browser
-- Supported local UTF-8 text files pasted, dropped, or selected in protected AI composers can be locally validated, redacted, and replaced with sanitized in-memory files where browser/site handoff works
+- Supported local UTF-8 text files pasted, dropped, or selected in protected chat composers can be locally validated, redacted, and replaced with sanitized in-memory files where browser/site handoff works
 - Large supported text-file uploads above 4 MiB and up to 50 MB use streaming/chunked local redaction before sanitized handoff
 - Supported text files above 50 MB are blocked instead of being uploaded raw
 - ChatGPT large paste flows that can become generated `Plain Text` attachments are intercepted and redacted before sanitized text/file handoff
@@ -154,6 +154,7 @@ More detail lives in [SECURITY_REVIEW.md](SECURITY_REVIEW.md).
 - `https://gemini.google.com/*`
 - `https://grok.com/*`
 - `https://x.com/*`
+- `https://web.whatsapp.com/*`
 
 ### User-managed protected sites
 

@@ -1,0 +1,580 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>LeakGuard E2E Protected Chat Fixture</title>
+    <style>
+      body {
+        margin: 0;
+        font: 16px/1.5 system-ui, sans-serif;
+        color: #111827;
+        background: #f8fafc;
+      }
+
+      main {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 32px 20px;
+      }
+
+      form,
+      section {
+        margin-block: 20px;
+      }
+
+      textarea,
+      [contenteditable="true"] {
+        box-sizing: border-box;
+        width: 100%;
+        min-height: 120px;
+        padding: 12px;
+        border: 1px solid #94a3b8;
+        border-radius: 6px;
+        background: #fff;
+        color: #111827;
+        font: inherit;
+        white-space: pre-wrap;
+      }
+
+      [data-shell="whatsapp"] [contenteditable="true"] {
+        min-height: 88px;
+      }
+
+      [data-shell="whatsapp"] [data-wa-editor-shell] {
+        border: 1px solid #94a3b8;
+        border-radius: 6px;
+        background: #fff;
+        padding: 8px;
+      }
+
+      [data-shell="whatsapp"] [data-wa-editor-shell] [contenteditable="true"] {
+        border: 0;
+        padding: 4px;
+      }
+
+      button,
+      input::file-selector-button {
+        border: 1px solid #0f766e;
+        border-radius: 6px;
+        background: #0f766e;
+        color: #fff;
+        font: inherit;
+        padding: 8px 12px;
+      }
+
+      [hidden] {
+        display: none !important;
+      }
+
+      #drop-zone {
+        min-height: 96px;
+        border: 2px dashed #64748b;
+        border-radius: 6px;
+        background: #fff;
+        display: grid;
+        place-items: center;
+      }
+
+      #sent-messages,
+      #file-events,
+      #app-state {
+        min-height: 64px;
+        padding: 12px;
+        border: 1px solid #cbd5e1;
+        border-radius: 6px;
+        background: #fff;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Protected Chat Fixture</h1>
+
+      <form id="chat-form">
+        <label id="textarea-shell" data-shell="textarea">
+          Textarea composer
+          <textarea id="prompt-textarea" data-testid="prompt-textarea" placeholder="Message"></textarea>
+        </label>
+
+        <label id="editable-shell" data-shell="contenteditable" hidden>
+          Contenteditable composer
+          <div
+            id="editable-composer"
+            data-testid="prompt-textarea"
+            role="textbox"
+            aria-label="Message"
+            aria-multiline="true"
+            contenteditable="true"
+          ></div>
+        </label>
+
+        <label id="whatsapp-shell" data-shell="whatsapp" hidden>
+          WhatsApp-like nested composer
+          <div data-wa-editor-shell="true">
+            <div
+              id="whatsapp-composer"
+              class="selectable-text copyable-text x1hx0egp"
+              data-testid="prompt-textarea"
+              data-wa-testid="conversation-compose-box-input"
+              data-lexical-editor="true"
+              data-tab="10"
+              role="textbox"
+              aria-label="Type a message"
+              aria-placeholder="Type a message"
+              aria-multiline="true"
+              spellcheck="true"
+              contenteditable="true"
+            >
+              <p class="selectable-text copyable-text"><span data-lexical-text="true"><br></span></p>
+            </div>
+          </div>
+        </label>
+
+        <button id="send-button" data-testid="send-button" aria-label="Send message" type="submit">Send</button>
+      </form>
+
+      <section>
+        <label>
+          File input
+          <input id="file-input" type="file" multiple>
+        </label>
+      </section>
+
+      <section>
+        <div id="drop-zone" data-testid="drop-zone">Drop files here</div>
+      </section>
+
+      <section aria-label="Sent messages">
+        <h2>Sent messages</h2>
+        <div id="sent-messages" data-testid="sent-messages"></div>
+      </section>
+
+      <section aria-label="File events">
+        <h2>File events</h2>
+        <div id="file-events" data-testid="file-events"></div>
+      </section>
+
+      <section aria-label="App state">
+        <h2>App state</h2>
+        <div id="app-state" data-testid="app-state"></div>
+      </section>
+    </main>
+
+    <script>
+      (() => {
+        const params = new URLSearchParams(location.search);
+        const allowedModes = new Set([
+          "textarea",
+          "contenteditable",
+          "chatgpt",
+          "gemini",
+          "react",
+          "async",
+          "whatsapp"
+        ]);
+        const requestedMode = params.get("mode") || "textarea";
+        const mode = allowedModes.has(requestedMode) ? requestedMode : "textarea";
+        const textareaShell = document.querySelector("#textarea-shell");
+        const editableShell = document.querySelector("#editable-shell");
+        const whatsappShell = document.querySelector("#whatsapp-shell");
+        const textarea = document.querySelector("#prompt-textarea");
+        const editable = document.querySelector("#editable-composer");
+        const whatsapp = document.querySelector("#whatsapp-composer");
+        const form = document.querySelector("#chat-form");
+        const sentMessages = document.querySelector("#sent-messages");
+        const fileInput = document.querySelector("#file-input");
+        const fileEvents = document.querySelector("#file-events");
+        const appState = document.querySelector("#app-state");
+        const dropZone = document.querySelector("#drop-zone");
+
+        const state = {
+          mode,
+          submissions: [],
+          fileEvents: [],
+          emptySendIgnored: 0,
+          internalText: "",
+          renderCount: 0,
+          whatsappDeletePrimed: false,
+          whatsappClearAccepted: false,
+          whatsappClearRejected: false,
+          whatsappStaleResurrections: 0,
+          whatsappDuplicateSanitizedWrites: 0,
+          whatsappInputTypes: []
+        };
+
+        function normalizeText(value) {
+          return String(value || "")
+            .replace(/\r\n?/g, "\n")
+            .replace(/\u00a0/g, " ")
+            .replace(/[\u200B-\u200D\uFEFF]/g, "")
+            .replace(/\n{3,}/g, "\n\n");
+        }
+
+        function escapeHtml(value) {
+          return String(value || "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;");
+        }
+
+        function textToEditableHtml(value) {
+          const lines = normalizeText(value).split("\n");
+          return lines.map((line) => `<div>${line ? escapeHtml(line) : "<br>"}</div>`).join("");
+        }
+
+        function textToWhatsAppHtml(value) {
+          const lines = normalizeText(value).split("\n");
+          return lines
+            .map((line) => (
+              `<p class="selectable-text copyable-text"><span data-lexical-text="true">${line ? escapeHtml(line) : "<br>"}</span></p>`
+            ))
+            .join("");
+        }
+
+        function modeUsesTextarea() {
+          return mode === "textarea" || mode === "chatgpt";
+        }
+
+        function modeUsesWhatsAppComposer() {
+          return mode === "whatsapp";
+        }
+
+        function modeUsesStateMirror() {
+          return mode === "react" || mode === "async" || mode === "whatsapp";
+        }
+
+        function activeComposer() {
+          if (modeUsesTextarea()) return textarea;
+          if (modeUsesWhatsAppComposer()) return whatsapp;
+          return editable;
+        }
+
+        function placeCaretAtEnd(element) {
+          if (!element || !element.isContentEditable) return;
+          const selection = window.getSelection();
+          const range = document.createRange();
+          if (!selection || !range) return;
+          range.selectNodeContents(element);
+          range.collapse(false);
+          selection.removeAllRanges();
+          selection.addRange(range);
+        }
+
+        function readEditableText(element) {
+          const text = normalizeText(element.innerText || element.textContent || "");
+          return text.trim() ? text : "";
+        }
+
+        function readEditableNodeText(node) {
+          if (!node) return "";
+          if (node.nodeType === Node.TEXT_NODE) return normalizeText(node.nodeValue || "");
+          if (node.nodeType === Node.ELEMENT_NODE && node.tagName === "BR") return "\n";
+          return Array.from(node.childNodes || []).map(readEditableNodeText).join("");
+        }
+
+        function readWhatsAppText(element) {
+          const lines = [];
+          let inlineBuffer = "";
+          const flushInlineBuffer = () => {
+            if (!inlineBuffer && lines.length === 0) return;
+            lines.push(inlineBuffer);
+            inlineBuffer = "";
+          };
+
+          for (const child of Array.from(element.childNodes || [])) {
+            if (child.nodeType === Node.TEXT_NODE) {
+              inlineBuffer += normalizeText(child.nodeValue || "");
+              continue;
+            }
+
+            if (child.nodeType === Node.ELEMENT_NODE && child.tagName === "BR") {
+              flushInlineBuffer();
+              continue;
+            }
+
+            if (child.nodeType === Node.ELEMENT_NODE && /^(P|DIV|LI|PRE|BLOCKQUOTE)$/.test(child.tagName || "")) {
+              if (inlineBuffer) {
+                flushInlineBuffer();
+              }
+              lines.push(normalizeText(readEditableNodeText(child)).replace(/\n+$/g, ""));
+              continue;
+            }
+
+            inlineBuffer += readEditableNodeText(child);
+          }
+
+          if (inlineBuffer || !lines.length) {
+            flushInlineBuffer();
+          }
+          if (lines.length === 1 && lines[0] === "") return "";
+          const text = normalizeText(lines.join("\n"));
+          return text.trim() ? text : "";
+        }
+
+        function getComposerText() {
+          if (modeUsesTextarea()) return normalizeText(textarea.value);
+          if (modeUsesWhatsAppComposer()) return readWhatsAppText(whatsapp);
+          return readEditableText(activeComposer());
+        }
+
+        function renderAppState() {
+          appState.textContent = JSON.stringify({
+            mode: state.mode,
+            internalText: state.internalText,
+            renderCount: state.renderCount,
+            whatsappClearAccepted: state.whatsappClearAccepted,
+            whatsappClearRejected: state.whatsappClearRejected,
+            whatsappStaleResurrections: state.whatsappStaleResurrections,
+            whatsappDuplicateSanitizedWrites: state.whatsappDuplicateSanitizedWrites,
+            whatsappInputTypes: state.whatsappInputTypes,
+            submissions: state.submissions.length,
+            fileEvents: state.fileEvents.length
+          }, null, 2);
+        }
+
+        function renderComposerText(value) {
+          const text = normalizeText(value);
+          if (modeUsesTextarea()) {
+            textarea.value = text;
+          } else if (modeUsesWhatsAppComposer()) {
+            whatsapp.innerHTML = textToWhatsAppHtml(text);
+          } else {
+            editable.innerHTML = textToEditableHtml(text);
+          }
+          state.renderCount += 1;
+          renderAppState();
+          if (document.activeElement === activeComposer()) {
+            placeCaretAtEnd(activeComposer());
+          }
+        }
+
+        function setComposerText(value) {
+          const text = normalizeText(value);
+          if (modeUsesStateMirror()) {
+            state.internalText = text;
+          }
+          renderComposerText(text);
+          activeComposer().focus();
+          activeComposer().dispatchEvent(new InputEvent("input", {
+            bubbles: true,
+            composed: true,
+            inputType: "insertText",
+            data: text
+          }));
+        }
+
+        function clearComposer() {
+          if (modeUsesStateMirror()) {
+            state.internalText = "";
+          }
+          renderComposerText("");
+        }
+
+        function insertTextAtCursor(text) {
+          const composer = activeComposer();
+          const value = normalizeText(text);
+          if (modeUsesTextarea()) {
+            const start = Number.isFinite(composer.selectionStart) ? composer.selectionStart : composer.value.length;
+            const end = Number.isFinite(composer.selectionEnd) ? composer.selectionEnd : composer.value.length;
+            composer.value = `${composer.value.slice(0, start)}${value}${composer.value.slice(end)}`;
+            composer.selectionStart = composer.selectionEnd = start + value.length;
+          } else if (modeUsesWhatsAppComposer() && value === "\n") {
+            renderComposerText(`${getComposerText()}\n`);
+          } else {
+            document.execCommand("insertText", false, value);
+          }
+          composer.dispatchEvent(new InputEvent("input", {
+            bubbles: true,
+            composed: true,
+            inputType: value === "\n" ? "insertLineBreak" : "insertFromPaste",
+            data: value
+          }));
+        }
+
+        function syncWhatsAppBeforeInputState(event) {
+          if (!modeUsesWhatsAppComposer()) return;
+          const inputType = String(event?.inputType || "");
+          if (/^delete/.test(inputType)) {
+            state.whatsappDeletePrimed = true;
+          }
+        }
+
+        function syncStateFromDom(event) {
+          if (!modeUsesStateMirror()) return;
+          const text = getComposerText();
+          const inputType = String(event?.inputType || "");
+          if (mode === "whatsapp") {
+            state.whatsappInputTypes.push(inputType || "input");
+            state.whatsappInputTypes = state.whatsappInputTypes.slice(-12);
+          }
+
+          if (mode === "whatsapp" && /^delete/.test(inputType)) {
+            if (state.whatsappDeletePrimed || (text === "" && state.internalText === "")) {
+              state.whatsappDeletePrimed = false;
+              state.internalText = text;
+              state.whatsappClearAccepted = text === "";
+              state.whatsappClearRejected = text !== "";
+            } else {
+              state.whatsappClearRejected = true;
+              state.whatsappStaleResurrections += 1;
+              const staleText = state.internalText;
+              renderAppState();
+              window.setTimeout(() => {
+                renderComposerText(staleText);
+              }, 35);
+              return;
+            }
+          } else if (mode === "whatsapp" && /\[PWM_\d+\]/.test(text) && state.internalText && state.internalText !== text) {
+            state.whatsappDuplicateSanitizedWrites += 1;
+            state.internalText = `${text}\n${text}`;
+          } else {
+            state.internalText = text;
+          }
+          renderAppState();
+          if (mode === "async" || mode === "whatsapp") {
+            window.setTimeout(() => {
+              renderComposerText(state.internalText);
+            }, mode === "whatsapp" && event?.inputType === "insertReplacementText" ? 20 : 35);
+          }
+        }
+
+        function appendSent(text, source) {
+          const entry = { text: normalizeText(text), source };
+          state.submissions.push(entry);
+          const line = document.createElement("div");
+          line.className = "sent-message";
+          line.dataset.source = source;
+          line.textContent = entry.text;
+          sentMessages.appendChild(line);
+          renderAppState();
+        }
+
+        function submitActive(source) {
+          const text = modeUsesStateMirror() ? normalizeText(state.internalText) : getComposerText();
+          if (!text.trim()) {
+            state.emptySendIgnored += 1;
+            renderAppState();
+            return;
+          }
+          appendSent(text, source);
+          clearComposer();
+        }
+
+        async function describeFile(source, file) {
+          let text = "";
+          try {
+            text = typeof file.text === "function" ? await file.text() : "";
+          } catch {
+            text = "";
+          }
+          return {
+            source,
+            name: file.name,
+            type: file.type,
+            size: file.size,
+            text
+          };
+        }
+
+        async function recordFiles(source, files) {
+          const details = [];
+          for (const file of Array.from(files || [])) {
+            details.push(await describeFile(source, file));
+          }
+          state.fileEvents.push(...details);
+          fileEvents.textContent = state.fileEvents
+            .map((entry) => `${entry.source}:${entry.name}:${entry.type}:${entry.text}`)
+            .join("\n");
+          renderAppState();
+        }
+
+        for (const shell of [textareaShell, editableShell, whatsappShell]) {
+          shell.hidden = true;
+        }
+        if (modeUsesTextarea()) {
+          textareaShell.hidden = false;
+          editableShell.remove();
+          whatsappShell.remove();
+        } else if (modeUsesWhatsAppComposer()) {
+          whatsappShell.hidden = false;
+          textareaShell.remove();
+          editableShell.remove();
+        } else {
+          editableShell.hidden = false;
+          textareaShell.remove();
+          whatsappShell.remove();
+        }
+        if (mode === "gemini") {
+          editable.classList.add("ql-editor");
+          editable.setAttribute("data-lexical-editor", "true");
+        }
+        if (mode === "react" || mode === "async") {
+          editable.setAttribute("data-react-state-mirror", "true");
+        }
+        renderAppState();
+        activeComposer().focus();
+
+        activeComposer().addEventListener("beforeinput", syncWhatsAppBeforeInputState);
+        activeComposer().addEventListener("input", syncStateFromDom);
+
+        form.addEventListener("submit", (event) => {
+          event.preventDefault();
+          submitActive("submit");
+        });
+
+        document.querySelector("#send-button").addEventListener("click", () => {
+          submitActive("click");
+        });
+
+        form.addEventListener("keydown", (event) => {
+          if (event.key !== "Enter") return;
+          if (event.shiftKey) {
+            if (modeUsesWhatsAppComposer()) {
+              event.preventDefault();
+              insertTextAtCursor("\n");
+            }
+            return;
+          }
+          event.preventDefault();
+          submitActive("enter");
+        });
+
+        activeComposer().addEventListener("paste", (event) => {
+          window.setTimeout(() => {
+            if (event.defaultPrevented) return;
+            const text = event.clipboardData?.getData("text/plain") || "";
+            if (text) insertTextAtCursor(text);
+            if (event.clipboardData?.files?.length) {
+              recordFiles("paste", event.clipboardData.files);
+            }
+          }, 0);
+        });
+
+        fileInput.addEventListener("change", (event) => {
+          recordFiles("input", event.target.files);
+        });
+
+        dropZone.addEventListener("dragover", (event) => {
+          event.preventDefault();
+        });
+
+        dropZone.addEventListener("drop", (event) => {
+          event.preventDefault();
+          recordFiles("drop", event.dataTransfer.files);
+        });
+
+        window.__leakguardE2E = {
+          state,
+          activeComposer,
+          getComposerText,
+          setComposerText,
+          submissions: state.submissions,
+          fileEvents: state.fileEvents
+        };
+      })();
+    </script>
+  </body>
+</html>

@@ -1418,6 +1418,7 @@ async function run() {
     "content/adapters/claudeAdapter.js",
     "content/adapters/grokAdapter.js",
     "content/adapters/xAdapter.js",
+    "content/adapters/whatsappAdapter.js",
     "content/adapters/index.js"
   ];
   const adapterIndexes = adapterScripts.map((script) => contentScripts.indexOf(script));

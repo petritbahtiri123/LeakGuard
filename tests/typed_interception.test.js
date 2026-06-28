@@ -416,6 +416,12 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
       contentSource.includes("createSanitizedTextFile"),
     "content script should intercept local file paste/drop/file-input before host pages receive raw files"
   );
+  assert.ok(
+    fallbackSendSource.includes('event.key !== "Enter"') &&
+      !/\bevent\.key\s*={2,3}\s*["']v["']/i.test(fallbackSendSource) &&
+      !fallbackSendSource.includes("clipboardData"),
+    "keydown guards should not block Ctrl+V/Ctrl+Alt+V before paste clipboardData can be inspected"
+  );
   assert.strictEqual(
     manifestScripts[0],
     "content/file_drag_guard.js",
@@ -624,8 +630,8 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   assert.ok(
     fallbackSendSource.includes("const quickAnalysis = analyzeText(text);") &&
       fallbackSendSource.indexOf("const quickAnalysis = analyzeText(text);") <
-        fallbackSendSource.indexOf("consumeInterceptionEvent(event);") &&
-      fallbackSendSource.indexOf("consumeInterceptionEvent(event);") <
+        fallbackSendSource.lastIndexOf("consumeInterceptionEvent(event);") &&
+      fallbackSendSource.lastIndexOf("consumeInterceptionEvent(event);") <
         fallbackSendSource.indexOf("const analysis = await analyzeTextWithAiAssist(text)"),
     "Enter-send fallback should synchronously consume risky composer text before async AI analysis"
   );
@@ -662,11 +668,13 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   assert.ok(
     beforeInputSource.indexOf("if (!quickRelevantFindings.length && !quickPlaceholderNormalizationChanged)") <
       beforeInputSource.lastIndexOf("consumeInterceptionEvent(event);") &&
-      submitSource.indexOf("if (!analysisNeedsEventOwnership(quickAnalysis)) return;") <
+      submitSource.includes("const whatsappOwnsTextSend = shouldOwnWhatsAppTextSend(text);") &&
+      submitSource.indexOf("if (!analysisNeedsEventOwnership(quickAnalysis) && !whatsappOwnsTextSend) return;") <
         submitSource.lastIndexOf("consumeInterceptionEvent(event);") &&
-      fallbackSendSource.indexOf("if (!analysisNeedsEventOwnership(quickAnalysis)) return;") <
-        fallbackSendSource.indexOf("consumeInterceptionEvent(event);"),
-    "safe beforeinput, submit, and Enter-send events should not be consumed unless sync analysis finds risk"
+      fallbackSendSource.includes("const whatsappOwnsTextSend = shouldOwnWhatsAppTextSend(text);") &&
+      fallbackSendSource.indexOf("if (!analysisNeedsEventOwnership(quickAnalysis) && !whatsappOwnsTextSend) return;") <
+        fallbackSendSource.lastIndexOf("consumeInterceptionEvent(event);"),
+    "safe beforeinput events should stay unowned, while WhatsApp submit and Enter sends must be the explicit verified-replay exception"
   );
   assert.ok(
     beforeInputSource.includes("event?.isTrusted === false") &&
@@ -1259,6 +1267,701 @@ async function testTransactionalRewriteFallbackRemovesRawDuplicate() {
   assert.strictEqual(calls.directWrites, 1, "raw+redacted duplicate should force one direct rewrite");
 }
 
+async function testWhatsAppSendButtonClickOwnsSafeTextForVerifiedReplay() {
+  const factory = new Function(
+    [
+      "let extensionRuntimeAvailable = true;",
+      "let modalOpen = false;",
+      "let bypassNextSendButtonClick = false;",
+      "const calls = { consumed: 0, submitEvents: 0 };",
+      "const button = { closest: () => null };",
+      "const input = { text: 'LGQA_WHATSAPP_SAFE_TEXT hello team' };",
+      "function normalizeTarget(target) { return target; }",
+      "function isWhatsAppHost() { return true; }",
+      "function findSendButtonClickTarget() { return button; }",
+      "function findComposer() { return input; }",
+      "function noteActiveRiskEditor() {}",
+      "function getInputText(target) { return target.text; }",
+      "function analyzeText() { return { findings: [], placeholderNormalized: false }; }",
+      "function analysisNeedsEventOwnership() { return false; }",
+      "function consumeInterceptionEvent() { calls.consumed += 1; }",
+      "function createSyntheticSubmitInterceptionEvent(target, options) { return { target, leakGuardSendButton: options.sendButton, leakGuardReplayViaClick: options.replayViaClick }; }",
+      "async function maybeHandleSubmit(event) { calls.submitEvents += 1; calls.submitEvent = event; }",
+      "async function blockWhatsAppTextSend() { calls.blocked = true; }",
+      extractFunctionSource(contentSource, "shouldOwnWhatsAppTextSend"),
+      extractFunctionSource(contentSource, "maybeHandleSendButtonClick"),
+      "return { maybeHandleSendButtonClick, calls, button, input };"
+    ].join("\n\n")
+  );
+  const { maybeHandleSendButtonClick, calls, button, input } = factory();
+
+  await maybeHandleSendButtonClick({ target: button });
+
+  assert.strictEqual(calls.consumed, 1, "WhatsApp send click should be owned even when quick analysis sees safe text");
+  assert.strictEqual(calls.submitEvents, 1, "owned WhatsApp click should route through the verified submit pipeline");
+  assert.strictEqual(calls.submitEvent.target, input);
+  assert.strictEqual(calls.submitEvent.leakGuardSendButton, button);
+  assert.strictEqual(calls.submitEvent.leakGuardReplayViaClick, true);
+}
+
+async function testWhatsAppSendButtonClickFailsClosedWithoutComposer() {
+  const factory = new Function(
+    [
+      "let extensionRuntimeAvailable = true;",
+      "let modalOpen = false;",
+      "let bypassNextSendButtonClick = false;",
+      "const calls = { consumed: 0, blocks: 0 };",
+      "const button = { closest: () => null };",
+      "function normalizeTarget(target) { return target; }",
+      "function isWhatsAppHost() { return true; }",
+      "function findSendButtonClickTarget() { return button; }",
+      "function findComposer() { return null; }",
+      "function consumeInterceptionEvent() { calls.consumed += 1; }",
+      "async function blockWhatsAppTextSend(reason) { calls.blocks += 1; calls.reason = reason; }",
+      extractFunctionSource(contentSource, "maybeHandleSendButtonClick"),
+      "return { maybeHandleSendButtonClick, calls, button };"
+    ].join("\n\n")
+  );
+  const { maybeHandleSendButtonClick, calls, button } = factory();
+
+  await maybeHandleSendButtonClick({ target: button });
+
+  assert.strictEqual(calls.consumed, 1, "WhatsApp send click should be consumed when composer detection fails");
+  assert.strictEqual(calls.blocks, 1, "WhatsApp send click should show a local block instead of raw passthrough");
+  assert.strictEqual(calls.reason, "composer_not_found");
+}
+
+function createWhatsAppSubmitHarness(options = {}) {
+  const text = Object.prototype.hasOwnProperty.call(options, "text")
+    ? options.text
+    : "LGQA_WHATSAPP_SAFE_TEXT hello team";
+  const factory = new Function(
+    "text",
+    "queueSettles",
+    [
+      "let extensionRuntimeAvailable = true;",
+      "let modalOpen = false;",
+      "let bypassNextSubmit = false;",
+      "const WHATSAPP_TEXT_SEND_GUARD_MS = 5000;",
+      "const whatsAppPendingTextSendInputs = new WeakSet();",
+      "const whatsAppPendingTextSendTimers = new WeakMap();",
+      "const calls = {",
+      "  consumed: 0,",
+      "  blocks: 0,",
+      "  findComposer: 0,",
+      "  notes: 0,",
+      "  quickAnalyses: 0,",
+      "  aiAnalyses: 0,",
+      "  normalizedWrites: 0,",
+      "  exactChecks: 0,",
+      "  queued: 0,",
+      "  replayed: 0,",
+      "  redactions: 0,",
+      "  fallbackPending: 0,",
+      "  fallbackCleared: 0,",
+      "  timers: 0,",
+      "  clearedTimers: 0,",
+      "  queuedTexts: []",
+      "};",
+      "const button = {};",
+      "const input = { text, closest: () => null, querySelector: () => null };",
+      "function setTimeout(fn, ms) { calls.timers += 1; return { fn, ms }; }",
+      "function clearTimeout() { calls.clearedTimers += 1; }",
+      "function isWhatsAppHost() { return true; }",
+      "function consumeInterceptionEvent(event) { calls.consumed += 1; event.consumed = true; }",
+      "async function blockWhatsAppTextSend(reason) { calls.blocks += 1; calls.blockReason = reason; }",
+      "function findComposer() { calls.findComposer += 1; return input; }",
+      "function findSendButton() { return button; }",
+      "function noteActiveRiskEditor() { calls.notes += 1; }",
+      "function getInputText(target) { return target.text; }",
+      "function analyzeText() { calls.quickAnalyses += 1; return { findings: [], placeholderNormalized: false }; }",
+      "function analysisNeedsEventOwnership() { return false; }",
+      "async function analyzeTextWithAiAssist(value) {",
+      "  calls.aiAnalyses += 1;",
+      "  return { findings: [], secretFindings: [], placeholderNormalized: false, normalizedText: value };",
+      "}",
+      "function analysisHasOnlySanitizedPlaceholderFindings() { return false; }",
+      "function getActivePolicy() { return {}; }",
+      "async function getPolicyForAction() { throw new Error('safe WhatsApp text should not request risky policy'); }",
+      "async function handleDestinationPolicy() { throw new Error('safe WhatsApp text should not handle destination findings'); }",
+      "function getDestinationPolicyDecision() { return { blocked: false }; }",
+      "function shouldForceDestinationRedaction() { return false; }",
+      "async function handleHttpSecretPolicy() { return false; }",
+      "function isProtectionPauseActiveAfterPolicy() { return false; }",
+      "function clearAllRiskSessionState() {}",
+      "async function promptForSensitiveContentDecision() { throw new Error('safe WhatsApp text should not prompt'); }",
+      "async function requestRedaction(value) { calls.redactions += 1; return { redactedText: value }; }",
+      "async function applySubmitRedactionTransactionally() { throw new Error('safe WhatsApp text should not redact transactionally'); }",
+      "async function applyNormalizedComposerRewrite(target, value) {",
+      "  calls.normalizedWrites += 1;",
+      "  target.text = value;",
+      "  return { ok: true, text: value };",
+      "}",
+      "async function ensureExactComposerState(target, expected) {",
+      "  calls.exactChecks += 1;",
+      "  return target.text === expected;",
+      "}",
+      "async function showRewriteFailure() { calls.blocks += 1; calls.blockReason = 'rewrite_failure'; }",
+      "function collectFailureDetails() { return {}; }",
+      "function refreshBadgeFromCurrentInput() {}",
+      "function setBadge() {}",
+      "function hideBadgeSoon() {}",
+      "function markFallbackSendKeyRedactionPending(target) { calls.fallbackPending += 1; fallbackSendKeySuppressionInput = target; }",
+      "function clearFallbackSendKeyRedactionPending(target) {",
+      "  calls.fallbackCleared += 1;",
+      "  if (!target || target === fallbackSendKeySuppressionInput) fallbackSendKeySuppressionInput = null;",
+      "}",
+      "let fallbackSendKeySuppressionInput = null;",
+      "let fallbackSendKeySuppressionUntil = 0;",
+      "function queueVerifiedComposerSend(_input, expected, context, replay, verifiedOptions) {",
+      "  calls.queued += 1;",
+      "  calls.queuedTexts.push(expected);",
+      "  calls.queueContext = context;",
+      "  calls.queueOptions = verifiedOptions;",
+      "  if (queueSettles) {",
+      "    replay();",
+      "    if (verifiedOptions && typeof verifiedOptions.onSettled === 'function') verifiedOptions.onSettled();",
+      "  }",
+      "}",
+      "function replayVerifiedSend(_input, _form, sendButton, replayOptions) {",
+      "  calls.replayed += 1;",
+      "  calls.replayButton = sendButton;",
+      "  calls.replayOptions = replayOptions || null;",
+      "}",
+      extractFunctionSource(contentSource, "shouldOwnWhatsAppTextSend"),
+      extractFunctionSource(contentSource, "clearWhatsAppTextSendPending"),
+      extractFunctionSource(contentSource, "markWhatsAppTextSendPending"),
+      extractFunctionSource(contentSource, "createWhatsAppVerifiedSendOptions"),
+      extractFunctionSource(contentSource, "maybeHandleSubmit"),
+      extractFunctionSource(contentSource, "maybeHandleFallbackSendKey"),
+      "return { maybeHandleSubmit, maybeHandleFallbackSendKey, calls, input, button };"
+    ].join("\n\n")
+  );
+  return factory(text, options.queueSettles !== false);
+}
+
+async function testWhatsAppShiftEnterDoesNotOwnFallbackSend() {
+  const { maybeHandleFallbackSendKey, calls, input } = createWhatsAppSubmitHarness({
+    text: "LGQA_WHATSAPP_SHIFT_ENTER should stay multiline"
+  });
+
+  await maybeHandleFallbackSendKey({
+    target: input,
+    key: "Enter",
+    shiftKey: true,
+    altKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    isComposing: false,
+    defaultPrevented: false
+  });
+
+  assert.strictEqual(calls.consumed, 0, "WhatsApp Shift+Enter should not be consumed as send");
+  assert.strictEqual(calls.findComposer, 0, "WhatsApp Shift+Enter should leave multiline typing to the page");
+  assert.strictEqual(calls.queued, 0, "WhatsApp Shift+Enter should not queue verified replay");
+  assert.strictEqual(calls.blocks, 0, "WhatsApp Shift+Enter should not show a block modal");
+}
+
+async function testWhatsAppEmptyComposerClickEnterAndSubmitAreIgnoredSafely() {
+  const clickFactory = new Function(
+    [
+      "let extensionRuntimeAvailable = true;",
+      "let modalOpen = false;",
+      "let bypassNextSendButtonClick = false;",
+      "const calls = { consumed: 0, blocks: 0, submitEvents: 0, analyses: 0 };",
+      "const button = { closest: () => null };",
+      "const input = { text: '   ' };",
+      "function normalizeTarget(target) { return target; }",
+      "function isWhatsAppHost() { return true; }",
+      "function findSendButtonClickTarget() { return button; }",
+      "function findComposer() { return input; }",
+      "function noteActiveRiskEditor() {}",
+      "function getInputText(target) { return target.text; }",
+      "function analyzeText() { calls.analyses += 1; return { findings: [], placeholderNormalized: false }; }",
+      "function analysisNeedsEventOwnership() { return false; }",
+      "function consumeInterceptionEvent() { calls.consumed += 1; }",
+      "async function maybeHandleSubmit() { calls.submitEvents += 1; }",
+      "async function blockWhatsAppTextSend(reason) { calls.blocks += 1; calls.reason = reason; }",
+      extractFunctionSource(contentSource, "shouldOwnWhatsAppTextSend"),
+      extractFunctionSource(contentSource, "maybeHandleSendButtonClick"),
+      "return { maybeHandleSendButtonClick, calls, button };"
+    ].join("\n\n")
+  );
+  const clickHarness = clickFactory();
+
+  await clickHarness.maybeHandleSendButtonClick({ target: clickHarness.button });
+
+  assert.strictEqual(clickHarness.calls.consumed, 0, "empty WhatsApp send click should be ignored by LeakGuard");
+  assert.strictEqual(clickHarness.calls.blocks, 0, "empty WhatsApp send click should not show a false failure");
+  assert.strictEqual(clickHarness.calls.submitEvents, 0, "empty WhatsApp send click should not replay send");
+  assert.strictEqual(clickHarness.calls.analyses, 0, "empty WhatsApp send click should not analyze empty text");
+
+  const enterHarness = createWhatsAppSubmitHarness({ text: "" });
+  await enterHarness.maybeHandleFallbackSendKey({
+    target: enterHarness.input,
+    key: "Enter",
+    shiftKey: false,
+    altKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    isComposing: false,
+    defaultPrevented: false
+  });
+  assert.strictEqual(enterHarness.calls.consumed, 0, "empty WhatsApp Enter should be ignored by LeakGuard");
+  assert.strictEqual(enterHarness.calls.blocks, 0, "empty WhatsApp Enter should not show a false failure");
+  assert.strictEqual(enterHarness.calls.queued, 0, "empty WhatsApp Enter should not replay send");
+
+  const submitHarness = createWhatsAppSubmitHarness({ text: "" });
+  await submitHarness.maybeHandleSubmit({ target: submitHarness.input, type: "submit" });
+  assert.strictEqual(submitHarness.calls.consumed, 0, "empty WhatsApp submit should be ignored safely");
+  assert.strictEqual(submitHarness.calls.blocks, 0, "empty WhatsApp submit should not report extraction failure");
+  assert.strictEqual(submitHarness.calls.queued, 0, "empty WhatsApp submit should not queue verified replay");
+}
+
+async function testWhatsAppUntrustedTextExtractionFailsClosed() {
+  const clickFactory = new Function(
+    [
+      "let extensionRuntimeAvailable = true;",
+      "let modalOpen = false;",
+      "let bypassNextSendButtonClick = false;",
+      "const calls = { consumed: 0, blocks: 0, submitEvents: 0 };",
+      "const button = { closest: () => null };",
+      "const input = {};",
+      "function normalizeTarget(target) { return target; }",
+      "function isWhatsAppHost() { return true; }",
+      "function findSendButtonClickTarget() { return button; }",
+      "function findComposer() { return input; }",
+      "function noteActiveRiskEditor() {}",
+      "function getInputText() { return null; }",
+      "function consumeInterceptionEvent() { calls.consumed += 1; }",
+      "async function maybeHandleSubmit() { calls.submitEvents += 1; }",
+      "async function blockWhatsAppTextSend(reason) { calls.blocks += 1; calls.reason = reason; }",
+      extractFunctionSource(contentSource, "shouldOwnWhatsAppTextSend"),
+      extractFunctionSource(contentSource, "maybeHandleSendButtonClick"),
+      "return { maybeHandleSendButtonClick, calls, button };"
+    ].join("\n\n")
+  );
+  const clickHarness = clickFactory();
+
+  await clickHarness.maybeHandleSendButtonClick({ target: clickHarness.button });
+
+  assert.strictEqual(clickHarness.calls.consumed, 1, "untrusted WhatsApp click extraction should be consumed");
+  assert.strictEqual(clickHarness.calls.blocks, 1, "untrusted WhatsApp click extraction should fail closed");
+  assert.strictEqual(clickHarness.calls.reason, "text_extraction_failed");
+  assert.strictEqual(clickHarness.calls.submitEvents, 0, "untrusted WhatsApp click extraction should not replay");
+
+  const submitHarness = createWhatsAppSubmitHarness({ text: null });
+  await submitHarness.maybeHandleSubmit({ target: submitHarness.input, type: "submit" });
+  assert.strictEqual(submitHarness.calls.consumed, 1, "untrusted WhatsApp submit extraction should be consumed");
+  assert.strictEqual(submitHarness.calls.blocks, 1, "untrusted WhatsApp submit extraction should fail closed");
+  assert.strictEqual(submitHarness.calls.blockReason, "text_extraction_failed");
+  assert.strictEqual(submitHarness.calls.queued, 0, "untrusted WhatsApp submit extraction should not replay");
+
+  const enterHarness = createWhatsAppSubmitHarness({ text: null });
+  await enterHarness.maybeHandleFallbackSendKey({
+    target: enterHarness.input,
+    key: "Enter",
+    shiftKey: false,
+    altKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    isComposing: false,
+    defaultPrevented: false
+  });
+  assert.strictEqual(enterHarness.calls.consumed, 1, "untrusted WhatsApp Enter extraction should be consumed");
+  assert.strictEqual(enterHarness.calls.blocks, 1, "untrusted WhatsApp Enter extraction should fail closed");
+  assert.strictEqual(enterHarness.calls.blockReason, "text_extraction_failed");
+  assert.strictEqual(enterHarness.calls.queued, 0, "untrusted WhatsApp Enter extraction should not replay");
+}
+
+async function testWhatsAppSafeTextVariantsUseVerifiedReplayWithoutRedaction() {
+  const variants = [
+    "LGQA_WHATSAPP_NORMAL_TEXT hello team",
+    "LGQA_WHATSAPP_PUNCTUATION !!! ... ???",
+    "LGQA_WHATSAPP_EMOJI_ONLY \\u{1F642}",
+    "LGQA_WHATSAPP_PLACEHOLDER_1 my password is [PWM_1]",
+    "LGQA_WHATSAPP_PLACEHOLDER_2 my password is [PWM_2]"
+  ];
+
+  for (const text of variants) {
+    const { maybeHandleSubmit, calls, input, button } = createWhatsAppSubmitHarness({ text });
+
+    await maybeHandleSubmit({ target: input, type: "submit" });
+
+    assert.strictEqual(calls.consumed, 1, `${text} should be owned for verified replay`);
+    assert.strictEqual(calls.blocks, 0, `${text} should not be blocked`);
+    assert.strictEqual(calls.redactions, 0, `${text} should not request redaction`);
+    assert.strictEqual(calls.normalizedWrites, 1, `${text} should use normalized same-text verification`);
+    assert.strictEqual(calls.exactChecks, 1, `${text} should verify the composer before replay`);
+    assert.strictEqual(calls.queued, 1, `${text} should queue exactly one verified send`);
+    assert.strictEqual(calls.replayed, 1, `${text} should replay exactly once after verification`);
+    assert.deepStrictEqual(calls.queuedTexts, [text], `${text} should not be rewritten into a new value`);
+    assert.strictEqual(input.text, text, `${text} should remain unchanged in the composer`);
+    assert.strictEqual(calls.replayButton, button, `${text} should replay through the detected send button`);
+  }
+}
+
+async function testWhatsAppSecondSubmitOrEnterWhilePendingDoesNotStartRetryPath() {
+  const clickPath = createWhatsAppSubmitHarness({
+    text: "LGQA_WHATSAPP_DOUBLE_CLICK first click only",
+    queueSettles: false
+  });
+
+  await clickPath.maybeHandleSubmit({ target: clickPath.input, type: "submit" });
+  await clickPath.maybeHandleSubmit({ target: clickPath.input, type: "submit" });
+
+  assert.strictEqual(clickPath.calls.consumed, 2, "pending WhatsApp submit retries should still be consumed");
+  assert.strictEqual(clickPath.calls.queued, 1, "pending WhatsApp submit retries should not start a second verified send");
+  assert.strictEqual(clickPath.calls.replayed, 0, "test harness keeps the first send pending, so retry cannot become success");
+  assert.strictEqual(clickPath.calls.blocks, 0, "pending WhatsApp submit retry should not show a false block");
+
+  const enterPath = createWhatsAppSubmitHarness({
+    text: "LGQA_WHATSAPP_DOUBLE_ENTER first Enter only",
+    queueSettles: false
+  });
+  const enterEvent = {
+    target: enterPath.input,
+    key: "Enter",
+    shiftKey: false,
+    altKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    isComposing: false,
+    defaultPrevented: false
+  };
+
+  await enterPath.maybeHandleFallbackSendKey({ ...enterEvent });
+  await enterPath.maybeHandleFallbackSendKey({ ...enterEvent });
+
+  assert.strictEqual(enterPath.calls.consumed, 2, "pending WhatsApp Enter retries should still be consumed");
+  assert.strictEqual(enterPath.calls.queued, 1, "pending WhatsApp Enter retries should not start a second verified send");
+  assert.strictEqual(enterPath.calls.replayed, 0, "test harness keeps the first Enter send pending, so retry cannot become success");
+  assert.strictEqual(enterPath.calls.blocks, 0, "pending WhatsApp Enter retry should not show a false block");
+}
+
+function testWhatsAppEditorActionEmitsSingleDataBearingInsert() {
+  const factory = new Function(
+    "normalizeComposerText",
+    [
+      "const calls = { commands: [], events: [] };",
+      "let modelText = '';",
+      "const selection = { removeAllRanges() {}, addRange() {} };",
+      "const range = { selectNodeContents() {} };",
+      "const window = { getSelection: () => selection };",
+      "class Event { constructor(type, init = {}) { this.type = type; this.bubbles = Boolean(init.bubbles); this.composed = Boolean(init.composed); this.defaultPrevented = false; } preventDefault() { this.defaultPrevented = true; } }",
+      "class InputEvent extends Event { constructor(type, init = {}) { super(type, init); this.cancelable = Boolean(init.cancelable); this.inputType = init.inputType || ''; this.data = init.data == null ? null : String(init.data); } }",
+      "class DataTransfer { constructor() { this.store = new Map(); this.types = []; } setData(type, value) { this.store.set(type, String(value || '')); this.types = Array.from(this.store.keys()); } getData(type) { return this.store.get(type) || ''; } }",
+      "class ClipboardEvent extends Event { constructor(type, init = {}) { super(type, init); this.cancelable = Boolean(init.cancelable); this.clipboardData = init.clipboardData || null; } }",
+      "const document = {",
+      "  createRange: () => range,",
+      "  dispatchEvent: () => true,",
+      "  execCommand(command, _showUi, value) {",
+      "    calls.commands.push({ command, value: value == null ? null : String(value) });",
+      "    if (command === 'insertText') { modelText += String(value || ''); return true; }",
+      "    return false;",
+      "  }",
+      "};",
+      "const input = {",
+      "  focus() {},",
+      "  dispatchEvent(event) {",
+      "    calls.events.push({ type: event.type, inputType: event.inputType || '', data: event.data == null ? null : String(event.data), clipboardText: event.clipboardData?.getData?.('text/plain') || '' });",
+      "    if (event.type === 'paste') { modelText += event.clipboardData?.getData?.('text/plain') || ''; return true; }",
+      "    if ((event.type === 'beforeinput' || event.type === 'input') && event.data && /^insert/.test(event.inputType || '')) {",
+      "      modelText += event.data;",
+      "    }",
+      "    return true;",
+      "  }",
+      "};",
+      "function getInputText() { return modelText; }",
+      extractFunctionSource(contentSource, "dispatchWhatsAppEditorInputEvent"),
+      extractFunctionSource(contentSource, "dispatchWhatsAppEditorChange"),
+      extractFunctionSource(contentSource, "focusWhatsAppComposer"),
+      extractFunctionSource(contentSource, "selectWhatsAppComposerContents"),
+      extractFunctionSource(contentSource, "runWhatsAppEditorCommand"),
+      extractFunctionSource(contentSource, "attachEventDataTransfer"),
+      extractFunctionSource(contentSource, "createWhatsAppPlainTextTransfer"),
+      extractFunctionSource(contentSource, "dispatchWhatsAppEditorPasteEvent"),
+      extractFunctionSource(contentSource, "insertWhatsAppComposerTextThroughEditor"),
+      "return { input, calls, insertWhatsAppComposerTextThroughEditor, getText: () => modelText };"
+    ].join("\n\n")
+  );
+  const harness = factory(ComposerHelpers.normalizeComposerText);
+  const text = "LGQA_WHATSAPP_SINGLE_WRITE my password is [PWM_1]";
+
+  const inserted = harness.insertWhatsAppComposerTextThroughEditor(harness.input, text);
+
+  assert.strictEqual(inserted, true);
+  assert.strictEqual(
+    harness.getText(),
+    text,
+    "WhatsApp sanitized editor write should not duplicate text through data-bearing beforeinput/input events"
+  );
+  assert.deepStrictEqual(harness.calls.commands, [{ command: "insertText", value: text }]);
+
+  const multilineHarness = factory(ComposerHelpers.normalizeComposerText);
+  const multilineText = [
+    "LGQA_WHATSAPP_SINGLE_WRITE first [PWM_1]",
+    "LGQA_WHATSAPP_SINGLE_WRITE second [PWM_2]",
+    "LGQA_WHATSAPP_SINGLE_WRITE third"
+  ].join("\n");
+
+  const multilineInserted = multilineHarness.insertWhatsAppComposerTextThroughEditor(
+    multilineHarness.input,
+    multilineText
+  );
+
+  assert.strictEqual(multilineInserted, true);
+  assert.strictEqual(
+    multilineHarness.getText(),
+    multilineText,
+    "WhatsApp sanitized editor write should preserve multiline shape without duplicating text"
+  );
+  assert.deepStrictEqual(multilineHarness.calls.commands, []);
+  assert.deepStrictEqual(
+    multilineHarness.calls.events.filter((event) => event.type === "paste").map((event) => event.clipboardText),
+    [multilineText],
+    "WhatsApp multiline rewrite should hand sanitized text to the editor paste path"
+  );
+  assert.deepStrictEqual(
+    multilineHarness.calls.events.filter((event) => event.data),
+    [],
+    "WhatsApp multiline rewrite should not dispatch extra data-bearing synthetic input events"
+  );
+}
+
+async function testWhatsAppRewriteUsesSyncedComposerPathBeforeAppendProneStrategies() {
+  const factory = new Function(
+    "normalizeComposerText",
+    [
+      "const calls = { genericWrites: 0, forcedWrites: 0, directWrites: 0, syncedWrites: 0, editorActionWrites: 0 };",
+      "const ChatGptComposerSync = {",
+      "  applyChatGptSyncedComposerText: async () => {",
+      "    calls.syncedWrites += 1;",
+      "    return { ok: false, actual: '', strategy: 'unexpected-chatgpt-sync' };",
+      "  }",
+      "};",
+      "async function applyWhatsAppEditorActionComposerText(input, text, options) {",
+      "  calls.editorActionWrites += 1;",
+      "  calls.context = options.context;",
+      "  input.text = normalizeComposerText(text);",
+      "  return { ok: true, actual: input.text, strategy: 'whatsapp-editor-action-test' };",
+      "}",
+      "function isChatGptHost() { return false; }",
+      "function isWhatsAppHost() { return true; }",
+      "function isContentEditable(input) { return input?.contentEditable === true; }",
+      "function getWhatsAppComposerSyncDependencies() { return { isChatGptHost: isWhatsAppHost }; }",
+      "function buildComposerWritePlan(_input, text) { const canonical = normalizeComposerText(text); return { canonical, writeText: canonical }; }",
+      "function matchesComposerPlan(plan, actual) { return normalizeComposerText(actual) === plan.canonical; }",
+      "function suppressFollowupInputScan() {}",
+      "function setInputText(input, text) { calls.genericWrites += 1; input.text = `${input.text}${text}`; }",
+      "function forceRewriteInputText(input, text) { calls.forcedWrites += 1; input.text = `${input.text}${text}`; }",
+      "function setInputTextDirect(input, text) { calls.directWrites += 1; input.text = normalizeComposerText(text); return true; }",
+      "async function readStableComposerText(input) { return normalizeComposerText(input.text); }",
+      "async function verifyComposerRewriteSafe({ input, expectedText, actualText }) { const actual = normalizeComposerText(actualText == null ? input.text : actualText); return { ok: actual === normalizeComposerText(expectedText), actual, strategy: 'test' }; }",
+      "function debugLogSnapshot() {}",
+      extractFunctionSource(contentSource, "applyWhatsAppSyncedComposerText"),
+      extractFunctionSource(contentSource, "applyComposerText"),
+      "return { applyComposerText, calls };"
+    ].join("\n\n")
+  );
+  const { applyComposerText, calls } = factory(ComposerHelpers.normalizeComposerText);
+  const input = {
+    contentEditable: true,
+    text: "my password is rawsecret123"
+  };
+
+  const result = await applyComposerText(input, "my password is [PWM_1]", {
+    context: "submit",
+    originalText: input.text,
+    rawInsertedText: input.text,
+    restoreText: input.text
+  });
+
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(input.text, "my password is [PWM_1]");
+  assert.strictEqual(calls.editorActionWrites, 1, "WhatsApp composer should use one editor-action rewrite");
+  assert.strictEqual(calls.context, "submit", "WhatsApp editor-action rewrite should receive submit context");
+  assert.strictEqual(calls.syncedWrites, 0, "WhatsApp composer should not reuse the ChatGPT synced writer");
+  assert.strictEqual(calls.directWrites, 0, "WhatsApp composer should not use direct DOM before synced rewrite");
+  assert.strictEqual(calls.genericWrites, 0, "WhatsApp composer should skip append-prone generic rewrite");
+  assert.strictEqual(calls.forcedWrites, 0, "WhatsApp composer should skip append-prone forced rewrite");
+}
+
+async function testWhatsAppSyncedRewriteFailureDoesNotRestoreThroughAppendProneFallback() {
+  const factory = new Function(
+    "normalizeComposerText",
+    [
+      "const calls = { genericWrites: 0, forcedWrites: 0, directWrites: 0, syncedWrites: 0, editorActionWrites: 0 };",
+      "const ChatGptComposerSync = {",
+      "  applyChatGptSyncedComposerText: async (input) => {",
+      "    calls.syncedWrites += 1;",
+      "    return { ok: false, actual: input.text, strategy: 'whatsapp-synced-test-failed' };",
+      "  }",
+      "};",
+      "async function applyWhatsAppEditorActionComposerText(input) {",
+      "  calls.editorActionWrites += 1;",
+      "  return { ok: false, actual: input.text, strategy: 'whatsapp-editor-action-test-failed' };",
+      "}",
+      "function isChatGptHost() { return false; }",
+      "function isWhatsAppHost() { return true; }",
+      "function isContentEditable(input) { return input?.contentEditable === true; }",
+      "function getWhatsAppComposerSyncDependencies() { return { isChatGptHost: isWhatsAppHost }; }",
+      "function buildComposerWritePlan(_input, text) { const canonical = normalizeComposerText(text); return { canonical, writeText: canonical }; }",
+      "function matchesComposerPlan(plan, actual) { return normalizeComposerText(actual) === plan.canonical; }",
+      "function suppressFollowupInputScan() {}",
+      "function setInputText(input, text) { calls.genericWrites += 1; input.text = `${input.text}${text}`; }",
+      "function forceRewriteInputText(input, text) { calls.forcedWrites += 1; input.text = `${input.text}${text}`; }",
+      "function setInputTextDirect(_input, _text) { calls.directWrites += 1; return false; }",
+      "async function readStableComposerText(input) { return normalizeComposerText(input.text); }",
+      "async function verifyComposerRewriteSafe({ input, expectedText, actualText }) { const actual = normalizeComposerText(actualText == null ? input.text : actualText); return { ok: actual === normalizeComposerText(expectedText), actual, strategy: 'test' }; }",
+      "function debugLogSnapshot() {}",
+      extractFunctionSource(contentSource, "applyWhatsAppSyncedComposerText"),
+      extractFunctionSource(contentSource, "applyComposerText"),
+      "return { applyComposerText, calls };"
+    ].join("\n\n")
+  );
+  const { applyComposerText, calls } = factory(ComposerHelpers.normalizeComposerText);
+  const input = {
+    contentEditable: true,
+    text: "my password is rawsecret123"
+  };
+
+  const result = await applyComposerText(input, "my password is [PWM_1]", {
+    context: "submit",
+    originalText: input.text,
+    rawInsertedText: input.text,
+    restoreText: input.text
+  });
+
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(input.text, "my password is rawsecret123");
+  assert.strictEqual(calls.editorActionWrites, 1, "WhatsApp failed rewrite should return the editor-action failure");
+  assert.strictEqual(calls.syncedWrites, 0, "WhatsApp failed rewrite should not call the ChatGPT synced writer");
+  assert.strictEqual(calls.directWrites, 0, "WhatsApp failed rewrite should leave restore handling to the editor-action writer");
+  assert.strictEqual(calls.genericWrites, 0, "WhatsApp failed rewrite should not append generic text");
+  assert.strictEqual(calls.forcedWrites, 0, "WhatsApp failed rewrite should not append restored text");
+}
+
+async function testWhatsAppTransactionalSyncedFailureDoesNotAppendFallbackCopies() {
+  const factory = new Function(
+    "normalizeComposerText",
+    [
+      "const calls = { genericWrites: 0, forcedWrites: 0, directWrites: 0, syncedWrites: 0, editorActionWrites: 0 };",
+      "const ChatGptComposerSync = {",
+      "  applyChatGptSyncedComposerText: async (input, text) => {",
+      "    calls.syncedWrites += 1;",
+      "    input.text = `${input.text}${normalizeComposerText(text)}`;",
+      "    return { ok: false, actual: input.text, strategy: 'whatsapp-synced-test-failed' };",
+      "  }",
+      "};",
+      "async function applyWhatsAppEditorActionComposerText(input, text) {",
+      "  calls.editorActionWrites += 1;",
+      "  input.text = `${input.text}${normalizeComposerText(text)}`;",
+      "  return { ok: false, actual: input.text, strategy: 'whatsapp-editor-action-test-failed' };",
+      "}",
+      "function isChatGptHost() { return false; }",
+      "function isWhatsAppHost() { return true; }",
+      "function isContentEditable(input) { return input?.contentEditable === true; }",
+      "function containsVisiblePlaceholderToken(text) { return /\\[PWM_\\d+\\]/.test(String(text || '')); }",
+      "function hasUnsafeVisibleSecret() { return false; }",
+      "function getWhatsAppComposerSyncDependencies() { return { isChatGptHost: isWhatsAppHost }; }",
+      "function buildComposerWritePlan(_input, text) { const canonical = normalizeComposerText(text); return { canonical, writeText: canonical, acceptableTexts: [canonical] }; }",
+      "function matchesComposerPlan(plan, actual) { return normalizeComposerText(actual) === plan.canonical; }",
+      "function suppressFollowupInputScan() {}",
+      "function setInputText(input, text) { calls.genericWrites += 1; input.text = `${input.text}${normalizeComposerText(text)}`; }",
+      "function forceRewriteInputText(input, text) { calls.forcedWrites += 1; input.text = `${input.text}${normalizeComposerText(text)}`; }",
+      "function setInputTextDirect(input, text) { calls.directWrites += 1; input.text = `${input.text}${normalizeComposerText(text)}`; return true; }",
+      "async function readStableComposerText(input) { return normalizeComposerText(input.text); }",
+      "async function verifyComposerRewriteSafe({ input, expectedText, actualText }) { const actual = normalizeComposerText(actualText == null ? input.text : actualText); return { ok: actual === normalizeComposerText(expectedText), actual, strategy: 'test' }; }",
+      "function debugLogSnapshot() {}",
+      extractFunctionSource(contentSource, "applyWhatsAppSyncedComposerText"),
+      extractFunctionSource(contentSource, "applyComposerText"),
+      extractFunctionSource(contentSource, "rewriteComposerTransactionally"),
+      "return { rewriteComposerTransactionally, calls };"
+    ].join("\n\n")
+  );
+  const { rewriteComposerTransactionally, calls } = factory(ComposerHelpers.normalizeComposerText);
+  const rawText = "my password is synthetic1234";
+  const redactedText = "my password is [PWM_1]";
+  const input = {
+    contentEditable: true,
+    text: rawText
+  };
+
+  const result = await rewriteComposerTransactionally(input, rawText, redactedText, "submit", {
+    restoreText: rawText,
+    restoreCaretOffset: rawText.length
+  });
+
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(input.text, `${rawText}${redactedText}`);
+  assert.strictEqual(calls.editorActionWrites, 1, "WhatsApp transactional rewrite should try the editor-action writer once");
+  assert.strictEqual(calls.syncedWrites, 0, "WhatsApp transactional rewrite should not call the ChatGPT synced writer");
+  assert.strictEqual(calls.directWrites, 0, "WhatsApp editor-action failure should not fall through to direct DOM append");
+  assert.strictEqual(calls.genericWrites, 0, "WhatsApp editor-action failure should not fall through to generic append");
+  assert.strictEqual(calls.forcedWrites, 0, "WhatsApp editor-action failure should not force another appended copy");
+}
+
+async function testWhatsAppTransactionalCorruptedDraftDoesNotAttemptAnotherRewrite() {
+  const factory = new Function(
+    "normalizeComposerText",
+    [
+      "const calls = { syncedWrites: 0, directWrites: 0, forcedWrites: 0 };",
+      "const ChatGptComposerSync = {",
+      "  applyChatGptSyncedComposerText: async (input, text) => {",
+      "    calls.syncedWrites += 1;",
+      "    input.text = `${input.text}${normalizeComposerText(text)}`;",
+      "    return { ok: false, actual: input.text, strategy: 'whatsapp-synced-test-failed' };",
+      "  }",
+      "};",
+      "async function applyWhatsAppEditorActionComposerText(input, text) {",
+      "  calls.syncedWrites += 1;",
+      "  input.text = `${input.text}${normalizeComposerText(text)}`;",
+      "  return { ok: false, actual: input.text, strategy: 'whatsapp-editor-action-test-failed' };",
+      "}",
+      "function isChatGptHost() { return false; }",
+      "function isWhatsAppHost() { return true; }",
+      "function isContentEditable(input) { return input?.contentEditable === true; }",
+      "function containsVisiblePlaceholderToken(text) { return /\\[PWM_\\d+\\]/.test(String(text || '')); }",
+      "function hasUnsafeVisibleSecret(text) { return /synthetic1234/.test(String(text || '')); }",
+      "function getWhatsAppComposerSyncDependencies() { return { isChatGptHost: isWhatsAppHost }; }",
+      "function buildComposerWritePlan(_input, text) { const canonical = normalizeComposerText(text); return { canonical, writeText: canonical, acceptableTexts: [canonical] }; }",
+      "function matchesComposerPlan(plan, actual) { return normalizeComposerText(actual) === plan.canonical; }",
+      "function suppressFollowupInputScan() {}",
+      "function setInputText(input, text) { input.text = `${input.text}${normalizeComposerText(text)}`; }",
+      "function forceRewriteInputText(input, text) { calls.forcedWrites += 1; input.text = `${input.text}${normalizeComposerText(text)}`; }",
+      "function setInputTextDirect(input, text) { calls.directWrites += 1; input.text = `${input.text}${normalizeComposerText(text)}`; return true; }",
+      "function getInputText(input) { return normalizeComposerText(input.text); }",
+      "async function readStableComposerText(input) { return normalizeComposerText(input.text); }",
+      "async function verifyComposerRewriteSafe({ input, expectedText, actualText }) { const actual = normalizeComposerText(actualText == null ? input.text : actualText); return { ok: actual === normalizeComposerText(expectedText), actual, strategy: 'test' }; }",
+      "function debugLogSnapshot() {}",
+      extractFunctionSource(contentSource, "applyWhatsAppSyncedComposerText"),
+      extractFunctionSource(contentSource, "applyComposerText"),
+      extractFunctionSource(contentSource, "rewriteComposerTransactionally"),
+      "return { rewriteComposerTransactionally, calls };"
+    ].join("\n\n")
+  );
+  const { rewriteComposerTransactionally, calls } = factory(ComposerHelpers.normalizeComposerText);
+  const rawText = "my password is synthetic1234";
+  const corruptedText = `${rawText}my password is [PWM_1]`;
+  const input = {
+    contentEditable: true,
+    text: corruptedText
+  };
+
+  const result = await rewriteComposerTransactionally(input, corruptedText, "my password is [PWM_2]", "submit", {
+    restoreText: corruptedText,
+    restoreCaretOffset: corruptedText.length
+  });
+
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.strategy, "whatsapp-corrupted-composer-blocked");
+  assert.strictEqual(input.text, corruptedText);
+  assert.strictEqual(calls.syncedWrites, 0, "corrupted WhatsApp drafts should fail closed before another append-prone rewrite");
+  assert.strictEqual(calls.directWrites, 0);
+  assert.strictEqual(calls.forcedWrites, 0);
+}
+
 async function testSubmitTransactionalHelperFailsClosedOnRawRestore() {
   const factory = new Function(
     [
@@ -1426,6 +2129,18 @@ function run() {
     .then(() => testRewriteVerificationFailClosedCases())
     .then(() => testRewriteFailureModalSuppression())
     .then(() => testTransactionalRewriteFallbackRemovesRawDuplicate())
+    .then(() => testWhatsAppSendButtonClickOwnsSafeTextForVerifiedReplay())
+    .then(() => testWhatsAppSendButtonClickFailsClosedWithoutComposer())
+    .then(() => testWhatsAppShiftEnterDoesNotOwnFallbackSend())
+    .then(() => testWhatsAppEmptyComposerClickEnterAndSubmitAreIgnoredSafely())
+    .then(() => testWhatsAppUntrustedTextExtractionFailsClosed())
+    .then(() => testWhatsAppSafeTextVariantsUseVerifiedReplayWithoutRedaction())
+    .then(() => testWhatsAppSecondSubmitOrEnterWhilePendingDoesNotStartRetryPath())
+    .then(() => testWhatsAppEditorActionEmitsSingleDataBearingInsert())
+    .then(() => testWhatsAppRewriteUsesSyncedComposerPathBeforeAppendProneStrategies())
+    .then(() => testWhatsAppSyncedRewriteFailureDoesNotRestoreThroughAppendProneFallback())
+    .then(() => testWhatsAppTransactionalSyncedFailureDoesNotAppendFallbackCopies())
+    .then(() => testWhatsAppTransactionalCorruptedDraftDoesNotAttemptAnotherRewrite())
     .then(() => testSubmitTransactionalHelperFailsClosedOnRawRestore())
     .then(() => testStaleTypedRewriteFailureKeepsSanitizedEditorUsable())
     .then(() => {

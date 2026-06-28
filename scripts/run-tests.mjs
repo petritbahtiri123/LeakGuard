@@ -63,6 +63,7 @@ const testFiles = [
   "tests/manual_qa_artifact_safety.test.js",
   "tests/browser_qa_assertions.test.js",
   "tests/live_prompt_capture_qa_docs.test.js",
+  "tests/whatsapp_live_diagnostics_guard.test.mjs",
   "tests/popup_ui.test.js",
   "tests/options_feedback_ui.test.js",
   "tests/productization.test.js",

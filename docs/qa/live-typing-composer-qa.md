@@ -29,7 +29,7 @@ Recommended safety split for future work:
 
 ## Manual QA checklist for normal typing
 
-Run these checks on ChatGPT, Gemini, Claude, Grok, OpenAI, and X/generic protected-site flows. Prioritize Gemini and ChatGPT.
+Run these checks on ChatGPT, Gemini, Claude, Grok, OpenAI, X, WhatsApp Web, and generic protected-site flows. Prioritize Gemini and ChatGPT.
 
 Use only synthetic text from this document. Do not use real credentials, private hostnames, customer data, or real files.
 

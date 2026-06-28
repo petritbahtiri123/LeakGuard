@@ -47,6 +47,7 @@
   } = ComposerHelpers;
   const {
     dataTransferHasFiles,
+    normalizeClipboardImageDataTransfer,
     readLocalTextFileFromDataTransfer,
     createSanitizedTextFile,
     redactSensitiveFileName
@@ -88,6 +89,7 @@
     ".ql-editor[contenteditable]:not([contenteditable='false'])",
     "[contenteditable]:not([contenteditable='false'])[data-lexical-editor='true']",
     "[contenteditable]:not([contenteditable='false'])[aria-multiline='true']",
+    "[data-testid='conversation-compose-box-input'][contenteditable]:not([contenteditable='false'])",
     "[data-testid*='composer'] textarea",
     "[data-testid*='composer'] [contenteditable='true']",
     "[data-testid*='composer'] [contenteditable]:not([contenteditable='false'])",
@@ -168,6 +170,8 @@
   let bypassNextSendButtonClick = false;
   let fallbackSendKeySuppressionUntil = 0;
   let fallbackSendKeySuppressionInput = null;
+  const whatsAppPendingTextSendInputs = new WeakSet();
+  const whatsAppPendingTextSendTimers = new WeakMap();
   let inputScanTimer = 0;
   let rehydrateObserver = null;
   let modalOpen = false;
@@ -201,6 +205,15 @@
   const SANITIZED_FILE_HANDOFF_SUPPRESS_MS = 30000;
   const PROGRAMMATIC_INPUT_SUPPRESS_MS = 500;
   const FALLBACK_SEND_KEY_SUPPRESS_MS = 5000;
+  const WHATSAPP_TEXT_SEND_GUARD_MS = 5000;
+  const WHATSAPP_REWRITE_CLEAR_TIMEOUT_MS = 500;
+  const WHATSAPP_REWRITE_INSERT_TIMEOUT_MS = 700;
+  const WHATSAPP_REWRITE_POLL_MS = 50;
+  const WHATSAPP_FILE_ATTACH_UNSUPPORTED_REASON = "whatsapp_file_attachments_unsupported";
+  const WHATSAPP_FILE_ATTACH_BLOCK_TITLE = "WhatsApp file upload blocked";
+  const WHATSAPP_FILE_ATTACH_BLOCK_MESSAGE =
+    "LeakGuard blocks WhatsApp Web file attachments in this text-only phase. No raw file was uploaded.";
+  const WHATSAPP_TEXT_SEND_BLOCK_TITLE = "WhatsApp send blocked";
   const CHATGPT_LARGE_PASTE_FILE_THRESHOLD = 16 * 1024;
   const CHATGPT_SANITIZED_PASTE_FILE_NAME = "leakguard-redacted-paste.txt";
   const GEMINI_DIRECT_TEXT_INSERT_THRESHOLD = 8 * 1024;
@@ -316,7 +329,8 @@
     chatgpt: true,
     claude: true,
     openai: true,
-    x: true
+    x: true,
+    whatsapp: false
   });
   let dmzOverlayEl = null;
   let dmzOverlayStatusEl = null;
@@ -1070,6 +1084,12 @@
   function resolveFileDragGuardPolicy(dataTransfer) {
     const policy = resolveLocalFileTransferPolicy(dataTransfer);
     const localTransferFiles = listLocalTransferFiles(dataTransfer);
+    if (isWhatsAppHost() && dataTransferLooksLikeFiles(dataTransfer)) {
+      return {
+        action: "block",
+        reason: WHATSAPP_FILE_ATTACH_UNSUPPORTED_REASON
+      };
+    }
     if (
       localTransferFiles.length === 1 &&
       shouldUseContentFileExtractionPipeline(localTransferFiles[0])
@@ -1123,6 +1143,29 @@
     return isUnsupportedProtectedImageTransfer(policy)
       ? UNSUPPORTED_PROTECTED_IMAGE_BLOCKED_TITLE
       : "Raw file upload blocked";
+  }
+
+  async function blockWhatsAppFileAttachment(event) {
+    if (!event?.defaultPrevented) {
+      consumeInterceptionEvent(event);
+    }
+    if (event?.target?.tagName === "INPUT" && String(event.target.type || "").toLowerCase() === "file") {
+      clearLocalFileInputSelection(event.target);
+    }
+    showFileProcessingError(WHATSAPP_FILE_ATTACH_BLOCK_TITLE, {
+      site: "whatsapp",
+      reason: WHATSAPP_FILE_ATTACH_UNSUPPORTED_REASON
+    });
+    hideFileProcessingOverlay(WHATSAPP_FILE_ATTACH_UNSUPPORTED_REASON);
+    setBadge(WHATSAPP_FILE_ATTACH_BLOCK_TITLE);
+    hideBadgeSoon(4200);
+    await showMessageModal(WHATSAPP_FILE_ATTACH_BLOCK_TITLE, WHATSAPP_FILE_ATTACH_BLOCK_MESSAGE);
+    refreshBadgeFromCurrentInput();
+    return {
+      handled: true,
+      ok: false,
+      reason: WHATSAPP_FILE_ATTACH_UNSUPPORTED_REASON
+    };
   }
 
   function clearDmzOverlayTimer() {
@@ -2663,6 +2706,7 @@
     if (el.contains(document.activeElement)) score += 32;
     if (id === "prompt-textarea") score += 80;
     if (/prompt/i.test(dataTestId)) score += 60;
+    if (dataTestId === "conversation-compose-box-input") score += 70;
     if (/composer/i.test(dataTestId)) score += 45;
     if (isTextArea(el)) score += 36;
     if (isContentEditable(el)) score += 28;
@@ -3387,6 +3431,289 @@
     };
   }
 
+  function debugWhatsAppComposerSync(label, input, expectedText = "", actualText = null, extra = {}) {
+    if (!isWhatsAppHost()) return;
+    debugReveal(String(label || "").replace(/^chatgpt-sync/, "whatsapp-sync"), {
+      ...getChatGptComposerSyncDebug(input, expectedText, actualText),
+      ...(extra || {})
+    });
+  }
+
+  function dispatchWhatsAppEditorInputEvent(input, inputType, data, options = {}) {
+    if (!input?.dispatchEvent) return false;
+    let event = null;
+    try {
+      event = new InputEvent(options.beforeInput ? "beforeinput" : "input", {
+        bubbles: true,
+        cancelable: Boolean(options.beforeInput),
+        composed: true,
+        inputType,
+        data: data == null ? null : String(data)
+      });
+    } catch {
+      event = new Event(options.beforeInput ? "beforeinput" : "input", {
+        bubbles: true,
+        cancelable: Boolean(options.beforeInput),
+        composed: true
+      });
+    }
+
+    try {
+      input.dispatchEvent(event);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function dispatchWhatsAppEditorChange(input) {
+    try {
+      input?.dispatchEvent?.(new Event("change", { bubbles: true, composed: true }));
+      document.dispatchEvent?.(new Event("selectionchange", { bubbles: true }));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function focusWhatsAppComposer(input) {
+    try {
+      input?.focus?.({ preventScroll: true });
+      return;
+    } catch {
+      try {
+        input?.focus?.();
+      } catch {
+        // Focus is best-effort; verification below decides whether the rewrite worked.
+      }
+    }
+  }
+
+  function selectWhatsAppComposerContents(input) {
+    if (
+      !input ||
+      typeof window === "undefined" ||
+      typeof document === "undefined" ||
+      typeof window.getSelection !== "function" ||
+      typeof document.createRange !== "function"
+    ) {
+      return false;
+    }
+
+    try {
+      focusWhatsAppComposer(input);
+      const selection = window.getSelection();
+      const range = document.createRange();
+      if (!selection || !range) return false;
+      range.selectNodeContents(input);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function runWhatsAppEditorCommand(command, value = null) {
+    if (typeof document?.execCommand !== "function") return false;
+    try {
+      return Boolean(document.execCommand(command, false, value));
+    } catch {
+      return false;
+    }
+  }
+
+  function createWhatsAppPlainTextTransfer(text) {
+    if (typeof DataTransfer !== "function") return null;
+    try {
+      const transfer = new DataTransfer();
+      transfer.setData("text/plain", text);
+      transfer.setData("text", text);
+      return transfer;
+    } catch {
+      return null;
+    }
+  }
+
+  function dispatchWhatsAppEditorPasteEvent(input, text) {
+    if (!input || typeof ClipboardEvent !== "function") return false;
+    const transfer = createWhatsAppPlainTextTransfer(text);
+    if (!transfer) return false;
+
+    try {
+      const event = new ClipboardEvent("paste", {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        clipboardData: transfer
+      });
+      const hasClipboardText =
+        event.clipboardData?.getData?.("text/plain") === text ||
+        attachEventDataTransfer(event, "clipboardData", transfer);
+      if (!hasClipboardText) return false;
+      const dispatched = input.dispatchEvent(event);
+      return dispatched && !event.defaultPrevented;
+    } catch {
+      return false;
+    }
+  }
+
+  async function waitForWhatsAppComposerText(input, expectedText, options = {}) {
+    const expected = normalizeComposerText(expectedText);
+    const timeoutMs = Math.max(WHATSAPP_REWRITE_POLL_MS, Number(options.timeoutMs) || WHATSAPP_REWRITE_INSERT_TIMEOUT_MS);
+    const stablePasses = Math.max(1, Number(options.stablePasses) || 2);
+    const deadline = Date.now() + timeoutMs;
+    let actual = normalizeComposerText(getInputText(input));
+    let matchedPasses = actual === expected ? 1 : 0;
+
+    while (Date.now() <= deadline) {
+      await new Promise((resolve) => window.setTimeout(resolve, WHATSAPP_REWRITE_POLL_MS));
+      actual = normalizeComposerText(getInputText(input));
+      matchedPasses = actual === expected ? matchedPasses + 1 : 0;
+      if (matchedPasses >= stablePasses) {
+        return { ok: true, actual };
+      }
+    }
+
+    return { ok: false, actual };
+  }
+
+  async function clearWhatsAppComposerThroughEditor(input) {
+    if (!selectWhatsAppComposerContents(input)) {
+      return { ok: false, actual: normalizeComposerText(getInputText(input)), strategy: "whatsapp-select-failed" };
+    }
+
+    dispatchWhatsAppEditorInputEvent(input, "deleteContentBackward", null, { beforeInput: true });
+    const deleted = runWhatsAppEditorCommand("delete");
+    dispatchWhatsAppEditorInputEvent(input, "deleteContentBackward", null);
+    dispatchWhatsAppEditorChange(input);
+
+    if (!deleted) {
+      return { ok: false, actual: normalizeComposerText(getInputText(input)), strategy: "whatsapp-delete-failed" };
+    }
+
+    const cleared = await waitForWhatsAppComposerText(input, "", {
+      timeoutMs: WHATSAPP_REWRITE_CLEAR_TIMEOUT_MS,
+      stablePasses: 2
+    });
+    return {
+      ...cleared,
+      strategy: cleared.ok ? "whatsapp-clear-synced" : "whatsapp-clear-not-empty"
+    };
+  }
+
+  function insertWhatsAppComposerTextThroughEditor(input, text, options = {}) {
+    const normalized = normalizeComposerText(text);
+    if (!selectWhatsAppComposerContents(input)) return false;
+
+    const inserted = !normalized || (
+      normalized.includes("\n")
+        ? dispatchWhatsAppEditorPasteEvent(input, normalized)
+        : runWhatsAppEditorCommand("insertText", normalized)
+    );
+    if (!inserted) return false;
+
+    if (Number.isFinite(options.caretOffset)) {
+      try {
+        input.focus({ preventScroll: true });
+      } catch {
+        focusWhatsAppComposer(input);
+      }
+    }
+    dispatchWhatsAppEditorInputEvent(input, "insertReplacementText", null);
+    dispatchWhatsAppEditorChange(input);
+    return true;
+  }
+
+  async function applyWhatsAppEditorActionComposerText(input, expectedText, options = {}) {
+    const plan = buildComposerWritePlan(input, expectedText);
+    const expected = plan.canonical;
+    const writeText = plan.writeText;
+    const rawInsertedText =
+      typeof options.rawInsertedText === "string"
+        ? normalizeComposerText(options.rawInsertedText)
+        : "";
+
+    debugWhatsAppComposerSync("whatsapp-sync:before-editor-action", input, expected, null, {
+      context: options.context || "composer-rewrite"
+    });
+
+    suppressFollowupInputScan();
+    const cleared = await clearWhatsAppComposerThroughEditor(input);
+    debugWhatsAppComposerSync("whatsapp-sync:after-clear", input, expected, cleared.actual, {
+      clearOk: cleared.ok,
+      strategy: cleared.strategy
+    });
+    if (!cleared.ok) {
+      return {
+        ok: false,
+        actual: cleared.actual,
+        strategy: cleared.strategy || "whatsapp-clear-failed"
+      };
+    }
+
+    suppressFollowupInputScan();
+    const inserted = insertWhatsAppComposerTextThroughEditor(input, writeText, {
+      caretOffset: options.caretOffset
+    });
+    if (!inserted) {
+      return {
+        ok: false,
+        actual: normalizeComposerText(getInputText(input)),
+        strategy: "whatsapp-insert-failed"
+      };
+    }
+
+    const settled = await waitForWhatsAppComposerText(input, expected, {
+      timeoutMs: WHATSAPP_REWRITE_INSERT_TIMEOUT_MS,
+      stablePasses: 2
+    });
+    debugWhatsAppComposerSync("whatsapp-sync:after-insert-settle", input, expected, settled.actual, {
+      insertOk: inserted,
+      exactMatch: settled.actual === expected
+    });
+    if (!settled.ok || settled.actual !== expected) {
+      return {
+        ok: false,
+        actual: settled.actual,
+        strategy: "whatsapp-insert-verification-failed"
+      };
+    }
+
+    const verification = await verifyComposerRewriteSafe({
+      input,
+      expectedText: expected,
+      originalText: options.originalText || rawInsertedText || options.restoreText || "",
+      redactedText: expected,
+      findings: options.findings,
+      context: options.context || "composer-rewrite",
+      caretOffset: options.caretOffset,
+      actualText: settled.actual,
+      allowMultilineRetry: false
+    });
+
+    if (!verification.ok || normalizeComposerText(verification.actual || settled.actual) !== expected) {
+      return {
+        ok: false,
+        actual: verification.actual || settled.actual,
+        strategy: `whatsapp-${verification.strategy || "rewrite-verification-failed"}`
+      };
+    }
+
+    return {
+      ok: true,
+      actual: verification.actual || settled.actual,
+      strategy: "whatsapp-editor-action"
+    };
+  }
+
+  function applyWhatsAppSyncedComposerText(input, expectedText, options = {}) {
+    return applyWhatsAppEditorActionComposerText(input, expectedText, {
+      ...options,
+      context: options.context || "composer-rewrite"
+    });
+  }
+
   async function applyComposerText(input, expectedText, options) {
     options = options || {};
     if (typeof isChatGptHost === "function" && isChatGptHost()) {
@@ -3404,6 +3731,19 @@
       typeof options.rawInsertedText === "string"
         ? normalizeComposerText(options.rawInsertedText)
         : "";
+    const useWhatsAppSyncedRewrite =
+      typeof isWhatsAppHost === "function" &&
+      isWhatsAppHost() &&
+      isContentEditable(input);
+
+    if (useWhatsAppSyncedRewrite) {
+      return applyWhatsAppSyncedComposerText(input, expected, {
+        ...options,
+        originalText: options.originalText || rawInsertedText || options.restoreText || "",
+        redactedText: expected,
+        rawInsertedText
+      });
+    }
 
     suppressFollowupInputScan();
     setInputText(input, writeText, {
@@ -3505,12 +3845,29 @@
     const normalizedRedacted = normalizeComposerText(redactedText);
     const plan = buildComposerWritePlan(input, normalizedRedacted);
     const acceptableTexts = Array.isArray(plan.acceptableTexts) ? plan.acceptableTexts : [plan.canonical];
+    const isWhatsAppContentEditable =
+      typeof isWhatsAppHost === "function" &&
+      isWhatsAppHost() &&
+      isContentEditable(input);
     const hasRawLeak = (actual) =>
       Boolean(
         normalizedOriginal &&
           normalizeComposerText(actual).includes(normalizedOriginal) &&
           !acceptableTexts.includes(normalizeComposerText(actual))
       );
+
+    if (
+      isWhatsAppContentEditable &&
+      containsVisiblePlaceholderToken(normalizedOriginal) &&
+      hasUnsafeVisibleSecret(normalizedOriginal)
+    ) {
+      return {
+        ok: false,
+        actual: normalizedOriginal,
+        strategy: "whatsapp-corrupted-composer-blocked"
+      };
+    }
+
     const applied = await applyComposerText(input, normalizedRedacted, {
       ...options,
       originalText: normalizedOriginal,
@@ -3520,6 +3877,14 @@
 
     if (applied.ok && !hasRawLeak(applied.actual)) {
       return applied;
+    }
+
+    if (isWhatsAppContentEditable) {
+      return {
+        ok: false,
+        actual: applied.actual || getInputText(input),
+        strategy: applied.strategy || "whatsapp-synced-rewrite-failed"
+      };
     }
 
     suppressFollowupInputScan();
@@ -3619,11 +3984,17 @@
     return true;
   }
 
-  function queueVerifiedComposerSend(input, expectedText, context, send) {
+  function queueVerifiedComposerSend(input, expectedText, context, send, options = {}) {
+    const settle = () => {
+      if (typeof options.onSettled === "function") {
+        options.onSettled();
+      }
+    };
     queueMicrotask(() => {
       ensureExactComposerState(input, expectedText, { context })
         .then((isExact) => {
           if (!isExact) {
+            settle();
             clearFallbackSendKeyRedactionPending(input);
             return showRewriteFailure(
               context,
@@ -3634,10 +4005,17 @@
           }
 
           clearFallbackSendKeyRedactionPending(input);
-          send();
+          try {
+            send();
+          } finally {
+            settle();
+          }
           return null;
         })
-        .catch(handleContentError);
+        .catch((error) => {
+          settle();
+          handleContentError(error);
+        });
     });
   }
 
@@ -4127,11 +4505,24 @@
       return;
     }
 
+    const rawPasteTransfer = getPasteTransfer(event);
+    const pasteTransfer =
+      typeof normalizeClipboardImageDataTransfer === "function"
+        ? normalizeClipboardImageDataTransfer(rawPasteTransfer)
+        : rawPasteTransfer;
+    if (
+      typeof dataTransferHasFiles === "function" &&
+      dataTransferHasFiles(pasteTransfer) &&
+      isWhatsAppHost()
+    ) {
+      await blockWhatsAppFileAttachment(event);
+      return;
+    }
+
     const input = findComposer(event.target);
     if (!input) return;
     noteActiveRiskEditor(input);
 
-    const pasteTransfer = getPasteTransfer(event);
     if (typeof dataTransferHasFiles === "function" && dataTransferHasFiles(pasteTransfer)) {
       await maybeHandleLocalFileInsert(event, input, pasteTransfer, "paste");
       return;
@@ -4473,6 +4864,10 @@
     return globalThis.PWM.HostMatching.isXHost(location.hostname);
   }
 
+  function isWhatsAppHost() {
+    return globalThis.PWM.HostMatching.isWhatsAppHost(location.hostname);
+  }
+
   const FILE_HANDOFF_ADAPTERS = globalThis.PWM.SiteAdapters.createFileHandoffAdapters({
     pendingAttachEnabled: FILE_HANDOFF_PENDING_ATTACH_ENABLED,
     hooks: {
@@ -4535,7 +4930,8 @@
       id === "claude" ||
       id === "grok" ||
       id === "openai" ||
-      id === "x"
+      id === "x" ||
+      id === "whatsapp"
     ) {
       return true;
     }
@@ -9257,6 +9653,10 @@
         hideFileProcessingOverlay,
         showFileProcessingSuccess
       });
+    if (isWhatsAppHost() && localTransferFiles.length) {
+      failProcessing(WHATSAPP_FILE_ATTACH_UNSUPPORTED_REASON, WHATSAPP_FILE_ATTACH_BLOCK_TITLE);
+      return blockWhatsAppFileAttachment(event);
+    }
     const multiFileResult = await maybeHandleMultiFileInsert(
       event,
       input,
@@ -9891,6 +10291,12 @@
     }
 
     const localTransferFiles = listLocalTransferFiles(snapshotDataTransfer);
+    if (isWhatsAppHost() && localTransferFiles.length) {
+      rawFileDropInterceptions.add(event);
+      await blockWhatsAppFileAttachment(event);
+      clearFileDragSession();
+      return;
+    }
     const contentExtractionFile =
       localTransferFiles.length === 1 && shouldUseContentFileExtractionPipeline(localTransferFiles[0])
         ? localTransferFiles[0]
@@ -10138,6 +10544,63 @@
     }
   }
 
+  function shouldOwnWhatsAppTextSend(text) {
+    return Boolean(isWhatsAppHost() && String(text || "").trim());
+  }
+
+  function clearWhatsAppTextSendPending(input) {
+    if (!input || !whatsAppPendingTextSendInputs.has(input)) return;
+    whatsAppPendingTextSendInputs.delete(input);
+    const timer = whatsAppPendingTextSendTimers.get(input);
+    if (timer) {
+      clearTimeout(timer);
+      whatsAppPendingTextSendTimers.delete(input);
+    }
+  }
+
+  function markWhatsAppTextSendPending(input) {
+    if (!isWhatsAppHost() || !input) return true;
+    if (whatsAppPendingTextSendInputs.has(input)) return false;
+    whatsAppPendingTextSendInputs.add(input);
+    const timer = setTimeout(() => {
+      whatsAppPendingTextSendInputs.delete(input);
+      whatsAppPendingTextSendTimers.delete(input);
+    }, WHATSAPP_TEXT_SEND_GUARD_MS);
+    whatsAppPendingTextSendTimers.set(input, timer);
+    return true;
+  }
+
+  function createWhatsAppVerifiedSendOptions(input, ownsTextSend) {
+    return ownsTextSend
+      ? {
+          onSettled: () => clearWhatsAppTextSendPending(input)
+        }
+      : {};
+  }
+
+  function getWhatsAppTextSendBlockMessage(reason) {
+    switch (reason) {
+      case "composer_not_found":
+        return "the active message composer could not be found";
+      case "text_extraction_failed":
+        return "the message text could not be read safely";
+      case "replay_button_not_found":
+        return "the send button could not be replayed safely";
+      default:
+        return "the text send could not be verified safely";
+    }
+  }
+
+  async function blockWhatsAppTextSend(reason) {
+    setBadge(WHATSAPP_TEXT_SEND_BLOCK_TITLE);
+    hideBadgeSoon(3200);
+    await showMessageModal(
+      WHATSAPP_TEXT_SEND_BLOCK_TITLE,
+      `LeakGuard blocked this WhatsApp Web send because ${getWhatsAppTextSendBlockMessage(reason)}. Nothing was submitted.`
+    );
+    refreshBadgeFromCurrentInput();
+  }
+
   async function maybeHandleSubmit(event) {
     if (!extensionRuntimeAvailable) {
       return;
@@ -10158,7 +10621,13 @@
       form?.querySelector?.("textarea, [contenteditable='true'][role='textbox'], [contenteditable='true']") ||
       findComposer(event.target);
 
-    if (!input) return;
+    if (!input) {
+      if (isWhatsAppHost()) {
+        consumeInterceptionEvent(event);
+        await blockWhatsAppTextSend("composer_not_found");
+      }
+      return;
+    }
     noteActiveRiskEditor(input);
     const nativeSubmitEvent = event.type === "submit" && !event.leakGuardSendButton;
     const submitter = event.leakGuardSendButton || event.submitter || (nativeSubmitEvent ? findSendButton(input) : null);
@@ -10166,24 +10635,41 @@
       preferButtonClick: Boolean(event.leakGuardReplayViaClick || event.submitter || nativeSubmitEvent)
     };
 
-    const text = getInputText(input);
-    if (!text || !text.trim()) return;
+    const extractedText = getInputText(input);
+    if (extractedText == null) {
+      if (isWhatsAppHost()) {
+        consumeInterceptionEvent(event);
+        await blockWhatsAppTextSend("text_extraction_failed");
+      }
+      return;
+    }
+
+    const text = String(extractedText);
+    if (!text.trim()) {
+      return;
+    }
 
     const quickAnalysis = analyzeText(text);
-    if (!analysisNeedsEventOwnership(quickAnalysis)) return;
+    const whatsappOwnsTextSend = shouldOwnWhatsAppTextSend(text);
+    if (!analysisNeedsEventOwnership(quickAnalysis) && !whatsappOwnsTextSend) return;
 
     consumeInterceptionEvent(event);
+    if (whatsappOwnsTextSend && !markWhatsAppTextSendPending(input)) return;
+    const verifiedSendOptions = createWhatsAppVerifiedSendOptions(input, whatsappOwnsTextSend);
 
     const analysis = await analyzeTextWithAiAssist(text);
-    if (!analysis.findings.length && !analysis.placeholderNormalized) return;
+    if (!analysis.findings.length && !analysis.placeholderNormalized && !whatsappOwnsTextSend) return;
 
     if (analysisHasOnlySanitizedPlaceholderFindings(analysis)) {
       const normalized = await applyNormalizedComposerRewrite(input, text, "submit");
-      if (!normalized.ok) return;
+      if (!normalized.ok) {
+        clearWhatsAppTextSendPending(input);
+        return;
+      }
 
       queueVerifiedComposerSend(input, normalized.text, "submit", () => {
         replayVerifiedSend(input, form, submitter, replayOptions);
-      });
+      }, verifiedSendOptions);
       return;
     }
 
@@ -10192,6 +10678,7 @@
       ? await handleDestinationPolicy(analysis.findings, policy)
       : getDestinationPolicyDecision(policy);
     if (analysis.findings.length && destinationPolicy.blocked) {
+      clearWhatsAppTextSendPending(input);
       return;
     }
     const destinationForceRedact = shouldForceDestinationRedaction(destinationPolicy, analysis.findings);
@@ -10205,7 +10692,10 @@
         "submit",
         analysis.secretFindings
       );
-      if (!rewritten) return;
+      if (!rewritten) {
+        clearWhatsAppTextSendPending(input);
+        return;
+      }
 
       setBadge("Content redacted");
       hideBadgeSoon();
@@ -10213,7 +10703,7 @@
 
       queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
         replayVerifiedSend(input, form, submitter, replayOptions);
-      });
+      }, verifiedSendOptions);
     });
 
     if (httpPolicyHandled) {
@@ -10231,7 +10721,10 @@
         "submit",
         analysis.secretFindings
       );
-      if (!rewritten) return;
+      if (!rewritten) {
+        clearWhatsAppTextSendPending(input);
+        return;
+      }
 
       setBadge("Destination policy required redaction");
       hideBadgeSoon();
@@ -10239,11 +10732,15 @@
 
       queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
         replayVerifiedSend(input, form, submitter, replayOptions);
-      });
+      }, verifiedSendOptions);
       return;
     }
 
-    if (analysis.findings.length && isProtectionPauseActiveAfterPolicy(policy, destinationPolicy)) {
+    if (
+      analysis.findings.length &&
+      !whatsappOwnsTextSend &&
+      isProtectionPauseActiveAfterPolicy(policy, destinationPolicy)
+    ) {
       clearAllRiskSessionState();
       replayVerifiedSend(input, form, submitter, replayOptions);
       return;
@@ -10251,7 +10748,10 @@
 
     if (!analysis.findings.length) {
       const normalized = await applyNormalizedComposerRewrite(input, text, "submit");
-      if (!normalized.ok) return;
+      if (!normalized.ok) {
+        clearWhatsAppTextSendPending(input);
+        return;
+      }
 
       if (!(await ensureExactComposerState(input, normalized.text))) {
         await showRewriteFailure(
@@ -10259,12 +10759,13 @@
           collectFailureDetails(input, normalized.text, getInputText(input), "submit")
         );
         refreshBadgeFromCurrentInput();
+        clearWhatsAppTextSendPending(input);
         return;
       }
 
       queueVerifiedComposerSend(input, normalized.text, "submit", () => {
         replayVerifiedSend(input, form, submitter, replayOptions);
-      });
+      }, verifiedSendOptions);
       return;
     }
 
@@ -10275,7 +10776,10 @@
       input,
       analysis.normalizedText
     );
-    if (decisionAction === "cancel") return;
+    if (decisionAction === "cancel") {
+      clearWhatsAppTextSendPending(input);
+      return;
+    }
 
     const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
 
@@ -10286,7 +10790,10 @@
       "submit",
       analysis.secretFindings
     );
-    if (!rewritten) return;
+    if (!rewritten) {
+      clearWhatsAppTextSendPending(input);
+      return;
+    }
 
     setBadge("Content redacted");
     hideBadgeSoon();
@@ -10294,7 +10801,7 @@
 
     queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
       replayVerifiedSend(input, form, submitter, replayOptions);
-    });
+    }, verifiedSendOptions);
   }
 
   function findSendButtonClickTarget(event) {
@@ -10391,14 +10898,31 @@
     if (!button) return;
 
     const input = findComposer(button);
-    if (!input) return;
+    if (!input) {
+      if (isWhatsAppHost()) {
+        consumeInterceptionEvent(event);
+        await blockWhatsAppTextSend("composer_not_found");
+      }
+      return;
+    }
     noteActiveRiskEditor(input);
 
-    const text = getInputText(input);
-    if (!text || !text.trim()) return;
+    const extractedText = getInputText(input);
+    if (extractedText == null) {
+      if (isWhatsAppHost()) {
+        consumeInterceptionEvent(event);
+        await blockWhatsAppTextSend("text_extraction_failed");
+      }
+      return;
+    }
+
+    const text = String(extractedText);
+    if (!text.trim()) {
+      return;
+    }
 
     const quickAnalysis = analyzeText(text);
-    if (!analysisNeedsEventOwnership(quickAnalysis)) return;
+    if (!analysisNeedsEventOwnership(quickAnalysis) && !shouldOwnWhatsAppTextSend(text)) return;
 
     consumeInterceptionEvent(event);
     const form = button.closest?.("form") || input.closest?.("form") || null;
@@ -10427,17 +10951,29 @@
     if (!input) return;
     noteActiveRiskEditor(input);
 
-    const text = getInputText(input);
-    if (!text || !text.trim()) return;
+    const extractedText = getInputText(input);
+    if (extractedText == null) {
+      if (isWhatsAppHost()) {
+        consumeInterceptionEvent(event);
+        await blockWhatsAppTextSend("text_extraction_failed");
+      }
+      return;
+    }
+
+    const text = String(extractedText);
+    if (!text.trim()) return;
 
     const quickAnalysis = analyzeText(text);
-    if (!analysisNeedsEventOwnership(quickAnalysis)) return;
+    const whatsappOwnsTextSend = shouldOwnWhatsAppTextSend(text);
+    if (!analysisNeedsEventOwnership(quickAnalysis) && !whatsappOwnsTextSend) return;
 
     consumeInterceptionEvent(event);
+    if (whatsappOwnsTextSend && !markWhatsAppTextSendPending(input)) return;
+    const verifiedSendOptions = createWhatsAppVerifiedSendOptions(input, whatsappOwnsTextSend);
     markFallbackSendKeyRedactionPending(input);
 
     const analysis = await analyzeTextWithAiAssist(text);
-    if (!analysis.findings.length && !analysis.placeholderNormalized) {
+    if (!analysis.findings.length && !analysis.placeholderNormalized && !whatsappOwnsTextSend) {
       clearFallbackSendKeyRedactionPending(input);
       return;
     }
@@ -10446,6 +10982,7 @@
       const normalized = await applyNormalizedComposerRewrite(input, text, "submit");
       if (!normalized.ok) {
         clearFallbackSendKeyRedactionPending(input);
+        clearWhatsAppTextSendPending(input);
         return;
       }
 
@@ -10453,8 +10990,10 @@
         const button = findSendButton(input);
         if (button) {
           replayVerifiedSend(input, null, button);
+        } else if (isWhatsAppHost()) {
+          void blockWhatsAppTextSend("replay_button_not_found");
         }
-      });
+      }, verifiedSendOptions);
       return;
     }
 
@@ -10464,6 +11003,7 @@
       : getDestinationPolicyDecision(policy);
     if (analysis.findings.length && destinationPolicy.blocked) {
       clearFallbackSendKeyRedactionPending(input);
+      clearWhatsAppTextSendPending(input);
       return;
     }
     const destinationForceRedact = shouldForceDestinationRedaction(destinationPolicy, analysis.findings);
@@ -10479,6 +11019,7 @@
       );
       if (!rewritten) {
         clearFallbackSendKeyRedactionPending(input);
+        clearWhatsAppTextSendPending(input);
         return;
       }
 
@@ -10490,8 +11031,10 @@
         const button = findSendButton(input);
         if (button) {
           replayVerifiedSend(input, null, button);
+        } else if (isWhatsAppHost()) {
+          void blockWhatsAppTextSend("replay_button_not_found");
         }
-      });
+      }, verifiedSendOptions);
     });
 
     if (httpPolicyHandled) {
@@ -10511,6 +11054,7 @@
       );
       if (!rewritten) {
         clearFallbackSendKeyRedactionPending(input);
+        clearWhatsAppTextSendPending(input);
         return;
       }
 
@@ -10522,12 +11066,18 @@
         const button = findSendButton(input);
         if (button) {
           replayVerifiedSend(input, null, button);
+        } else if (isWhatsAppHost()) {
+          void blockWhatsAppTextSend("replay_button_not_found");
         }
-      });
+      }, verifiedSendOptions);
       return;
     }
 
-    if (analysis.findings.length && isProtectionPauseActiveAfterPolicy(policy, destinationPolicy)) {
+    if (
+      analysis.findings.length &&
+      !whatsappOwnsTextSend &&
+      isProtectionPauseActiveAfterPolicy(policy, destinationPolicy)
+    ) {
       const button = findSendButton(input);
       clearFallbackSendKeyRedactionPending(input);
       replayVerifiedSend(input, null, button);
@@ -10538,31 +11088,18 @@
       const normalized = await applyNormalizedComposerRewrite(input, text, "submit");
       if (!normalized.ok) {
         clearFallbackSendKeyRedactionPending(input);
+        clearWhatsAppTextSendPending(input);
         return;
       }
 
-      queueMicrotask(() => {
-        ensureExactComposerState(input, normalized.text)
-          .then((isExact) => {
-            if (!isExact) {
-              clearFallbackSendKeyRedactionPending(input);
-              return showRewriteFailure(
-                "submit",
-                collectFailureDetails(input, normalized.text, getInputText(input), "submit")
-              ).then(() => {
-                refreshBadgeFromCurrentInput();
-              });
-            }
-
-            const button = findSendButton(input);
-            if (button) {
-              clearFallbackSendKeyRedactionPending(input);
-              replayVerifiedSend(input, null, button);
-            }
-            return null;
-          })
-          .catch(handleContentError);
-      });
+      queueVerifiedComposerSend(input, normalized.text, "submit", () => {
+        const button = findSendButton(input);
+        if (button) {
+          replayVerifiedSend(input, null, button);
+        } else if (isWhatsAppHost()) {
+          void blockWhatsAppTextSend("replay_button_not_found");
+        }
+      }, verifiedSendOptions);
       return;
     }
 
@@ -10575,6 +11112,7 @@
     );
     if (decisionAction === "cancel") {
       clearFallbackSendKeyRedactionPending(input);
+      clearWhatsAppTextSendPending(input);
       return;
     }
 
@@ -10589,6 +11127,7 @@
     );
     if (!rewritten) {
       clearFallbackSendKeyRedactionPending(input);
+      clearWhatsAppTextSendPending(input);
       return;
     }
 
@@ -10600,8 +11139,10 @@
       const button = findSendButton(input);
       if (button) {
         replayVerifiedSend(input, null, button);
+      } else if (isWhatsAppHost()) {
+        void blockWhatsAppTextSend("replay_button_not_found");
       }
-    });
+    }, verifiedSendOptions);
   }
 
   async function maybeHandleTypedSecrets() {

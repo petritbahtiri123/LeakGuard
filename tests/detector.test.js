@@ -1052,6 +1052,7 @@ function testGenericSecretAssignmentsInLongLinesRedactWithoutSafeKeyFalsePositiv
     'public_key_label="this is public, not private"',
     "DUPLICATE_CHECK_BEGIN_123456789",
     "DUPLICATE_CHECK_END_123456789",
+    "LGQA_WA_DUPLICATE_1",
     "LEAKGUARD_PERFORMANCE_TEST_END_MARKER_987654321",
     "This text says use a password manager.",
     'secret_note="this is my secret: admin-login-token-FAKE-1234567890"'
@@ -1098,6 +1099,7 @@ function testGenericSecretAssignmentsInLongLinesRedactWithoutSafeKeyFalsePositiv
   assert.ok(result.redactedText.includes('public_key_label="this is public, not private"'));
   assert.ok(result.redactedText.includes("DUPLICATE_CHECK_BEGIN_123456789"));
   assert.ok(result.redactedText.includes("DUPLICATE_CHECK_END_123456789"));
+  assert.ok(result.redactedText.includes("LGQA_WA_DUPLICATE_1"));
   assert.ok(result.redactedText.includes("LEAKGUARD_PERFORMANCE_TEST_END_MARKER_987654321"));
   assert.ok(result.redactedText.includes("This text says use a password manager."));
   assert.ok(

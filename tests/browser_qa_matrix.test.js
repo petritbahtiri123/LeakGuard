@@ -113,6 +113,7 @@ async function assertFullCoverageMatrix() {
   for (const inputPath of [
     "typed text",
     "paste text",
+    "WhatsApp Web text-only send guard",
     "file input upload",
     "drag/drop file upload",
     "paste file attachment",
@@ -144,6 +145,27 @@ async function assertFullCoverageMatrix() {
     assert.ok(matrix.multiFilePolicy.requiredCases.includes(requiredCase), `multi-file policy should include ${requiredCase}`);
   }
   assert.ok(matrix.followUpInputPaths.includes("drag/drop text"), "text drag/drop should be documented as follow-up");
+  assert.strictEqual(matrix.whatsAppTextOnly.target, "https://web.whatsapp.com/*");
+  for (const inputPath of ["send button click", "Enter-to-send", "file attachment attempt"]) {
+    assert.ok(matrix.whatsAppTextOnly.inputPaths.includes(inputPath), `WhatsApp QA should include ${inputPath}`);
+  }
+  for (const requiredCase of [
+    "first click sends sanitized text",
+    "Enter sends sanitized text",
+    "raw fake secret is never sent",
+    "trusted [PWM_1] and [PWM_2] placeholders do not loop",
+    "redaction failure blocks send",
+    "composer-not-found blocks send",
+    "rewrite verification failure blocks send",
+    "programmatic replay does not recurse",
+    "second-click retry is not accepted as success",
+    "attachment attempt remains unsupported and blocked"
+  ]) {
+    assert.ok(
+      matrix.whatsAppTextOnly.requiredCases.includes(requiredCase),
+      `WhatsApp QA should include ${requiredCase}`
+    );
+  }
 
   for (const testCase of matrix.supportedFiles) {
     assertSupportedFileCaseShape(testCase);

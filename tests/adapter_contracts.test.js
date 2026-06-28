@@ -3,14 +3,15 @@ const fs = require("fs");
 const path = require("path");
 
 const repoRoot = path.join(__dirname, "..");
-const expectedProviderIds = ["chatgpt", "openai", "gemini", "claude", "grok", "x"];
+const expectedProviderIds = ["chatgpt", "openai", "gemini", "claude", "grok", "x", "whatsapp"];
 const pendingAttachEnabled = Object.freeze({
   gemini: true,
   grok: true,
   chatgpt: true,
   claude: true,
   openai: true,
-  x: true
+  x: true,
+  whatsapp: false
 });
 
 require(path.join(repoRoot, "src/content/adapters/hostMatching.js"));
@@ -21,6 +22,7 @@ require(path.join(repoRoot, "src/content/adapters/geminiAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/claudeAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/grokAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/xAdapter.js"));
+require(path.join(repoRoot, "src/content/adapters/whatsappAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/index.js"));
 require(path.join(repoRoot, "src/shared/runtime_scripts.js"));
 
@@ -78,7 +80,8 @@ function testHostMatchingRoutesExpectedUrlsToAdapters() {
     ["https://gemini.google.com/app", "gemini"],
     ["https://claude.ai/new", "claude"],
     ["https://console.grok.com/chat", "grok"],
-    ["https://x.com/compose/post", "x"]
+    ["https://x.com/compose/post", "x"],
+    ["https://web.whatsapp.com/", "whatsapp"]
   ];
 
   cases.forEach(([url, expectedId]) => {
@@ -103,6 +106,8 @@ function testUnsupportedHostnamesDoNotReceiveSpecialAdapterBehavior() {
     "https://claude.ai.evil.test/new",
     "https://grok.example.test/chat",
     "https://x.example.test/compose/post",
+    "https://web.whatsapp.com.evil.test/",
+    "https://whatsapp.com/",
     "https://example.test/"
   ];
 
@@ -129,7 +134,8 @@ function testAdapterParityCapabilitiesStayStable() {
     gemini: { directFileInput: true, directDropReplay: false, pendingAttach: true, multiFile: true },
     grok: { directFileInput: true, directDropReplay: true, pendingAttach: true, multiFile: true },
     claude: { directFileInput: true, directDropReplay: false, pendingAttach: true, multiFile: true },
-    x: { directFileInput: true, directDropReplay: false, pendingAttach: true, multiFile: true }
+    x: { directFileInput: true, directDropReplay: false, pendingAttach: true, multiFile: true },
+    whatsapp: { directFileInput: false, directDropReplay: false, pendingAttach: false, multiFile: false }
   };
 
   for (const [id, expected] of Object.entries(expectedCapabilities)) {
@@ -156,8 +162,8 @@ function testAdapterParityCapabilitiesStayStable() {
     );
     assert.strictEqual(
       description.supportsTrustedAttachButton,
-      true,
-      `${id} trusted attach button capability should stay declared`
+      id !== "whatsapp",
+      `${id} trusted attach button capability should stay declared only for file-capable adapters`
     );
   }
 }
@@ -165,7 +171,7 @@ function testAdapterParityCapabilitiesStayStable() {
 function testPendingAttachIsEnabledForBuiltInProviders() {
   const adapters = createAdapters();
 
-  expectedProviderIds.forEach((id) => {
+  expectedProviderIds.filter((id) => id !== "whatsapp").forEach((id) => {
     assert.strictEqual(adapters[id].pendingAttachEnabled, true, `${id} pending attach should stay enabled`);
     assert.strictEqual(
       hostMatching.isFileHandoffAdapterPendingAttachEnabled(adapters[id]),
@@ -173,12 +179,19 @@ function testPendingAttachIsEnabledForBuiltInProviders() {
       `${id} pending attach gate should stay enabled`
     );
   });
+
+  assert.strictEqual(adapters.whatsapp.pendingAttachEnabled, false, "WhatsApp pending attach should stay disabled");
+  assert.strictEqual(
+    hostMatching.isFileHandoffAdapterPendingAttachEnabled(adapters.whatsapp),
+    false,
+    "WhatsApp pending attach gate should stay disabled"
+  );
 }
 
 function testUploadAndUnsafeClickPredicatesStayPresent() {
   const adapters = createAdapters();
 
-  expectedProviderIds.forEach((id) => {
+  expectedProviderIds.filter((id) => id !== "whatsapp").forEach((id) => {
     const adapter = adapters[id];
     assert.ok(adapter.uploadButtonSelectors.length > 0, `${id} should keep upload trigger selectors`);
     assert.ok(adapter.fileInputSelectors.length > 0, `${id} should keep file input selectors`);
@@ -192,6 +205,13 @@ function testUploadAndUnsafeClickPredicatesStayPresent() {
       `${id} should expose trusted attach activation`
     );
   });
+
+  const whatsapp = adapters.whatsapp;
+  assert.deepStrictEqual(whatsapp.uploadButtonSelectors, [], "WhatsApp text-only adapter should not expose upload triggers");
+  assert.deepStrictEqual(whatsapp.fileInputSelectors, [], "WhatsApp text-only adapter should not expose file inputs");
+  assert.strictEqual(whatsapp.resolveUploadTrigger(), null, "WhatsApp upload trigger resolution should stay disabled");
+  assert.strictEqual(whatsapp.resolveFileInput(), null, "WhatsApp file input resolution should stay disabled");
+  assert.strictEqual(whatsapp.isUploadClickTarget(), false, "WhatsApp upload click detection should stay disabled");
 
   ["gemini", "grok"].forEach((id) => {
     assert.strictEqual(

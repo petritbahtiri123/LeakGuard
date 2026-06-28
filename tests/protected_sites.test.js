@@ -93,12 +93,19 @@ function testSafeOriginMatchingStaysExactAndDeterministic() {
 
 function testBuiltInSitesRemainRecognizedWithoutUserRules() {
   const builtin = getProtectedSiteStatus("https://chatgpt.com/c/123", []);
+  const whatsapp = getProtectedSiteStatus("https://web.whatsapp.com/", []);
 
-  assert.strictEqual(builtin.protected, true, "expected built-in protected AI hosts to stay active");
+  assert.strictEqual(builtin.protected, true, "expected built-in protected chat hosts to stay active");
   assert.strictEqual(builtin.source, "builtin");
+  assert.strictEqual(whatsapp.protected, true, "expected WhatsApp Web to be a built-in protected site");
+  assert.strictEqual(whatsapp.source, "builtin");
   assert.ok(
     BUILTIN_PROTECTED_SITES.some((rule) => rule.origin === "https://chatgpt.com"),
     "expected ChatGPT to remain in the built-in protected site list"
+  );
+  assert.ok(
+    BUILTIN_PROTECTED_SITES.some((rule) => rule.origin === "https://web.whatsapp.com"),
+    "expected WhatsApp Web to remain in the built-in protected site list"
   );
 }
 

@@ -9,6 +9,7 @@ const {
   serializeContentEditableRoot,
   isContentEditable,
   getInputText,
+  insertContentEditableTextCommand,
   writePlainTextToContentEditablePreservingNewlines,
   buildRiskFingerprint
 } = globalThis.PWM.ComposerHelpers;
@@ -302,6 +303,94 @@ function testPlainTextContentEditableWritePreservesNewlines() {
   }
 }
 
+function testCommandInsertCanSelectTextNodeRangeForLexicalEditors() {
+  const originalDocument = global.document;
+  const originalWindow = global.window;
+  const originalEvent = global.Event;
+  const rawText = textNode("my password is synthetic1234");
+  const paragraph = elementNode("P", [rawText]);
+  const editor = createWritableContentEditable();
+  editor.replaceChildren(paragraph);
+  let activeRange = null;
+
+  function refreshText() {
+    paragraph.textContent = rawText.nodeValue;
+    editor.textContent = rawText.nodeValue;
+    editor.innerText = rawText.nodeValue;
+  }
+
+  global.window = {
+    getSelection() {
+      return {
+        removeAllRanges() {},
+        addRange(range) {
+          activeRange = range;
+        }
+      };
+    }
+  };
+  global.document = {
+    createRange() {
+      return {
+        textNodeRange: false,
+        selectNodeContents() {
+          this.textNodeRange = false;
+        },
+        collapse() {},
+        setStart(node, offset) {
+          this.startNode = node;
+          this.startOffset = offset;
+          this.textNodeRange = node === rawText;
+        },
+        setEnd(node, offset) {
+          this.endNode = node;
+          this.endOffset = offset;
+          this.textNodeRange = this.textNodeRange && node === rawText;
+        }
+      };
+    },
+    execCommand(command, _showUi, value) {
+      if (command === "delete") {
+        if (activeRange?.textNodeRange) {
+          rawText.nodeValue = "";
+          refreshText();
+        }
+        return true;
+      }
+      if (command === "insertText") {
+        rawText.nodeValue = activeRange?.textNodeRange
+          ? String(value || "")
+          : `${rawText.nodeValue}${String(value || "")}`;
+        refreshText();
+        return true;
+      }
+      return false;
+    }
+  };
+  global.Event = class {
+    constructor(type) {
+      this.type = type;
+    }
+  };
+
+  try {
+    const written = insertContentEditableTextCommand(editor, "my password is [PWM_1]", {
+      selectTextNodeRange: true
+    });
+
+    assert.strictEqual(written, true);
+    assert.strictEqual(
+      getInputText(editor),
+      "my password is [PWM_1]",
+      "Lexical-like editors should replace the existing paragraph text instead of appending the redacted text"
+    );
+  } finally {
+    global.document = originalDocument;
+    global.window = originalWindow;
+    global.Event = originalEvent;
+  }
+}
+
 function testRiskFingerprintIgnoresNormalComposerTextChanges() {
   const text = "username=wayland.dev";
   const continued = `${text} is the account name, not a password.`;
@@ -467,11 +556,12 @@ function run() {
   testSerializesBlockTreeWithBlankLines();
   testTrimsEditorGeneratedTrailingBlankLines();
   testSerializesTopLevelBreakRunsAsBlankLines();
-  testContentEditableRewritePathsSyncHostState();
-  testContentEditableAttributeDetectionSupportsGenericEditors();
-  testLocalFileFallbackHelpersUsePlainEvents();
-  testPlainTextContentEditableWritePreservesNewlines();
-  testRiskFingerprintIgnoresNormalComposerTextChanges();
+testContentEditableRewritePathsSyncHostState();
+testContentEditableAttributeDetectionSupportsGenericEditors();
+testLocalFileFallbackHelpersUsePlainEvents();
+testPlainTextContentEditableWritePreservesNewlines();
+testCommandInsertCanSelectTextNodeRangeForLexicalEditors();
+testRiskFingerprintIgnoresNormalComposerTextChanges();
   testRiskFingerprintChangesWhenFindingsChange();
   testRiskFingerprintDoesNotStoreRawFindingValues();
   testRiskFingerprintUsesRangeWhenFindingHasNoRawValue();

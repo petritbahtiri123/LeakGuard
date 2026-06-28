@@ -270,6 +270,7 @@ function getBrowserQaCoverageMatrix({ matrixMode = BROWSER_QA_MATRIX_MODES.FAST 
     inputPaths: [
       "typed text",
       "paste text",
+      "WhatsApp Web text-only send guard",
       "file input upload",
       "drag/drop file upload",
       "paste file attachment",
@@ -294,6 +295,22 @@ function getBrowserQaCoverageMatrix({ matrixMode = BROWSER_QA_MATRIX_MODES.FAST 
         "10 small + 3 large supported files",
         "10 small + 6 large blocked before processing",
         "unsupported mixed file excluded from sanitized handoff"
+      ]
+    },
+    whatsAppTextOnly: {
+      target: "https://web.whatsapp.com/*",
+      inputPaths: ["send button click", "Enter-to-send", "file attachment attempt"],
+      requiredCases: [
+        "first click sends sanitized text",
+        "Enter sends sanitized text",
+        "raw fake secret is never sent",
+        "trusted [PWM_1] and [PWM_2] placeholders do not loop",
+        "redaction failure blocks send",
+        "composer-not-found blocks send",
+        "rewrite verification failure blocks send",
+        "programmatic replay does not recurse",
+        "second-click retry is not accepted as success",
+        "attachment attempt remains unsupported and blocked"
       ]
     },
     followUpInputPaths: ["drag/drop text"],

@@ -9,7 +9,8 @@
     { label: "Gemini", input: "https://gemini.google.com" },
     { label: "Claude", input: "https://claude.ai" },
     { label: "Grok", input: "https://grok.com" },
-    { label: "X", input: "https://x.com" }
+    { label: "X", input: "https://x.com" },
+    { label: "WhatsApp", input: "https://web.whatsapp.com" }
   ];
 
   function trimHostname(hostname) {
