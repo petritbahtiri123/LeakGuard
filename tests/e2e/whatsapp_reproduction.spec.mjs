@@ -5,10 +5,12 @@ import {
   expectComposerTextExactly,
   expectNoFileEvents,
   expectNoDoubleSend,
+  getFileEvents,
   expectNoRawSecretVisible,
   getSentMessages,
   getComposerText,
   pressEnterToSend,
+  pasteImageFromClipboard,
   pressShiftEnter,
   test,
   typeIntoComposer,
@@ -211,7 +213,28 @@ test.describe("@whatsapp @text WhatsApp-like reproduction contract", () => {
     await expectComposerTextExactly(page, "");
   });
 
-  test("@files @images image attachment remains unsupported", async ({ extensionApp }) => {
+  test("@images clipboard image paste redacts or fails closed", async ({ extensionApp }) => {
+    test.setTimeout(130000);
+    const page = await extensionApp.openProtectedFixture("whatsapp");
+    const file = await imageFixture("png");
+
+    await pasteImageFromClipboard(page, file);
+
+    await expect.poll(async () => {
+      const events = await getFileEvents(page);
+      const body = await page.locator("body").innerText();
+      return events.some((event) =>
+        event.source === "paste" &&
+        event.name === file.expectedOutputName &&
+        event.type === "image/png"
+      ) || /Raw image upload blocked/i.test(body);
+    }, { timeout: 90000 }).toBe(true);
+    const events = await getFileEvents(page);
+    expect(events.every((event) => event.name !== file.name), "WhatsApp must not receive raw clipboard image").toBe(true);
+    await expectNoRawSecretVisible(page, file.secret);
+  });
+
+  test("@files @images attach-button image remains unsupported", async ({ extensionApp }) => {
     const page = await extensionApp.openProtectedFixture("whatsapp");
     const file = await imageFixture("png");
 

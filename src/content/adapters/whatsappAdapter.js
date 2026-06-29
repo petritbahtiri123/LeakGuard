@@ -9,6 +9,7 @@
       siteLabel: "WhatsApp",
       hosts: ["web.whatsapp.com"],
       supportsDirectFileInputAssignment: false,
+      supportsClipboardImagePasteHandoff: true,
       supportsMultiFileHandoff: false,
       supportsDirectDropReplay: false,
       supportsPendingAttach: false,

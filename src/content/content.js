@@ -1145,6 +1145,19 @@
       : "Raw file upload blocked";
   }
 
+
+  function isSupportedWhatsAppClipboardImagePaste(dataTransfer, context = "paste") {
+    if (!isWhatsAppHost() || context !== "paste") return false;
+    if (typeof dataTransferHasFiles !== "function" || !dataTransferHasFiles(dataTransfer)) return false;
+    const files = listLocalTransferFiles(dataTransfer);
+    if (files.length !== 1) return false;
+    const helper = globalThis.PWM?.FilePasteHelpers || {};
+    if (typeof helper.isSupportedClipboardImageMimeType !== "function") return false;
+    if (!helper.isSupportedClipboardImageMimeType(files[0]?.type)) return false;
+    const adapter = getFileHandoffAdapterById("whatsapp") || getFileHandoffAdapterForLocation();
+    return adapter?.id === "whatsapp" && adapter.supportsClipboardImagePasteHandoff === true;
+  }
+
   async function blockWhatsAppFileAttachment(event) {
     if (!event?.defaultPrevented) {
       consumeInterceptionEvent(event);
@@ -4513,7 +4526,8 @@
     if (
       typeof dataTransferHasFiles === "function" &&
       dataTransferHasFiles(pasteTransfer) &&
-      isWhatsAppHost()
+      isWhatsAppHost() &&
+      !isSupportedWhatsAppClipboardImagePaste(pasteTransfer, "paste")
     ) {
       await blockWhatsAppFileAttachment(event);
       return;
@@ -9653,7 +9667,11 @@
         hideFileProcessingOverlay,
         showFileProcessingSuccess
       });
-    if (isWhatsAppHost() && localTransferFiles.length) {
+    if (
+      isWhatsAppHost() &&
+      localTransferFiles.length &&
+      !isSupportedWhatsAppClipboardImagePaste(dataTransfer, context)
+    ) {
       failProcessing(WHATSAPP_FILE_ATTACH_UNSUPPORTED_REASON, WHATSAPP_FILE_ATTACH_BLOCK_TITLE);
       return blockWhatsAppFileAttachment(event);
     }
