@@ -222,7 +222,12 @@ test.describe("@whatsapp @text WhatsApp-like reproduction contract", () => {
 
     await expect.poll(async () => {
       const events = await getFileEvents(page);
-      const body = await page.locator("body").innerText();
+      const body = await page.evaluate(() => {
+        const modalText = Array.from(document.querySelectorAll(".pwm-modal-backdrop, .pwm-modal"))
+          .map((element) => element.innerText || element.textContent || "")
+          .join("\n");
+        return `${document.body.innerText || ""}\n${modalText}`;
+      });
       return events.some((event) =>
         event.source === "paste" &&
         event.name === file.expectedOutputName &&
