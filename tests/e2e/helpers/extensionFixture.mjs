@@ -558,6 +558,31 @@ export async function pasteImageFromClipboard(page, file) {
   }, payload);
 }
 
+export async function pasteImageFromSystemClipboard(page, file) {
+  const [payload] = serializablePayloads(file);
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"], {
+    origin: new URL(page.url()).origin
+  });
+  const clipboardReady = await page.evaluate(async (image) => {
+    if (!navigator.clipboard?.write || typeof ClipboardItem !== "function") return false;
+    const binary = atob(image.base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    const blob = new Blob([bytes], { type: image.mimeType });
+    await navigator.clipboard.write([
+      new ClipboardItem({
+        [image.mimeType]: blob
+      })
+    ]);
+    return true;
+  }, payload);
+  expect(clipboardReady, "browser clipboard image write should be available").toBe(true);
+  await composerLocator(page).focus();
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+V" : "Control+V");
+}
+
 export async function dispatchFileDrop(page, fileOrPayload) {
   if ("text" in fileOrPayload && !("buffer" in fileOrPayload)) {
     await dragDropFile(page, {

@@ -583,6 +583,14 @@
         activeComposer().addEventListener("beforeinput", syncWhatsAppBeforeInputState);
         activeComposer().addEventListener("input", syncStateFromDom);
 
+        document.addEventListener("paste", (event) => {
+          if (!modeUsesWhatsAppComposer()) return;
+          if (event.defaultPrevented) return;
+          if (event.clipboardData?.files?.length) {
+            renderWhatsAppPreview(event.clipboardData.files);
+          }
+        }, true);
+
         form.addEventListener("submit", (event) => {
           event.preventDefault();
           submitActive("submit");
@@ -611,7 +619,11 @@
             const text = event.clipboardData?.getData("text/plain") || "";
             if (text) insertTextAtCursor(text);
             if (event.clipboardData?.files?.length) {
-              recordFiles("paste", event.clipboardData.files);
+              if (modeUsesWhatsAppComposer()) {
+                renderWhatsAppPreview(event.clipboardData.files);
+              } else {
+                recordFiles("paste", event.clipboardData.files);
+              }
             }
           }, 0);
         });

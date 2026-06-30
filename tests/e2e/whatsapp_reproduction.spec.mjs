@@ -12,6 +12,7 @@ import {
   getComposerText,
   pressEnterToSend,
   pasteImageFromClipboard,
+  pasteImageFromSystemClipboard,
   pressShiftEnter,
   test,
   typeIntoComposer,
@@ -237,6 +238,38 @@ test.describe("@whatsapp @text WhatsApp-like reproduction contract", () => {
     }, { timeout: 90000 }).toBe(true);
     const events = await getFileEvents(page);
     expect(events.every((event) => event.name !== file.name), "WhatsApp must not receive raw clipboard image").toBe(true);
+    const preview = await getWhatsAppPreviewState(page);
+    expect(preview?.rawPreviewSeen, "WhatsApp clipboard raw preview must never appear").toBe(false);
+    expect(preview?.rawPreviewBeforeSanitized, "Clipboard raw preview must not appear before sanitized handoff").toBe(false);
+    await expectNoRawSecretVisible(page, file.secret);
+  });
+
+  test("@images keyboard clipboard image paste redacts or fails closed", async ({ extensionApp }) => {
+    test.setTimeout(130000);
+    const page = await extensionApp.openProtectedFixture("whatsapp");
+    const file = await imageFixture("png");
+
+    await pasteImageFromSystemClipboard(page, file);
+
+    await expect.poll(async () => {
+      const events = await getFileEvents(page);
+      const body = await page.evaluate(() => {
+        const modalText = Array.from(document.querySelectorAll(".pwm-modal-backdrop, .pwm-modal"))
+          .map((element) => element.innerText || element.textContent || "")
+          .join("\n");
+        return `${document.body.innerText || ""}\n${modalText}`;
+      });
+      return events.some((event) =>
+        event.source === "paste" &&
+        event.name === file.expectedOutputName &&
+        event.type === "image/png"
+      ) || /Raw image upload blocked/i.test(body);
+    }, { timeout: 90000 }).toBe(true);
+    const events = await getFileEvents(page);
+    expect(events.every((event) => event.name !== file.name), "WhatsApp must not receive raw keyboard clipboard image").toBe(true);
+    const preview = await getWhatsAppPreviewState(page);
+    expect(preview?.rawPreviewSeen, "WhatsApp keyboard clipboard raw preview must never appear").toBe(false);
+    expect(preview?.rawPreviewBeforeSanitized, "Keyboard clipboard raw preview must not appear before sanitized handoff").toBe(false);
     await expectNoRawSecretVisible(page, file.secret);
   });
 

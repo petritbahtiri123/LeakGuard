@@ -4540,21 +4540,32 @@
       typeof normalizeClipboardImageDataTransfer === "function"
         ? normalizeClipboardImageDataTransfer(rawPasteTransfer)
         : rawPasteTransfer;
+    const hasPasteFiles =
+      typeof dataTransferHasFiles === "function" && dataTransferHasFiles(pasteTransfer);
+    const supportedWhatsAppClipboardImagePaste =
+      hasPasteFiles && isSupportedWhatsAppClipboardImagePaste(pasteTransfer, "paste");
     if (
-      typeof dataTransferHasFiles === "function" &&
-      dataTransferHasFiles(pasteTransfer) &&
+      hasPasteFiles &&
       isWhatsAppHost() &&
-      !isSupportedWhatsAppClipboardImagePaste(pasteTransfer, "paste")
+      !supportedWhatsAppClipboardImagePaste
     ) {
       await blockWhatsAppFileAttachment(event);
       return;
     }
+    if (supportedWhatsAppClipboardImagePaste) {
+      consumeInterceptionEvent(event);
+    }
 
     const input = findComposer(event.target);
-    if (!input) return;
+    if (!input) {
+      if (hasPasteFiles && isWhatsAppHost()) {
+        await blockWhatsAppFileAttachment(event);
+      }
+      return;
+    }
     noteActiveRiskEditor(input);
 
-    if (typeof dataTransferHasFiles === "function" && dataTransferHasFiles(pasteTransfer)) {
+    if (hasPasteFiles) {
       await maybeHandleLocalFileInsert(event, input, pasteTransfer, "paste");
       return;
     }
@@ -9155,10 +9166,51 @@
     return isImageContentExtractionResult(result) ? "Raw image upload blocked" : "Raw file blocked";
   }
 
+  function getImageContentExtractionBlockedMessage(reason) {
+    const code = String(reason || "image_redaction_failed");
+    const messages = {
+      protected_site_image_ocr_disabled:
+        "LeakGuard blocked this image because local image OCR is not available for this protected site.",
+      ocr_runtime_unavailable:
+        "LeakGuard blocked this image because local OCR could not start.",
+      protected_site_ocr_broker_unavailable:
+        "LeakGuard blocked this image because the local OCR bridge could not start.",
+      protected_site_ocr_broker_timeout:
+        "LeakGuard blocked this image because local OCR timed out before a sanitized image was ready.",
+      ocr_failed:
+        "LeakGuard blocked this image because local OCR could not read it safely.",
+      ocr_unsupported_image_type:
+        "LeakGuard blocked this image because this image type is not supported for safe redaction.",
+      ocr_image_too_large:
+        "LeakGuard blocked this image because it is too large for local OCR.",
+      ocr_image_dimensions_too_large:
+        "LeakGuard blocked this image because its dimensions are too large for local OCR.",
+      ocr_boxes_missing:
+        "LeakGuard blocked this image because it could not verify safe visual redaction boxes.",
+      protected_site_visual_redaction_not_eligible:
+        "LeakGuard blocked this image because visual redaction could not be verified safely.",
+      ocr_box_confidence_too_low:
+        "LeakGuard blocked this image because OCR box confidence was too low for protected-site upload.",
+      image_redactor_unavailable:
+        "LeakGuard blocked this image because local image redaction is not available.",
+      image_redaction_failed:
+        "LeakGuard blocked this image because local redacted PNG creation failed.",
+      redacted_image_file_invalid:
+        "LeakGuard blocked this image because the redacted PNG output could not be verified.",
+      image_redaction_file_unavailable:
+        "LeakGuard blocked this image because no verified redacted PNG was produced.",
+      file_read_failed:
+        "LeakGuard blocked this image because the clipboard image could not be read locally.",
+      file_extraction_failed:
+        "LeakGuard blocked this image because local image extraction failed."
+    };
+    return messages[code] || `LeakGuard blocked this image because local OCR/redaction did not produce a verified sanitized PNG. Reason: ${code}.`;
+  }
+
   function getContentExtractionBlockedMessage(reason, result) {
     const code = String(reason || "content_file_extraction_failed");
     if (isImageContentExtractionResult(result)) {
-      return "Raw image upload blocked.";
+      return getImageContentExtractionBlockedMessage(code);
     }
     if (code === "pdf_no_extractable_text") {
       return "LeakGuard blocked the raw upload because this appears to be a scanned or image-only PDF. Local PDF OCR is not available yet, so LeakGuard could not create a safe redacted replacement.";
@@ -9662,12 +9714,20 @@
   }
 
   async function maybeHandleLocalFileInsert(event, input, dataTransfer, context) {
+    const alreadyConsumedSupportedWhatsAppClipboardImagePaste =
+      event?.defaultPrevented === true &&
+      context === "paste" &&
+      isSupportedWhatsAppClipboardImagePaste(dataTransfer, context);
     if (
       !extensionRuntimeAvailable ||
       modalOpen ||
       (event.defaultPrevented &&
         context !== "drop" &&
-        !(context === "file-input" && (isGeminiHost() || (isFirefoxRuntime() && isProtectedFileDropDriver(getCurrentHandoffDriverId()))))) ||
+        !(
+          context === "file-input" &&
+          (isGeminiHost() || (isFirefoxRuntime() && isProtectedFileDropDriver(getCurrentHandoffDriverId())))
+        ) &&
+        !alreadyConsumedSupportedWhatsAppClipboardImagePaste) ||
       typeof readLocalTextFileFromDataTransfer !== "function" ||
       typeof createSanitizedTextFile !== "function" ||
       !dataTransferHasFiles(dataTransfer)
@@ -10452,6 +10512,20 @@
     }
 
     const selectedFiles = Array.from(event.target.files || []);
+    const processingSignature = fileInputProcessingSignatures.get(event.target) || "";
+    if (isWhatsAppHost() && processingSignature && selectedFiles.length === 0) {
+      consumeInterceptionEvent(event);
+      debugReveal("file-input:whatsapp-empty-processing-event-suppressed", {
+        eventType: event.type || "",
+        input: describeFileInputForDebug(event.target, "whatsapp-processing"),
+        reason: "empty_event_during_image_attach_processing"
+      });
+      return {
+        handled: true,
+        ok: true,
+        strategy: "whatsapp-empty-processing-event-suppressed"
+      };
+    }
     const sanitizedHandoffSuppression = getSanitizedFileInputHandoffSuppression(event.target, selectedFiles);
     if (sanitizedHandoffSuppression) {
       suppressSanitizedFileInputHandoffEvent(event, sanitizedHandoffSuppression);
@@ -10509,7 +10583,6 @@
     }
 
     const selectedSignature = getFileListMetadataSignature(selectedFiles);
-    const processingSignature = fileInputProcessingSignatures.get(event.target) || "";
     if (selectedSignature && processingSignature === selectedSignature) {
       consumeInterceptionEvent(event);
       debugReveal("file-input:duplicate-raw-event-suppressed", {
@@ -11657,13 +11730,11 @@
       true
     );
 
-    document.addEventListener(
-      "paste",
-      (event) => {
-        maybeHandlePaste(event).catch(handleContentError);
-      },
-      true
-    );
+    const onPaste = (event) => {
+      maybeHandlePaste(event).catch(handleContentError);
+    };
+    window.addEventListener("paste", onPaste, true);
+    document.addEventListener("paste", onPaste, true);
 
     document.addEventListener(
       "change",
