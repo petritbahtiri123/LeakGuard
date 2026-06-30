@@ -316,6 +316,52 @@ test.describe("@whatsapp @text WhatsApp-like reproduction contract", () => {
     await expectNoRawSecretVisible(page, file.secret);
   });
 
+  test("@files @images sanitized image preview send does not show text rewrite failure", async ({ extensionApp }) => {
+    test.setTimeout(130000);
+    const page = await extensionApp.openProtectedFixture("whatsapp");
+    const file = await imageFixture("png");
+
+    await uploadWhatsAppAttachFile(page, file);
+    await expect.poll(async () => {
+      const preview = await getWhatsAppPreviewState(page);
+      const body = await page.evaluate(() => {
+        const modalText = Array.from(document.querySelectorAll(".pwm-modal-backdrop, .pwm-modal"))
+          .map((element) => element.innerText || element.textContent || "")
+          .join("\n");
+        return `${document.body.innerText || ""}\n${modalText}`;
+      });
+      return preview?.sanitized === true || /Raw image upload blocked/i.test(body);
+    }, { timeout: 90000 }).toBe(true);
+
+    const initialPreview = await getWhatsAppPreviewState(page);
+    expect(initialPreview?.rawPreviewSeen, "sanitized image preview send setup must not show raw preview").toBe(false);
+    if (!initialPreview?.sanitized) {
+      await expectBlocked(page, /Raw image upload blocked/i);
+      await expectNoFileEvents(page);
+      await expectNoRawSecretVisible(page, file.secret);
+      return;
+    }
+
+    await typeIntoComposer(page, "API_KEY=[PWM_1]");
+    await page.locator("#whatsapp-preview-send-button").click();
+
+    await expect.poll(async () => {
+      const preview = await getWhatsAppPreviewState(page);
+      return preview?.sent === true;
+    }, { timeout: 15000 }).toBe(true);
+    const body = await page.evaluate(() => {
+      const modalText = Array.from(document.querySelectorAll(".pwm-modal-backdrop, .pwm-modal"))
+        .map((element) => element.innerText || element.textContent || "")
+        .join("\n");
+      return `${document.body.innerText || ""}\n${modalText}`;
+    });
+    expect(body).not.toMatch(/Rewrite verification failed/i);
+    expect(await getSentMessages(page)).toEqual([]);
+    const preview = await getWhatsAppPreviewState(page);
+    expect(preview?.rawPreviewSeen, "sanitized image preview send must not show raw preview").toBe(false);
+    await expectNoRawSecretVisible(page, file.secret);
+  });
+
   test("@files @images attach-button OCR failure blocks without preview", async ({ extensionApp }) => {
     const page = await extensionApp.openProtectedFixture("whatsapp");
     const file = malformedImageFixture();

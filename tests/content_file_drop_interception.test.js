@@ -1053,6 +1053,10 @@ function createHarness(overrides = {}) {
     FilePasteHelpers: globalThis.PWM.FilePasteHelpers,
     FileScanner: globalThis.PWM.FileScanner || {},
     StreamingFileRedactor: globalThis.PWM.StreamingFileRedactor || {},
+    PLACEHOLDER_TOKEN_REGEX: globalThis.PWM.PLACEHOLDER_TOKEN_REGEX,
+    ANY_PLACEHOLDER_TOKEN_REGEX: globalThis.PWM.ANY_PLACEHOLDER_TOKEN_REGEX,
+    normalizeVisiblePlaceholders: globalThis.PWM.normalizeVisiblePlaceholders,
+    PlaceholderFamilies: globalThis.PWM.PlaceholderFamilies || {},
     normalizeComposerText: globalThis.PWM.ComposerHelpers.normalizeComposerText,
     isTextArea: globalThis.PWM.ComposerHelpers.isTextArea,
     isContentEditable: globalThis.PWM.ComposerHelpers.isContentEditable,
@@ -1257,6 +1261,7 @@ function createHarness(overrides = {}) {
       "const GEMINI_GHOST_INGRESS_TIMEOUT_MS = 2200;",
       "const GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MS = 60000;",
       "const GROK_PENDING_SANITIZED_FILE_HANDOFF_MS = 60000;",
+      "const WHATSAPP_SANITIZED_IMAGE_SEND_BYPASS_MS = 30000;",
       "const LOCAL_TEXT_FAST_MAX_BYTES = 2 * 1024 * 1024;",
       "const LOCAL_TEXT_OPTIMIZED_MAX_BYTES = 4 * 1024 * 1024;",
       "const LOCAL_TEXT_HARD_BLOCK_BYTES = 4 * 1024 * 1024;",
@@ -1300,6 +1305,9 @@ function createHarness(overrides = {}) {
       "let pendingAttachPromptEl = null;",
       "let pendingAttachPromptSite = \"\";",
       "let fileInputProcessingSignatures = new WeakMap();",
+      "const whatsAppSanitizedImageHandoffInputs = new WeakMap();",
+      "let whatsAppSanitizedImageHandoffUntil = 0;",
+      "let whatsAppBypassSanitizedImageSubmitUntil = 0;",
       ...contentDebugEventsHarnessSource(),
       ...fileHandoffAdapterHarnessSource(),
       "function setDmzOverlayState(message, state = \"\") { calls.dmzStates.push({ message, state }); }",
@@ -1378,6 +1386,14 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "isOpenAiChatHost"),
       extractFunctionSource(contentSource, "isXHost"),
       extractFunctionSource(contentSource, "isWhatsAppHost"),
+      extractFunctionSource(contentSource, "containsVisiblePlaceholderToken"),
+      extractFunctionSource(contentSource, "hasUnsafeVisibleSecret"),
+      extractFunctionSource(contentSource, "shouldOwnWhatsAppTextSend"),
+      extractFunctionSource(contentSource, "markWhatsAppSanitizedImageHandoff"),
+      extractFunctionSource(contentSource, "hasRecentWhatsAppSanitizedImageHandoff"),
+      extractFunctionSource(contentSource, "consumeRecentWhatsAppSanitizedImageHandoff"),
+      extractFunctionSource(contentSource, "isWhatsAppSanitizedImageSendTextSafe"),
+      extractFunctionSource(contentSource, "shouldBypassWhatsAppSanitizedImageSend"),
       extractFunctionSource(contentSource, "getCurrentHandoffDriverId"),
       extractFunctionSource(contentSource, "getActiveProtection"),
       extractFunctionSource(contentSource, "isProtectedFileDropDriver"),
@@ -1402,6 +1418,8 @@ function createHarness(overrides = {}) {
       extractFunctionSource(chatGptComposerSyncSource, "runChatGptSyncedWriteAttempt"),
       extractFunctionSource(chatGptComposerSyncSource, "applyChatGptSyncedComposerText"),
       extractFunctionSource(contentSource, "applyChatGptLargePasteTextFallback"),
+      extractFunctionSource(contentSource, "isHighConfidenceRewriteFinding"),
+      extractFunctionSource(contentSource, "isKnownSanitizedPlaceholderToken"),
       extractFunctionSource(contentSource, "maybeHandleChatGptLargeTextPaste"),
       extractFunctionSource(contentSource, "resolveGeminiEditorTarget"),
       extractFunctionSource(contentSource, "findGeminiEditorCandidateInRoot"),
@@ -1576,7 +1594,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "maybeHandleFileDrag"),
       'let lastGeminiDropSessionHash = "";',
       extractFunctionSource(contentSource, "maybeHandleFileInputChange"),
-      "return { maybeHandleChatGptLargeTextPaste, maybeHandlePaste, maybeHandleDrop, maybeHandleFileDrag, maybeHandleFileInputChange, handOffSanitizedFileInput, resolveFileDragGuardPolicy, hasPendingGrokSanitizedFileHandoff, getPendingGrokSanitizedFileHandoffDebug, getSuppressInputScanUntil: () => suppressInputScanUntil, isProgrammaticInputScanSuppressed };"
+      "return { maybeHandleChatGptLargeTextPaste, maybeHandlePaste, maybeHandleDrop, maybeHandleFileDrag, maybeHandleFileInputChange, handOffSanitizedFileInput, resolveFileDragGuardPolicy, hasPendingGrokSanitizedFileHandoff, getPendingGrokSanitizedFileHandoffDebug, markWhatsAppSanitizedImageHandoff, shouldBypassWhatsAppSanitizedImageSend, getSuppressInputScanUntil: () => suppressInputScanUntil, isProgrammaticInputScanSuppressed };"
     ].join("\n\n")
   );
   const handlers = factory(...Object.values(dependencies));
@@ -7826,6 +7844,48 @@ async function testWhatsAppSingleImageAttachRoutesToSanitizedHandoff() {
     assert.strictEqual(calls.textFallbacks.length, 0, `${name} must not insert OCR text into WhatsApp`);
     assert.strictEqual(JSON.stringify(calls).includes(rawSecret), false);
   }
+}
+
+async function testWhatsAppSanitizedImageHandoffBypassesSafePlaceholderCaptionOnly() {
+  const rawSecret = "sk-proj-RawCaptionMustStillBlock1234567890abcdef";
+  const editor = { tagName: "DIV", isContentEditable: true, text: "API_KEY=[PWM_1]", selection: { start: 0, end: 0 } };
+  const findingFor = (text) => {
+    const value = String(text || "");
+    if (value.includes(rawSecret)) {
+      return [{ raw: rawSecret, severity: "high", start: value.indexOf(rawSecret) }];
+    }
+    if (value.includes("API_KEY=[PWM_1]")) {
+      return [{ raw: "API_KEY=[PWM_1]", severity: "high", start: value.indexOf("API_KEY=[PWM_1]") }];
+    }
+    return [];
+  };
+  const { markWhatsAppSanitizedImageHandoff, shouldBypassWhatsAppSanitizedImageSend } = createHarness({
+    location: { hostname: "web.whatsapp.com" },
+    findComposer: () => editor,
+    analyzeText: (text) => {
+      const findings = findingFor(text);
+      return {
+        normalizedText: String(text || ""),
+        secretFindings: findings,
+        networkFindings: [],
+        findings,
+        placeholderNormalized: false
+      };
+    }
+  });
+
+  markWhatsAppSanitizedImageHandoff(editor);
+
+  assert.strictEqual(
+    shouldBypassWhatsAppSanitizedImageSend(editor, "API_KEY=[PWM_1]"),
+    true,
+    "a sanitized WhatsApp image preview send should not show a rewrite failure for trusted placeholder captions"
+  );
+  assert.strictEqual(
+    shouldBypassWhatsAppSanitizedImageSend(editor, `API_KEY=${rawSecret}`),
+    false,
+    "raw caption secrets must still use the normal WhatsApp text verifier"
+  );
 }
 
 async function testWhatsAppImageAttachSuppressesRawInputClearEventDuringOcr() {
@@ -15853,6 +15913,7 @@ function testMultiFileProtectedUploadStaticGuards() {
   await testWhatsAppClipboardImagePasteFailureBlocksRawImage();
   await testWhatsAppUnsupportedClipboardImagePasteRemainsBlocked();
   await testWhatsAppSingleImageAttachRoutesToSanitizedHandoff();
+  await testWhatsAppSanitizedImageHandoffBypassesSafePlaceholderCaptionOnly();
   await testWhatsAppImageAttachSuppressesRawInputClearEventDuringOcr();
   await testWhatsAppImageAttachOcrFailureBlocksRawImage();
   await testWhatsAppUnsupportedAndMultiFileAttachRemainBlocked();

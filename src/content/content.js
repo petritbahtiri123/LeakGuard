@@ -172,6 +172,9 @@
   let fallbackSendKeySuppressionInput = null;
   const whatsAppPendingTextSendInputs = new WeakSet();
   const whatsAppPendingTextSendTimers = new WeakMap();
+  const whatsAppSanitizedImageHandoffInputs = new WeakMap();
+  let whatsAppSanitizedImageHandoffUntil = 0;
+  let whatsAppBypassSanitizedImageSubmitUntil = 0;
   let inputScanTimer = 0;
   let rehydrateObserver = null;
   let modalOpen = false;
@@ -206,6 +209,7 @@
   const PROGRAMMATIC_INPUT_SUPPRESS_MS = 500;
   const FALLBACK_SEND_KEY_SUPPRESS_MS = 5000;
   const WHATSAPP_TEXT_SEND_GUARD_MS = 5000;
+  const WHATSAPP_SANITIZED_IMAGE_SEND_BYPASS_MS = 30000;
   const WHATSAPP_REWRITE_CLEAR_TIMEOUT_MS = 500;
   const WHATSAPP_REWRITE_INSERT_TIMEOUT_MS = 700;
   const WHATSAPP_REWRITE_POLL_MS = 50;
@@ -10358,6 +10362,9 @@
     } else if (disposition.shouldShowSuccess) {
       showProcessingSuccess(disposition.successStatus, disposition.successReason);
     }
+    if (imageRedactionMode && isWhatsAppHost()) {
+      markWhatsAppSanitizedImageHandoff(input || findComposer(event.target));
+    }
     refreshBadgeFromCurrentInput();
     return {
       handled: handoffClassification.handled,
@@ -10665,6 +10672,46 @@
     return Boolean(isWhatsAppHost() && String(text || "").trim());
   }
 
+  function markWhatsAppSanitizedImageHandoff(input) {
+    if (!isWhatsAppHost()) return;
+    const expiresAt = Date.now() + WHATSAPP_SANITIZED_IMAGE_SEND_BYPASS_MS;
+    whatsAppSanitizedImageHandoffUntil = expiresAt;
+    if (input && typeof input === "object") {
+      whatsAppSanitizedImageHandoffInputs.set(input, expiresAt);
+    }
+  }
+
+  function hasRecentWhatsAppSanitizedImageHandoff(input) {
+    if (!isWhatsAppHost()) return false;
+    const now = Date.now();
+    if (input && (whatsAppSanitizedImageHandoffInputs.get(input) || 0) > now) return true;
+    return whatsAppSanitizedImageHandoffUntil > now;
+  }
+
+  function consumeRecentWhatsAppSanitizedImageHandoff(input) {
+    whatsAppSanitizedImageHandoffUntil = 0;
+    if (input && typeof input === "object") {
+      whatsAppSanitizedImageHandoffInputs.delete(input);
+    }
+  }
+
+  function isWhatsAppSanitizedImageSendTextSafe(text) {
+    const value = String(text || "");
+    if (!value.trim()) return true;
+    if (hasUnsafeVisibleSecret(value)) return false;
+    const analysis = analyzeText(value);
+    return (analysis.findings || []).every((finding) =>
+      isKnownSanitizedPlaceholderToken(finding?.raw) || containsVisiblePlaceholderToken(finding?.raw)
+    );
+  }
+
+  function shouldBypassWhatsAppSanitizedImageSend(input, text) {
+    return (
+      hasRecentWhatsAppSanitizedImageHandoff(input) &&
+      isWhatsAppSanitizedImageSendTextSafe(text)
+    );
+  }
+
   function clearWhatsAppTextSendPending(input) {
     if (!input || !whatsAppPendingTextSendInputs.has(input)) return;
     whatsAppPendingTextSendInputs.delete(input);
@@ -10723,6 +10770,13 @@
       return;
     }
 
+    if (isWhatsAppHost() && whatsAppBypassSanitizedImageSubmitUntil > Date.now()) {
+      return;
+    }
+    if (whatsAppBypassSanitizedImageSubmitUntil && whatsAppBypassSanitizedImageSubmitUntil <= Date.now()) {
+      whatsAppBypassSanitizedImageSubmitUntil = 0;
+    }
+
     if (modalOpen) {
       consumeInterceptionEvent(event);
       return;
@@ -10763,6 +10817,15 @@
 
     const text = String(extractedText);
     if (!text.trim()) {
+      return;
+    }
+    if (shouldBypassWhatsAppSanitizedImageSend(input, text)) {
+      consumeRecentWhatsAppSanitizedImageHandoff(input);
+      whatsAppBypassSanitizedImageSubmitUntil = Date.now() + 1000;
+      debugReveal("whatsapp:image-send-text-verification-bypassed", {
+        reason: "recent_sanitized_image_handoff",
+        text: summarizeDebugText(text)
+      });
       return;
     }
 
@@ -11035,6 +11098,15 @@
 
     const text = String(extractedText);
     if (!text.trim()) {
+      return;
+    }
+    if (shouldBypassWhatsAppSanitizedImageSend(input, text)) {
+      consumeRecentWhatsAppSanitizedImageHandoff(input);
+      whatsAppBypassSanitizedImageSubmitUntil = Date.now() + 1000;
+      debugReveal("whatsapp:image-send-click-verification-bypassed", {
+        reason: "recent_sanitized_image_handoff",
+        text: summarizeDebugText(text)
+      });
       return;
     }
 
