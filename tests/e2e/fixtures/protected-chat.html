@@ -87,6 +87,14 @@
         white-space: pre-wrap;
         overflow-wrap: anywhere;
       }
+
+      #whatsapp-preview-modal {
+        margin-top: 12px;
+        padding: 12px;
+        border: 1px solid #0f766e;
+        border-radius: 6px;
+        background: #ecfdf5;
+      }
     </style>
   </head>
   <body>
@@ -130,6 +138,12 @@
             >
               <p class="selectable-text copyable-text"><span data-lexical-text="true"><br></span></p>
             </div>
+          </div>
+          <button id="whatsapp-attach-button" data-testid="whatsapp-attach-button" aria-label="Attach" type="button">Attach</button>
+          <input id="whatsapp-file-input" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
+          <div id="whatsapp-preview-modal" data-testid="whatsapp-preview-modal" hidden>
+            <div id="whatsapp-preview-area" data-testid="whatsapp-preview-area"></div>
+            <button id="whatsapp-preview-send-button" data-testid="whatsapp-preview-send-button" type="button">Send image</button>
           </div>
         </label>
 
@@ -183,6 +197,11 @@
         const textarea = document.querySelector("#prompt-textarea");
         const editable = document.querySelector("#editable-composer");
         const whatsapp = document.querySelector("#whatsapp-composer");
+        const whatsappAttachButton = document.querySelector("#whatsapp-attach-button");
+        const whatsappFileInput = document.querySelector("#whatsapp-file-input");
+        const whatsappPreviewModal = document.querySelector("#whatsapp-preview-modal");
+        const whatsappPreviewArea = document.querySelector("#whatsapp-preview-area");
+        const whatsappPreviewSendButton = document.querySelector("#whatsapp-preview-send-button");
         const form = document.querySelector("#chat-form");
         const sentMessages = document.querySelector("#sent-messages");
         const fileInput = document.querySelector("#file-input");
@@ -202,7 +221,15 @@
           whatsappClearRejected: false,
           whatsappStaleResurrections: 0,
           whatsappDuplicateSanitizedWrites: 0,
-          whatsappInputTypes: []
+          whatsappInputTypes: [],
+          whatsappPreview: {
+            visible: false,
+            sanitized: false,
+            rawPreviewSeen: false,
+            rawPreviewBeforeSanitized: false,
+            sent: false,
+            files: []
+          }
         };
 
         function normalizeText(value) {
@@ -330,6 +357,7 @@
             whatsappStaleResurrections: state.whatsappStaleResurrections,
             whatsappDuplicateSanitizedWrites: state.whatsappDuplicateSanitizedWrites,
             whatsappInputTypes: state.whatsappInputTypes,
+            whatsappPreview: state.whatsappPreview,
             submissions: state.submissions.length,
             fileEvents: state.fileEvents.length
           }, null, 2);
@@ -489,6 +517,41 @@
             .map((entry) => `${entry.source}:${entry.name}:${entry.type}:${entry.text}`)
             .join("\n");
           renderAppState();
+          return details;
+        }
+
+        function summarizePreviewFile(file) {
+          return {
+            name: file.name,
+            type: file.type,
+            size: file.size,
+            sanitized: /\.redacted\.png$/i.test(file.name || "") && file.type === "image/png"
+          };
+        }
+
+        async function renderWhatsAppPreview(files) {
+          if (!modeUsesWhatsAppComposer()) return;
+          const inputFiles = Array.from(files || []);
+          const details = await recordFiles("input", inputFiles);
+          const previewFiles = inputFiles.map(summarizePreviewFile);
+          const sanitized = previewFiles.length === 1 && previewFiles[0].sanitized;
+          const rawPreview = previewFiles.length > 0 && !sanitized;
+          if (rawPreview) {
+            state.whatsappPreview.rawPreviewSeen = true;
+            if (!state.whatsappPreview.sanitized) {
+              state.whatsappPreview.rawPreviewBeforeSanitized = true;
+            }
+          }
+          state.whatsappPreview.visible = previewFiles.length > 0;
+          state.whatsappPreview.sanitized = sanitized;
+          state.whatsappPreview.files = previewFiles;
+          if (whatsappPreviewModal && whatsappPreviewArea) {
+            whatsappPreviewModal.hidden = previewFiles.length === 0;
+            whatsappPreviewArea.textContent = details
+              .map((entry) => `${sanitized ? "sanitized" : "raw"}:${entry.name}:${entry.type}`)
+              .join("\n");
+          }
+          renderAppState();
         }
 
         for (const shell of [textareaShell, editableShell, whatsappShell]) {
@@ -557,6 +620,23 @@
           recordFiles("input", event.target.files);
         });
 
+        if (whatsappAttachButton && whatsappFileInput) {
+          whatsappAttachButton.addEventListener("click", () => {
+            whatsappFileInput.click();
+          });
+          whatsappFileInput.addEventListener("change", (event) => {
+            renderWhatsAppPreview(event.target.files);
+          });
+        }
+
+        if (whatsappPreviewSendButton) {
+          whatsappPreviewSendButton.addEventListener("click", () => {
+            if (!state.whatsappPreview.visible || !state.whatsappPreview.sanitized) return;
+            state.whatsappPreview.sent = true;
+            renderAppState();
+          });
+        }
+
         dropZone.addEventListener("dragover", (event) => {
           event.preventDefault();
         });
@@ -572,7 +652,8 @@
           getComposerText,
           setComposerText,
           submissions: state.submissions,
-          fileEvents: state.fileEvents
+          fileEvents: state.fileEvents,
+          getWhatsAppPreviewState: () => JSON.parse(JSON.stringify(state.whatsappPreview))
         };
       })();
     </script>

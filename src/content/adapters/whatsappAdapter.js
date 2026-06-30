@@ -10,6 +10,7 @@
       hosts: ["web.whatsapp.com"],
       supportsDirectFileInputAssignment: false,
       supportsClipboardImagePasteHandoff: true,
+      supportsSanitizedImageAttachHandoff: true,
       supportsMultiFileHandoff: false,
       supportsDirectDropReplay: false,
       supportsPendingAttach: false,

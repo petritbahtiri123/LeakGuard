@@ -427,6 +427,12 @@ export async function getFileEvents(page) {
   return await page.evaluate(() => window.__leakguardE2E.fileEvents);
 }
 
+export async function getWhatsAppPreviewState(page) {
+  return await page.evaluate(() => {
+    return window.__leakguardE2E.getWhatsAppPreviewState?.() || null;
+  });
+}
+
 export async function expectNoRawSecretVisible(page, secret) {
   const visibleText = await page.evaluate(() => {
     const controls = Array.from(document.querySelectorAll("textarea, input, [contenteditable]"))
@@ -503,6 +509,12 @@ export async function expectNoUnsafeOriginalFilename(page, unsafeName) {
 export async function uploadFile(page, fileOrFiles) {
   const files = normalizePayloads(fileOrFiles);
   await page.setInputFiles("#file-input", files);
+}
+
+export async function uploadWhatsAppAttachFile(page, fileOrFiles) {
+  const files = normalizePayloads(fileOrFiles);
+  await page.locator("#whatsapp-attach-button").click();
+  await page.setInputFiles("#whatsapp-file-input", files);
 }
 
 export async function dragDropFile(page, fileOrFiles) {

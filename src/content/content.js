@@ -1158,6 +1158,23 @@
     return adapter?.id === "whatsapp" && adapter.supportsClipboardImagePasteHandoff === true;
   }
 
+  function isSupportedWhatsAppAttachImageFile(file) {
+    if (!file || !shouldUseContentFileExtractionPipeline(file)) return false;
+    return (
+      SUPPORTED_IMAGE_REDACTION_EXTENSIONS.has(getLocalFileExtension(file)) &&
+      SUPPORTED_IMAGE_REDACTION_MIME_TYPES.has(getLocalFileMimeType(file))
+    );
+  }
+
+  function isSupportedWhatsAppImageAttach(dataTransfer, context = "file-input") {
+    if (!isWhatsAppHost() || context !== "file-input") return false;
+    if (typeof dataTransferHasFiles !== "function" || !dataTransferHasFiles(dataTransfer)) return false;
+    const files = listLocalTransferFiles(dataTransfer);
+    if (files.length !== 1 || !isSupportedWhatsAppAttachImageFile(files[0])) return false;
+    const adapter = getFileHandoffAdapterById("whatsapp") || getFileHandoffAdapterForLocation();
+    return adapter?.id === "whatsapp" && adapter.supportsSanitizedImageAttachHandoff === true;
+  }
+
   async function blockWhatsAppFileAttachment(event) {
     if (!event?.defaultPrevented) {
       consumeInterceptionEvent(event);
@@ -9667,10 +9684,12 @@
         hideFileProcessingOverlay,
         showFileProcessingSuccess
       });
+    const supportedWhatsAppImageAttach = isSupportedWhatsAppImageAttach(dataTransfer, context);
     if (
       isWhatsAppHost() &&
       localTransferFiles.length &&
-      !isSupportedWhatsAppClipboardImagePaste(dataTransfer, context)
+      !isSupportedWhatsAppClipboardImagePaste(dataTransfer, context) &&
+      !supportedWhatsAppImageAttach
     ) {
       failProcessing(WHATSAPP_FILE_ATTACH_UNSUPPORTED_REASON, WHATSAPP_FILE_ATTACH_BLOCK_TITLE);
       return blockWhatsAppFileAttachment(event);
@@ -9746,6 +9765,13 @@
 
     if (!(event.defaultPrevented && context === "file-input" && isGeminiHost())) {
       consumeInterceptionEvent(event);
+    }
+    if (
+      supportedWhatsAppImageAttach &&
+      event?.target?.tagName === "INPUT" &&
+      String(event.target.type || "").toLowerCase() === "file"
+    ) {
+      clearLocalFileInputSelection(event.target);
     }
 
     if (context === "file-input") {
