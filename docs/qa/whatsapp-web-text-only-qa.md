@@ -5,8 +5,8 @@ Use only a controlled test chat, such as a self-chat or a test account. Do not u
 ## Scope
 
 - Target: `https://web.whatsapp.com/*`
-- Supported in this phase: message composer text only.
-- Unsupported in this phase: attachments, files, images, videos, documents, and file fallback insertion.
+- Supported in this checklist: message composer text. Supported image attach/paste paths have separate QA checklists.
+- Unsupported in this phase: videos, documents, arbitrary files, multi-file upload, and file fallback insertion.
 - Expected fail-closed behavior: if LeakGuard cannot detect the composer, extract text, redact, rewrite, verify, or replay the send safely, nothing is sent.
 
 ## Manual Checklist
@@ -21,8 +21,8 @@ Use only a controlled test chat, such as a self-chat or a test account. Do not u
 8. Confirm only the sanitized message is sent.
 9. Type `LGQA_WHATSAPP_PLACEHOLDER_1 my password is [PWM_2]`.
 10. Click Send once and confirm `[PWM_2]` remains unchanged with no redaction loop.
-11. Try a file/image/document attachment.
-12. Confirm LeakGuard blocks or ignores the raw attachment safely and does not attempt sanitized handoff or text fallback insertion.
+11. Try a document attachment.
+12. Confirm LeakGuard blocks the raw attachment safely and does not attempt sanitized handoff or text fallback insertion.
 
 ## Browser QA Contract
 
@@ -37,11 +37,11 @@ Automated browser QA metadata tracks these required cases:
 - Rewrite verification failure blocks send.
 - Programmatic replay does not recurse.
 - Second-click retry is not accepted as success.
-- Attachment attempt remains unsupported and blocked.
+- Unsupported document attachment attempts remain blocked.
 
 ## Root Cause Notes
 
 - WhatsApp Web is a real messaging surface, so risk-gated interception is not enough. WhatsApp text sends now own non-empty send attempts and use the verified replay path even when quick analysis finds no issue.
 - WhatsApp previously shared the file handoff adapter shape used by AI/chat surfaces. That could allow sanitized file handoff or sanitized text fallback behavior that is not supported for WhatsApp in this phase.
-- The WhatsApp adapter is now text-only: no file input assignment, no pending attach, no trusted attach button, and no upload trigger resolution.
-- The shared file handoff flow has a WhatsApp hard stop so future callers cannot accidentally insert sanitized file text into a WhatsApp message.
+- The WhatsApp adapter keeps generic file support disabled: no pending attach, no trusted attach button, no upload trigger resolution, and no document or multi-file handoff.
+- The shared file handoff flow has a WhatsApp hard stop for generic handoff so future callers cannot accidentally insert sanitized file text into a WhatsApp message.

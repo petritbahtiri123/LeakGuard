@@ -172,6 +172,9 @@
   let fallbackSendKeySuppressionInput = null;
   const whatsAppPendingTextSendInputs = new WeakSet();
   const whatsAppPendingTextSendTimers = new WeakMap();
+  const whatsAppSanitizedImageHandoffInputs = new WeakMap();
+  let whatsAppSanitizedImageHandoffUntil = 0;
+  let whatsAppBypassSanitizedImageSubmitUntil = 0;
   let inputScanTimer = 0;
   let rehydrateObserver = null;
   let modalOpen = false;
@@ -180,6 +183,7 @@
   let typedRewriteGeneration = 0;
   let activeRiskEditor = null;
   let suppressInputScanUntil = 0;
+  let recentWhatsAppTextPaste = null;
   const rewriteFailureModalSuppressions = new Map();
   let statusPanelEl = null;
   let statusPanelCollapsed = false;
@@ -204,8 +208,10 @@
   });
   const SANITIZED_FILE_HANDOFF_SUPPRESS_MS = 30000;
   const PROGRAMMATIC_INPUT_SUPPRESS_MS = 500;
+  const WHATSAPP_DUPLICATE_TEXT_PASTE_SUPPRESS_MS = 1200;
   const FALLBACK_SEND_KEY_SUPPRESS_MS = 5000;
   const WHATSAPP_TEXT_SEND_GUARD_MS = 5000;
+  const WHATSAPP_SANITIZED_IMAGE_SEND_BYPASS_MS = 30000;
   const WHATSAPP_REWRITE_CLEAR_TIMEOUT_MS = 500;
   const WHATSAPP_REWRITE_INSERT_TIMEOUT_MS = 700;
   const WHATSAPP_REWRITE_POLL_MS = 50;
@@ -958,6 +964,64 @@
     return transfer?.getData?.("text/plain") || transfer?.getData?.("text") || event?.data || "";
   }
 
+  function isTextPasteInterceptionEvent(event) {
+    return event?.type === "paste" || isPasteBeforeInput(event);
+  }
+
+  function buildTextPasteSignature(text) {
+    const normalized = normalizeComposerText(text);
+    let hash = 2166136261;
+    for (let index = 0; index < normalized.length; index += 1) {
+      hash ^= normalized.charCodeAt(index);
+      hash = Math.imul(hash, 16777619) >>> 0;
+    }
+    return `${normalized.length}:${(normalized.match(/\n/g) || []).length}:${hash.toString(36)}`;
+  }
+
+  function rememberWhatsAppTextPaste(input, pasted, event) {
+    if (!isWhatsAppHost() || !isTextPasteInterceptionEvent(event) || !pasted) return;
+    recentWhatsAppTextPaste = {
+      input,
+      signature: buildTextPasteSignature(pasted),
+      eventType: String(event?.type || ""),
+      inputType: String(event?.inputType || ""),
+      expiresAt: Date.now() + WHATSAPP_DUPLICATE_TEXT_PASTE_SUPPRESS_MS
+    };
+  }
+
+  function shouldSuppressDuplicateWhatsAppTextPaste(input, pasted, event) {
+    if (!isWhatsAppHost() || !isTextPasteInterceptionEvent(event) || !pasted) return false;
+
+    const recent = recentWhatsAppTextPaste;
+    if (!recent) return false;
+    if (Date.now() > recent.expiresAt) {
+      recentWhatsAppTextPaste = null;
+      return false;
+    }
+
+    const currentEventType = String(event?.type || "");
+    const currentInputType = String(event?.inputType || "");
+    const isPairedBrowserPasteEvent =
+      recent.eventType !== currentEventType || recent.inputType !== currentInputType;
+    const duplicate =
+      isPairedBrowserPasteEvent &&
+      recent.input === input &&
+      recent.signature === buildTextPasteSignature(pasted);
+
+    if (duplicate) {
+      recentWhatsAppTextPaste = null;
+      debugReveal("whatsapp:text-paste-duplicate-event-suppressed", {
+        previousEventType: recent.eventType,
+        currentEventType,
+        previousInputType: recent.inputType,
+        currentInputType,
+        length: normalizeComposerText(pasted).length
+      });
+    }
+
+    return duplicate;
+  }
+
   function dataTransferLooksLikeFiles(dataTransfer) {
     if (typeof fileDragGuard?.dataTransferLooksLikeFiles === "function") {
       return fileDragGuard.dataTransferLooksLikeFiles(dataTransfer);
@@ -1143,6 +1207,36 @@
     return isUnsupportedProtectedImageTransfer(policy)
       ? UNSUPPORTED_PROTECTED_IMAGE_BLOCKED_TITLE
       : "Raw file upload blocked";
+  }
+
+
+  function isSupportedWhatsAppClipboardImagePaste(dataTransfer, context = "paste") {
+    if (!isWhatsAppHost() || context !== "paste") return false;
+    if (typeof dataTransferHasFiles !== "function" || !dataTransferHasFiles(dataTransfer)) return false;
+    const files = listLocalTransferFiles(dataTransfer);
+    if (files.length !== 1) return false;
+    const helper = globalThis.PWM?.FilePasteHelpers || {};
+    if (typeof helper.isSupportedClipboardImageMimeType !== "function") return false;
+    if (!helper.isSupportedClipboardImageMimeType(files[0]?.type)) return false;
+    const adapter = getFileHandoffAdapterById("whatsapp") || getFileHandoffAdapterForLocation();
+    return adapter?.id === "whatsapp" && adapter.supportsClipboardImagePasteHandoff === true;
+  }
+
+  function isSupportedWhatsAppAttachImageFile(file) {
+    if (!file || !shouldUseContentFileExtractionPipeline(file)) return false;
+    return (
+      SUPPORTED_IMAGE_REDACTION_EXTENSIONS.has(getLocalFileExtension(file)) &&
+      SUPPORTED_IMAGE_REDACTION_MIME_TYPES.has(getLocalFileMimeType(file))
+    );
+  }
+
+  function isSupportedWhatsAppImageAttach(dataTransfer, context = "file-input") {
+    if (!isWhatsAppHost() || context !== "file-input") return false;
+    if (typeof dataTransferHasFiles !== "function" || !dataTransferHasFiles(dataTransfer)) return false;
+    const files = listLocalTransferFiles(dataTransfer);
+    if (files.length !== 1 || !isSupportedWhatsAppAttachImageFile(files[0])) return false;
+    const adapter = getFileHandoffAdapterById("whatsapp") || getFileHandoffAdapterForLocation();
+    return adapter?.id === "whatsapp" && adapter.supportsSanitizedImageAttachHandoff === true;
   }
 
   async function blockWhatsAppFileAttachment(event) {
@@ -3547,6 +3641,7 @@
         composed: true,
         clipboardData: transfer
       });
+      markSanitizedTextRewriteEvent(event);
       const hasClipboardText =
         event.clipboardData?.getData?.("text/plain") === text ||
         attachEventDataTransfer(event, "clipboardData", transfer);
@@ -3672,13 +3767,6 @@
       insertOk: inserted,
       exactMatch: settled.actual === expected
     });
-    if (!settled.ok || settled.actual !== expected) {
-      return {
-        ok: false,
-        actual: settled.actual,
-        strategy: "whatsapp-insert-verification-failed"
-      };
-    }
 
     const verification = await verifyComposerRewriteSafe({
       input,
@@ -3692,7 +3780,7 @@
       allowMultilineRetry: false
     });
 
-    if (!verification.ok || normalizeComposerText(verification.actual || settled.actual) !== expected) {
+    if (!verification.ok) {
       return {
         ok: false,
         actual: verification.actual || settled.actual,
@@ -3700,10 +3788,23 @@
       };
     }
 
+    const settledActual = normalizeComposerText(settled.actual);
+    const exactSettledMatch = settledActual === expected;
+    if (!exactSettledMatch && !shouldAcceptWhatsAppSafePlaceholderPasteVerification(expected, settledActual)) {
+      return {
+        ok: false,
+        actual: settled.actual,
+        strategy: "whatsapp-insert-verification-failed"
+      };
+    }
+
     return {
       ok: true,
       actual: verification.actual || settled.actual,
-      strategy: "whatsapp-editor-action"
+      strategy:
+        exactSettledMatch
+          ? "whatsapp-editor-action"
+          : `whatsapp-editor-action-${verification.strategy || "safe-verification"}`
     };
   }
 
@@ -4178,6 +4279,25 @@
     );
 
     if (!applied.ok) {
+      if (
+        context === "paste" &&
+        shouldAcceptWhatsAppSafePlaceholderPasteVerification(next.text, applied.actual)
+      ) {
+        debugReveal("whatsapp:paste-safe-placeholder-verification-accepted", {
+          reason: "actual_contains_expected_placeholders",
+          strategy: applied.strategy || null,
+          expected: {
+            length: getDebugTextLength(next.text),
+            placeholderCount: countDebugPlaceholders(next.text)
+          },
+          actual: {
+            length: getDebugTextLength(applied.actual),
+            placeholderCount: countDebugPlaceholders(applied.actual)
+          }
+        });
+        return true;
+      }
+
       await showRewriteFailure(
         context,
         collectFailureDetails(input, next.text, applied.actual, context)
@@ -4204,6 +4324,25 @@
       const { raw = "" } = finding || {};
       return isHighConfidenceRewriteFinding(finding) && !containsVisiblePlaceholderToken(raw);
     });
+  }
+
+  function shouldAcceptWhatsAppSafePlaceholderPasteVerification(expectedText, actualText) {
+    if (!isWhatsAppHost()) return false;
+
+    const expected = normalizeComposerText(expectedText);
+    const actual = normalizeComposerText(actualText);
+    if (!expected.trim() || !actual.trim()) return false;
+    if (!containsVisiblePlaceholderToken(expected) || !containsVisiblePlaceholderToken(actual)) {
+      return false;
+    }
+    if (!isReasonablyCloseRewriteLength(expected, actual)) return false;
+    if (listPlaceholderTokens(expected).length !== listPlaceholderTokens(actual).length) {
+      return false;
+    }
+    if (!actualContainsExpectedPlaceholders(expected, actual)) return false;
+    if (hasUnsafeVisibleSecret(actual)) return false;
+
+    return true;
   }
 
   function shouldSuppressStaleTypedRewriteFailure(rewriteGeneration, input, actualText = null) {
@@ -4500,6 +4639,7 @@
   async function maybeHandlePaste(event) {
     if (!extensionRuntimeAvailable || modalOpen || event.defaultPrevented) return;
     if (isSanitizedFileHandoffEvent(event)) return;
+    if (isSanitizedTextRewriteEvent(event)) return;
 
     if (isGeminiHost() && await maybeHandleGeminiEditorPaste(event)) {
       return;
@@ -4510,20 +4650,32 @@
       typeof normalizeClipboardImageDataTransfer === "function"
         ? normalizeClipboardImageDataTransfer(rawPasteTransfer)
         : rawPasteTransfer;
+    const hasPasteFiles =
+      typeof dataTransferHasFiles === "function" && dataTransferHasFiles(pasteTransfer);
+    const supportedWhatsAppClipboardImagePaste =
+      hasPasteFiles && isSupportedWhatsAppClipboardImagePaste(pasteTransfer, "paste");
     if (
-      typeof dataTransferHasFiles === "function" &&
-      dataTransferHasFiles(pasteTransfer) &&
-      isWhatsAppHost()
+      hasPasteFiles &&
+      isWhatsAppHost() &&
+      !supportedWhatsAppClipboardImagePaste
     ) {
       await blockWhatsAppFileAttachment(event);
       return;
     }
+    if (supportedWhatsAppClipboardImagePaste) {
+      consumeInterceptionEvent(event);
+    }
 
     const input = findComposer(event.target);
-    if (!input) return;
+    if (!input) {
+      if (hasPasteFiles && isWhatsAppHost()) {
+        await blockWhatsAppFileAttachment(event);
+      }
+      return;
+    }
     noteActiveRiskEditor(input);
 
-    if (typeof dataTransferHasFiles === "function" && dataTransferHasFiles(pasteTransfer)) {
+    if (hasPasteFiles) {
       await maybeHandleLocalFileInsert(event, input, pasteTransfer, "paste");
       return;
     }
@@ -4531,17 +4683,22 @@
     const pasted = getPastedPlainText(event);
 
     if (!pasted) return;
+    if (shouldSuppressDuplicateWhatsAppTextPaste(input, pasted, event)) {
+      consumeInterceptionEvent(event);
+      return;
+    }
 
     const quickAnalysis = analyzeText(pasted);
+    if (!quickAnalysis.findings.length && !quickAnalysis.placeholderNormalized) return;
+    rememberWhatsAppTextPaste(input, pasted, event);
+    consumeInterceptionEvent(event);
+
     if (await maybeHandleChatGptLargeTextPaste(event, input, pasted, quickAnalysis)) {
       return;
     }
 
-    if (!quickAnalysis.findings.length && !quickAnalysis.placeholderNormalized) return;
-
     const originalText = getInputText(input);
     const selection = getSelectionOffsets(input);
-    consumeInterceptionEvent(event);
 
     const analysis = await analyzeTextWithAiAssist(pasted);
 
@@ -4683,6 +4840,21 @@
 
   function isSanitizedFileHandoffEvent(event) {
     return Boolean(event?.__PWM_SANITIZED_FILE_HANDOFF__);
+  }
+
+  function isSanitizedTextRewriteEvent(event) {
+    return Boolean(event?.__PWM_SANITIZED_TEXT_REWRITE__);
+  }
+
+  function markSanitizedTextRewriteEvent(event) {
+    try {
+      Object.defineProperty(event, "__PWM_SANITIZED_TEXT_REWRITE__", {
+        value: true,
+        configurable: false
+      });
+    } catch {
+      event.__PWM_SANITIZED_TEXT_REWRITE__ = true;
+    }
   }
 
   function markSanitizedFileHandoffEvent(event) {
@@ -9124,10 +9296,51 @@
     return isImageContentExtractionResult(result) ? "Raw image upload blocked" : "Raw file blocked";
   }
 
+  function getImageContentExtractionBlockedMessage(reason) {
+    const code = String(reason || "image_redaction_failed");
+    const messages = {
+      protected_site_image_ocr_disabled:
+        "LeakGuard blocked this image because local image OCR is not available for this protected site.",
+      ocr_runtime_unavailable:
+        "LeakGuard blocked this image because local OCR could not start.",
+      protected_site_ocr_broker_unavailable:
+        "LeakGuard blocked this image because the local OCR bridge could not start.",
+      protected_site_ocr_broker_timeout:
+        "LeakGuard blocked this image because local OCR timed out before a sanitized image was ready.",
+      ocr_failed:
+        "LeakGuard blocked this image because local OCR could not read it safely.",
+      ocr_unsupported_image_type:
+        "LeakGuard blocked this image because this image type is not supported for safe redaction.",
+      ocr_image_too_large:
+        "LeakGuard blocked this image because it is too large for local OCR.",
+      ocr_image_dimensions_too_large:
+        "LeakGuard blocked this image because its dimensions are too large for local OCR.",
+      ocr_boxes_missing:
+        "LeakGuard blocked this image because it could not verify safe visual redaction boxes.",
+      protected_site_visual_redaction_not_eligible:
+        "LeakGuard blocked this image because visual redaction could not be verified safely.",
+      ocr_box_confidence_too_low:
+        "LeakGuard blocked this image because OCR box confidence was too low for protected-site upload.",
+      image_redactor_unavailable:
+        "LeakGuard blocked this image because local image redaction is not available.",
+      image_redaction_failed:
+        "LeakGuard blocked this image because local redacted PNG creation failed.",
+      redacted_image_file_invalid:
+        "LeakGuard blocked this image because the redacted PNG output could not be verified.",
+      image_redaction_file_unavailable:
+        "LeakGuard blocked this image because no verified redacted PNG was produced.",
+      file_read_failed:
+        "LeakGuard blocked this image because the clipboard image could not be read locally.",
+      file_extraction_failed:
+        "LeakGuard blocked this image because local image extraction failed."
+    };
+    return messages[code] || `LeakGuard blocked this image because local OCR/redaction did not produce a verified sanitized PNG. Reason: ${code}.`;
+  }
+
   function getContentExtractionBlockedMessage(reason, result) {
     const code = String(reason || "content_file_extraction_failed");
     if (isImageContentExtractionResult(result)) {
-      return "Raw image upload blocked.";
+      return getImageContentExtractionBlockedMessage(code);
     }
     if (code === "pdf_no_extractable_text") {
       return "LeakGuard blocked the raw upload because this appears to be a scanned or image-only PDF. Local PDF OCR is not available yet, so LeakGuard could not create a safe redacted replacement.";
@@ -9631,12 +9844,20 @@
   }
 
   async function maybeHandleLocalFileInsert(event, input, dataTransfer, context) {
+    const alreadyConsumedSupportedWhatsAppClipboardImagePaste =
+      event?.defaultPrevented === true &&
+      context === "paste" &&
+      isSupportedWhatsAppClipboardImagePaste(dataTransfer, context);
     if (
       !extensionRuntimeAvailable ||
       modalOpen ||
       (event.defaultPrevented &&
         context !== "drop" &&
-        !(context === "file-input" && (isGeminiHost() || (isFirefoxRuntime() && isProtectedFileDropDriver(getCurrentHandoffDriverId()))))) ||
+        !(
+          context === "file-input" &&
+          (isGeminiHost() || (isFirefoxRuntime() && isProtectedFileDropDriver(getCurrentHandoffDriverId())))
+        ) &&
+        !alreadyConsumedSupportedWhatsAppClipboardImagePaste) ||
       typeof readLocalTextFileFromDataTransfer !== "function" ||
       typeof createSanitizedTextFile !== "function" ||
       !dataTransferHasFiles(dataTransfer)
@@ -9653,7 +9874,13 @@
         hideFileProcessingOverlay,
         showFileProcessingSuccess
       });
-    if (isWhatsAppHost() && localTransferFiles.length) {
+    const supportedWhatsAppImageAttach = isSupportedWhatsAppImageAttach(dataTransfer, context);
+    if (
+      isWhatsAppHost() &&
+      localTransferFiles.length &&
+      !isSupportedWhatsAppClipboardImagePaste(dataTransfer, context) &&
+      !supportedWhatsAppImageAttach
+    ) {
       failProcessing(WHATSAPP_FILE_ATTACH_UNSUPPORTED_REASON, WHATSAPP_FILE_ATTACH_BLOCK_TITLE);
       return blockWhatsAppFileAttachment(event);
     }
@@ -9728,6 +9955,13 @@
 
     if (!(event.defaultPrevented && context === "file-input" && isGeminiHost())) {
       consumeInterceptionEvent(event);
+    }
+    if (
+      supportedWhatsAppImageAttach &&
+      event?.target?.tagName === "INPUT" &&
+      String(event.target.type || "").toLowerCase() === "file"
+    ) {
+      clearLocalFileInputSelection(event.target);
     }
 
     if (context === "file-input") {
@@ -10254,6 +10488,9 @@
     } else if (disposition.shouldShowSuccess) {
       showProcessingSuccess(disposition.successStatus, disposition.successReason);
     }
+    if (imageRedactionMode && isWhatsAppHost()) {
+      markWhatsAppSanitizedImageHandoff(input || findComposer(event.target));
+    }
     refreshBadgeFromCurrentInput();
     return {
       handled: handoffClassification.handled,
@@ -10408,6 +10645,20 @@
     }
 
     const selectedFiles = Array.from(event.target.files || []);
+    const processingSignature = fileInputProcessingSignatures.get(event.target) || "";
+    if (isWhatsAppHost() && processingSignature && selectedFiles.length === 0) {
+      consumeInterceptionEvent(event);
+      debugReveal("file-input:whatsapp-empty-processing-event-suppressed", {
+        eventType: event.type || "",
+        input: describeFileInputForDebug(event.target, "whatsapp-processing"),
+        reason: "empty_event_during_image_attach_processing"
+      });
+      return {
+        handled: true,
+        ok: true,
+        strategy: "whatsapp-empty-processing-event-suppressed"
+      };
+    }
     const sanitizedHandoffSuppression = getSanitizedFileInputHandoffSuppression(event.target, selectedFiles);
     if (sanitizedHandoffSuppression) {
       suppressSanitizedFileInputHandoffEvent(event, sanitizedHandoffSuppression);
@@ -10465,7 +10716,6 @@
     }
 
     const selectedSignature = getFileListMetadataSignature(selectedFiles);
-    const processingSignature = fileInputProcessingSignatures.get(event.target) || "";
     if (selectedSignature && processingSignature === selectedSignature) {
       consumeInterceptionEvent(event);
       debugReveal("file-input:duplicate-raw-event-suppressed", {
@@ -10548,6 +10798,46 @@
     return Boolean(isWhatsAppHost() && String(text || "").trim());
   }
 
+  function markWhatsAppSanitizedImageHandoff(input) {
+    if (!isWhatsAppHost()) return;
+    const expiresAt = Date.now() + WHATSAPP_SANITIZED_IMAGE_SEND_BYPASS_MS;
+    whatsAppSanitizedImageHandoffUntil = expiresAt;
+    if (input && typeof input === "object") {
+      whatsAppSanitizedImageHandoffInputs.set(input, expiresAt);
+    }
+  }
+
+  function hasRecentWhatsAppSanitizedImageHandoff(input) {
+    if (!isWhatsAppHost()) return false;
+    const now = Date.now();
+    if (input && (whatsAppSanitizedImageHandoffInputs.get(input) || 0) > now) return true;
+    return whatsAppSanitizedImageHandoffUntil > now;
+  }
+
+  function consumeRecentWhatsAppSanitizedImageHandoff(input) {
+    whatsAppSanitizedImageHandoffUntil = 0;
+    if (input && typeof input === "object") {
+      whatsAppSanitizedImageHandoffInputs.delete(input);
+    }
+  }
+
+  function isWhatsAppSanitizedImageSendTextSafe(text) {
+    const value = String(text || "");
+    if (!value.trim()) return true;
+    if (hasUnsafeVisibleSecret(value)) return false;
+    const analysis = analyzeText(value);
+    return (analysis.findings || []).every((finding) =>
+      isKnownSanitizedPlaceholderToken(finding?.raw) || containsVisiblePlaceholderToken(finding?.raw)
+    );
+  }
+
+  function shouldBypassWhatsAppSanitizedImageSend(input, text) {
+    return (
+      hasRecentWhatsAppSanitizedImageHandoff(input) &&
+      isWhatsAppSanitizedImageSendTextSafe(text)
+    );
+  }
+
   function clearWhatsAppTextSendPending(input) {
     if (!input || !whatsAppPendingTextSendInputs.has(input)) return;
     whatsAppPendingTextSendInputs.delete(input);
@@ -10606,6 +10896,13 @@
       return;
     }
 
+    if (isWhatsAppHost() && whatsAppBypassSanitizedImageSubmitUntil > Date.now()) {
+      return;
+    }
+    if (whatsAppBypassSanitizedImageSubmitUntil && whatsAppBypassSanitizedImageSubmitUntil <= Date.now()) {
+      whatsAppBypassSanitizedImageSubmitUntil = 0;
+    }
+
     if (modalOpen) {
       consumeInterceptionEvent(event);
       return;
@@ -10646,6 +10943,15 @@
 
     const text = String(extractedText);
     if (!text.trim()) {
+      return;
+    }
+    if (shouldBypassWhatsAppSanitizedImageSend(input, text)) {
+      consumeRecentWhatsAppSanitizedImageHandoff(input);
+      whatsAppBypassSanitizedImageSubmitUntil = Date.now() + 1000;
+      debugReveal("whatsapp:image-send-text-verification-bypassed", {
+        reason: "recent_sanitized_image_handoff",
+        text: summarizeDebugText(text)
+      });
       return;
     }
 
@@ -10918,6 +11224,15 @@
 
     const text = String(extractedText);
     if (!text.trim()) {
+      return;
+    }
+    if (shouldBypassWhatsAppSanitizedImageSend(input, text)) {
+      consumeRecentWhatsAppSanitizedImageHandoff(input);
+      whatsAppBypassSanitizedImageSubmitUntil = Date.now() + 1000;
+      debugReveal("whatsapp:image-send-click-verification-bypassed", {
+        reason: "recent_sanitized_image_handoff",
+        text: summarizeDebugText(text)
+      });
       return;
     }
 
@@ -11613,13 +11928,11 @@
       true
     );
 
-    document.addEventListener(
-      "paste",
-      (event) => {
-        maybeHandlePaste(event).catch(handleContentError);
-      },
-      true
-    );
+    const onPaste = (event) => {
+      maybeHandlePaste(event).catch(handleContentError);
+    };
+    window.addEventListener("paste", onPaste, true);
+    document.addEventListener("paste", onPaste, true);
 
     document.addEventListener(
       "change",

@@ -59,6 +59,37 @@
       return String(id || "").toLowerCase() === "whatsapp";
     }
 
+    function isRedactedPngFile(file) {
+      return Boolean(
+        file &&
+          String(file.type || "").split(";")[0].trim().toLowerCase() === "image/png" &&
+          /\.redacted\.png$/i.test(String(file.name || ""))
+      );
+    }
+
+    function getWhatsAppImageAttachAdapter() {
+      return getFileHandoffAdapterById("whatsapp") || getFileHandoffAdapterForLocation();
+    }
+
+    function shouldVerifyWhatsAppImageAttach(context) {
+      const adapter = getWhatsAppImageAttachAdapter();
+      return Boolean(
+        context === "file-input" &&
+          isWhatsAppDriver(getCurrentHandoffDriverId()) &&
+          adapter?.id === "whatsapp" &&
+          adapter.supportsSanitizedImageAttachHandoff === true
+      );
+    }
+
+    function verifyWhatsAppSanitizedImageAttach(fileInput, sanitizedFile) {
+      const assignedFiles = Array.from(fileInput?.files || []);
+      return (
+        assignedFiles.length === 1 &&
+        assignedFiles[0] === sanitizedFile &&
+        isRedactedPngFile(assignedFiles[0])
+      );
+    }
+
     function isSafeSanitizedPayload(payload) {
       return Boolean(
         payload &&
@@ -100,9 +131,42 @@
       }
 
       if (context === "file-input") {
-        return handOffSanitizedFileInput(event?.target, transfer, {
+        const verifyWhatsAppImageAttach = shouldVerifyWhatsAppImageAttach(context);
+        if (verifyWhatsAppImageAttach && !isRedactedPngFile(sanitizedFile)) {
+          emitDebug("file-handoff:whatsapp-image-attach-verification-failed", {
+            context,
+            reason: "sanitized_image_file_invalid",
+            sanitizedFile: describeFileForDebug(sanitizedFile)
+          });
+          return false;
+        }
+        const assigned = handOffSanitizedFileInput(event?.target, transfer, {
           dispatchInput: true
         });
+        if (!assigned || !verifyWhatsAppImageAttach) return assigned;
+        if (verifyWhatsAppSanitizedImageAttach(event?.target, sanitizedFile)) {
+          emitDebug("file-handoff:whatsapp-image-attach-verified", {
+            context,
+            sanitizedFile: describeFileForDebug(sanitizedFile)
+          });
+          return true;
+        }
+        emitDebug("file-handoff:whatsapp-image-attach-verification-failed", {
+          context,
+          reason: "assigned_file_mismatch",
+          sanitizedFile: describeFileForDebug(sanitizedFile)
+        });
+        try {
+          event.target.value = "";
+        } catch {
+          // The raw file remains blocked; clearing is best-effort after a failed sanitized assignment.
+        }
+        try {
+          event.target.files = [];
+        } catch {
+          // Some browsers expose FileList as read-only; the event remains consumed and fails closed.
+        }
+        return false;
       }
 
       if (context === "drop") {

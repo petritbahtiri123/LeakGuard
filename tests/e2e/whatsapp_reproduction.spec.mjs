@@ -5,16 +5,20 @@ import {
   expectComposerTextExactly,
   expectNoFileEvents,
   expectNoDoubleSend,
+  getFileEvents,
+  getWhatsAppPreviewState,
   expectNoRawSecretVisible,
   getSentMessages,
   getComposerText,
   pressEnterToSend,
+  pasteImageFromClipboard,
+  pasteImageFromSystemClipboard,
   pressShiftEnter,
   test,
   typeIntoComposer,
-  uploadFile
+  uploadWhatsAppAttachFile
 } from "./helpers/extensionFixture.mjs";
-import { imageFixture } from "./helpers/e2eFileFixtures.mjs";
+import { imageFixture, malformedImageFixture } from "./helpers/e2eFileFixtures.mjs";
 
 const whatsappInput = [
   "LGQA_WA_DUPLICATE_1",
@@ -57,6 +61,30 @@ function countOccurrences(text, needle) {
 
 async function getFixtureState(page) {
   return await page.evaluate(() => ({ ...window.__leakguardE2E.state }));
+}
+
+async function dispatchWhatsAppPasteThenBeforeInput(page, text) {
+  await page.locator("[data-testid='prompt-textarea']:visible").first().focus();
+  await page.evaluate((value) => {
+    const composer = window.__leakguardE2E.activeComposer();
+    const transfer = new DataTransfer();
+    transfer.setData("text/plain", value);
+    composer.dispatchEvent(new ClipboardEvent("paste", {
+      bubbles: true,
+      cancelable: true,
+      clipboardData: transfer
+    }));
+
+    window.setTimeout(() => {
+      composer.dispatchEvent(new InputEvent("beforeinput", {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        inputType: "insertFromPaste",
+        data: value
+      }));
+    }, 50);
+  }, text);
 }
 
 test.describe("@whatsapp @text WhatsApp-like reproduction contract", () => {
@@ -128,6 +156,23 @@ test.describe("@whatsapp @text WhatsApp-like reproduction contract", () => {
     expect(countOccurrences(sentText, "[PWM_2]"), "second placeholder should appear once").toBe(1);
     await expectNoRawSecretVisible(page, "LGQA_WA_MULTILINE_FakePassword123456789!");
     await expectNoRawSecretVisible(page, "LGQA_WA_MULTILINE_SecondFakePassword123456789!");
+  });
+
+  test("paired paste and beforeinput text events redact once without false modal", async ({ extensionApp }) => {
+    const page = await extensionApp.openProtectedFixture("whatsapp");
+
+    await dispatchWhatsAppPasteThenBeforeInput(page, whatsappInput);
+
+    await expect.poll(async () => (await getComposerText(page)).trim()).toBe(expectedSanitized);
+    const modalText = await page.evaluate(() =>
+      Array.from(document.querySelectorAll(".pwm-modal-backdrop, .pwm-modal"))
+        .map((node) => node.textContent || "")
+        .join("\n")
+    );
+    expect(modalText).not.toMatch(/Rewrite verification failed/i);
+    for (const secret of rawSecrets) {
+      await expectNoRawSecretVisible(page, secret);
+    }
   });
 
   test("clear step syncs empty before sanitized insert", async ({ extensionApp }) => {
@@ -211,15 +256,197 @@ test.describe("@whatsapp @text WhatsApp-like reproduction contract", () => {
     await expectComposerTextExactly(page, "");
   });
 
-  test("@files @images image attachment remains unsupported", async ({ extensionApp }) => {
+  test("@images clipboard image paste redacts or fails closed", async ({ extensionApp }) => {
+    test.setTimeout(130000);
     const page = await extensionApp.openProtectedFixture("whatsapp");
     const file = await imageFixture("png");
 
-    await uploadFile(page, file);
+    await pasteImageFromClipboard(page, file);
 
-    await expectBlocked(page, /WhatsApp file upload blocked/i);
-    await page.waitForTimeout(250);
+    await expect.poll(async () => {
+      const events = await getFileEvents(page);
+      const body = await page.evaluate(() => {
+        const modalText = Array.from(document.querySelectorAll(".pwm-modal-backdrop, .pwm-modal"))
+          .map((element) => element.innerText || element.textContent || "")
+          .join("\n");
+        return `${document.body.innerText || ""}\n${modalText}`;
+      });
+      return events.some((event) =>
+        event.source === "paste" &&
+        event.name === file.expectedOutputName &&
+        event.type === "image/png"
+      ) || /Raw image upload blocked/i.test(body);
+    }, { timeout: 90000 }).toBe(true);
+    const events = await getFileEvents(page);
+    expect(events.every((event) => event.name !== file.name), "WhatsApp must not receive raw clipboard image").toBe(true);
+    const preview = await getWhatsAppPreviewState(page);
+    expect(preview?.rawPreviewSeen, "WhatsApp clipboard raw preview must never appear").toBe(false);
+    expect(preview?.rawPreviewBeforeSanitized, "Clipboard raw preview must not appear before sanitized handoff").toBe(false);
+    await expectNoRawSecretVisible(page, file.secret);
+  });
+
+  test("@images keyboard clipboard image paste redacts or fails closed", async ({ extensionApp }) => {
+    test.setTimeout(130000);
+    const page = await extensionApp.openProtectedFixture("whatsapp");
+    const file = await imageFixture("png");
+
+    await pasteImageFromSystemClipboard(page, file);
+
+    await expect.poll(async () => {
+      const events = await getFileEvents(page);
+      const body = await page.evaluate(() => {
+        const modalText = Array.from(document.querySelectorAll(".pwm-modal-backdrop, .pwm-modal"))
+          .map((element) => element.innerText || element.textContent || "")
+          .join("\n");
+        return `${document.body.innerText || ""}\n${modalText}`;
+      });
+      return events.some((event) =>
+        event.source === "paste" &&
+        event.name === file.expectedOutputName &&
+        event.type === "image/png"
+      ) || /Raw image upload blocked/i.test(body);
+    }, { timeout: 90000 }).toBe(true);
+    const events = await getFileEvents(page);
+    expect(events.every((event) => event.name !== file.name), "WhatsApp must not receive raw keyboard clipboard image").toBe(true);
+    const preview = await getWhatsAppPreviewState(page);
+    expect(preview?.rawPreviewSeen, "WhatsApp keyboard clipboard raw preview must never appear").toBe(false);
+    expect(preview?.rawPreviewBeforeSanitized, "Keyboard clipboard raw preview must not appear before sanitized handoff").toBe(false);
+    await expectNoRawSecretVisible(page, file.secret);
+  });
+
+  test("@files @images attach-button PNG image redacts or fails closed without raw preview", async ({ extensionApp }) => {
+    test.setTimeout(130000);
+    const page = await extensionApp.openProtectedFixture("whatsapp");
+    const file = await imageFixture("png");
+
+    await uploadWhatsAppAttachFile(page, file);
+
+    await expect.poll(async () => {
+      const preview = await getWhatsAppPreviewState(page);
+      const events = await getFileEvents(page);
+      const body = await page.evaluate(() => {
+        const modalText = Array.from(document.querySelectorAll(".pwm-modal-backdrop, .pwm-modal"))
+          .map((element) => element.innerText || element.textContent || "")
+          .join("\n");
+        return `${document.body.innerText || ""}\n${modalText}`;
+      });
+      return Boolean(
+        preview?.sanitized ||
+          events.some((event) =>
+            event.source === "input" &&
+            event.name === file.expectedOutputName &&
+            event.type === "image/png"
+          ) ||
+          /Raw image upload blocked/i.test(body)
+      );
+    }, { timeout: 90000 }).toBe(true);
+
+    const preview = await getWhatsAppPreviewState(page);
+    expect(preview?.rawPreviewSeen, "WhatsApp raw preview must never appear").toBe(false);
+    expect(preview?.rawPreviewBeforeSanitized, "Raw preview must not appear before sanitized handoff").toBe(false);
+    const events = await getFileEvents(page);
+    expect(events.every((event) => event.name !== file.name), "WhatsApp must not receive the raw attach image").toBe(true);
+    if (preview?.sanitized) {
+      expect(preview.files).toEqual([
+        expect.objectContaining({ name: file.expectedOutputName, type: "image/png", sanitized: true })
+      ]);
+    } else {
+      await expectBlocked(page, /Raw image upload blocked/i);
+      await expectNoFileEvents(page);
+    }
+    await expectNoRawSecretVisible(page, file.secret);
+  });
+
+  test("@files @images sanitized image preview send does not show text rewrite failure", async ({ extensionApp }) => {
+    test.setTimeout(130000);
+    const page = await extensionApp.openProtectedFixture("whatsapp");
+    const file = await imageFixture("png");
+
+    await uploadWhatsAppAttachFile(page, file);
+    await expect.poll(async () => {
+      const preview = await getWhatsAppPreviewState(page);
+      const body = await page.evaluate(() => {
+        const modalText = Array.from(document.querySelectorAll(".pwm-modal-backdrop, .pwm-modal"))
+          .map((element) => element.innerText || element.textContent || "")
+          .join("\n");
+        return `${document.body.innerText || ""}\n${modalText}`;
+      });
+      return preview?.sanitized === true || /Raw image upload blocked/i.test(body);
+    }, { timeout: 90000 }).toBe(true);
+
+    const initialPreview = await getWhatsAppPreviewState(page);
+    expect(initialPreview?.rawPreviewSeen, "sanitized image preview send setup must not show raw preview").toBe(false);
+    if (!initialPreview?.sanitized) {
+      await expectBlocked(page, /Raw image upload blocked/i);
+      await expectNoFileEvents(page);
+      await expectNoRawSecretVisible(page, file.secret);
+      return;
+    }
+
+    await typeIntoComposer(page, "API_KEY=[PWM_1]");
+    await page.locator("#whatsapp-preview-send-button").click();
+
+    await expect.poll(async () => {
+      const preview = await getWhatsAppPreviewState(page);
+      return preview?.sent === true;
+    }, { timeout: 15000 }).toBe(true);
+    const body = await page.evaluate(() => {
+      const modalText = Array.from(document.querySelectorAll(".pwm-modal-backdrop, .pwm-modal"))
+        .map((element) => element.innerText || element.textContent || "")
+        .join("\n");
+      return `${document.body.innerText || ""}\n${modalText}`;
+    });
+    expect(body).not.toMatch(/Rewrite verification failed/i);
+    expect(await getSentMessages(page)).toEqual([]);
+    const preview = await getWhatsAppPreviewState(page);
+    expect(preview?.rawPreviewSeen, "sanitized image preview send must not show raw preview").toBe(false);
+    await expectNoRawSecretVisible(page, file.secret);
+  });
+
+  test("@files @images attach-button OCR failure blocks without preview", async ({ extensionApp }) => {
+    const page = await extensionApp.openProtectedFixture("whatsapp");
+    const file = malformedImageFixture();
+
+    await uploadWhatsAppAttachFile(page, file);
+
+    await expectBlocked(page, /Raw image upload blocked|WhatsApp file upload blocked/i);
+    const preview = await getWhatsAppPreviewState(page);
+    expect(preview?.visible, "blocked OCR failure must not open a preview").toBe(false);
+    expect(preview?.rawPreviewSeen, "blocked OCR failure must not show raw preview").toBe(false);
     await expectNoFileEvents(page);
     await expectNoRawSecretVisible(page, file.secret);
+  });
+
+  test("@files @images attach-button unsupported type blocks without preview", async ({ extensionApp }) => {
+    const page = await extensionApp.openProtectedFixture("whatsapp");
+    const file = {
+      name: "lgqa-whatsapp-unsupported.gif",
+      mimeType: "image/gif",
+      buffer: Buffer.from("GIF89a unsupported image bytes")
+    };
+
+    await uploadWhatsAppAttachFile(page, file);
+
+    await expectBlocked(page, /WhatsApp file upload blocked/i);
+    const preview = await getWhatsAppPreviewState(page);
+    expect(preview?.visible, "unsupported attach must not open preview").toBe(false);
+    expect(preview?.rawPreviewSeen, "unsupported attach must not show raw preview").toBe(false);
+    await expectNoFileEvents(page);
+  });
+
+  test("@files @images attach-button multi-file blocks without preview", async ({ extensionApp }) => {
+    const page = await extensionApp.openProtectedFixture("whatsapp");
+    const first = await imageFixture("png");
+    const second = await imageFixture("jpg");
+
+    await uploadWhatsAppAttachFile(page, [first, second]);
+
+    await expectBlocked(page, /WhatsApp file upload blocked/i);
+    const preview = await getWhatsAppPreviewState(page);
+    expect(preview?.visible, "multi-file attach must not open preview").toBe(false);
+    expect(preview?.rawPreviewSeen, "multi-file attach must not show raw preview").toBe(false);
+    await expectNoFileEvents(page);
+    await expectNoRawSecretVisible(page, first.secret);
+    await expectNoRawSecretVisible(page, second.secret);
   });
 });
