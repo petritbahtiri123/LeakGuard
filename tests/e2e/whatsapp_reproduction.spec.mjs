@@ -63,6 +63,30 @@ async function getFixtureState(page) {
   return await page.evaluate(() => ({ ...window.__leakguardE2E.state }));
 }
 
+async function dispatchWhatsAppPasteThenBeforeInput(page, text) {
+  await page.locator("[data-testid='prompt-textarea']:visible").first().focus();
+  await page.evaluate((value) => {
+    const composer = window.__leakguardE2E.activeComposer();
+    const transfer = new DataTransfer();
+    transfer.setData("text/plain", value);
+    composer.dispatchEvent(new ClipboardEvent("paste", {
+      bubbles: true,
+      cancelable: true,
+      clipboardData: transfer
+    }));
+
+    window.setTimeout(() => {
+      composer.dispatchEvent(new InputEvent("beforeinput", {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        inputType: "insertFromPaste",
+        data: value
+      }));
+    }, 50);
+  }, text);
+}
+
 test.describe("@whatsapp @text WhatsApp-like reproduction contract", () => {
   test("current fail-closed guard never sends raw fake secrets", async ({ extensionApp }) => {
     const page = await extensionApp.openProtectedFixture("whatsapp");
@@ -132,6 +156,23 @@ test.describe("@whatsapp @text WhatsApp-like reproduction contract", () => {
     expect(countOccurrences(sentText, "[PWM_2]"), "second placeholder should appear once").toBe(1);
     await expectNoRawSecretVisible(page, "LGQA_WA_MULTILINE_FakePassword123456789!");
     await expectNoRawSecretVisible(page, "LGQA_WA_MULTILINE_SecondFakePassword123456789!");
+  });
+
+  test("paired paste and beforeinput text events redact once without false modal", async ({ extensionApp }) => {
+    const page = await extensionApp.openProtectedFixture("whatsapp");
+
+    await dispatchWhatsAppPasteThenBeforeInput(page, whatsappInput);
+
+    await expect.poll(async () => (await getComposerText(page)).trim()).toBe(expectedSanitized);
+    const modalText = await page.evaluate(() =>
+      Array.from(document.querySelectorAll(".pwm-modal-backdrop, .pwm-modal"))
+        .map((node) => node.textContent || "")
+        .join("\n")
+    );
+    expect(modalText).not.toMatch(/Rewrite verification failed/i);
+    for (const secret of rawSecrets) {
+      await expectNoRawSecretVisible(page, secret);
+    }
   });
 
   test("clear step syncs empty before sanitized insert", async ({ extensionApp }) => {

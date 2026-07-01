@@ -183,6 +183,7 @@
   let typedRewriteGeneration = 0;
   let activeRiskEditor = null;
   let suppressInputScanUntil = 0;
+  let recentWhatsAppTextPaste = null;
   const rewriteFailureModalSuppressions = new Map();
   let statusPanelEl = null;
   let statusPanelCollapsed = false;
@@ -207,6 +208,7 @@
   });
   const SANITIZED_FILE_HANDOFF_SUPPRESS_MS = 30000;
   const PROGRAMMATIC_INPUT_SUPPRESS_MS = 500;
+  const WHATSAPP_DUPLICATE_TEXT_PASTE_SUPPRESS_MS = 1200;
   const FALLBACK_SEND_KEY_SUPPRESS_MS = 5000;
   const WHATSAPP_TEXT_SEND_GUARD_MS = 5000;
   const WHATSAPP_SANITIZED_IMAGE_SEND_BYPASS_MS = 30000;
@@ -960,6 +962,64 @@
   function getPastedPlainText(event) {
     const transfer = getPasteTransfer(event);
     return transfer?.getData?.("text/plain") || transfer?.getData?.("text") || event?.data || "";
+  }
+
+  function isTextPasteInterceptionEvent(event) {
+    return event?.type === "paste" || isPasteBeforeInput(event);
+  }
+
+  function buildTextPasteSignature(text) {
+    const normalized = normalizeComposerText(text);
+    let hash = 2166136261;
+    for (let index = 0; index < normalized.length; index += 1) {
+      hash ^= normalized.charCodeAt(index);
+      hash = Math.imul(hash, 16777619) >>> 0;
+    }
+    return `${normalized.length}:${(normalized.match(/\n/g) || []).length}:${hash.toString(36)}`;
+  }
+
+  function rememberWhatsAppTextPaste(input, pasted, event) {
+    if (!isWhatsAppHost() || !isTextPasteInterceptionEvent(event) || !pasted) return;
+    recentWhatsAppTextPaste = {
+      input,
+      signature: buildTextPasteSignature(pasted),
+      eventType: String(event?.type || ""),
+      inputType: String(event?.inputType || ""),
+      expiresAt: Date.now() + WHATSAPP_DUPLICATE_TEXT_PASTE_SUPPRESS_MS
+    };
+  }
+
+  function shouldSuppressDuplicateWhatsAppTextPaste(input, pasted, event) {
+    if (!isWhatsAppHost() || !isTextPasteInterceptionEvent(event) || !pasted) return false;
+
+    const recent = recentWhatsAppTextPaste;
+    if (!recent) return false;
+    if (Date.now() > recent.expiresAt) {
+      recentWhatsAppTextPaste = null;
+      return false;
+    }
+
+    const currentEventType = String(event?.type || "");
+    const currentInputType = String(event?.inputType || "");
+    const isPairedBrowserPasteEvent =
+      recent.eventType !== currentEventType || recent.inputType !== currentInputType;
+    const duplicate =
+      isPairedBrowserPasteEvent &&
+      recent.input === input &&
+      recent.signature === buildTextPasteSignature(pasted);
+
+    if (duplicate) {
+      recentWhatsAppTextPaste = null;
+      debugReveal("whatsapp:text-paste-duplicate-event-suppressed", {
+        previousEventType: recent.eventType,
+        currentEventType,
+        previousInputType: recent.inputType,
+        currentInputType,
+        length: normalizeComposerText(pasted).length
+      });
+    }
+
+    return duplicate;
   }
 
   function dataTransferLooksLikeFiles(dataTransfer) {
@@ -3581,6 +3641,7 @@
         composed: true,
         clipboardData: transfer
       });
+      markSanitizedTextRewriteEvent(event);
       const hasClipboardText =
         event.clipboardData?.getData?.("text/plain") === text ||
         attachEventDataTransfer(event, "clipboardData", transfer);
@@ -4212,6 +4273,25 @@
     );
 
     if (!applied.ok) {
+      if (
+        context === "paste" &&
+        shouldAcceptWhatsAppSafePlaceholderPasteVerification(next.text, applied.actual)
+      ) {
+        debugReveal("whatsapp:paste-safe-placeholder-verification-accepted", {
+          reason: "actual_contains_expected_placeholders",
+          strategy: applied.strategy || null,
+          expected: {
+            length: getDebugTextLength(next.text),
+            placeholderCount: countDebugPlaceholders(next.text)
+          },
+          actual: {
+            length: getDebugTextLength(applied.actual),
+            placeholderCount: countDebugPlaceholders(applied.actual)
+          }
+        });
+        return true;
+      }
+
       await showRewriteFailure(
         context,
         collectFailureDetails(input, next.text, applied.actual, context)
@@ -4238,6 +4318,25 @@
       const { raw = "" } = finding || {};
       return isHighConfidenceRewriteFinding(finding) && !containsVisiblePlaceholderToken(raw);
     });
+  }
+
+  function shouldAcceptWhatsAppSafePlaceholderPasteVerification(expectedText, actualText) {
+    if (!isWhatsAppHost()) return false;
+
+    const expected = normalizeComposerText(expectedText);
+    const actual = normalizeComposerText(actualText);
+    if (!expected.trim() || !actual.trim()) return false;
+    if (!containsVisiblePlaceholderToken(expected) || !containsVisiblePlaceholderToken(actual)) {
+      return false;
+    }
+    if (!isReasonablyCloseRewriteLength(expected, actual)) return false;
+    if (listPlaceholderTokens(expected).length !== listPlaceholderTokens(actual).length) {
+      return false;
+    }
+    if (!actualContainsExpectedPlaceholders(expected, actual)) return false;
+    if (hasUnsafeVisibleSecret(actual)) return false;
+
+    return true;
   }
 
   function shouldSuppressStaleTypedRewriteFailure(rewriteGeneration, input, actualText = null) {
@@ -4534,6 +4633,7 @@
   async function maybeHandlePaste(event) {
     if (!extensionRuntimeAvailable || modalOpen || event.defaultPrevented) return;
     if (isSanitizedFileHandoffEvent(event)) return;
+    if (isSanitizedTextRewriteEvent(event)) return;
 
     if (isGeminiHost() && await maybeHandleGeminiEditorPaste(event)) {
       return;
@@ -4577,6 +4677,10 @@
     const pasted = getPastedPlainText(event);
 
     if (!pasted) return;
+    if (shouldSuppressDuplicateWhatsAppTextPaste(input, pasted, event)) {
+      consumeInterceptionEvent(event);
+      return;
+    }
 
     const quickAnalysis = analyzeText(pasted);
     if (await maybeHandleChatGptLargeTextPaste(event, input, pasted, quickAnalysis)) {
@@ -4584,6 +4688,7 @@
     }
 
     if (!quickAnalysis.findings.length && !quickAnalysis.placeholderNormalized) return;
+    rememberWhatsAppTextPaste(input, pasted, event);
 
     const originalText = getInputText(input);
     const selection = getSelectionOffsets(input);
@@ -4729,6 +4834,21 @@
 
   function isSanitizedFileHandoffEvent(event) {
     return Boolean(event?.__PWM_SANITIZED_FILE_HANDOFF__);
+  }
+
+  function isSanitizedTextRewriteEvent(event) {
+    return Boolean(event?.__PWM_SANITIZED_TEXT_REWRITE__);
+  }
+
+  function markSanitizedTextRewriteEvent(event) {
+    try {
+      Object.defineProperty(event, "__PWM_SANITIZED_TEXT_REWRITE__", {
+        value: true,
+        configurable: false
+      });
+    } catch {
+      event.__PWM_SANITIZED_TEXT_REWRITE__ = true;
+    }
   }
 
   function markSanitizedFileHandoffEvent(event) {
