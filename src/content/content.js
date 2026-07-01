@@ -4689,16 +4689,16 @@
     }
 
     const quickAnalysis = analyzeText(pasted);
+    if (!quickAnalysis.findings.length && !quickAnalysis.placeholderNormalized) return;
+    rememberWhatsAppTextPaste(input, pasted, event);
+    consumeInterceptionEvent(event);
+
     if (await maybeHandleChatGptLargeTextPaste(event, input, pasted, quickAnalysis)) {
       return;
     }
 
-    if (!quickAnalysis.findings.length && !quickAnalysis.placeholderNormalized) return;
-    rememberWhatsAppTextPaste(input, pasted, event);
-
     const originalText = getInputText(input);
     const selection = getSelectionOffsets(input);
-    consumeInterceptionEvent(event);
 
     const analysis = await analyzeTextWithAiAssist(pasted);
 

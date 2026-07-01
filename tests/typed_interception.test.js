@@ -810,6 +810,22 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
     "paste rewrites should verify that the original pasted text is not left beside redacted content"
   );
   assert.ok(
+    pasteSource.indexOf("rememberWhatsAppTextPaste(input, pasted, event);") <
+      pasteSource.indexOf("await maybeHandleChatGptLargeTextPaste(event, input, pasted, quickAnalysis)"),
+    "WhatsApp paste dedupe must be remembered before async large-paste checks can let paired beforeinput append duplicates"
+  );
+  assert.ok(
+    pasteSource.includes(
+      [
+        "rememberWhatsAppTextPaste(input, pasted, event);",
+        "    consumeInterceptionEvent(event);",
+        "",
+        "    if (await maybeHandleChatGptLargeTextPaste(event, input, pasted, quickAnalysis))"
+      ].join("\n")
+    ),
+    "risky paste events must be consumed before awaited branches let the host insert raw or duplicate text"
+  );
+  assert.ok(
     contentSource.includes("buildRiskFingerprint") &&
       contentSource.includes("pendingDecisionFingerprint") &&
       contentSource.includes("pendingDecisionPromise"),
