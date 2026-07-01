@@ -3767,13 +3767,6 @@
       insertOk: inserted,
       exactMatch: settled.actual === expected
     });
-    if (!settled.ok || settled.actual !== expected) {
-      return {
-        ok: false,
-        actual: settled.actual,
-        strategy: "whatsapp-insert-verification-failed"
-      };
-    }
 
     const verification = await verifyComposerRewriteSafe({
       input,
@@ -3787,7 +3780,7 @@
       allowMultilineRetry: false
     });
 
-    if (!verification.ok || normalizeComposerText(verification.actual || settled.actual) !== expected) {
+    if (!verification.ok) {
       return {
         ok: false,
         actual: verification.actual || settled.actual,
@@ -3795,10 +3788,23 @@
       };
     }
 
+    const settledActual = normalizeComposerText(settled.actual);
+    const exactSettledMatch = settledActual === expected;
+    if (!exactSettledMatch && !shouldAcceptWhatsAppSafePlaceholderPasteVerification(expected, settledActual)) {
+      return {
+        ok: false,
+        actual: settled.actual,
+        strategy: "whatsapp-insert-verification-failed"
+      };
+    }
+
     return {
       ok: true,
       actual: verification.actual || settled.actual,
-      strategy: "whatsapp-editor-action"
+      strategy:
+        exactSettledMatch
+          ? "whatsapp-editor-action"
+          : `whatsapp-editor-action-${verification.strategy || "safe-verification"}`
     };
   }
 
