@@ -565,6 +565,34 @@ async function ensureProtectionInjected(tabId) {
   });
 }
 
+async function reloadOpenBuiltinProtectedTabs() {
+  if (!ext?.tabs?.query || !ext?.tabs?.reload) return 0;
+
+  const tabIds = new Set();
+  for (const rule of BUILTIN_PROTECTED_SITES || []) {
+    if (!rule?.matchPattern) continue;
+
+    let tabs = [];
+    try {
+      tabs = await ext.tabs.query({ url: rule.matchPattern });
+    } catch {
+      tabs = [];
+    }
+
+    for (const tab of tabs || []) {
+      if (typeof tab?.id === "number") {
+        tabIds.add(tab.id);
+      }
+    }
+  }
+
+  for (const tabId of tabIds) {
+    await ext.tabs.reload(tabId).catch(() => {});
+  }
+
+  return tabIds.size;
+}
+
 async function reloadTabForRuleChange(tabId, url, rule) {
   if (typeof tabId !== "number" || !siteRuleMatchesUrl(rule, url)) {
     return false;
@@ -939,6 +967,7 @@ ext.tabs?.onRemoved?.addListener((tabId) => {
 
 ext.runtime?.onInstalled?.addListener(() => {
   syncDynamicContentScripts().catch(() => {});
+  reloadOpenBuiltinProtectedTabs().catch(() => {});
 });
 
 ext.runtime?.onStartup?.addListener(() => {

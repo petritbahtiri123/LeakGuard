@@ -4049,7 +4049,13 @@
       caretOffset: options.caretOffset,
       actualText: actual
     });
-    return verification.ok;
+    return (
+      verification.ok ||
+      shouldAcceptWhatsAppSafePlaceholderPasteVerification(
+        plan.canonical,
+        verification.actual || actual
+      )
+    );
   }
 
   async function applySubmitRedactionTransactionally(input, originalText, redactedText, context, findings) {

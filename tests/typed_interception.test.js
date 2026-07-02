@@ -884,6 +884,40 @@ function testPerplexityStyleRewriteVerificationToleratesWhitespaceNormalization(
   );
 }
 
+function testWhatsAppParagraphComposerSerializationAvoidsInnerTextBlankLineInflation() {
+  const textNode = (value) => ({
+    nodeType: 3,
+    nodeValue: value
+  });
+  const elementNode = (tagName, children = []) => ({
+    nodeType: 1,
+    tagName,
+    childNodes: children,
+    textContent: children.map((child) => child.nodeValue || child.textContent || "").join("")
+  });
+  const lines = [
+    "AWS_ACCESS_KEY_ID=[PWM_1]",
+    "AWS_SECRET_ACCESS_KEY=[PWM_2]",
+    "DATABASE_URL=postgres://qa_user:[PWM_3]@db.internal.example:5432/prod",
+    "AdminPassword=[PWM_3]",
+    "",
+    "[PWM_4]"
+  ];
+  const composer = {
+    tagName: "DIV",
+    isContentEditable: true,
+    getAttribute: (name) => (name === "contenteditable" ? "true" : null),
+    innerText: `${lines.join("\n\n")}\n\n`,
+    childNodes: lines.concat([""]).map((line) => elementNode("P", line ? [textNode(line)] : []))
+  };
+
+  assert.strictEqual(
+    ComposerHelpers.getInputText(composer),
+    lines.join("\n"),
+    "WhatsApp paragraph nodes should serialize without DOM-added blank lines"
+  );
+}
+
 function createRewriteVerificationHarness(overrides = {}) {
   const logs = [];
   const state = {
@@ -1326,6 +1360,24 @@ async function testWhatsAppPasteSafePlaceholderVerificationFailureDoesNotShowFal
   assert.strictEqual(safeOk, true, "safe WhatsApp placeholder paste should not show a false rewrite failure");
   assert.strictEqual(safeHarness.calls.failures, 0, "safe placeholder paste should suppress the false failure modal");
 
+  const paragraphExpandedText = `${redactedText.split("\n").join("\n\n")}\n\n`;
+  const paragraphHarness = createHarness({ actualText: paragraphExpandedText });
+  const paragraphOk = await paragraphHarness.applyPasteDecision(
+    { text: paragraphExpandedText },
+    rawText,
+    { start: 0, end: rawText.length },
+    redactedText,
+    "paste",
+    { rawInsertedText: rawText }
+  );
+
+  assert.strictEqual(paragraphOk, true, "safe WhatsApp paragraph-expanded paste should verify safely");
+  assert.strictEqual(
+    paragraphHarness.calls.failures,
+    0,
+    "WhatsApp DOM-added paragraph blank lines should not show a false rewrite failure"
+  );
+
   const unsafeHarness = createHarness({
     actualText: `${redactedText}\nOPENAI_API_KEY=sk-proj-StillRawSecretValue1234567890abcdef`
   });
@@ -1368,6 +1420,46 @@ async function testWhatsAppPasteSafePlaceholderVerificationFailureDoesNotShowFal
 
   assert.strictEqual(nonWhatsAppOk, false, "safe placeholder acceptance should stay scoped to WhatsApp paste");
   assert.strictEqual(nonWhatsAppHarness.calls.failures, 1);
+}
+
+function testWhatsAppSplitCredentialPlaceholderIsNotUnsafeVisibleSecret() {
+  const factory = new Function(
+    "deps",
+    [
+      "const ANY_PLACEHOLDER_TOKEN_REGEX = /\\[(?:PWM|NET|PUB_HOST)_\\d+\\]/g;",
+      "const PLACEHOLDER_TOKEN_REGEX = /\\[(?:PWM|NET|PUB_HOST)_\\d+\\]/g;",
+      "function analyzeText(text) { return deps.analyzeText(text); }",
+      extractFunctionSource(contentSource, "containsVisiblePlaceholderToken"),
+      extractFunctionSource(contentSource, "isHighConfidenceRewriteFinding"),
+      extractFunctionSource(contentSource, "hasUnsafeVisibleSecret"),
+      "return { hasUnsafeVisibleSecret };"
+    ].join("\n\n")
+  );
+  const harness = factory({
+    analyzeText: (text) => {
+      const findings = analyze(text);
+      return {
+        findings,
+        secretFindings: findings.filter((finding) => finding.type !== "PUBLIC_IPV4")
+      };
+    }
+  });
+  const splitSanitized = [
+    "DATABASE_URL=postgres://qa_user:",
+    "[PWM_7]@db.internal.example:5432/prod",
+    "AdminPassword=[PWM_7]"
+  ].join("\n");
+
+  assert.strictEqual(
+    harness.hasUnsafeVisibleSecret(splitSanitized),
+    false,
+    "WhatsApp line wrapping after URL credential prefix should stay safe when the placeholder is visible"
+  );
+  assert.strictEqual(
+    harness.hasUnsafeVisibleSecret("DATABASE_URL=postgres://qa_user:RawDbSecretValue123456@db.internal.example:5432/prod"),
+    true,
+    "raw DB URL credentials must still be treated as unsafe visible secrets"
+  );
 }
 
 async function testTransactionalRewriteFallbackRemovesRawDuplicate() {
@@ -2226,6 +2318,94 @@ async function testSubmitTransactionalHelperFailsClosedOnRawRestore() {
   assert.strictEqual(calls.failureDetails.actualText, rawText, "failure details should preserve the unsafe actual text summary input");
 }
 
+async function testWhatsAppExactComposerStateAcceptsSafeMultilinePlaceholderLayout() {
+  const expected = [
+    "DO NOT USE",
+    "AWS_ACCESS_KEY_ID=[PWM_1]",
+    "AWS_SECRET_ACCESS_KEY=[PWM_2]",
+    "GITHUB_TOKEN=[PWM_3]",
+    "OPENAI_API_KEY=[PWM_4]",
+    "STRIPE_SECRET_KEY=[PWM_5]",
+    "SLACK_WEBHOOK=[PWM_6]",
+    "DATABASE_URL=postgres://qa_user:[PWM_7]@db.internal.example:5432/prod",
+    "AdminPassword=[PWM_7]",
+    "",
+    "[PWM_8]"
+  ].join("\n");
+  const actual = [
+    "DO NOT USE",
+    "",
+    "AWS_ACCESS_KEY_ID=[PWM_1]",
+    "",
+    "AWS_SECRET_ACCESS_KEY=[PWM_2]",
+    "",
+    "GITHUB_TOKEN=[PWM_3]",
+    "",
+    "OPENAI_API_KEY=[PWM_4]",
+    "",
+    "STRIPE_SECRET_KEY=[PWM_5]",
+    "",
+    "SLACK_WEBHOOK=[PWM_6]",
+    "",
+    "DATABASE_URL=postgres://qa_user:",
+    "[PWM_7]@db.internal.example:5432/prod",
+    "",
+    "AdminPassword=[PWM_7]",
+    "",
+    "",
+    "[PWM_8]",
+    ""
+  ].join("\n");
+  const factory = new Function(
+    "deps",
+    [
+      "const calls = { verifications: 0 };",
+      "const ANY_PLACEHOLDER_TOKEN_REGEX = /\\[(?:PWM|NET|PUB_HOST)_\\d+\\]/g;",
+      "const PLACEHOLDER_TOKEN_REGEX = ANY_PLACEHOLDER_TOKEN_REGEX;",
+      "function normalizeComposerText(value) { return deps.normalizeComposerText(value); }",
+      "function buildComposerWritePlan(_input, text) { const canonical = normalizeComposerText(text); return { canonical, writeText: canonical, acceptableTexts: [canonical] }; }",
+      "async function readStableComposerText() { return deps.actual; }",
+      "function debugLogSnapshot() {}",
+      "async function verifyComposerRewriteSafe() { calls.verifications += 1; return { ok: false, actual: deps.actual, strategy: 'forced-layout-mismatch' }; }",
+      "function getInputText() { return deps.actual; }",
+      "function isWhatsAppHost() { return true; }",
+      "function analyzeText(text) { return deps.analyzeText(text); }",
+      "function isReasonablyCloseRewriteLength(expectedText, actualText) { return deps.isReasonablyCloseRewriteLength(expectedText, actualText); }",
+      "function listPlaceholderTokens(text) { return deps.listPlaceholderTokens(text); }",
+      "function actualContainsExpectedPlaceholders(expectedText, actualText) { return deps.actualContainsExpectedPlaceholders(expectedText, actualText); }",
+      extractFunctionSource(contentSource, "containsVisiblePlaceholderToken"),
+      extractFunctionSource(contentSource, "isHighConfidenceRewriteFinding"),
+      extractFunctionSource(contentSource, "hasUnsafeVisibleSecret"),
+      extractFunctionSource(contentSource, "shouldAcceptWhatsAppSafePlaceholderPasteVerification"),
+      extractFunctionSource(contentSource, "ensureExactComposerState"),
+      "return { ensureExactComposerState, calls };"
+    ].join("\n\n")
+  );
+  const harness = factory({
+    actual,
+    normalizeComposerText: ComposerHelpers.normalizeComposerText,
+    isReasonablyCloseRewriteLength:
+      globalThis.PWM.RewriteVerificationText.isReasonablyCloseRewriteLength,
+    listPlaceholderTokens: globalThis.PWM.RewriteVerificationText.listPlaceholderTokens,
+    actualContainsExpectedPlaceholders:
+      globalThis.PWM.RewriteVerificationText.actualContainsExpectedPlaceholders,
+    analyzeText: (text) => {
+      const findings = analyze(text);
+      return {
+        findings,
+        secretFindings: findings.filter((finding) => finding.type !== "PUBLIC_IPV4")
+      };
+    }
+  });
+
+  assert.strictEqual(
+    await harness.ensureExactComposerState({}, expected, { context: "submit" }),
+    true,
+    "final WhatsApp pre-send verification should accept safe multiline placeholder layout"
+  );
+  assert.strictEqual(harness.calls.verifications, 1);
+}
+
 async function testStaleTypedRewriteFailureKeepsSanitizedEditorUsable() {
   const createHarness = (options = {}) => {
     const factory = new Function(
@@ -2354,6 +2534,7 @@ function run() {
   testPauseBypassGatesPasteAndSendAfterPolicy();
   testContentScriptBindsBeforeInputAndKeepsFallbackGuard();
   testPerplexityStyleRewriteVerificationToleratesWhitespaceNormalization();
+  testWhatsAppParagraphComposerSerializationAvoidsInnerTextBlankLineInflation();
   testTypedDebugDiagnosticsSummarizeOnly();
   return Promise.resolve()
     .then(() => testGenericRewriteVerificationSafeCases())
@@ -2361,6 +2542,7 @@ function run() {
     .then(() => testRewriteVerificationFailClosedCases())
     .then(() => testRewriteFailureModalSuppression())
     .then(() => testWhatsAppPasteSafePlaceholderVerificationFailureDoesNotShowFalseModal())
+    .then(() => testWhatsAppSplitCredentialPlaceholderIsNotUnsafeVisibleSecret())
     .then(() => testTransactionalRewriteFallbackRemovesRawDuplicate())
     .then(() => testWhatsAppSendButtonClickOwnsSafeTextForVerifiedReplay())
     .then(() => testWhatsAppSendButtonClickFailsClosedWithoutComposer())
@@ -2376,6 +2558,7 @@ function run() {
     .then(() => testWhatsAppTransactionalSyncedFailureDoesNotAppendFallbackCopies())
     .then(() => testWhatsAppTransactionalCorruptedDraftDoesNotAttemptAnotherRewrite())
     .then(() => testSubmitTransactionalHelperFailsClosedOnRawRestore())
+    .then(() => testWhatsAppExactComposerStateAcceptsSafeMultilinePlaceholderLayout())
     .then(() => testStaleTypedRewriteFailureKeepsSanitizedEditorUsable())
     .then(() => {
       console.log("PASS typed beforeinput interception regressions");
