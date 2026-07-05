@@ -146,9 +146,13 @@ export const textFileFixtures = [
   })(),
   (() => {
     const body = textBody("CSV_FILE");
-    return payload("lgqa-csv-secret.csv", "text/csv", bufferFromText(`marker,secret\nLGQA_CSV_FILE,${body.secret}\n`), {
+    const text = [
+      "marker,service_password,database_url",
+      `LGQA_CSV_FILE,${body.secret},postgres://admin:FakePass123@db.example.com:5432/customerdb`
+    ].join("\n");
+    return payload("lgqa-csv-secret.csv", "text/csv", bufferFromText(text), {
       secret: body.secret,
-      text: `marker,secret\nLGQA_CSV_FILE,${body.secret}\n`
+      text
     });
   })(),
   (() => {
