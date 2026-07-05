@@ -8646,12 +8646,6 @@ function createWhatsAppDropTarget() {
   };
 }
 
-function getSingleSanitizedDropFiles(target) {
-  assert.deepStrictEqual(target.events, ["drop"]);
-  assert.strictEqual(target.eventObjects.length, 1);
-  return Array.from(target.eventObjects[0].dataTransfer?.files || []);
-}
-
 async function testWhatsAppSingleContentFileDropsRemainBlockedForPhase5A() {
   const cases = [
     {

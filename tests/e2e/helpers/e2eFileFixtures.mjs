@@ -145,13 +145,13 @@ export const textFileFixtures = [
     return payload("lgqa-markdown-secret.md", "text/markdown", bufferFromText(`# QA\n\n${body.text}`), body);
   })(),
   (() => {
-    const body = textBody("CSV_FILE");
+    const secret = "sk-proj-LGQACSVFileKey1234567890abcdef1234567890";
     const text = [
-      "marker,service_password,database_url",
-      `LGQA_CSV_FILE,${body.secret},postgres://admin:FakePass123@db.example.com:5432/customerdb`
+      "marker,openai_api_key,database_url",
+      `LGQA_CSV_FILE,${secret},postgres://admin:FakePass123@db.example.com:5432/customerdb`
     ].join("\n");
     return payload("lgqa-csv-secret.csv", "text/csv", bufferFromText(text), {
-      secret: body.secret,
+      secret,
       text
     });
   })(),
@@ -192,10 +192,10 @@ export const textFileFixtures = [
     });
   })(),
   (() => {
-    const body = textBody("SQL_FILE");
-    const text = `-- LGQA_SQL_FILE\nCREATE USER app WITH PASSWORD '${body.secret}';\n`;
+    const secret = "sk-proj-LGQASQLFileKey1234567890abcdef1234567890";
+    const text = `-- LGQA_SQL_FILE\n-- OPENAI_API_KEY=${secret}\nCREATE USER app WITH PASSWORD 'FakePass123';\n`;
     return payload("lgqa-sql-secret.sql", "text/plain", bufferFromText(text), {
-      secret: body.secret,
+      secret,
       text
     });
   })(),
