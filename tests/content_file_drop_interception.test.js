@@ -1278,11 +1278,12 @@ function createHarness(overrides = {}) {
       'const LOCAL_FILE_UNSUPPORTED_WARNING = "LeakGuard did not scan or redact this unsupported file. Supported text, text PDF, DOCX, XLSX, and PNG/JPG/JPEG/WEBP image paths are protected where available. Unsupported archives, executables, legacy Office files, unsupported images, and binary files are blocked on protected sites when LeakGuard cannot safely replace them.";',
       'const WHATSAPP_FILE_ATTACH_UNSUPPORTED_REASON = "whatsapp_file_attachments_unsupported";',
       'const WHATSAPP_FILE_ATTACH_BLOCK_TITLE = "WhatsApp file upload blocked";',
-      'const WHATSAPP_FILE_ATTACH_BLOCK_MESSAGE = "LeakGuard blocks WhatsApp Web file attachments in this text-only phase. No raw file was uploaded.";',
+      'const WHATSAPP_FILE_ATTACH_BLOCK_MESSAGE = "LeakGuard blocks unsupported WhatsApp Web file attachments in this phase. No raw file was uploaded.";',
       'const UNSUPPORTED_PROTECTED_IMAGE_BLOCKED_TITLE = "Raw image upload blocked";',
       'const UNSUPPORTED_PROTECTED_IMAGE_BLOCKED_MESSAGE = "Raw image upload blocked. This image type is not supported for safe redaction.";',
       'const SUPPORTED_IMAGE_REDACTION_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);',
       'const SUPPORTED_IMAGE_REDACTION_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);',
+      'const SUPPORTED_WHATSAPP_TEXT_DOCUMENT_ATTACH_EXTENSIONS = new Set([".txt", ".env", ".json", ".log", ".md", ".csv"]);',
       'const UNSUPPORTED_PROTECTED_IMAGE_EXTENSIONS = new Set([".gif", ".bmp", ".ico", ".svg"]);',
       "let suppressInputScanUntil = 0;",
       "let recentWhatsAppTextPaste = null;",
@@ -1370,6 +1371,8 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "isSupportedWhatsAppClipboardImagePaste"),
       extractFunctionSource(contentSource, "isSupportedWhatsAppAttachImageFile"),
       extractFunctionSource(contentSource, "isSupportedWhatsAppImageAttach"),
+      extractFunctionSource(contentSource, "isSupportedWhatsAppTextDocumentAttachFile"),
+      extractFunctionSource(contentSource, "isSupportedWhatsAppTextDocumentAttach"),
       extractFunctionSource(contentSource, "blockWhatsAppFileAttachment"),
       extractFunctionSource(contentSource, "getContentExtractionBlockedMessage"),
       extractFunctionSource(contentSource, "getLocalTextPayloadByteLength"),
@@ -7853,6 +7856,165 @@ async function testWhatsAppSingleImageAttachRoutesToSanitizedHandoff() {
   }
 }
 
+async function testWhatsAppSingleTextDocumentAttachRoutesToSanitizedHandoff() {
+  for (const [name, mimeType] of [
+    ["lgqa-wa-doc.txt", "text/plain"],
+    ["lgqa-wa-doc.env", "text/plain"],
+    ["lgqa-wa-doc.json", "application/json"],
+    ["lgqa-wa-doc.log", "text/plain"],
+    ["lgqa-wa-doc.md", "text/markdown"],
+    ["lgqa-wa-doc.csv", "text/csv"]
+  ]) {
+    const rawSecret = "LeakGuardFileApiKey1234567890";
+    const rawText = [
+      "LGQA_WA_DOC_TEXT_1=true",
+      `OPENAI_API_KEY=${rawSecret}`
+    ].join("\n");
+    const sanitizedText = [
+      "LGQA_WA_DOC_TEXT_1=true",
+      "OPENAI_API_KEY=[PWM_1]"
+    ].join("\n");
+    const rawFile = createReadableTextFile({ name, type: mimeType, text: rawText });
+    const fileInput = createFileInput();
+    fileInput.files = [rawFile];
+    fileInput.value = `C:\\fakepath\\${name}`;
+    let readCalls = 0;
+    const { maybeHandleFileInputChange, calls } = createHarness({
+      location: { hostname: "web.whatsapp.com" },
+      findComposer: () => null,
+      readLocalTextFileFromDataTransfer: async (transfer) => {
+        readCalls += 1;
+        assert.strictEqual(fileInput.files.length, 0, `${name} raw input should be cleared before reading`);
+        assert.strictEqual(Array.from(transfer.files || [])[0], rawFile);
+        return {
+          handled: true,
+          ok: true,
+          text: rawText,
+          file: {
+            name,
+            extension: name.slice(name.lastIndexOf(".")),
+            type: mimeType,
+            sizeBytes: rawFile.size
+          }
+        };
+      },
+      createSanitizedTextFile: (file, text) => {
+        assert.strictEqual(file.name, name);
+        assert.strictEqual(text, sanitizedText);
+        const sanitizedFile = {
+          name: file.name,
+          type: file.type || "text/plain",
+          size: text.length,
+          async text() {
+            return text;
+          }
+        };
+        calls.createdFiles.push({ file, text, sanitizedFile });
+        return sanitizedFile;
+      },
+      handOffSanitizedLocalFile: async (event, input, sanitizedFile, context) => {
+        calls.handoffs.push({ event, input, sanitizedFile, context });
+        fileInput.files = [sanitizedFile];
+        fileInput.dispatchEvent({ type: "input", bubbles: true, composed: true });
+        fileInput.dispatchEvent({ type: "change", bubbles: true, composed: true });
+        return true;
+      }
+    });
+    const { event } = createEvent({ type: "change", target: fileInput });
+
+    const result = await maybeHandleFileInputChange(event);
+
+    assert.strictEqual(event.defaultPrevented, true, `${name} raw attach event should be consumed`);
+    assert.strictEqual(result.ok, true, `${name} should attach a sanitized document`);
+    assert.strictEqual(result.stage, "file");
+    assert.strictEqual(readCalls, 1);
+    assert.strictEqual(calls.redactions.length, 1);
+    assert.strictEqual(calls.createdFiles.length, 1);
+    assert.strictEqual(calls.handoffs.length, 1);
+    assert.strictEqual(calls.handoffs[0].context, "file-input");
+    assert.strictEqual(fileInput.files.length, 1);
+    assert.strictEqual(fileInput.files[0], calls.createdFiles[0].sanitizedFile);
+    assert.notStrictEqual(fileInput.files[0], rawFile);
+    assert.deepStrictEqual(fileInput.events, ["input", "change"]);
+    assert.strictEqual(await fileInput.files[0].text(), sanitizedText);
+    assert.strictEqual((await fileInput.files[0].text()).includes(rawSecret), false);
+    assert.ok((await fileInput.files[0].text()).includes("[PWM_1]"));
+    assert.strictEqual(calls.textFallbacks.length, 0, `${name} must not insert extracted text into WhatsApp`);
+  }
+}
+
+async function testWhatsAppTextDocumentAttachFailuresBlockRawDocument() {
+  const cases = [
+    {
+      label: "extraction failure",
+      createOverrides: (fileInput) => ({
+        readLocalTextFileFromDataTransfer: async () => {
+          assert.strictEqual(fileInput.files.length, 0, "raw input should be cleared before extraction failure");
+          return {
+            handled: true,
+            ok: false,
+            code: "file_read_failed",
+            title: "Raw file blocked",
+            message: "LeakGuard blocked raw file upload because local scanning failed."
+          };
+        }
+      }),
+      expectedReason: "file_read_failed"
+    },
+    {
+      label: "redaction failure",
+      createOverrides: () => ({
+        requestRedaction: async () => {
+          throw new Error("redaction failed");
+        }
+      }),
+      expectedReason: "local_file_sanitization_failed"
+    },
+    {
+      label: "rebuild failure",
+      createOverrides: () => ({
+        createSanitizedTextFile: () => null
+      }),
+      expectedReason: "local_file_sanitization_failed"
+    },
+    {
+      label: "handoff failure",
+      createOverrides: () => ({
+        handOffSanitizedLocalFile: () => false
+      }),
+      expectedReason: "sanitized_file_handoff_failed"
+    }
+  ];
+
+  for (const testCase of cases) {
+    const unsafeName = `lgqa-wa-doc-sk-proj-UnsafeFileName1234567890abcdef-${testCase.label.replace(/\s+/g, "-")}.env`;
+    const rawFile = createReadableTextFile({
+      name: unsafeName,
+      type: "text/plain",
+      text: "OPENAI_API_KEY=LeakGuardFileApiKey1234567890"
+    });
+    const fileInput = createFileInput();
+    fileInput.files = [rawFile];
+    fileInput.value = `C:\\fakepath\\${unsafeName}`;
+    const { maybeHandleFileInputChange, calls } = createHarness({
+      location: { hostname: "web.whatsapp.com" },
+      findComposer: () => null,
+      ...testCase.createOverrides(fileInput)
+    });
+
+    const result = await maybeHandleFileInputChange(createEvent({ type: "change", target: fileInput }).event);
+
+    assert.strictEqual(result.ok, false, `${testCase.label} should block`);
+    assert.strictEqual(result.reason, testCase.expectedReason);
+    assert.strictEqual(fileInput.files.length, 0, `${testCase.label} must leave no raw file assigned`);
+    assert.strictEqual(calls.textFallbacks.length, 0, `${testCase.label} must not insert extracted text`);
+    assert.strictEqual(JSON.stringify(calls.modals).includes(unsafeName), false);
+    if (testCase.label !== "handoff failure") {
+      assert.strictEqual(calls.handoffs.length, 0, `${testCase.label} must not attempt sanitized handoff`);
+    }
+  }
+}
+
 async function testWhatsAppSanitizedImageHandoffBypassesSafePlaceholderCaptionOnly() {
   const rawSecret = "sk-proj-RawCaptionMustStillBlock1234567890abcdef";
   const editor = { tagName: "DIV", isContentEditable: true, text: "API_KEY=[PWM_1]", selection: { start: 0, end: 0 } };
@@ -8033,10 +8195,18 @@ async function testWhatsAppUnsupportedAndMultiFileAttachRemainBlocked() {
     [createReadableTextFile({ name: "unsupported.gif", type: "image/gif", text: "gif bytes" })],
     [createReadableTextFile({ name: "unsupported.bmp", type: "image/bmp", text: "bmp bytes" })],
     [createReadableTextFile({ name: "unsupported.svg", type: "image/svg+xml", text: "<svg></svg>" })],
+    [createReadableTextFile({ name: "unsupported.exe", type: "application/octet-stream", text: "exe bytes" })],
+    [createReadableTextFile({ name: "unsupported.bin", type: "application/octet-stream", text: "bin bytes" })],
     [createReadableTextFile({ name: "document.pdf", type: "application/pdf", text: "pdf bytes" })],
+    [createReadableTextFile({ name: "document.docx", type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", text: "docx bytes" })],
+    [createReadableTextFile({ name: "document.xlsx", type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", text: "xlsx bytes" })],
     [
       createReadableTextFile({ name: "one.png", type: "image/png", text: "one" }),
       createReadableTextFile({ name: "two.png", type: "image/png", text: "two" })
+    ],
+    [
+      createReadableTextFile({ name: "one.env", type: "text/plain", text: "one" }),
+      createReadableTextFile({ name: "two.env", type: "text/plain", text: "two" })
     ]
   ];
 
@@ -11783,6 +11953,94 @@ async function testWhatsAppSanitizedImageAttachVerifierRequiresRedactedPng() {
   assert.strictEqual(invalid, false);
   assert.strictEqual(invalidFileInput.files.length, 0);
   assert.deepStrictEqual(invalidFileInput.events, []);
+}
+
+async function testWhatsAppSanitizedTextDocumentAttachVerifierRequiresPhase3AType() {
+  for (const [name, type] of [
+    ["lgqa-wa-doc.txt", "text/plain"],
+    ["lgqa-wa-doc.env", "text/plain"],
+    ["lgqa-wa-doc.json", "application/json"],
+    ["lgqa-wa-doc.log", "text/plain"],
+    ["lgqa-wa-doc.md", "text/markdown"],
+    ["lgqa-wa-doc.csv", "text/csv"]
+  ]) {
+    const fileInput = createFileInput();
+    const sanitizedDocument = {
+      name,
+      type,
+      size: 64,
+      async text() {
+        return "OPENAI_API_KEY=[PWM_1]";
+      }
+    };
+    const flow = globalThis.PWM.createFileHandoffFlow({
+      createSanitizedDataTransfer: (file) => ({ files: [file] }),
+      describeFileForDebug: (file) => ({ name: file?.name || "", type: file?.type || "", size: file?.size || 0 }),
+      getCurrentHandoffDriverId: () => "whatsapp",
+      getFileHandoffAdapterById: () => ({
+        id: "whatsapp",
+        supportsSanitizedTextDocumentAttachHandoff: true
+      }),
+      getFileHandoffAdapterForLocation: () => ({
+        id: "whatsapp",
+        supportsSanitizedTextDocumentAttachHandoff: true
+      }),
+      handOffSanitizedFileInput: (targetInput, transfer) => {
+        targetInput.files = transfer.files;
+        targetInput.dispatchEvent({ type: "input", bubbles: true, composed: true });
+        targetInput.dispatchEvent({ type: "change", bubbles: true, composed: true });
+        return true;
+      }
+    });
+
+    const ok = await flow.handOffSanitizedLocalFile(
+      { type: "change", target: fileInput },
+      null,
+      sanitizedDocument,
+      "file-input"
+    );
+
+    assert.strictEqual(ok, true, `${name} should be accepted as a sanitized WhatsApp text document`);
+    assert.strictEqual(fileInput.files.length, 1);
+    assert.strictEqual(fileInput.files[0], sanitizedDocument);
+    assert.deepStrictEqual(fileInput.events, ["input", "change"]);
+  }
+
+  for (const invalid of [
+    { name: "lgqa-wa-doc.pdf", type: "application/pdf", size: 64 },
+    { name: "lgqa-wa-doc.docx", type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", size: 64 },
+    { name: "lgqa-wa-doc.xlsx", type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", size: 64 },
+    { name: "lgqa-wa-doc.pem", type: "text/plain", size: 64 }
+  ]) {
+    const invalidFileInput = createFileInput();
+    const flow = globalThis.PWM.createFileHandoffFlow({
+      createSanitizedDataTransfer: (file) => ({ files: [file] }),
+      describeFileForDebug: (file) => ({ name: file?.name || "", type: file?.type || "", size: file?.size || 0 }),
+      getCurrentHandoffDriverId: () => "whatsapp",
+      getFileHandoffAdapterById: () => ({
+        id: "whatsapp",
+        supportsSanitizedTextDocumentAttachHandoff: true
+      }),
+      getFileHandoffAdapterForLocation: () => ({
+        id: "whatsapp",
+        supportsSanitizedTextDocumentAttachHandoff: true
+      }),
+      handOffSanitizedFileInput: () => {
+        throw new Error(`${invalid.name} must be rejected before assignment`);
+      }
+    });
+
+    const ok = await flow.handOffSanitizedLocalFile(
+      { type: "change", target: invalidFileInput },
+      null,
+      invalid,
+      "file-input"
+    );
+
+    assert.strictEqual(ok, false, `${invalid.name} should be rejected for WhatsApp Phase 3A`);
+    assert.strictEqual(invalidFileInput.files.length, 0);
+    assert.deepStrictEqual(invalidFileInput.events, []);
+  }
 }
 
 async function testWhatsAppSanitizedImageAttachVerifierRejectsAssignedMismatch() {
@@ -15777,6 +16035,7 @@ function testMultiFileProtectedUploadStaticGuards() {
 
 (async () => {
   testSanitizedFileFallbackTextPrefersRedactedSanitizedFileName();
+  await testWhatsAppSanitizedTextDocumentAttachVerifierRequiresPhase3AType();
   await testFileDragoverIsAcceptedWithoutComposerTarget();
   await testFileDragoverIsAcceptedWithoutHelperLoaded();
   await testFileDropIsHandledWithoutComposerTarget();
@@ -15920,6 +16179,8 @@ function testMultiFileProtectedUploadStaticGuards() {
   await testWhatsAppClipboardImagePasteFailureBlocksRawImage();
   await testWhatsAppUnsupportedClipboardImagePasteRemainsBlocked();
   await testWhatsAppSingleImageAttachRoutesToSanitizedHandoff();
+  await testWhatsAppSingleTextDocumentAttachRoutesToSanitizedHandoff();
+  await testWhatsAppTextDocumentAttachFailuresBlockRawDocument();
   await testWhatsAppSanitizedImageHandoffBypassesSafePlaceholderCaptionOnly();
   await testWhatsAppImageAttachSuppressesRawInputClearEventDuringOcr();
   await testWhatsAppImageAttachOcrFailureBlocksRawImage();

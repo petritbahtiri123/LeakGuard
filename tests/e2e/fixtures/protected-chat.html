@@ -140,7 +140,7 @@
             </div>
           </div>
           <button id="whatsapp-attach-button" data-testid="whatsapp-attach-button" aria-label="Attach" type="button">Attach</button>
-          <input id="whatsapp-file-input" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
+          <input id="whatsapp-file-input" type="file" accept="image/png,image/jpeg,image/webp,.txt,.env,.json,.log,.md,.csv,text/plain,application/json,text/markdown,text/csv" multiple hidden>
           <div id="whatsapp-preview-modal" data-testid="whatsapp-preview-modal" hidden>
             <div id="whatsapp-preview-area" data-testid="whatsapp-preview-area"></div>
             <button id="whatsapp-preview-send-button" data-testid="whatsapp-preview-send-button" type="button">Send image</button>
@@ -520,12 +520,30 @@
           return details;
         }
 
-        function summarizePreviewFile(file) {
+        const whatsappTextDocumentExtensions = new Set([".txt", ".env", ".json", ".log", ".md", ".csv"]);
+
+        function getFileExtension(name) {
+          const normalized = String(name || "").toLowerCase();
+          const index = normalized.lastIndexOf(".");
+          if (normalized === ".env") return ".env";
+          if (index <= 0 || index === normalized.length - 1) return "";
+          return normalized.slice(index);
+        }
+
+        function isSanitizedWhatsAppTextDocument(file, detail) {
+          const extension = getFileExtension(file?.name);
+          const text = String(detail?.text || "");
+          return whatsappTextDocumentExtensions.has(extension) && /\[(?:PWM|NET|PUB_HOST)_\d+\]/.test(text);
+        }
+
+        function summarizePreviewFile(file, detail) {
           return {
             name: file.name,
             type: file.type,
             size: file.size,
-            sanitized: /\.redacted\.png$/i.test(file.name || "") && file.type === "image/png"
+            sanitized:
+              (/\.redacted\.png$/i.test(file.name || "") && file.type === "image/png") ||
+              isSanitizedWhatsAppTextDocument(file, detail)
           };
         }
 
@@ -533,7 +551,7 @@
           if (!modeUsesWhatsAppComposer()) return;
           const inputFiles = Array.from(files || []);
           const details = await recordFiles("input", inputFiles);
-          const previewFiles = inputFiles.map(summarizePreviewFile);
+          const previewFiles = inputFiles.map((file, index) => summarizePreviewFile(file, details[index]));
           const sanitized = previewFiles.length === 1 && previewFiles[0].sanitized;
           const rawPreview = previewFiles.length > 0 && !sanitized;
           if (rawPreview) {

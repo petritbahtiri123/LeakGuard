@@ -299,7 +299,7 @@ function getBrowserQaCoverageMatrix({ matrixMode = BROWSER_QA_MATRIX_MODES.FAST 
     },
     whatsAppTextOnly: {
       target: "https://web.whatsapp.com/*",
-      inputPaths: ["send button click", "Enter-to-send", "file attachment attempt"],
+      inputPaths: ["send button click", "Enter-to-send", "single text-document attachment", "unsupported file attachment attempt"],
       requiredCases: [
         "first click sends sanitized text",
         "Enter sends sanitized text",
@@ -310,7 +310,9 @@ function getBrowserQaCoverageMatrix({ matrixMode = BROWSER_QA_MATRIX_MODES.FAST 
         "rewrite verification failure blocks send",
         "programmatic replay does not recurse",
         "second-click retry is not accepted as success",
-        "attachment attempt remains unsupported and blocked"
+        "single .txt/.env/.json/.log/.md attachment assigns only a sanitized document",
+        "PDF/DOCX/XLSX attachment remains blocked",
+        "multi-file attachment remains blocked"
       ]
     },
     followUpInputPaths: ["drag/drop text"],

@@ -11,6 +11,7 @@
       supportsDirectFileInputAssignment: false,
       supportsClipboardImagePasteHandoff: true,
       supportsSanitizedImageAttachHandoff: true,
+      supportsSanitizedTextDocumentAttachHandoff: true,
       supportsMultiFileHandoff: false,
       supportsDirectDropReplay: false,
       supportsPendingAttach: false,

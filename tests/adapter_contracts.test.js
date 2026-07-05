@@ -212,6 +212,16 @@ function testUploadAndUnsafeClickPredicatesStayPresent() {
   assert.strictEqual(whatsapp.resolveUploadTrigger(), null, "WhatsApp upload trigger resolution should stay disabled");
   assert.strictEqual(whatsapp.resolveFileInput(), null, "WhatsApp file input resolution should stay disabled");
   assert.strictEqual(whatsapp.isUploadClickTarget(), false, "WhatsApp upload click detection should stay disabled");
+  assert.strictEqual(
+    whatsapp.supportsSanitizedTextDocumentAttachHandoff,
+    true,
+    "WhatsApp should expose only the narrow sanitized text-document attach capability"
+  );
+  assert.strictEqual(
+    whatsapp.supportsDirectFileInputAssignment,
+    false,
+    "WhatsApp text-document support must not enable raw direct file input assignment"
+  );
 
   ["gemini", "grok"].forEach((id) => {
     assert.strictEqual(

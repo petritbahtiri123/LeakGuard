@@ -146,7 +146,12 @@ async function assertFullCoverageMatrix() {
   }
   assert.ok(matrix.followUpInputPaths.includes("drag/drop text"), "text drag/drop should be documented as follow-up");
   assert.strictEqual(matrix.whatsAppTextOnly.target, "https://web.whatsapp.com/*");
-  for (const inputPath of ["send button click", "Enter-to-send", "file attachment attempt"]) {
+  for (const inputPath of [
+    "send button click",
+    "Enter-to-send",
+    "single text-document attachment",
+    "unsupported file attachment attempt"
+  ]) {
     assert.ok(matrix.whatsAppTextOnly.inputPaths.includes(inputPath), `WhatsApp QA should include ${inputPath}`);
   }
   for (const requiredCase of [
@@ -159,7 +164,9 @@ async function assertFullCoverageMatrix() {
     "rewrite verification failure blocks send",
     "programmatic replay does not recurse",
     "second-click retry is not accepted as success",
-    "attachment attempt remains unsupported and blocked"
+    "single .txt/.env/.json/.log/.md attachment assigns only a sanitized document",
+    "PDF/DOCX/XLSX attachment remains blocked",
+    "multi-file attachment remains blocked"
   ]) {
     assert.ok(
       matrix.whatsAppTextOnly.requiredCases.includes(requiredCase),

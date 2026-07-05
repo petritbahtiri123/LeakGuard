@@ -18,7 +18,13 @@ import {
   typeIntoComposer,
   uploadWhatsAppAttachFile
 } from "./helpers/extensionFixture.mjs";
-import { imageFixture, malformedImageFixture } from "./helpers/e2eFileFixtures.mjs";
+import {
+  imageFixture,
+  malformedImageFixture,
+  textFileFixtures,
+  documentFileFixtures,
+  unsupportedFileFixture
+} from "./helpers/e2eFileFixtures.mjs";
 
 const whatsappInput = [
   "LGQA_WA_DUPLICATE_1",
@@ -87,7 +93,42 @@ async function dispatchWhatsAppPasteThenBeforeInput(page, text) {
   }, text);
 }
 
+async function waitForWhatsAppSanitizedDocument(page, file) {
+  await expect.poll(async () => {
+    const preview = await getWhatsAppPreviewState(page);
+    const events = await getFileEvents(page);
+    const modalText = await page.evaluate(() =>
+      Array.from(document.querySelectorAll(".pwm-modal-backdrop, .pwm-modal"))
+        .map((element) => element.innerText || element.textContent || "")
+        .join("\n")
+    );
+    return Boolean(
+      preview?.sanitized === true ||
+        events.some((event) =>
+          event.source === "input" &&
+          event.name === file.name &&
+          String(event.text || "").includes("[PWM_") &&
+          !String(event.text || "").includes(file.secret)
+        ) ||
+        /Raw file upload blocked|WhatsApp file upload blocked/i.test(modalText)
+    );
+  }, { timeout: 30000 }).toBe(true);
+}
+
+function expectSanitizedDocumentEvent(events, file) {
+  const matching = events.filter((event) => event.source === "input" && event.name === file.name);
+  expect(matching.length, `${file.name} should be assigned to WhatsApp only after sanitization`).toBeGreaterThan(0);
+  for (const event of matching) {
+    expect(event.text, `${file.name} assigned text should not be raw`).not.toBe(file.text);
+    expect(event.text, `${file.name} assigned text should contain placeholders`).toContain("[PWM_");
+    expect(event.text, `${file.name} assigned text should not contain the fixture secret`).not.toContain(file.secret);
+    expect(event.text, `${file.name} assigned text should not contain database password`).not.toContain("FakePass123");
+  }
+}
+
 test.describe("@whatsapp @text WhatsApp-like reproduction contract", () => {
+  test.setTimeout(130000);
+
   test("current fail-closed guard never sends raw fake secrets", async ({ extensionApp }) => {
     const page = await extensionApp.openProtectedFixture("whatsapp");
 
@@ -403,6 +444,29 @@ test.describe("@whatsapp @text WhatsApp-like reproduction contract", () => {
     await expectNoRawSecretVisible(page, file.secret);
   });
 
+  for (const file of textFileFixtures) {
+    test(`@files text document attach-button redacts ${file.name} Phase 3A file`, async ({ extensionApp }) => {
+      test.setTimeout(90000);
+      const page = await extensionApp.openProtectedFixture("whatsapp");
+
+      await uploadWhatsAppAttachFile(page, file);
+      await waitForWhatsAppSanitizedDocument(page, file);
+
+      const preview = await getWhatsAppPreviewState(page);
+      expect(preview?.rawPreviewSeen, `${file.name} raw preview must never appear`).toBe(false);
+      expect(preview?.rawPreviewBeforeSanitized, `${file.name} raw preview must not appear first`).toBe(false);
+      const events = await getFileEvents(page);
+      expect(
+        events.every((event) => String(event.text || "") !== file.text),
+        `${file.name} raw file text must not be assigned`
+      ).toBe(true);
+      expectSanitizedDocumentEvent(events, file);
+      await expectNoRawSecretVisible(page, file.secret);
+      await page.locator("#whatsapp-preview-send-button").click();
+      await expect.poll(async () => (await getWhatsAppPreviewState(page))?.sent === true).toBe(true);
+    });
+  }
+
   test("@files @images attach-button OCR failure blocks without preview", async ({ extensionApp }) => {
     const page = await extensionApp.openProtectedFixture("whatsapp");
     const file = malformedImageFixture();
@@ -434,6 +498,36 @@ test.describe("@whatsapp @text WhatsApp-like reproduction contract", () => {
     await expectNoFileEvents(page);
   });
 
+  test("@files document attach-button PDF DOCX XLSX remain blocked without preview", async ({ extensionApp }) => {
+    for (const file of documentFileFixtures) {
+      const page = await extensionApp.openProtectedFixture("whatsapp");
+
+      await uploadWhatsAppAttachFile(page, file);
+
+      await expectBlocked(page, /WhatsApp file upload blocked/i);
+      const preview = await getWhatsAppPreviewState(page);
+      expect(preview?.visible, `${file.name} must not open preview`).toBe(false);
+      expect(preview?.rawPreviewSeen, `${file.name} raw preview must not appear`).toBe(false);
+      await expectNoFileEvents(page);
+      await expectNoRawSecretVisible(page, file.secret);
+    }
+  });
+
+  test("@files text document multi-file remains blocked without preview", async ({ extensionApp }) => {
+    const page = await extensionApp.openProtectedFixture("whatsapp");
+    const [first, second] = textFileFixtures;
+
+    await uploadWhatsAppAttachFile(page, [first, second]);
+
+    await expectBlocked(page, /WhatsApp file upload blocked/i);
+    const preview = await getWhatsAppPreviewState(page);
+    expect(preview?.visible, "multi text document attach must not open preview").toBe(false);
+    expect(preview?.rawPreviewSeen, "multi text document raw preview must not show").toBe(false);
+    await expectNoFileEvents(page);
+    await expectNoRawSecretVisible(page, first.secret);
+    await expectNoRawSecretVisible(page, second.secret);
+  });
+
   test("@files @images attach-button multi-file blocks without preview", async ({ extensionApp }) => {
     const page = await extensionApp.openProtectedFixture("whatsapp");
     const first = await imageFixture("png");
@@ -448,5 +542,19 @@ test.describe("@whatsapp @text WhatsApp-like reproduction contract", () => {
     await expectNoFileEvents(page);
     await expectNoRawSecretVisible(page, first.secret);
     await expectNoRawSecretVisible(page, second.secret);
+  });
+
+  test("@files unsupported binary document attach blocks without preview", async ({ extensionApp }) => {
+    const page = await extensionApp.openProtectedFixture("whatsapp");
+    const file = unsupportedFileFixture({ name: "lgqa-whatsapp-unsupported.exe" });
+
+    await uploadWhatsAppAttachFile(page, file);
+
+    await expectBlocked(page, /WhatsApp file upload blocked/i);
+    const preview = await getWhatsAppPreviewState(page);
+    expect(preview?.visible, "unsupported binary attach must not open preview").toBe(false);
+    expect(preview?.rawPreviewSeen, "unsupported binary raw preview must not show").toBe(false);
+    await expectNoFileEvents(page);
+    await expectNoRawSecretVisible(page, file.secret);
   });
 });

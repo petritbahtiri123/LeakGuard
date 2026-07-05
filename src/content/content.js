@@ -218,7 +218,7 @@
   const WHATSAPP_FILE_ATTACH_UNSUPPORTED_REASON = "whatsapp_file_attachments_unsupported";
   const WHATSAPP_FILE_ATTACH_BLOCK_TITLE = "WhatsApp file upload blocked";
   const WHATSAPP_FILE_ATTACH_BLOCK_MESSAGE =
-    "LeakGuard blocks WhatsApp Web file attachments in this text-only phase. No raw file was uploaded.";
+    "LeakGuard blocks unsupported WhatsApp Web file attachments in this phase. No raw file was uploaded.";
   const WHATSAPP_TEXT_SEND_BLOCK_TITLE = "WhatsApp send blocked";
   const CHATGPT_LARGE_PASTE_FILE_THRESHOLD = 16 * 1024;
   const CHATGPT_SANITIZED_PASTE_FILE_NAME = "leakguard-redacted-paste.txt";
@@ -275,6 +275,7 @@
     "Raw image upload blocked. This image type is not supported for safe redaction.";
   const SUPPORTED_IMAGE_REDACTION_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
   const SUPPORTED_IMAGE_REDACTION_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+  const SUPPORTED_WHATSAPP_TEXT_DOCUMENT_ATTACH_EXTENSIONS = new Set([".txt", ".env", ".json", ".log", ".md", ".csv"]);
   const UNSUPPORTED_PROTECTED_IMAGE_EXTENSIONS = new Set([".gif", ".bmp", ".ico", ".svg"]);
   const FILE_DRAG_SESSION_RESET_MS = 5000;
   const MAX_MULTI_FILE_SMALL_ATTACHMENTS =
@@ -1241,6 +1242,22 @@
     if (files.length !== 1 || !isSupportedWhatsAppAttachImageFile(files[0])) return false;
     const adapter = getFileHandoffAdapterById("whatsapp") || getFileHandoffAdapterForLocation();
     return adapter?.id === "whatsapp" && adapter.supportsSanitizedImageAttachHandoff === true;
+  }
+
+  function isSupportedWhatsAppTextDocumentAttachFile(file) {
+    if (!file) return false;
+    const extension = getLocalFileExtension(file);
+    if (!SUPPORTED_WHATSAPP_TEXT_DOCUMENT_ATTACH_EXTENSIONS.has(extension)) return false;
+    return typeof FileScanner.isSupportedTextFile !== "function" || FileScanner.isSupportedTextFile(file.name, file.type);
+  }
+
+  function isSupportedWhatsAppTextDocumentAttach(dataTransfer, context = "file-input") {
+    if (!isWhatsAppHost() || context !== "file-input") return false;
+    if (typeof dataTransferHasFiles !== "function" || !dataTransferHasFiles(dataTransfer)) return false;
+    const files = listLocalTransferFiles(dataTransfer);
+    if (files.length !== 1 || !isSupportedWhatsAppTextDocumentAttachFile(files[0])) return false;
+    const adapter = getFileHandoffAdapterById("whatsapp") || getFileHandoffAdapterForLocation();
+    return adapter?.id === "whatsapp" && adapter.supportsSanitizedTextDocumentAttachHandoff === true;
   }
 
   async function blockWhatsAppFileAttachment(event) {
@@ -9906,11 +9923,13 @@
         showFileProcessingSuccess
       });
     const supportedWhatsAppImageAttach = isSupportedWhatsAppImageAttach(dataTransfer, context);
+    const supportedWhatsAppTextDocumentAttach = isSupportedWhatsAppTextDocumentAttach(dataTransfer, context);
     if (
       isWhatsAppHost() &&
       localTransferFiles.length &&
       !isSupportedWhatsAppClipboardImagePaste(dataTransfer, context) &&
-      !supportedWhatsAppImageAttach
+      !supportedWhatsAppImageAttach &&
+      !supportedWhatsAppTextDocumentAttach
     ) {
       failProcessing(WHATSAPP_FILE_ATTACH_UNSUPPORTED_REASON, WHATSAPP_FILE_ATTACH_BLOCK_TITLE);
       return blockWhatsAppFileAttachment(event);
@@ -9988,7 +10007,7 @@
       consumeInterceptionEvent(event);
     }
     if (
-      supportedWhatsAppImageAttach &&
+      (supportedWhatsAppImageAttach || supportedWhatsAppTextDocumentAttach) &&
       event?.target?.tagName === "INPUT" &&
       String(event.target.type || "").toLowerCase() === "file"
     ) {
@@ -10292,6 +10311,7 @@
 
     const shouldSkipTextFallback =
       localFile.skipTextFallback === true ||
+      supportedWhatsAppTextDocumentAttach ||
       (context === "file-input" && isFirefoxRuntime() && isGeminiHost());
     const preflightPlan = globalThis.PWM.FileAttachPipeline.classifyFileAttachPreflightPlan({
       context,
@@ -10342,6 +10362,9 @@
       } else {
         result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
         sanitizedFile = createSanitizedTextFile(localFile.file, result.redactedText);
+      }
+      if (!sanitizedFile) {
+        throw new Error("sanitized_file_create_failed");
       }
     } catch (error) {
       if (optimizedStatus) {
@@ -10401,6 +10424,10 @@
     if (imageRedactionMode) {
       payload.allowFileOnlyHandoff = true;
       payload.imageRedactionMode = true;
+    }
+    if (supportedWhatsAppTextDocumentAttach) {
+      payload.allowFileOnlyHandoff = true;
+      payload.textDocumentAttachMode = true;
     }
     const attachFlow = await globalThis.PWM.FileAttachPipeline.runSanitizedFileAttachFlow({
       context,
@@ -10775,17 +10802,26 @@
     }
 
     const input = findComposer(event.target);
-    const hasContentExtractionFile =
-      selectedFiles.length === 1 && shouldUseContentFileExtractionPipeline(selectedFiles[0]);
     const selectedTransfer = {
       files: selectedFiles,
       types: ["Files"],
       items: []
     };
+    const hasContentExtractionFile =
+      selectedFiles.length === 1 && shouldUseContentFileExtractionPipeline(selectedFiles[0]);
+    const hasSupportedWhatsAppAttach =
+      isSupportedWhatsAppImageAttach(selectedTransfer, "file-input") ||
+      isSupportedWhatsAppTextDocumentAttach(selectedTransfer, "file-input");
     const selectedTransferPolicy = resolveLocalFileTransferPolicy(selectedTransfer);
     const hasFailClosedProtectedUnsupportedFile =
       shouldFailClosedProtectedUnsupportedFileTransfer(selectedTransferPolicy);
-    if (!input && !isGeminiHost() && !hasContentExtractionFile && !hasFailClosedProtectedUnsupportedFile) {
+    if (
+      !input &&
+      !isGeminiHost() &&
+      !hasContentExtractionFile &&
+      !hasFailClosedProtectedUnsupportedFile &&
+      !hasSupportedWhatsAppAttach
+    ) {
       if (!(isFirefoxRuntime() && isProtectedFileDropDriver(getCurrentHandoffDriverId()))) return;
     }
 

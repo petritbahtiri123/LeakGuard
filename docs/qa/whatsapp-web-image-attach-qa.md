@@ -1,6 +1,6 @@
 # WhatsApp Web Image Attach QA
 
-Use this checklist for Phase 2 WhatsApp Web support. This phase supports one attach-button image at a time: PNG, JPG/JPEG, or WEBP only.
+Use this checklist for Phase 2 WhatsApp Web image support. This image checklist supports one attach-button image at a time: PNG, JPG/JPEG, or WEBP only. Phase 3A text-document attach QA is covered in `docs/qa/whatsapp-web-text-document-attach-qa.md`.
 
 ## Test setup
 
@@ -58,4 +58,4 @@ Expected: LeakGuard blocks the batch, shows a fail-closed message, and WhatsApp 
 
 ## Out of scope
 
-Documents, PDFs, DOCX, XLSX, videos, arbitrary files, and WhatsApp multi-file attach remain unsupported in this phase.
+PDFs, DOCX, XLSX, videos, arbitrary files, and WhatsApp multi-file attach remain unsupported in this image checklist. Single text-document attach checks are covered separately in `docs/qa/whatsapp-web-text-document-attach-qa.md`.

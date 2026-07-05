@@ -1,6 +1,6 @@
 # WhatsApp Web Clipboard Image Paste QA
 
-Use this checklist for Phase 1 WhatsApp clipboard-image support. Phase 2 attach-button image QA is covered in `docs/qa/whatsapp-web-image-attach-qa.md`; document uploads, multi-file uploads, and non-image files remain unsupported and must fail closed.
+Use this checklist for Phase 1 WhatsApp clipboard-image support. Phase 2 attach-button image QA is covered in `docs/qa/whatsapp-web-image-attach-qa.md`; Phase 3A text-document attach QA is covered in `docs/qa/whatsapp-web-text-document-attach-qa.md`. Clipboard document paste, multi-file uploads, and other non-image clipboard files remain unsupported and must fail closed.
 
 ## Harmless test screenshot
 
@@ -40,7 +40,7 @@ For every PNG, JPG/JPEG, and WEBP clipboard-image paste test, confirm:
 
 - The raw image never appears in WhatsApp preview before LeakGuard finishes.
 - If LeakGuard fails OCR/redaction, no WhatsApp preview appears at all.
-- Unsupported GIF, BMP, SVG, documents, and multi-file pastes remain blocked.
+- Unsupported GIF, BMP, SVG, document clipboard pastes, and multi-file pastes remain blocked.
 
 ## Text regression checks
 
