@@ -276,6 +276,16 @@
   const SUPPORTED_IMAGE_REDACTION_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
   const SUPPORTED_IMAGE_REDACTION_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
   const SUPPORTED_WHATSAPP_TEXT_DOCUMENT_ATTACH_EXTENSIONS = new Set([".txt", ".env", ".json", ".log", ".md", ".csv"]);
+  const SUPPORTED_WHATSAPP_PDF_ATTACH_EXTENSIONS = new Set([".pdf"]);
+  const SUPPORTED_WHATSAPP_PDF_ATTACH_MIME_TYPES = new Set(["application/pdf"]);
+  const SUPPORTED_WHATSAPP_DOCX_ATTACH_EXTENSIONS = new Set([".docx"]);
+  const SUPPORTED_WHATSAPP_DOCX_ATTACH_MIME_TYPES = new Set([
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  ]);
+  const SUPPORTED_WHATSAPP_XLSX_ATTACH_EXTENSIONS = new Set([".xlsx"]);
+  const SUPPORTED_WHATSAPP_XLSX_ATTACH_MIME_TYPES = new Set([
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  ]);
   const UNSUPPORTED_PROTECTED_IMAGE_EXTENSIONS = new Set([".gif", ".bmp", ".ico", ".svg"]);
   const FILE_DRAG_SESSION_RESET_MS = 5000;
   const MAX_MULTI_FILE_SMALL_ATTACHMENTS =
@@ -1227,6 +1237,16 @@
     return adapter?.id === "whatsapp" && adapter.supportsClipboardImagePasteHandoff === true;
   }
 
+  function isWhatsAppSanitizedDropHandoffEnabled(context = "drop") {
+    if (!isWhatsAppHost() || context !== "drop") return false;
+    const adapter = getFileHandoffAdapterById("whatsapp") || getFileHandoffAdapterForLocation();
+    return adapter?.id === "whatsapp" && adapter.supportsSanitizedDropHandoff === true;
+  }
+
+  function isWhatsAppSanitizedFileHandoffContext(context = "file-input") {
+    return context === "file-input" || isWhatsAppSanitizedDropHandoffEnabled(context);
+  }
+
   function isSupportedWhatsAppAttachImageFile(file) {
     if (!file || !shouldUseContentFileExtractionPipeline(file)) return false;
     return (
@@ -1236,7 +1256,7 @@
   }
 
   function isSupportedWhatsAppImageAttach(dataTransfer, context = "file-input") {
-    if (!isWhatsAppHost() || context !== "file-input") return false;
+    if (!isWhatsAppHost() || !isWhatsAppSanitizedFileHandoffContext(context)) return false;
     if (typeof dataTransferHasFiles !== "function" || !dataTransferHasFiles(dataTransfer)) return false;
     const files = listLocalTransferFiles(dataTransfer);
     if (files.length !== 1 || !isSupportedWhatsAppAttachImageFile(files[0])) return false;
@@ -1252,12 +1272,93 @@
   }
 
   function isSupportedWhatsAppTextDocumentAttach(dataTransfer, context = "file-input") {
-    if (!isWhatsAppHost() || context !== "file-input") return false;
+    if (!isWhatsAppHost() || !isWhatsAppSanitizedFileHandoffContext(context)) return false;
     if (typeof dataTransferHasFiles !== "function" || !dataTransferHasFiles(dataTransfer)) return false;
     const files = listLocalTransferFiles(dataTransfer);
     if (files.length !== 1 || !isSupportedWhatsAppTextDocumentAttachFile(files[0])) return false;
     const adapter = getFileHandoffAdapterById("whatsapp") || getFileHandoffAdapterForLocation();
     return adapter?.id === "whatsapp" && adapter.supportsSanitizedTextDocumentAttachHandoff === true;
+  }
+
+  function isSupportedWhatsAppPdfAttachFile(file) {
+    if (!file || !shouldUseContentFileExtractionPipeline(file)) return false;
+    return (
+      SUPPORTED_WHATSAPP_PDF_ATTACH_EXTENSIONS.has(getLocalFileExtension(file)) &&
+      SUPPORTED_WHATSAPP_PDF_ATTACH_MIME_TYPES.has(getLocalFileMimeType(file))
+    );
+  }
+
+  function isSupportedWhatsAppPdfAttach(dataTransfer, context = "file-input") {
+    if (!isWhatsAppHost() || !isWhatsAppSanitizedFileHandoffContext(context)) return false;
+    if (typeof dataTransferHasFiles !== "function" || !dataTransferHasFiles(dataTransfer)) return false;
+    const files = listLocalTransferFiles(dataTransfer);
+    if (files.length !== 1 || !isSupportedWhatsAppPdfAttachFile(files[0])) return false;
+    const adapter = getFileHandoffAdapterById("whatsapp") || getFileHandoffAdapterForLocation();
+    return adapter?.id === "whatsapp" && adapter.supportsSanitizedPdfAttachHandoff === true;
+  }
+
+  function isSupportedWhatsAppDocxAttachFile(file) {
+    if (!file || !shouldUseContentFileExtractionPipeline(file)) return false;
+    return (
+      SUPPORTED_WHATSAPP_DOCX_ATTACH_EXTENSIONS.has(getLocalFileExtension(file)) &&
+      SUPPORTED_WHATSAPP_DOCX_ATTACH_MIME_TYPES.has(getLocalFileMimeType(file))
+    );
+  }
+
+  function isSupportedWhatsAppDocxAttach(dataTransfer, context = "file-input") {
+    if (!isWhatsAppHost() || !isWhatsAppSanitizedFileHandoffContext(context)) return false;
+    if (typeof dataTransferHasFiles !== "function" || !dataTransferHasFiles(dataTransfer)) return false;
+    const files = listLocalTransferFiles(dataTransfer);
+    if (files.length !== 1 || !isSupportedWhatsAppDocxAttachFile(files[0])) return false;
+    const adapter = getFileHandoffAdapterById("whatsapp") || getFileHandoffAdapterForLocation();
+    return adapter?.id === "whatsapp" && adapter.supportsSanitizedDocxAttachHandoff === true;
+  }
+
+  function isSupportedWhatsAppXlsxAttachFile(file) {
+    if (!file || !shouldUseContentFileExtractionPipeline(file)) return false;
+    return (
+      SUPPORTED_WHATSAPP_XLSX_ATTACH_EXTENSIONS.has(getLocalFileExtension(file)) &&
+      SUPPORTED_WHATSAPP_XLSX_ATTACH_MIME_TYPES.has(getLocalFileMimeType(file))
+    );
+  }
+
+  function isSupportedWhatsAppXlsxAttach(dataTransfer, context = "file-input") {
+    if (!isWhatsAppHost() || !isWhatsAppSanitizedFileHandoffContext(context)) return false;
+    if (typeof dataTransferHasFiles !== "function" || !dataTransferHasFiles(dataTransfer)) return false;
+    const files = listLocalTransferFiles(dataTransfer);
+    if (files.length !== 1 || !isSupportedWhatsAppXlsxAttachFile(files[0])) return false;
+    const adapter = getFileHandoffAdapterById("whatsapp") || getFileHandoffAdapterForLocation();
+    return adapter?.id === "whatsapp" && adapter.supportsSanitizedXlsxAttachHandoff === true;
+  }
+
+  function isWhatsAppSanitizedMultiFileAttachEnabled(context = "file-input") {
+    if (!isWhatsAppHost() || !isWhatsAppSanitizedFileHandoffContext(context)) return false;
+    const adapter = getFileHandoffAdapterById("whatsapp") || getFileHandoffAdapterForLocation();
+    return adapter?.id === "whatsapp" && adapter.supportsSanitizedMultiFileAttachHandoff === true;
+  }
+
+  function isPotentialWhatsAppMultiFileAttach(files, context = "file-input") {
+    return Boolean(
+      isWhatsAppSanitizedMultiFileAttachEnabled(context) &&
+        Array.from(files || []).length > 1
+    );
+  }
+
+  function isSupportedWhatsAppMultiFileAttachFile(file) {
+    return Boolean(
+      isSupportedWhatsAppAttachImageFile(file) ||
+        isSupportedWhatsAppTextDocumentAttachFile(file) ||
+        isSupportedWhatsAppPdfAttachFile(file) ||
+        isSupportedWhatsAppDocxAttachFile(file) ||
+        isSupportedWhatsAppXlsxAttachFile(file)
+    );
+  }
+
+  function isSupportedWhatsAppMultiFileAttach(dataTransfer, context = "file-input") {
+    if (!isWhatsAppSanitizedMultiFileAttachEnabled(context)) return false;
+    if (typeof dataTransferHasFiles !== "function" || !dataTransferHasFiles(dataTransfer)) return false;
+    const files = listLocalTransferFiles(dataTransfer);
+    return files.length >= 2 && files.length <= 5 && files.every(isSupportedWhatsAppMultiFileAttachFile);
   }
 
   async function blockWhatsAppFileAttachment(event) {
@@ -9534,6 +9635,127 @@
     return globalThis.PWM.FileAttachPipeline.formatMultiFileStatusMessage(summary, options);
   }
 
+  function isExpectedWhatsAppSanitizedMultiFileAttachFile(file) {
+    const extension = getLocalFileExtension(file);
+    const mimeType = getLocalFileMimeType(file);
+    const name = String(file?.name || "");
+    if (extension === ".png" || mimeType === "image/png") {
+      return mimeType === "image/png" && /\.redacted\.png$/i.test(name);
+    }
+    if (extension === ".pdf" || mimeType === "application/pdf") {
+      return mimeType === "application/pdf" && /\.redacted\.pdf$/i.test(name);
+    }
+    if (extension === ".docx" || mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
+      return (
+        mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" &&
+        /\.redacted\.docx$/i.test(name)
+      );
+    }
+    if (extension === ".xlsx" || mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") {
+      return (
+        mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" &&
+        /\.redacted\.xlsx$/i.test(name)
+      );
+    }
+    return isSupportedWhatsAppTextDocumentAttachFile(file);
+  }
+
+  function verifyWhatsAppSanitizedMultiFileAttach(fileInput, sanitizedFiles, originalFiles = []) {
+    const expectedFiles = Array.from(sanitizedFiles || []).filter(Boolean);
+    const assignedFiles = Array.from(fileInput?.files || []);
+    const rawOriginals = new Set(Array.from(originalFiles || []));
+    if (assignedFiles.length !== expectedFiles.length) {
+      return {
+        ok: false,
+        reason: "assigned_file_count_mismatch",
+        assignedCount: assignedFiles.length,
+        expectedCount: expectedFiles.length
+      };
+    }
+    for (let index = 0; index < expectedFiles.length; index += 1) {
+      const assignedFile = assignedFiles[index];
+      const expectedFile = expectedFiles[index];
+      if (assignedFile !== expectedFile) {
+        return {
+          ok: false,
+          reason: "assigned_file_order_or_identity_mismatch",
+          assignedCount: assignedFiles.length,
+          expectedCount: expectedFiles.length
+        };
+      }
+      if (rawOriginals.has(assignedFile)) {
+        return {
+          ok: false,
+          reason: "raw_original_file_assigned",
+          assignedCount: assignedFiles.length,
+          expectedCount: expectedFiles.length
+        };
+      }
+      if (!isExpectedWhatsAppSanitizedMultiFileAttachFile(assignedFile)) {
+        return {
+          ok: false,
+          reason: "assigned_file_type_invalid",
+          assignedCount: assignedFiles.length,
+          expectedCount: expectedFiles.length
+        };
+      }
+    }
+    return {
+      ok: true,
+      reason: "",
+      assignedCount: assignedFiles.length,
+      expectedCount: expectedFiles.length
+    };
+  }
+
+  function verifyWhatsAppSanitizedMultiFileDrop(transfer, sanitizedFiles, originalFiles = []) {
+    const expectedFiles = Array.from(sanitizedFiles || []).filter(Boolean);
+    const assignedFiles = Array.from(transfer?.files || []);
+    const rawOriginals = new Set(Array.from(originalFiles || []));
+    if (assignedFiles.length !== expectedFiles.length) {
+      return {
+        ok: false,
+        reason: "drop_file_count_mismatch",
+        assignedCount: assignedFiles.length,
+        expectedCount: expectedFiles.length
+      };
+    }
+    for (let index = 0; index < expectedFiles.length; index += 1) {
+      const assignedFile = assignedFiles[index];
+      const expectedFile = expectedFiles[index];
+      if (assignedFile !== expectedFile) {
+        return {
+          ok: false,
+          reason: "drop_file_order_or_identity_mismatch",
+          assignedCount: assignedFiles.length,
+          expectedCount: expectedFiles.length
+        };
+      }
+      if (rawOriginals.has(assignedFile)) {
+        return {
+          ok: false,
+          reason: "raw_original_file_dropped",
+          assignedCount: assignedFiles.length,
+          expectedCount: expectedFiles.length
+        };
+      }
+      if (!isExpectedWhatsAppSanitizedMultiFileAttachFile(assignedFile)) {
+        return {
+          ok: false,
+          reason: "drop_file_type_invalid",
+          assignedCount: assignedFiles.length,
+          expectedCount: expectedFiles.length
+        };
+      }
+    }
+    return {
+      ok: true,
+      reason: "",
+      assignedCount: assignedFiles.length,
+      expectedCount: expectedFiles.length
+    };
+  }
+
   async function processLocalFileForSanitizedBatch(file, index, context) {
     try {
       const contentExtractionResult = shouldUseContentFileExtractionPipeline(file)
@@ -9645,7 +9867,12 @@
         imageRedactionMode,
         summary: summarizeMultiFileItem(index, "sanitized", file, "")
       };
-    } catch {
+    } catch (error) {
+      debugFileAttachMetadata("file-handoff:multi-file-item-processing-failed", {
+        context,
+        error,
+        file: getLocalFileSafeMetadata(file)
+      });
       return {
         ok: false,
         status: "failed",
@@ -9656,16 +9883,38 @@
     }
   }
 
-  async function handOffSanitizedFileBatch(event, input, sanitizedFiles, context) {
+  async function handOffSanitizedFileBatch(event, input, sanitizedFiles, context, options = {}) {
     const transfer = createSanitizedDataTransfer(sanitizedFiles);
     if (!transfer) return false;
+    const verifyWhatsAppBatch = options.verifyWhatsAppBatch === true;
+    const originalFiles = Array.from(options.originalFiles || []);
+    const assignSanitizedBatchToInput = (fileInput) => {
+      const assigned = handOffSanitizedFileInput(fileInput, transfer, { dispatchInput: true });
+      if (!assigned || !verifyWhatsAppBatch) return assigned;
+      const verification = verifyWhatsAppSanitizedMultiFileAttach(fileInput, sanitizedFiles, originalFiles);
+      if (verification.ok) {
+        debugFileAttachMetadata("file-handoff:whatsapp-multi-file-attach-verified", {
+          fileCount: verification.assignedCount,
+          files: Array.from(sanitizedFiles || []).map(describeFileForDebug)
+        });
+        return true;
+      }
+      debugFileAttachMetadata("file-handoff:whatsapp-multi-file-attach-verification-failed", {
+        reason: verification.reason,
+        assignedCount: verification.assignedCount,
+        expectedCount: verification.expectedCount,
+        files: Array.from(sanitizedFiles || []).map(describeFileForDebug)
+      });
+      clearLocalFileInputSelection(fileInput);
+      return false;
+    };
 
     if (context === "file-input" && isFileInputElement(event?.target)) {
-      return handOffSanitizedFileInput(event.target, transfer, { dispatchInput: true });
+      return assignSanitizedBatchToInput(event.target);
     }
 
     const fileInput = resolveFileInputForHandoff(event, input);
-    if (fileInput && handOffSanitizedFileInput(fileInput, transfer, { dispatchInput: true })) {
+    if (fileInput && assignSanitizedBatchToInput(fileInput)) {
       return true;
     }
 
@@ -9676,6 +9925,23 @@
       } catch {
         // Some DataTransfer implementations expose dropEffect as read-only.
       }
+      if (verifyWhatsAppBatch) {
+        const verification = verifyWhatsAppSanitizedMultiFileDrop(transfer, sanitizedFiles, originalFiles);
+        if (verification.ok) {
+          debugFileAttachMetadata("file-handoff:whatsapp-multi-file-drop-verified", {
+            fileCount: verification.assignedCount,
+            files: Array.from(sanitizedFiles || []).map(describeFileForDebug)
+          });
+        } else {
+          debugFileAttachMetadata("file-handoff:whatsapp-multi-file-drop-verification-failed", {
+            reason: verification.reason,
+            assignedCount: verification.assignedCount,
+            expectedCount: verification.expectedCount,
+            files: Array.from(sanitizedFiles || []).map(describeFileForDebug)
+          });
+          return false;
+        }
+      }
       return dispatchSanitizedFileEvent(target, "drop", transfer);
     }
     if (context === "paste") {
@@ -9685,8 +9951,9 @@
   }
 
   async function maybeHandleMultiFileInsert(event, input, files, context, processingSite, controls) {
+    const isWhatsAppBatch = isPotentialWhatsAppMultiFileAttach(files, context);
     const plan = globalThis.PWM.FileAttachPipeline.createMultiFileAttachPlan(files, {
-      maxSmallFiles: MAX_MULTI_FILE_SMALL_ATTACHMENTS,
+      maxSmallFiles: isWhatsAppBatch ? 5 : MAX_MULTI_FILE_SMALL_ATTACHMENTS,
       maxLargeFiles: MAX_MULTI_FILE_LARGE_ATTACHMENTS,
       smallMaxBytes: MULTI_FILE_SMALL_MAX_BYTES,
       supportedMaxBytes: MULTI_FILE_SUPPORTED_MAX_BYTES
@@ -9725,6 +9992,29 @@
         summary: blockedBeforeProcessingSummary
       });
       return { handled: true, ok: false, reason: plan.reason };
+    }
+
+    if (isWhatsAppBatch && !isSupportedWhatsAppMultiFileAttach({ files, types: ["Files"], items: [] }, context)) {
+      const blockedBeforeProcessingItems = createBlockedBeforeProcessingItems(files, WHATSAPP_FILE_ATTACH_UNSUPPORTED_REASON);
+      const blockedBeforeProcessingSummary = createMultiFileStatusSummary([], blockedBeforeProcessingItems);
+      controls.failProcessing(WHATSAPP_FILE_ATTACH_UNSUPPORTED_REASON, WHATSAPP_FILE_ATTACH_BLOCK_TITLE);
+      setBadge(WHATSAPP_FILE_ATTACH_BLOCK_TITLE);
+      hideBadgeSoon(4200);
+      await showMessageModal(
+        WHATSAPP_FILE_ATTACH_BLOCK_TITLE,
+        formatMultiFileStatusMessage(blockedBeforeProcessingSummary, {
+          blockedBeforeProcessing: true,
+          reason: WHATSAPP_FILE_ATTACH_UNSUPPORTED_REASON
+        })
+      );
+      refreshBadgeFromCurrentInput();
+      debugFileAttachMetadata("file-handoff:multi-file-blocked", {
+        site: processingSite,
+        reason: WHATSAPP_FILE_ATTACH_UNSUPPORTED_REASON,
+        fileCount: plan.fileCount,
+        summary: blockedBeforeProcessingSummary
+      });
+      return { handled: true, ok: false, reason: WHATSAPP_FILE_ATTACH_UNSUPPORTED_REASON };
     }
 
     showFileProcessingOverlay({
@@ -9780,6 +10070,39 @@
       return { handled: true, ok: false, reason: "multi_file_all_blocked" };
     }
 
+    if (isWhatsAppBatch && blockedItems.length) {
+      const allBlockedSummary = createMultiFileStatusSummary(
+        [],
+        processed.map((item) => ({
+          ...item,
+          status: item.ok ? "blocked" : item.status,
+          code: item.ok ? "whatsapp_batch_blocked_after_peer_failure" : item.code,
+          summary: {
+            ...(item.summary || {}),
+            status: item.ok ? "blocked" : item.summary?.status || item.status,
+            code: item.ok ? "whatsapp_batch_blocked_after_peer_failure" : item.summary?.code || item.code
+          }
+        }))
+      );
+      controls.failProcessing("whatsapp_multi_file_batch_failed", "Raw file upload blocked");
+      setBadge("Raw file upload blocked");
+      hideBadgeSoon(4200);
+      await showMessageModal(
+        "Raw file upload blocked",
+        formatMultiFileStatusMessage(allBlockedSummary)
+      );
+      refreshBadgeFromCurrentInput();
+      debugFileAttachMetadata("file-handoff:multi-file-blocked", {
+        site: processingSite,
+        reason: "whatsapp_multi_file_batch_failed",
+        fileCount: files.length,
+        sanitizedCount: sanitizedItems.length,
+        blockedCount: blockedItems.length,
+        summary: allBlockedSummary
+      });
+      return { handled: true, ok: false, reason: "whatsapp_multi_file_batch_failed" };
+    }
+
     updateFileProcessingOverlay({
       site: processingSite,
       status: "Preparing sanitized file upload...",
@@ -9831,7 +10154,11 @@
       event,
       input,
       sanitizedFiles,
-      context
+      context,
+      {
+        verifyWhatsAppBatch: isWhatsAppBatch,
+        originalFiles: files
+      }
     );
     if (!handoffOk) {
       if (queuePendingMultiFileHandoff()) {
@@ -9924,12 +10251,20 @@
       });
     const supportedWhatsAppImageAttach = isSupportedWhatsAppImageAttach(dataTransfer, context);
     const supportedWhatsAppTextDocumentAttach = isSupportedWhatsAppTextDocumentAttach(dataTransfer, context);
+    const supportedWhatsAppPdfAttach = isSupportedWhatsAppPdfAttach(dataTransfer, context);
+    const supportedWhatsAppDocxAttach = isSupportedWhatsAppDocxAttach(dataTransfer, context);
+    const supportedWhatsAppXlsxAttach = isSupportedWhatsAppXlsxAttach(dataTransfer, context);
+    const potentialWhatsAppMultiFileAttach = isPotentialWhatsAppMultiFileAttach(localTransferFiles, context);
     if (
       isWhatsAppHost() &&
       localTransferFiles.length &&
       !isSupportedWhatsAppClipboardImagePaste(dataTransfer, context) &&
+      !potentialWhatsAppMultiFileAttach &&
       !supportedWhatsAppImageAttach &&
-      !supportedWhatsAppTextDocumentAttach
+      !supportedWhatsAppTextDocumentAttach &&
+      !supportedWhatsAppPdfAttach &&
+      !supportedWhatsAppDocxAttach &&
+      !supportedWhatsAppXlsxAttach
     ) {
       failProcessing(WHATSAPP_FILE_ATTACH_UNSUPPORTED_REASON, WHATSAPP_FILE_ATTACH_BLOCK_TITLE);
       return blockWhatsAppFileAttachment(event);
@@ -10007,7 +10342,11 @@
       consumeInterceptionEvent(event);
     }
     if (
-      (supportedWhatsAppImageAttach || supportedWhatsAppTextDocumentAttach) &&
+      (supportedWhatsAppImageAttach ||
+        supportedWhatsAppTextDocumentAttach ||
+        supportedWhatsAppPdfAttach ||
+        supportedWhatsAppDocxAttach ||
+        supportedWhatsAppXlsxAttach) &&
       event?.target?.tagName === "INPUT" &&
       String(event.target.type || "").toLowerCase() === "file"
     ) {
@@ -10312,6 +10651,9 @@
     const shouldSkipTextFallback =
       localFile.skipTextFallback === true ||
       supportedWhatsAppTextDocumentAttach ||
+      supportedWhatsAppPdfAttach ||
+      supportedWhatsAppDocxAttach ||
+      supportedWhatsAppXlsxAttach ||
       (context === "file-input" && isFirefoxRuntime() && isGeminiHost());
     const preflightPlan = globalThis.PWM.FileAttachPipeline.classifyFileAttachPreflightPlan({
       context,
@@ -10428,6 +10770,18 @@
     if (supportedWhatsAppTextDocumentAttach) {
       payload.allowFileOnlyHandoff = true;
       payload.textDocumentAttachMode = true;
+    }
+    if (supportedWhatsAppPdfAttach) {
+      payload.allowFileOnlyHandoff = true;
+      payload.pdfAttachMode = true;
+    }
+    if (supportedWhatsAppDocxAttach) {
+      payload.allowFileOnlyHandoff = true;
+      payload.docxAttachMode = true;
+    }
+    if (supportedWhatsAppXlsxAttach) {
+      payload.allowFileOnlyHandoff = true;
+      payload.xlsxAttachMode = true;
     }
     const attachFlow = await globalThis.PWM.FileAttachPipeline.runSanitizedFileAttachFlow({
       context,
@@ -10586,7 +10940,14 @@
     }
 
     const localTransferFiles = listLocalTransferFiles(snapshotDataTransfer);
-    if (isWhatsAppHost() && localTransferFiles.length) {
+    const supportedWhatsAppDrop =
+      isSupportedWhatsAppImageAttach(snapshotDataTransfer, "drop") ||
+      isSupportedWhatsAppTextDocumentAttach(snapshotDataTransfer, "drop") ||
+      isSupportedWhatsAppPdfAttach(snapshotDataTransfer, "drop") ||
+      isSupportedWhatsAppDocxAttach(snapshotDataTransfer, "drop") ||
+      isSupportedWhatsAppXlsxAttach(snapshotDataTransfer, "drop") ||
+      isPotentialWhatsAppMultiFileAttach(localTransferFiles, "drop");
+    if (isWhatsAppHost() && localTransferFiles.length && !supportedWhatsAppDrop) {
       rawFileDropInterceptions.add(event);
       await blockWhatsAppFileAttachment(event);
       clearFileDragSession();
@@ -10811,16 +11172,22 @@
       selectedFiles.length === 1 && shouldUseContentFileExtractionPipeline(selectedFiles[0]);
     const hasSupportedWhatsAppAttach =
       isSupportedWhatsAppImageAttach(selectedTransfer, "file-input") ||
-      isSupportedWhatsAppTextDocumentAttach(selectedTransfer, "file-input");
+      isSupportedWhatsAppTextDocumentAttach(selectedTransfer, "file-input") ||
+      isSupportedWhatsAppPdfAttach(selectedTransfer, "file-input") ||
+      isSupportedWhatsAppDocxAttach(selectedTransfer, "file-input") ||
+      isSupportedWhatsAppXlsxAttach(selectedTransfer, "file-input") ||
+      isPotentialWhatsAppMultiFileAttach(selectedFiles, "file-input");
     const selectedTransferPolicy = resolveLocalFileTransferPolicy(selectedTransfer);
     const hasFailClosedProtectedUnsupportedFile =
       shouldFailClosedProtectedUnsupportedFileTransfer(selectedTransferPolicy);
+    const hasWhatsAppFileInputSelection = isWhatsAppHost() && selectedFiles.length > 0;
     if (
       !input &&
       !isGeminiHost() &&
       !hasContentExtractionFile &&
       !hasFailClosedProtectedUnsupportedFile &&
-      !hasSupportedWhatsAppAttach
+      !hasSupportedWhatsAppAttach &&
+      !hasWhatsAppFileInputSelection
     ) {
       if (!(isFirefoxRuntime() && isProtectedFileDropDriver(getCurrentHandoffDriverId()))) return;
     }
@@ -10859,6 +11226,7 @@
         });
       }
     }
+    return result;
   }
 
   function shouldOwnWhatsAppTextSend(text) {

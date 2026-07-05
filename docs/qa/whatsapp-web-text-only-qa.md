@@ -5,8 +5,8 @@ Use only a controlled test chat, such as a self-chat or a test account. Do not u
 ## Scope
 
 - Target: `https://web.whatsapp.com/*`
-- Supported in this checklist: message composer text. Supported image attach/paste and Phase 3A text-document attach paths have separate QA checklists.
-- Unsupported in this text checklist: videos, arbitrary files, multi-file upload, file fallback insertion, and PDF/DOCX/XLSX WhatsApp attach.
+- Supported in this checklist: message composer text. Supported image attach/paste, single-file document attach, and Phase 4 multi-file attach paths have separate QA checklists.
+- Unsupported in this text checklist: videos, arbitrary files, clipboard document/multi-file paste, 6+ file batches, unsupported or failing multi-file batches, and file fallback insertion.
 - Expected fail-closed behavior: if LeakGuard cannot detect the composer, extract text, redact, rewrite, verify, or replay the send safely, nothing is sent.
 
 ## Manual Checklist
@@ -21,8 +21,7 @@ Use only a controlled test chat, such as a self-chat or a test account. Do not u
 8. Confirm only the sanitized message is sent.
 9. Type `LGQA_WHATSAPP_PLACEHOLDER_1 my password is [PWM_2]`.
 10. Click Send once and confirm `[PWM_2]` remains unchanged with no redaction loop.
-11. Try a PDF, DOCX, or XLSX attachment.
-12. Confirm LeakGuard blocks the raw attachment safely and does not attempt sanitized handoff or text fallback insertion.
+11. Confirm XLSX attach QA is covered separately in `docs/qa/whatsapp-web-xlsx-attach-qa.md`.
 
 ## Browser QA Contract
 
@@ -38,12 +37,16 @@ Automated browser QA metadata tracks these required cases:
 - Programmatic replay does not recurse.
 - Second-click retry is not accepted as success.
 - Single supported text-document attach is covered by `docs/qa/whatsapp-web-text-document-attach-qa.md`.
-- PDF/DOCX/XLSX attachment attempts remain blocked.
-- Multi-file attachment attempts remain blocked.
+- Single supported PDF attach is covered by `docs/qa/whatsapp-web-pdf-attach-qa.md`.
+- Single supported DOCX attach is covered by `docs/qa/whatsapp-web-docx-attach-qa.md`.
+- Single supported XLSX attach is covered by `docs/qa/whatsapp-web-xlsx-attach-qa.md`.
+- WhatsApp supports 2-5 sanitized multi-file attach for supported types.
+- WhatsApp blocks 6+ files before read.
+- WhatsApp blocks unsupported or failing multi-file batches all-or-nothing.
 
 ## Root Cause Notes
 
 - WhatsApp Web is a real messaging surface, so risk-gated interception is not enough. WhatsApp text sends now own non-empty send attempts and use the verified replay path even when quick analysis finds no issue.
 - WhatsApp previously shared the file handoff adapter shape used by AI/chat surfaces. That could allow broad sanitized file handoff or sanitized text fallback behavior that is not supported for WhatsApp.
-- The WhatsApp adapter keeps generic file support disabled: no pending attach, no trusted attach button, no upload trigger resolution, no PDF/DOCX/XLSX handoff, and no multi-file handoff.
+- The WhatsApp adapter keeps generic file support disabled: no pending attach, no trusted attach button, no upload trigger resolution, and no generic multi-file handoff. Only narrow sanitized image, text-document, PDF, DOCX, XLSX, and 2-5 supported multi-file attach handoff capabilities are enabled.
 - The shared file handoff flow has a WhatsApp hard stop for generic handoff so future callers cannot accidentally insert sanitized file text into a WhatsApp message.

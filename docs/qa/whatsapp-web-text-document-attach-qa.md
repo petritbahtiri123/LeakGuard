@@ -1,6 +1,6 @@
 # WhatsApp Web Text Document Attach QA
 
-Use this checklist for Phase 3A WhatsApp Web document support. This phase supports exactly one text-based document selected from the attach button: `.txt`, `.env`, `.json`, `.log`, `.md`, and `.csv`.
+Use this checklist for WhatsApp Web text-document support. The single-file path supports one text-based document selected from the attach button: `.txt`, `.env`, `.json`, `.log`, `.md`, and `.csv`. Phase 4 also supports 2-5 sanitized multi-file attach for supported text documents, PDFs, DOCX files, XLSX files, and images.
 
 ## Test Setup
 
@@ -51,21 +51,6 @@ For each supported file:
 5. Confirm the raw secret strings never appear in the preview, composer, page text, debug UI, or error UI.
 6. Send from the WhatsApp preview only after sanitized preview appears.
 
-## Blocked Document Types
-
-Try each file type one at a time:
-
-- `.pdf`
-- `.docx`
-- `.xlsx`
-
-Expected:
-
-- LeakGuard blocks the selection.
-- WhatsApp does not show a raw preview.
-- No file is sent.
-- No raw original filename or raw fake secret appears in the block UI.
-
 ## Unsupported Files
 
 Try unsupported files such as:
@@ -80,9 +65,13 @@ Expected: blocked fail-closed with no raw preview, no send, and no raw filename 
 
 ## Multi-File
 
-Select two or more files, including combinations of supported text documents and supported images.
+Select two or more files, including combinations of supported text documents, supported PDFs, supported DOCX files, supported XLSX files, and supported images.
 
-Expected: blocked fail-closed. Phase 3A does not support multi-file WhatsApp attach.
+Expected:
+
+- 2-5 supported files are sanitized locally and assigned back to WhatsApp only as sanitized `File` objects in input order.
+- 6+ files are blocked before read.
+- Any unsupported or failing file blocks the whole batch all-or-nothing, with no partial handoff.
 
 ## Raw Document Confirmation
 
@@ -101,11 +90,11 @@ After document attach checks, verify these still work:
 - WhatsApp multiline text redaction.
 - WhatsApp clipboard image paste.
 - WhatsApp attach-button image support for exactly one PNG, JPG/JPEG, or WEBP.
+- WhatsApp attach-button PDF support for exactly one rebuilt sanitized PDF.
+- WhatsApp attach-button DOCX support for exactly one rebuilt sanitized DOCX.
+- WhatsApp attach-button XLSX support for exactly one rebuilt sanitized XLSX.
+- WhatsApp attach-button multi-file support for 2-5 supported sanitized files.
 
 ## Still Out Of Scope
 
-- PDF attach support on WhatsApp.
-- DOCX attach support on WhatsApp.
-- XLSX attach support on WhatsApp.
-- Multi-file WhatsApp attach.
 - Raw direct file input passthrough.

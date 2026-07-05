@@ -299,7 +299,16 @@ function getBrowserQaCoverageMatrix({ matrixMode = BROWSER_QA_MATRIX_MODES.FAST 
     },
     whatsAppTextOnly: {
       target: "https://web.whatsapp.com/*",
-      inputPaths: ["send button click", "Enter-to-send", "single text-document attachment", "unsupported file attachment attempt"],
+      inputPaths: [
+        "send button click",
+        "Enter-to-send",
+        "single text-document attachment",
+        "single PDF attachment",
+        "single DOCX attachment",
+        "single XLSX attachment",
+        "multi-file attachment",
+        "unsupported file attachment attempt"
+      ],
       requiredCases: [
         "first click sends sanitized text",
         "Enter sends sanitized text",
@@ -310,9 +319,14 @@ function getBrowserQaCoverageMatrix({ matrixMode = BROWSER_QA_MATRIX_MODES.FAST 
         "rewrite verification failure blocks send",
         "programmatic replay does not recurse",
         "second-click retry is not accepted as success",
-        "single .txt/.env/.json/.log/.md attachment assigns only a sanitized document",
-        "PDF/DOCX/XLSX attachment remains blocked",
-        "multi-file attachment remains blocked"
+        "single .txt/.env/.json/.log/.md/.csv attachment assigns only a sanitized document",
+        "single PDF attachment assigns only a sanitized rebuilt PDF",
+        "single DOCX attachment assigns only a sanitized rebuilt DOCX",
+        "single XLSX attachment assigns only a sanitized rebuilt XLSX",
+        "encrypted/malformed/image-only PDF attachment remains blocked",
+        "2-5 supported multi-file attachments assign only sanitized files",
+        "6+ WhatsApp multi-file attachments block before read",
+        "unsupported or failing WhatsApp multi-file batch blocks all-or-nothing"
       ]
     },
     followUpInputPaths: ["drag/drop text"],

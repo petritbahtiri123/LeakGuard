@@ -1,6 +1,6 @@
 # WhatsApp Web Image Attach QA
 
-Use this checklist for Phase 2 WhatsApp Web image support. This image checklist supports one attach-button image at a time: PNG, JPG/JPEG, or WEBP only. Phase 3A text-document attach QA is covered in `docs/qa/whatsapp-web-text-document-attach-qa.md`.
+Use this checklist for WhatsApp Web image attach support. The single-file image path supports one attach-button image at a time: PNG, JPG/JPEG, or WEBP only. Phase 4 also supports 2-5 sanitized multi-file attach for supported images, text documents, PDFs, DOCX files, and XLSX files.
 
 ## Test setup
 
@@ -44,11 +44,15 @@ Try GIF, BMP, SVG, ICO, or another unsupported image type.
 
 Expected: LeakGuard blocks the attach, shows a fail-closed message, and WhatsApp does not show a preview.
 
-## Multi-file blocked
+## Multi-File
 
 Select two or more files, including two supported images.
 
-Expected: LeakGuard blocks the batch, shows a fail-closed message, and WhatsApp does not show a preview.
+Expected:
+
+- 2-5 supported files are sanitized locally and assigned back to WhatsApp only as sanitized `File` objects in input order.
+- 6+ files are blocked before read.
+- Any unsupported file, OCR failure, or redaction failure blocks the whole batch all-or-nothing, with no partial handoff.
 
 ## Regression checks
 
@@ -58,4 +62,4 @@ Expected: LeakGuard blocks the batch, shows a fail-closed message, and WhatsApp 
 
 ## Out of scope
 
-PDFs, DOCX, XLSX, videos, arbitrary files, and WhatsApp multi-file attach remain unsupported in this image checklist. Single text-document attach checks are covered separately in `docs/qa/whatsapp-web-text-document-attach-qa.md`.
+Videos, arbitrary files, 6+ file batches, unsupported mixed batches, and failing image batches remain blocked fail-closed. Single text-document, single-PDF, single-DOCX, and single-XLSX attach checks are covered separately.

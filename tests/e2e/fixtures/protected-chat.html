@@ -140,7 +140,7 @@
             </div>
           </div>
           <button id="whatsapp-attach-button" data-testid="whatsapp-attach-button" aria-label="Attach" type="button">Attach</button>
-          <input id="whatsapp-file-input" type="file" accept="image/png,image/jpeg,image/webp,.txt,.env,.json,.log,.md,.csv,text/plain,application/json,text/markdown,text/csv" multiple hidden>
+          <input id="whatsapp-file-input" type="file" accept="image/png,image/jpeg,image/webp,.txt,.env,.json,.log,.md,.csv,.pdf,.docx,.xlsx,text/plain,application/json,text/markdown,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" multiple hidden>
           <div id="whatsapp-preview-modal" data-testid="whatsapp-preview-modal" hidden>
             <div id="whatsapp-preview-area" data-testid="whatsapp-preview-area"></div>
             <button id="whatsapp-preview-send-button" data-testid="whatsapp-preview-send-button" type="button">Send image</button>
@@ -228,7 +228,12 @@
             rawPreviewSeen: false,
             rawPreviewBeforeSanitized: false,
             sent: false,
-            files: []
+            source: "",
+            files: [],
+            dropOrder: [],
+            dragenterCount: 0,
+            dragoverCount: 0,
+            dropCount: 0
           }
         };
 
@@ -536,6 +541,27 @@
           return whatsappTextDocumentExtensions.has(extension) && /\[(?:PWM|NET|PUB_HOST)_\d+\]/.test(text);
         }
 
+        function isSanitizedWhatsAppPdf(file, detail) {
+          const text = String(detail?.text || "");
+          return /\.redacted\.pdf$/i.test(file?.name || "") &&
+            file?.type === "application/pdf" &&
+            /\[(?:PWM|NET|PUB_HOST)_\d+\]/.test(text);
+        }
+
+        function isSanitizedWhatsAppDocx(file, detail) {
+          const text = String(detail?.text || "");
+          return /\.redacted\.docx$/i.test(file?.name || "") &&
+            file?.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" &&
+            /\[(?:PWM|NET|PUB_HOST)_\d+\]/.test(text);
+        }
+
+        function isSanitizedWhatsAppXlsx(file, detail) {
+          const text = String(detail?.text || "");
+          return /\.redacted\.xlsx$/i.test(file?.name || "") &&
+            file?.type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" &&
+            /\[(?:PWM|NET|PUB_HOST)_\d+\]/.test(text);
+        }
+
         function summarizePreviewFile(file, detail) {
           return {
             name: file.name,
@@ -543,16 +569,26 @@
             size: file.size,
             sanitized:
               (/\.redacted\.png$/i.test(file.name || "") && file.type === "image/png") ||
-              isSanitizedWhatsAppTextDocument(file, detail)
+              isSanitizedWhatsAppTextDocument(file, detail) ||
+              isSanitizedWhatsAppPdf(file, detail) ||
+              isSanitizedWhatsAppDocx(file, detail) ||
+              isSanitizedWhatsAppXlsx(file, detail)
           };
         }
 
-        async function renderWhatsAppPreview(files) {
+        function dataTransferLooksLikeFiles(dataTransfer) {
+          const types = Array.from(dataTransfer?.types || []);
+          return types.includes("Files") ||
+            Number(dataTransfer?.files?.length || 0) > 0 ||
+            Array.from(dataTransfer?.items || []).some((item) => String(item?.kind || "").toLowerCase() === "file");
+        }
+
+        async function renderWhatsAppPreview(files, source = "input") {
           if (!modeUsesWhatsAppComposer()) return;
           const inputFiles = Array.from(files || []);
-          const details = await recordFiles("input", inputFiles);
+          const details = await recordFiles(source, inputFiles);
           const previewFiles = inputFiles.map((file, index) => summarizePreviewFile(file, details[index]));
-          const sanitized = previewFiles.length === 1 && previewFiles[0].sanitized;
+          const sanitized = previewFiles.length > 0 && previewFiles.every((file) => file.sanitized);
           const rawPreview = previewFiles.length > 0 && !sanitized;
           if (rawPreview) {
             state.whatsappPreview.rawPreviewSeen = true;
@@ -562,7 +598,11 @@
           }
           state.whatsappPreview.visible = previewFiles.length > 0;
           state.whatsappPreview.sanitized = sanitized;
+          state.whatsappPreview.source = source;
           state.whatsappPreview.files = previewFiles;
+          if (source === "drop") {
+            state.whatsappPreview.dropOrder = previewFiles.map((file) => file.name);
+          }
           if (whatsappPreviewModal && whatsappPreviewArea) {
             whatsappPreviewModal.hidden = previewFiles.length === 0;
             whatsappPreviewArea.textContent = details
@@ -570,6 +610,31 @@
               .join("\n");
           }
           renderAppState();
+        }
+
+        function noteWhatsAppDragEvent(type, event) {
+          if (!modeUsesWhatsAppComposer() || !dataTransferLooksLikeFiles(event.dataTransfer)) return;
+          if (type === "dragenter") {
+            state.whatsappPreview.dragenterCount += 1;
+          } else if (type === "dragover") {
+            state.whatsappPreview.dragoverCount += 1;
+          }
+          renderAppState();
+        }
+
+        function scheduleWhatsAppDropPreview(event) {
+          if (!modeUsesWhatsAppComposer() || !dataTransferLooksLikeFiles(event.dataTransfer)) return;
+          const files = Array.from(event.dataTransfer?.files || []);
+          if (!files.length) return;
+          state.whatsappPreview.dropCount += 1;
+          renderAppState();
+          window.setTimeout(() => {
+            if (event.defaultPrevented) {
+              renderAppState();
+              return;
+            }
+            renderWhatsAppPreview(files, "drop");
+          }, 0);
         }
 
         for (const shell of [textareaShell, editableShell, whatsappShell]) {
@@ -605,8 +670,20 @@
           if (!modeUsesWhatsAppComposer()) return;
           if (event.defaultPrevented) return;
           if (event.clipboardData?.files?.length) {
-            renderWhatsAppPreview(event.clipboardData.files);
+            renderWhatsAppPreview(event.clipboardData.files, "paste");
           }
+        }, true);
+
+        document.addEventListener("dragenter", (event) => {
+          noteWhatsAppDragEvent("dragenter", event);
+        }, true);
+
+        document.addEventListener("dragover", (event) => {
+          noteWhatsAppDragEvent("dragover", event);
+        }, true);
+
+        document.addEventListener("drop", (event) => {
+          scheduleWhatsAppDropPreview(event);
         }, true);
 
         form.addEventListener("submit", (event) => {
@@ -638,7 +715,7 @@
             if (text) insertTextAtCursor(text);
             if (event.clipboardData?.files?.length) {
               if (modeUsesWhatsAppComposer()) {
-                renderWhatsAppPreview(event.clipboardData.files);
+                renderWhatsAppPreview(event.clipboardData.files, "paste");
               } else {
                 recordFiles("paste", event.clipboardData.files);
               }
@@ -655,7 +732,7 @@
             whatsappFileInput.click();
           });
           whatsappFileInput.addEventListener("change", (event) => {
-            renderWhatsAppPreview(event.target.files);
+            renderWhatsAppPreview(event.target.files, "input");
           });
         }
 
@@ -672,6 +749,7 @@
         });
 
         dropZone.addEventListener("drop", (event) => {
+          if (modeUsesWhatsAppComposer()) return;
           event.preventDefault();
           recordFiles("drop", event.dataTransfer.files);
         });

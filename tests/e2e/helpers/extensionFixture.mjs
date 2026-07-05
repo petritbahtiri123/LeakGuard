@@ -517,7 +517,7 @@ export async function uploadWhatsAppAttachFile(page, fileOrFiles) {
   await page.setInputFiles("#whatsapp-file-input", files);
 }
 
-export async function dragDropFile(page, fileOrFiles) {
+async function dragDropFileToSelector(page, fileOrFiles, selector) {
   const payloads = serializablePayloads(fileOrFiles);
   const dataTransfer = await page.evaluateHandle((files) => {
     const transfer = new DataTransfer();
@@ -532,11 +532,19 @@ export async function dragDropFile(page, fileOrFiles) {
     return transfer;
   }, payloads);
 
-  const dropZone = page.locator("#drop-zone");
+  const dropZone = page.locator(selector);
   await dropZone.dispatchEvent("dragenter", { dataTransfer });
   await dropZone.dispatchEvent("dragover", { dataTransfer });
   await dropZone.dispatchEvent("drop", { dataTransfer });
   await dataTransfer.dispose();
+}
+
+export async function dragDropFile(page, fileOrFiles) {
+  await dragDropFileToSelector(page, fileOrFiles, "#drop-zone");
+}
+
+export async function dragDropWhatsAppFile(page, fileOrFiles) {
+  await dragDropFileToSelector(page, fileOrFiles, "#whatsapp-composer");
 }
 
 export async function pasteImageFromClipboard(page, file) {

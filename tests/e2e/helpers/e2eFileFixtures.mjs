@@ -25,13 +25,14 @@ function makePdf(text, options = {}) {
     return bufferFromText(`%PDF-1.4\nLGQA_MALFORMED_PDF ${text}\ntruncated`);
   }
 
+  const encryptMarker = options.encrypted ? " /Encrypt 6 0 R" : "";
   const streamText = options.imageOnly
     ? "q\n10 0 0 10 0 0 cm\n/Im1 Do\nQ\n"
     : `BT\n/F1 12 Tf\n72 720 Td\n(${escapePdfText(text)}) Tj\nET\n`;
   const stream = Buffer.from(streamText, "binary");
   return Buffer.concat([
     Buffer.from("%PDF-1.4\n", "binary"),
-    Buffer.from("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n", "binary"),
+    Buffer.from(`1 0 obj\n<< /Type /Catalog /Pages 2 0 R${encryptMarker} >>\nendobj\n`, "binary"),
     Buffer.from("2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n", "binary"),
     Buffer.from("3 0 obj\n<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>\nendobj\n", "binary"),
     Buffer.from(`4 0 obj\n<< /Length ${stream.length} >>\nstream\n`, "binary"),
@@ -148,7 +149,10 @@ export const textFileFixtures = [
 export const documentFileFixtures = [
   (() => {
     const body = textBody("PDF_FILE");
-    return payload("lgqa-pdf-secret.pdf", "application/pdf", makePdf(body.text), body);
+    return payload("lgqa-pdf-secret.pdf", "application/pdf", makePdf(body.text), {
+      ...body,
+      expectedOutputName: "lgqa-pdf-secret.redacted.pdf"
+    });
   })(),
   (() => {
     const body = textBody("DOCX_FILE");
@@ -156,7 +160,10 @@ export const documentFileFixtures = [
       "lgqa-docx-secret.docx",
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
       makeDocx(body.text),
-      body
+      {
+        ...body,
+        expectedOutputName: "lgqa-docx-secret.redacted.docx"
+      }
     );
   })(),
   (() => {
@@ -165,7 +172,10 @@ export const documentFileFixtures = [
       "lgqa-xlsx-secret.xlsx",
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       makeXlsx(body.text),
-      body
+      {
+        ...body,
+        expectedOutputName: "lgqa-xlsx-secret.redacted.xlsx"
+      }
     );
   })()
 ];
@@ -173,6 +183,26 @@ export const documentFileFixtures = [
 export function malformedPdfFixture() {
   const body = textBody("MALFORMED_PDF");
   return payload("lgqa-malformed-secret.pdf", "application/pdf", makePdf(body.text, { malformed: true }), body);
+}
+
+export function encryptedPdfFixture() {
+  const body = textBody("ENCRYPTED_PDF");
+  return payload("lgqa-encrypted-secret.pdf", "application/pdf", makePdf(body.text, { encrypted: true }), body);
+}
+
+export function imageOnlyPdfFixture() {
+  const body = textBody("IMAGE_ONLY_PDF");
+  return payload("lgqa-image-only-secret.pdf", "application/pdf", makePdf(body.text, { imageOnly: true }), body);
+}
+
+export function malformedDocxFixture() {
+  const body = textBody("MALFORMED_DOCX");
+  return payload(
+    "lgqa-malformed-secret.docx",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    bufferFromText(`not a docx ${body.text}`),
+    body
+  );
 }
 
 export function unsupportedFileFixture(options = {}) {
