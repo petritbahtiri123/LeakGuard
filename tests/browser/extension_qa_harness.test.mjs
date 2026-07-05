@@ -75,21 +75,48 @@ const BROWSER_QA_MATRIX_MODES = Object.freeze({
   FULL: "full"
 });
 
-const REQUESTED_SUPPORTED_TEXT_FILE_TYPES = Object.freeze([
-  { extension: ".txt", mimeType: "text/plain", label: "protected-site .txt handoff" },
-  { extension: ".env", mimeType: "text/plain", label: "protected-site .env handoff" },
-  { extension: ".json", mimeType: "application/json", label: "protected-site .json handoff" },
-  { extension: ".yaml", mimeType: "text/yaml", label: "protected-site .yaml handoff" },
-  { extension: ".yml", mimeType: "text/yaml", label: "protected-site .yml handoff" },
-  { extension: ".log", mimeType: "text/plain", label: "protected-site .log handoff" },
-  { extension: ".md", mimeType: "text/markdown", label: "protected-site .md handoff" },
-  { extension: ".html", mimeType: "text/html", label: "protected-site .html handoff" },
-  { extension: ".js", mimeType: "text/javascript", label: "protected-site .js handoff" },
-  { extension: ".ps1", mimeType: "text/plain", label: "protected-site .ps1 handoff" },
-  { extension: ".ini", mimeType: "text/plain", label: "protected-site .ini handoff" },
-  { extension: ".xml", mimeType: "application/xml", label: "protected-site .xml handoff" },
-  { extension: ".csv", mimeType: "text/csv", label: "protected-site .csv handoff" }
-]);
+const TEXT_EXTENSION_MIME_TYPES = Object.freeze({
+  ".css": "text/css",
+  ".csv": "text/csv",
+  ".html": "text/html",
+  ".json": "application/json",
+  ".js": "text/javascript",
+  ".jsx": "text/javascript",
+  ".md": "text/markdown",
+  ".markdown": "text/markdown",
+  ".scss": "text/css",
+  ".ts": "text/typescript",
+  ".tsx": "text/typescript",
+  ".xml": "application/xml",
+  ".yaml": "text/yaml",
+  ".yml": "text/yaml"
+});
+
+function createCanonicalTextFileTypeDefinition(extension) {
+  return {
+    extension,
+    mimeType: TEXT_EXTENSION_MIME_TYPES[extension] || "text/plain",
+    label: `protected-site ${extension} handoff`
+  };
+}
+
+const REQUESTED_SUPPORTED_TEXT_FILE_TYPES = Object.freeze(
+  Array.from(SUPPORTED_TEXT_EXTENSIONS)
+    .sort()
+    .map(createCanonicalTextFileTypeDefinition)
+);
+
+const REQUESTED_SUPPORTED_TEXT_BASENAME_FILE_TYPES = Object.freeze(
+  Array.from(SUPPORTED_TEXT_BASENAMES)
+    .sort()
+    .map((basename) => ({
+      id: basename,
+      extension: "",
+      fileName: basename.charAt(0).toUpperCase() + basename.slice(1),
+      mimeType: "text/plain",
+      label: `protected-site ${basename} handoff`
+    }))
+);
 
 const FAST_TEXT_FILE_EXTENSIONS = new Set([".env", ".json", ".log"]);
 
@@ -236,13 +263,18 @@ function createUnsupportedFileCase(definition) {
 
 function getProtectedSiteTextFileCases({ matrixMode = BROWSER_QA_MATRIX_MODES.FAST } = {}) {
   const normalizedMode = normalizeMatrixMode(matrixMode);
-  return REQUESTED_SUPPORTED_TEXT_FILE_TYPES
+  const extensionCases = REQUESTED_SUPPORTED_TEXT_FILE_TYPES
     .filter((definition) =>
       normalizedMode === BROWSER_QA_MATRIX_MODES.FULL
         ? SUPPORTED_TEXT_EXTENSIONS.has(definition.extension)
         : FAST_TEXT_FILE_EXTENSIONS.has(definition.extension)
     )
     .map(createSupportedFileCase);
+  const basenameCases =
+    normalizedMode === BROWSER_QA_MATRIX_MODES.FULL
+      ? REQUESTED_SUPPORTED_TEXT_BASENAME_FILE_TYPES.map(createSupportedFileCase)
+      : [];
+  return [...extensionCases, ...basenameCases];
 }
 
 function getProtectedSiteDocumentFileCases() {
@@ -319,14 +351,17 @@ function getBrowserQaCoverageMatrix({ matrixMode = BROWSER_QA_MATRIX_MODES.FAST 
         "rewrite verification failure blocks send",
         "programmatic replay does not recurse",
         "second-click retry is not accepted as success",
-        "single .txt/.env/.json/.log/.md/.csv attachment assigns only a sanitized document",
+        "single canonical LeakGuard text-like attachment assigns only a sanitized document",
+        "Dockerfile and Makefile attachments assign only sanitized documents",
         "single PDF attachment assigns only a sanitized rebuilt PDF",
         "single DOCX attachment assigns only a sanitized rebuilt DOCX",
         "single XLSX attachment assigns only a sanitized rebuilt XLSX",
         "encrypted/malformed/image-only PDF attachment remains blocked",
         "2-5 supported multi-file attachments assign only sanitized files",
         "6+ WhatsApp multi-file attachments block before read",
-        "unsupported or failing WhatsApp multi-file batch blocks all-or-nothing"
+        "unsupported extensionless WhatsApp attachment remains blocked",
+        "unsupported or failing WhatsApp multi-file batch blocks all-or-nothing",
+        "WhatsApp drag/drop file attach remains blocked until Phase 5B"
       ]
     },
     followUpInputPaths: ["drag/drop text"],

@@ -140,7 +140,7 @@
             </div>
           </div>
           <button id="whatsapp-attach-button" data-testid="whatsapp-attach-button" aria-label="Attach" type="button">Attach</button>
-          <input id="whatsapp-file-input" type="file" accept="image/png,image/jpeg,image/webp,.txt,.env,.json,.log,.md,.csv,.pdf,.docx,.xlsx,text/plain,application/json,text/markdown,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" multiple hidden>
+          <input id="whatsapp-file-input" type="file" accept="image/png,image/jpeg,image/webp,.txt,.md,.markdown,.env,.log,.json,.yaml,.yml,.pem,.key,.toml,.xml,.csv,.ini,.conf,.cfg,.ps1,.sh,.bash,.zsh,.bat,.cmd,.py,.js,.jsx,.ts,.tsx,.html,.css,.scss,.java,.c,.cpp,.h,.hpp,.cs,.go,.rs,.rb,.php,.sql,.pdf,.docx,.xlsx,text/plain,application/json,text/markdown,text/csv,text/yaml,application/xml,text/html,text/css,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" multiple hidden>
           <div id="whatsapp-preview-modal" data-testid="whatsapp-preview-modal" hidden>
             <div id="whatsapp-preview-area" data-testid="whatsapp-preview-area"></div>
             <button id="whatsapp-preview-send-button" data-testid="whatsapp-preview-send-button" type="button">Send image</button>
@@ -525,7 +525,13 @@
           return details;
         }
 
-        const whatsappTextDocumentExtensions = new Set([".txt", ".env", ".json", ".log", ".md", ".csv"]);
+        const whatsappTextDocumentExtensions = new Set([
+          ".txt", ".md", ".markdown", ".env", ".log", ".json", ".yaml", ".yml", ".pem", ".key",
+          ".toml", ".xml", ".csv", ".ini", ".conf", ".cfg", ".ps1", ".sh", ".bash", ".zsh",
+          ".bat", ".cmd", ".py", ".js", ".jsx", ".ts", ".tsx", ".html", ".css", ".scss",
+          ".java", ".c", ".cpp", ".h", ".hpp", ".cs", ".go", ".rs", ".rb", ".php", ".sql"
+        ]);
+        const whatsappTextDocumentBasenames = new Set(["dockerfile", "makefile"]);
 
         function getFileExtension(name) {
           const normalized = String(name || "").toLowerCase();
@@ -535,10 +541,18 @@
           return normalized.slice(index);
         }
 
+        function getFileBasename(name) {
+          return String(name || "").split(/[\\/]/).pop().toLowerCase();
+        }
+
         function isSanitizedWhatsAppTextDocument(file, detail) {
           const extension = getFileExtension(file?.name);
+          const basename = getFileBasename(file?.name);
           const text = String(detail?.text || "");
-          return whatsappTextDocumentExtensions.has(extension) && /\[(?:PWM|NET|PUB_HOST)_\d+\]/.test(text);
+          return (
+            (whatsappTextDocumentExtensions.has(extension) || whatsappTextDocumentBasenames.has(basename)) &&
+            /\[(?:PWM|NET|PUB_HOST)_\d+\]/.test(text)
+          );
         }
 
         function isSanitizedWhatsAppPdf(file, detail) {

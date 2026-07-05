@@ -53,6 +53,7 @@
     redactSensitiveFileName
   } = FilePasteHelpers || {};
   const FileScanner = globalThis.PWM?.FileScanner || {};
+  const FileTypeRegistry = globalThis.PWM?.FileTypeRegistry || {};
   const {
     canExtractForAdapterHandoff,
     processFileForAdapterHandoff
@@ -275,7 +276,6 @@
     "Raw image upload blocked. This image type is not supported for safe redaction.";
   const SUPPORTED_IMAGE_REDACTION_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
   const SUPPORTED_IMAGE_REDACTION_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
-  const SUPPORTED_WHATSAPP_TEXT_DOCUMENT_ATTACH_EXTENSIONS = new Set([".txt", ".env", ".json", ".log", ".md", ".csv"]);
   const SUPPORTED_WHATSAPP_PDF_ATTACH_EXTENSIONS = new Set([".pdf"]);
   const SUPPORTED_WHATSAPP_PDF_ATTACH_MIME_TYPES = new Set(["application/pdf"]);
   const SUPPORTED_WHATSAPP_DOCX_ATTACH_EXTENSIONS = new Set([".docx"]);
@@ -1266,9 +1266,17 @@
 
   function isSupportedWhatsAppTextDocumentAttachFile(file) {
     if (!file) return false;
-    const extension = getLocalFileExtension(file);
-    if (!SUPPORTED_WHATSAPP_TEXT_DOCUMENT_ATTACH_EXTENSIONS.has(extension)) return false;
-    return typeof FileScanner.isSupportedTextFile !== "function" || FileScanner.isSupportedTextFile(file.name, file.type);
+    if (typeof FileTypeRegistry.classifyFileType === "function") {
+      const classification = FileTypeRegistry.classifyFileType({
+        fileName: file.name,
+        mimeType: file.type
+      });
+      if (classification?.status !== FileTypeRegistry.FILE_TYPE_STATUS?.SUPPORTED || classification?.family !== "text") {
+        return false;
+      }
+      return typeof FileScanner.isSupportedTextFile !== "function" || FileScanner.isSupportedTextFile(file.name, file.type);
+    }
+    return typeof FileScanner.isSupportedTextFile === "function" && FileScanner.isSupportedTextFile(file.name, file.type);
   }
 
   function isSupportedWhatsAppTextDocumentAttach(dataTransfer, context = "file-input") {

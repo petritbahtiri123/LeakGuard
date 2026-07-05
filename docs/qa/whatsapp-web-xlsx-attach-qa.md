@@ -110,10 +110,11 @@ After XLSX attach checks, verify these still work:
 - WhatsApp multiline text redaction.
 - WhatsApp clipboard image paste for PNG, JPG/JPEG, or WEBP.
 - WhatsApp attach-button image support for exactly one PNG, JPG/JPEG, or WEBP.
-- WhatsApp attach-button text-document support for exactly one `.txt`, `.env`, `.json`, `.log`, `.md`, or `.csv`.
+- WhatsApp attach-button text-document support for canonical LeakGuard text-like files, including `Dockerfile` and `Makefile`; unsupported extensionless files remain blocked.
 - WhatsApp attach-button PDF support for exactly one rebuilt sanitized PDF.
 - WhatsApp attach-button DOCX support for exactly one rebuilt sanitized DOCX.
 - WhatsApp attach-button multi-file support for 2-5 supported sanitized files.
+- WhatsApp drag/drop file attach remains blocked until Phase 5B.
 
 ## Still Out Of Scope
 

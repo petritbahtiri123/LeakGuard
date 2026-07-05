@@ -24,6 +24,7 @@ require(path.join(repoRoot, "src/content/adapters/grokAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/xAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/whatsappAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/index.js"));
+require(path.join(repoRoot, "src/shared/fileTypeRegistry.js"));
 require(path.join(repoRoot, "src/content/file_handoff_flow.js"));
 require(path.join(repoRoot, "src/shared/runtime_scripts.js"));
 
@@ -240,8 +241,8 @@ function testUploadAndUnsafeClickPredicatesStayPresent() {
   );
   assert.strictEqual(
     whatsapp.supportsSanitizedDropHandoff,
-    true,
-    "WhatsApp should expose only the narrow sanitized drop handoff capability"
+    false,
+    "WhatsApp drag/drop support should stay disabled until the dedicated drag/drop phase"
   );
   assert.strictEqual(
     whatsapp.supportsMultiFileHandoff,

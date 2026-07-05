@@ -59,7 +59,8 @@ Expected:
 1. Paste a PNG/JPG/WEBP image from the clipboard into WhatsApp and confirm the Phase 1 clipboard path still works or fails closed safely.
 2. Send a normal text message with synthetic secrets and confirm text redaction still works.
 3. Send multiline text with synthetic secrets and confirm line breaks and redaction are preserved.
+4. Confirm text-document attach still supports canonical LeakGuard text-like files, including `Dockerfile` and `Makefile`, and blocks unsupported extensionless files.
 
 ## Out of scope
 
-Videos, arbitrary files, 6+ file batches, unsupported mixed batches, and failing image batches remain blocked fail-closed. Single text-document, single-PDF, single-DOCX, and single-XLSX attach checks are covered separately.
+Videos, arbitrary files, drag/drop file attach until Phase 5B, file paste, 6+ file batches, unsupported mixed batches, and failing image batches remain blocked fail-closed. Single text-document, single-PDF, single-DOCX, and single-XLSX attach checks are covered separately.

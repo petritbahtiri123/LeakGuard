@@ -16,7 +16,7 @@
       supportsSanitizedDocxAttachHandoff: true,
       supportsSanitizedXlsxAttachHandoff: true,
       supportsSanitizedMultiFileAttachHandoff: true,
-      supportsSanitizedDropHandoff: true,
+      supportsSanitizedDropHandoff: false,
       supportsMultiFileHandoff: false,
       supportsDirectDropReplay: false,
       supportsPendingAttach: false,

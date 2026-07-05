@@ -6,41 +6,41 @@
 - Confirm LeakGuard is enabled for `https://web.whatsapp.com/`.
 - Open a disposable WhatsApp Web chat or the local WhatsApp-like E2E fixture.
 - Keep DevTools open only for metadata-only checks. Do not log raw file contents or real secrets.
-- For every case, confirm the raw file preview never appears before the sanitized preview.
+- Phase 5A expectation: drag/drop file attach is not supported yet. For every case, confirm LeakGuard blocks the drop before WhatsApp previews or receives files.
 
 ## Single-File Drop
 
-1. Drop one supported text-like file, such as `.txt`, `.env`, `.json`, `.log`, `.md`, or `.csv`.
-2. Expected: LeakGuard consumes the raw drop, sanitizes locally, and WhatsApp preview receives only the sanitized file.
-3. Confirm placeholders such as `[PWM_1]` appear in the sanitized file content.
+1. Drop one canonical text-like file, such as `.yaml`, `.pem`, `.ps1`, `.py`, `.sql`, `Dockerfile`, or `Makefile`.
+2. Expected: LeakGuard consumes and blocks the raw drop.
+3. Expected: WhatsApp shows no raw preview, no sanitized preview, no send, and no file-event handoff.
 4. Confirm the original raw secret text is not visible in the preview, composer, page, logs, or file-event state.
 
 ## Two-File Drop
 
 1. Drop two supported files together.
-2. Expected: both files sanitize independently.
-3. Expected: preview order matches input order.
-4. Expected: no partial preview appears while processing.
+2. Expected: LeakGuard blocks before handoff.
+3. Expected: no preview appears and no partial file reaches WhatsApp.
+4. Expected: failure output is metadata-only.
 
 ## Five-File Drop
 
 1. Drop five supported files together.
 2. Use a mixed batch when possible: text-like, PDF, DOCX, XLSX, and another text-like file.
-3. Expected: all five files sanitize locally.
-4. Expected: preview order matches input order.
-5. Expected: only sanitized `File` objects reach WhatsApp.
+3. Expected: LeakGuard blocks before handoff.
+4. Expected: no raw or sanitized preview appears.
+5. Expected: WhatsApp receives no `File` objects.
 
 ## Mixed Supported Files
 
 Use combinations of:
 
 - PNG, JPG, JPEG, WEBP
-- TXT, ENV, JSON, LOG, MD, CSV
+- canonical LeakGuard text-like files, including `Dockerfile` and `Makefile`
 - PDF
 - DOCX
 - XLSX
 
-Expected: every supported file is sanitized through the same extraction/redaction/rebuild or image OCR/redaction pipeline used by attach-button flow.
+Expected: every mixed drag/drop batch remains blocked until Phase 5B. The attach-button path covers sanitized processing for the supported file families.
 
 ## Six-File Block
 
@@ -69,6 +69,7 @@ For every drag/drop case:
 - `rawPreviewBeforeSanitized` must remain false.
 - No original filename containing unsafe text should appear in user-visible state.
 - Raw file content must not appear in the composer, preview, sent messages, logs, debug output, or fixture file events.
+- No sanitized drag/drop preview is expected in Phase 5A.
 
 ## Attach-Button Regression
 

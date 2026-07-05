@@ -1,6 +1,6 @@
 # WhatsApp Web Text Document Attach QA
 
-Use this checklist for WhatsApp Web text-document support. The single-file path supports one text-based document selected from the attach button: `.txt`, `.env`, `.json`, `.log`, `.md`, and `.csv`. Phase 4 also supports 2-5 sanitized multi-file attach for supported text documents, PDFs, DOCX files, XLSX files, and images.
+Use this checklist for WhatsApp Web text-document support. The attach-button path supports canonical LeakGuard text-like files from `src/shared/fileTypeRegistry.js`, including extensionless `Dockerfile` and `Makefile`. Phase 5A also supports 2-5 sanitized multi-file attach for supported text documents, PDFs, DOCX files, XLSX files, and images.
 
 ## Test Setup
 
@@ -18,11 +18,48 @@ Use a private test chat, a self-chat, or a dedicated QA group with no real recip
 Create local files with safe names such as:
 
 - `lgqa-wa-doc.txt`
-- `lgqa-wa-doc.env`
-- `lgqa-wa-doc.json`
-- `lgqa-wa-doc.log`
 - `lgqa-wa-doc.md`
+- `lgqa-wa-doc.markdown`
+- `lgqa-wa-doc.env`
+- `lgqa-wa-doc.log`
+- `lgqa-wa-doc.json`
+- `lgqa-wa-doc.yaml`
+- `lgqa-wa-doc.yml`
+- `lgqa-wa-doc.pem`
+- `lgqa-wa-doc.key`
+- `lgqa-wa-doc.toml`
+- `lgqa-wa-doc.xml`
 - `lgqa-wa-doc.csv`
+- `lgqa-wa-doc.ini`
+- `lgqa-wa-doc.conf`
+- `lgqa-wa-doc.cfg`
+- `lgqa-wa-doc.ps1`
+- `lgqa-wa-doc.sh`
+- `lgqa-wa-doc.bash`
+- `lgqa-wa-doc.zsh`
+- `lgqa-wa-doc.bat`
+- `lgqa-wa-doc.cmd`
+- `lgqa-wa-doc.py`
+- `lgqa-wa-doc.js`
+- `lgqa-wa-doc.jsx`
+- `lgqa-wa-doc.ts`
+- `lgqa-wa-doc.tsx`
+- `lgqa-wa-doc.html`
+- `lgqa-wa-doc.css`
+- `lgqa-wa-doc.scss`
+- `lgqa-wa-doc.java`
+- `lgqa-wa-doc.c`
+- `lgqa-wa-doc.cpp`
+- `lgqa-wa-doc.h`
+- `lgqa-wa-doc.hpp`
+- `lgqa-wa-doc.cs`
+- `lgqa-wa-doc.go`
+- `lgqa-wa-doc.rs`
+- `lgqa-wa-doc.rb`
+- `lgqa-wa-doc.php`
+- `lgqa-wa-doc.sql`
+- `Dockerfile`
+- `Makefile`
 
 Example `.env` body:
 
@@ -55,6 +92,8 @@ For each supported file:
 
 Try unsupported files such as:
 
+- extensionless files that are not `Dockerfile` or `Makefile`
+- MIME-only text files with unsupported names
 - `.exe`
 - `.bin`
 - `.gif`
@@ -98,3 +137,5 @@ After document attach checks, verify these still work:
 ## Still Out Of Scope
 
 - Raw direct file input passthrough.
+- WhatsApp drag/drop file attach. Keep drag/drop blocked until Phase 5B.
+- WhatsApp file paste.

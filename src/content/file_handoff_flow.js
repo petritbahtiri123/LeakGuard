@@ -17,6 +17,7 @@
       documentRef = typeof document !== "undefined" ? document : null,
       dispatchSanitizedFileEvent = () => false,
       downloadGeminiSanitizedFileFallback = async () => false,
+      FileTypeRegistry = globalThis.PWM?.FileTypeRegistry || {},
       assignSafeFileAttachErrorMetadata = noop,
       emitDebug = noop,
       findGeminiFileInput = () => ({ fileInput: null }),
@@ -50,12 +51,6 @@
       tryGeminiSanitizedFileAttach = async () => false
     } = deps;
     const WHATSAPP_FILE_ATTACH_UNSUPPORTED_REASON = "whatsapp_file_attachments_unsupported";
-    const SUPPORTED_WHATSAPP_TEXT_DOCUMENT_EXTENSIONS = new Set([".txt", ".env", ".json", ".log", ".md", ".csv"]);
-    const BLOCKED_WHATSAPP_TEXT_DOCUMENT_MIME_TYPES = new Set([
-      "application/pdf",
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    ]);
     const WHATSAPP_PDF_MIME_TYPE = "application/pdf";
     const WHATSAPP_DOCX_MIME_TYPE =
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -115,12 +110,14 @@
     }
 
     function isSanitizedTextDocumentFile(file) {
-      const extension = getFileExtension(file);
-      const mimeType = getMimeType(file);
+      if (!file || typeof FileTypeRegistry.classifyFileType !== "function") return false;
+      const classification = FileTypeRegistry.classifyFileType({
+        fileName: file.name,
+        mimeType: file.type
+      });
       return Boolean(
-        file &&
-          SUPPORTED_WHATSAPP_TEXT_DOCUMENT_EXTENSIONS.has(extension) &&
-          !BLOCKED_WHATSAPP_TEXT_DOCUMENT_MIME_TYPES.has(mimeType)
+        classification?.status === FileTypeRegistry.FILE_TYPE_STATUS?.SUPPORTED &&
+          classification?.family === "text"
       );
     }
 
@@ -143,7 +140,7 @@
       if (capabilities.pdfCapable && (extension === ".pdf" || mimeType === WHATSAPP_PDF_MIME_TYPE)) return "pdf";
       if (capabilities.docxCapable && (extension === ".docx" || mimeType === WHATSAPP_DOCX_MIME_TYPE)) return "docx";
       if (capabilities.xlsxCapable && (extension === ".xlsx" || mimeType === WHATSAPP_XLSX_MIME_TYPE)) return "xlsx";
-      if (capabilities.textDocumentCapable && SUPPORTED_WHATSAPP_TEXT_DOCUMENT_EXTENSIONS.has(extension)) {
+      if (capabilities.textDocumentCapable && isSanitizedTextDocumentFile(file)) {
         return "text-document";
       }
       if (capabilities.pdfCapable) return "pdf";
