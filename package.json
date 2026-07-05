@@ -45,6 +45,8 @@
     "build": "npm run build:all",
     "prebuild:chrome": "npm run prepare:build",
     "build:chrome": "node scripts/build-extension.mjs --browser chrome --mode consumer",
+    "prebuild:chrome-debug": "npm run prepare:build",
+    "build:chrome-debug": "node scripts/build-extension.mjs --browser chrome --mode debug",
     "prebuild:chrome-enterprise": "npm run prepare:build",
     "build:chrome-enterprise": "node scripts/build-extension.mjs --browser chrome --mode enterprise",
     "prebuild:firefox": "npm run prepare:build",
