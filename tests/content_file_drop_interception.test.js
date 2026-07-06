@@ -23,6 +23,7 @@ const adapterSourceFiles = [
   "src/content/adapters/geminiAdapter.js",
   "src/content/adapters/claudeAdapter.js",
   "src/content/adapters/grokAdapter.js",
+  "src/content/adapters/grokFileHandoff.js",
   "src/content/adapters/xAdapter.js",
   "src/content/adapters/whatsappAdapter.js",
   "src/content/adapters/index.js"
@@ -80,6 +81,7 @@ require(path.join(repoRoot, "src/content/adapters/geminiDiagnosticsAdapter.js"))
 require(path.join(repoRoot, "src/content/adapters/geminiAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/claudeAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/grokAdapter.js"));
+require(path.join(repoRoot, "src/content/adapters/grokFileHandoff.js"));
 require(path.join(repoRoot, "src/content/adapters/xAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/whatsappAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/index.js"));
@@ -1075,6 +1077,7 @@ function createHarness(overrides = {}) {
     FileProcessingUi: globalThis.PWM.FileProcessingUi || {},
     WhatsAppCapabilities: globalThis.PWM.WhatsAppCapabilities || {},
     WhatsAppTextFlow: globalThis.PWM.WhatsAppTextFlow || {},
+    GrokFileHandoff: globalThis.PWM.GrokFileHandoff || {},
     StreamingFileRedactor: globalThis.PWM.StreamingFileRedactor || {},
     PLACEHOLDER_TOKEN_REGEX: globalThis.PWM.PLACEHOLDER_TOKEN_REGEX,
     ANY_PLACEHOLDER_TOKEN_REGEX: globalThis.PWM.ANY_PLACEHOLDER_TOKEN_REGEX,
@@ -1321,6 +1324,7 @@ function createHarness(overrides = {}) {
       "let fileDropInterception = null;",
       "let fileInputInterception = null;",
       "let fileProcessingUi = null;",
+      "let grokFileHandoff = null;",
       "let whatsAppCapabilities = null;",
       "let whatsAppTextFlow = null;",
       "let syntheticFileListCapabilityCache = null;",
@@ -1515,6 +1519,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "sanitizeDownloadFileNameSegment"),
       extractFunctionSource(contentSource, "logSanitizedFileHandoffFailure"),
       extractFunctionSource(contentSource, "performPendingGeminiUserAttach"),
+      extractFunctionSource(contentSource, "getGrokFileHandoff"),
       extractFunctionSource(contentSource, "findGrokUploadButton"),
       extractFunctionSource(contentSource, "openGrokUploadButtonSafely"),
       extractFunctionSource(contentSource, "waitForGrokPendingFileInput"),
@@ -2202,6 +2207,7 @@ function createHandoffHarness({
     FilePasteHelpers: globalThis.PWM.FilePasteHelpers,
     FileDropInterception: globalThis.PWM.FileDropInterception || {},
     FileProcessingUi: globalThis.PWM.FileProcessingUi || {},
+    GrokFileHandoff: globalThis.PWM.GrokFileHandoff || {},
     navigator: { userAgent },
     location: { hostname },
     currentPublicState: {
@@ -2297,6 +2303,7 @@ function createHandoffHarness({
       "let pendingGenericSanitizedFileHandoff = null;",
       "let pendingGenericSanitizedFileTimer = 0;",
       "let fileProcessingUi = null;",
+      "let grokFileHandoff = null;",
       "let fileDropInterception = null;",
       "let syntheticFileListCapabilityCache = null;",
       "let inputFileAssignmentCapabilityCache = null;",
@@ -2362,6 +2369,7 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "hasGeminiSanitizedDownloadFallback"),
       extractFunctionSource(contentSource, "logSanitizedFileHandoffFailure"),
       extractFunctionSource(contentSource, "performPendingGeminiUserAttach"),
+      extractFunctionSource(contentSource, "getGrokFileHandoff"),
       extractFunctionSource(contentSource, "findGrokUploadButton"),
       extractFunctionSource(contentSource, "openGrokUploadButtonSafely"),
       extractFunctionSource(contentSource, "waitForGrokPendingFileInput"),

@@ -84,6 +84,7 @@
     "content/adapters/geminiAdapter.js",
     "content/adapters/claudeAdapter.js",
     "content/adapters/grokAdapter.js",
+    "content/adapters/grokFileHandoff.js",
     "content/adapters/xAdapter.js",
     "content/adapters/whatsappAdapter.js",
     "content/adapters/index.js",

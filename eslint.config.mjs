@@ -34,6 +34,7 @@ const contentScriptHarnessBaseline = exactNames([
   "countVerificationLineBreaks",
   "formatGeminiSanitizedFileFallbackText",
   "geminiFallbackLanguageFromFileName",
+  "getGrokUploadClickCandidates",
   "getPendingGeminiSanitizedFileHandoffDebug",
   "getPendingGrokSanitizedFileHandoffDebug",
   "handOffPrimedGeminiFirefoxUploadTarget",
@@ -45,6 +46,7 @@ const contentScriptHarnessBaseline = exactNames([
   "isHighConfidenceRewriteFinding",
   "isOpenAiChatHost",
   "isReasonablyCloseRewriteLength",
+  "openGrokUploadButtonSafely",
   "isSupportedWhatsAppDocxAttachFile",
   "isSupportedWhatsAppMultiFileAttachFile",
   "isSupportedWhatsAppPdfAttachFile",
@@ -57,9 +59,11 @@ const contentScriptHarnessBaseline = exactNames([
   "primeGeminiFirefoxUploadTarget",
   "processLocalFileForSanitizedBatch",
   "samePlaceholderTokenSet",
+  "scoreGrokFileInput",
   "summarizeMultiFileItem",
   "summarizeVerificationCandidate",
-  "waitForGeminiUploadMenuInput"
+  "waitForGeminiUploadMenuInput",
+  "waitForGrokPendingFileInput"
 ]);
 
 export default defineConfig([
