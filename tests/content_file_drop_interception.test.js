@@ -21,6 +21,7 @@ const adapterSourceFiles = [
   "src/content/adapters/openaiAdapter.js",
   "src/content/adapters/geminiDiagnosticsAdapter.js",
   "src/content/adapters/geminiAdapter.js",
+  "src/content/adapters/geminiUploadDiscovery.js",
   "src/content/adapters/claudeAdapter.js",
   "src/content/adapters/grokAdapter.js",
   "src/content/adapters/grokFileHandoff.js",
@@ -79,6 +80,7 @@ require(path.join(repoRoot, "src/content/adapters/chatgptAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/openaiAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/geminiDiagnosticsAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/geminiAdapter.js"));
+require(path.join(repoRoot, "src/content/adapters/geminiUploadDiscovery.js"));
 require(path.join(repoRoot, "src/content/adapters/claudeAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/grokAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/grokFileHandoff.js"));
@@ -1077,6 +1079,7 @@ function createHarness(overrides = {}) {
     FileProcessingUi: globalThis.PWM.FileProcessingUi || {},
     WhatsAppCapabilities: globalThis.PWM.WhatsAppCapabilities || {},
     WhatsAppTextFlow: globalThis.PWM.WhatsAppTextFlow || {},
+    GeminiUploadDiscovery: globalThis.PWM.GeminiUploadDiscovery || {},
     GrokFileHandoff: globalThis.PWM.GrokFileHandoff || {},
     StreamingFileRedactor: globalThis.PWM.StreamingFileRedactor || {},
     PLACEHOLDER_TOKEN_REGEX: globalThis.PWM.PLACEHOLDER_TOKEN_REGEX,
@@ -1324,6 +1327,7 @@ function createHarness(overrides = {}) {
       "let fileDropInterception = null;",
       "let fileInputInterception = null;",
       "let fileProcessingUi = null;",
+      "let geminiUploadDiscovery = null;",
       "let grokFileHandoff = null;",
       "let whatsAppCapabilities = null;",
       "let whatsAppTextFlow = null;",
@@ -1574,6 +1578,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "findGeminiFileDataInputInNode"),
       extractFunctionSource(contentSource, "findGeminiFileDataInputInMutations"),
       extractFunctionSource(contentSource, "createGeminiFirefoxFilePickerGuard"),
+      extractFunctionSource(contentSource, "getGeminiUploadDiscovery"),
       extractFunctionSource(contentSource, "openGeminiUploadMenuSafely"),
       extractFunctionSource(contentSource, "isSafeGeminiUploadFilesMenuItem"),
       extractFunctionSource(contentSource, "collectGeminiUploadFilesMenuItemsFromRoot"),
@@ -2207,6 +2212,7 @@ function createHandoffHarness({
     FilePasteHelpers: globalThis.PWM.FilePasteHelpers,
     FileDropInterception: globalThis.PWM.FileDropInterception || {},
     FileProcessingUi: globalThis.PWM.FileProcessingUi || {},
+    GeminiUploadDiscovery: globalThis.PWM.GeminiUploadDiscovery || {},
     GrokFileHandoff: globalThis.PWM.GrokFileHandoff || {},
     navigator: { userAgent },
     location: { hostname },
@@ -2303,6 +2309,7 @@ function createHandoffHarness({
       "let pendingGenericSanitizedFileHandoff = null;",
       "let pendingGenericSanitizedFileTimer = 0;",
       "let fileProcessingUi = null;",
+      "let geminiUploadDiscovery = null;",
       "let grokFileHandoff = null;",
       "let fileDropInterception = null;",
       "let syntheticFileListCapabilityCache = null;",
@@ -2444,6 +2451,7 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "findGeminiFileDataInputInNode"),
       extractFunctionSource(contentSource, "findGeminiFileDataInputInMutations"),
       extractFunctionSource(contentSource, "createGeminiFirefoxFilePickerGuard"),
+      extractFunctionSource(contentSource, "getGeminiUploadDiscovery"),
       extractFunctionSource(contentSource, "openGeminiUploadMenuSafely"),
       extractFunctionSource(contentSource, "isSafeGeminiUploadFilesMenuItem"),
       extractFunctionSource(contentSource, "collectGeminiUploadFilesMenuItemsFromRoot"),

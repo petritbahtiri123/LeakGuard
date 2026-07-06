@@ -67,6 +67,7 @@
   const WhatsAppCapabilities = globalThis.PWM?.WhatsAppCapabilities || {};
   const WhatsAppTextFlow = globalThis.PWM?.WhatsAppTextFlow || {};
   const WhatsAppSelectors = globalThis.PWM?.WhatsAppSelectors || {};
+  const GeminiUploadDiscovery = globalThis.PWM?.GeminiUploadDiscovery || {};
   const GrokFileHandoff = globalThis.PWM?.GrokFileHandoff || {};
   const {
     canExtractForAdapterHandoff,
@@ -180,6 +181,7 @@
   };
   let contentModalUi = null;
   let contentStatusUi = null;
+  let geminiUploadDiscovery = null;
   let grokFileHandoff = null;
   let bypassNextSubmit = false;
   let bypassNextSendButtonClick = false;
@@ -5666,249 +5668,99 @@
     };
   }
 
-  function openGeminiUploadMenuSafely(menuButton) {
-    if (!isSafeGeminiUploadMenuButton(menuButton) || isFileInputElement(menuButton)) return false;
-    try {
-      for (const type of ["pointerdown", "mousedown", "mouseup", "click"]) {
-        menuButton.dispatchEvent(createGeminiUploadMenuEvent(type));
-      }
-      return true;
-    } catch {
-      return false;
+  function getGeminiUploadDiscovery() {
+    if (geminiUploadDiscovery) return geminiUploadDiscovery;
+    if (typeof GeminiUploadDiscovery.createGeminiUploadDiscovery !== "function") {
+      geminiUploadDiscovery = Object.freeze({
+        openGeminiUploadMenuSafely: () => false,
+        isSafeGeminiUploadFilesMenuItem: () => false,
+        collectGeminiUploadFilesMenuItemsFromRoot: () => {},
+        findGeminiUploadFilesMenuItem: () => null,
+        openGeminiUploadFilesMenuItemSafely: () => false,
+        isGeminiHiddenFileSelectorTrigger: () => false,
+        collectGeminiHiddenFileSelectorTriggersFromRoot: () => {},
+        findGeminiHiddenFileSelectorTrigger: () => null,
+        findGeminiHiddenFileSelectorTriggerInNode: () => null,
+        findGeminiHiddenFileSelectorTriggerInMutations: () => null,
+        activateGeminiHiddenFileSelectorTriggerSafely: () => false,
+        waitForGeminiUploadFilesMenuItem: async () => null,
+        isLikelyGeminiUploadClickTarget: () => false,
+        isRejectedGeminiUploadMenuItem: () => false,
+        scoreGeminiUploadMenuItem: () => 0,
+        discoverGeminiUploadOverlayItem: () => null,
+        isForbiddenGeminiUploadButton: () => true,
+        isAllowedGeminiUploadMenuOpener: () => false,
+        clickElementSafely: () => false
+      });
+      return geminiUploadDiscovery;
     }
+
+    geminiUploadDiscovery = GeminiUploadDiscovery.createGeminiUploadDiscovery({
+      documentRef: document,
+      MutationObserverRef: typeof MutationObserver === "function" ? MutationObserver : null,
+      MouseEventRef: typeof MouseEvent === "function" ? MouseEvent : null,
+      setTimeoutFn: setTimeout,
+      clearTimeoutFn: clearTimeout,
+      isGeminiHost,
+      isFileInputElement,
+      normalizeTarget,
+      describeElementForDebug,
+      createGeminiUploadMenuEvent,
+      isSafeGeminiUploadMenuButton,
+      isGeminiUploadMenuButtonVisible,
+      hasGeminiUploadMenuIntent,
+      isUnsafeGeminiUploadMenuButton,
+      isGeminiSourceUploadIcon
+    });
+    return geminiUploadDiscovery;
+  }
+
+  function openGeminiUploadMenuSafely(menuButton) {
+    return getGeminiUploadDiscovery().openGeminiUploadMenuSafely(menuButton);
   }
 
   function isSafeGeminiUploadFilesMenuItem(candidate) {
-    if (!candidate || String(candidate.tagName || "").toUpperCase() !== "BUTTON") return false;
-    if (candidate.disabled || isFileInputElement(candidate)) return false;
-    const meta = describeElementForDebug(candidate);
-    const role = meta?.role || candidate.getAttribute?.("role") || "";
-    const label = meta?.ariaLabel || "";
-    const text = meta?.textSnippet || "";
-    const testId = candidate.getAttribute?.("data-test-id") || candidate.dataset?.testId || "";
-    if (testId === "local-images-files-uploader-button") return true;
-    return role === "menuitem" && (/upload files/i.test(label) || /^upload files$/i.test(text));
+    return getGeminiUploadDiscovery().isSafeGeminiUploadFilesMenuItem(candidate);
   }
 
   function collectGeminiUploadFilesMenuItemsFromRoot(root, candidates, seen, visitedRoots) {
-    if (!root || visitedRoots.has(root)) return;
-    visitedRoots.add(root);
-
-    const selectors = [
-      'button[data-test-id="local-images-files-uploader-button"]',
-      'button[role="menuitem"][aria-label*="Upload files"]',
-      '[role="menuitem"]',
-      "button"
-    ];
-    for (const selector of selectors) {
-      try {
-        root.querySelectorAll?.(selector).forEach((candidate) => {
-          if (!candidate || seen.has(candidate)) return;
-          seen.add(candidate);
-          candidates.push(candidate);
-        });
-      } catch {
-        // Selector support varies across synthetic and host-controlled roots.
-      }
-    }
-
-    let elements = [];
-    try {
-      elements = Array.from(root.querySelectorAll?.("*") || []);
-    } catch {
-      elements = [];
-    }
-    elements.forEach((element) => {
-      if (element?.shadowRoot) {
-        collectGeminiUploadFilesMenuItemsFromRoot(element.shadowRoot, candidates, seen, visitedRoots);
-      }
-    });
+    return getGeminiUploadDiscovery().collectGeminiUploadFilesMenuItemsFromRoot(root, candidates, seen, visitedRoots);
   }
 
   function findGeminiUploadFilesMenuItem() {
-    if (!isGeminiHost()) return null;
-    const candidates = [];
-    collectGeminiUploadFilesMenuItemsFromRoot(document, candidates, new WeakSet(), new WeakSet());
-    const overlayItem = discoverGeminiUploadOverlayItem();
-    return (
-      candidates.find((candidate) => {
-        const testId = candidate.getAttribute?.("data-test-id") || candidate.dataset?.testId || "";
-        return testId === "local-images-files-uploader-button" && isSafeGeminiUploadFilesMenuItem(candidate);
-      }) ||
-      candidates.find((candidate) => isSafeGeminiUploadFilesMenuItem(candidate)) ||
-      (isSafeGeminiUploadFilesMenuItem(overlayItem) ? overlayItem : null) ||
-      null
-    );
+    return getGeminiUploadDiscovery().findGeminiUploadFilesMenuItem();
   }
 
   function openGeminiUploadFilesMenuItemSafely(menuItem) {
-    if (!isSafeGeminiUploadFilesMenuItem(menuItem) || isFileInputElement(menuItem)) return false;
-    try {
-      for (const type of ["pointerdown", "mousedown", "mouseup", "click"]) {
-        menuItem.dispatchEvent(createGeminiUploadMenuEvent(type));
-      }
-      return true;
-    } catch {
-      return false;
-    }
+    return getGeminiUploadDiscovery().openGeminiUploadFilesMenuItemSafely(menuItem);
   }
 
   function isGeminiHiddenFileSelectorTrigger(candidate) {
-    if (!candidate || String(candidate.tagName || "").toUpperCase() !== "BUTTON") return false;
-    if (candidate.disabled || isFileInputElement(candidate)) return false;
-    const className = String(candidate.className || candidate.getAttribute?.("class") || "");
-    return /\bhidden-local-file-image-selector-button\b/.test(className);
+    return getGeminiUploadDiscovery().isGeminiHiddenFileSelectorTrigger(candidate);
   }
 
   function collectGeminiHiddenFileSelectorTriggersFromRoot(root, candidates, seen, visitedRoots) {
-    if (!root || visitedRoots.has(root)) return;
-    visitedRoots.add(root);
-
-    const selectors = [
-      "button.hidden-local-file-image-selector-button[xapfileselectortrigger]",
-      ".hidden-local-file-image-selector-button[xapfileselectortrigger]",
-      "button.hidden-local-file-image-selector-button",
-      ".hidden-local-file-image-selector-button"
-    ];
-    for (const selector of selectors) {
-      try {
-        root.querySelectorAll?.(selector).forEach((candidate) => {
-          if (!candidate || seen.has(candidate) || !isGeminiHiddenFileSelectorTrigger(candidate)) return;
-          seen.add(candidate);
-          candidates.push(candidate);
-        });
-      } catch {
-        // Selector support varies across synthetic and host-controlled roots.
-      }
-    }
-
-    let elements = [];
-    try {
-      elements = Array.from(root.querySelectorAll?.("*") || []);
-    } catch {
-      elements = [];
-    }
-    elements.forEach((element) => {
-      if (element?.shadowRoot) {
-        collectGeminiHiddenFileSelectorTriggersFromRoot(element.shadowRoot, candidates, seen, visitedRoots);
-      }
-    });
+    return getGeminiUploadDiscovery().collectGeminiHiddenFileSelectorTriggersFromRoot(root, candidates, seen, visitedRoots);
   }
 
   function findGeminiHiddenFileSelectorTrigger() {
-    if (!isGeminiHost()) return null;
-    const candidates = [];
-    collectGeminiHiddenFileSelectorTriggersFromRoot(document, candidates, new WeakSet(), new WeakSet());
-    return candidates.find(isGeminiHiddenFileSelectorTrigger) || null;
+    return getGeminiUploadDiscovery().findGeminiHiddenFileSelectorTrigger();
   }
 
   function findGeminiHiddenFileSelectorTriggerInNode(node) {
-    if (!isGeminiHost() || !node || typeof node !== "object") return null;
-    const candidate = normalizeTarget(node);
-    if (isGeminiHiddenFileSelectorTrigger(candidate)) return candidate;
-
-    const candidates = [];
-    const seen = new WeakSet();
-    const visitedRoots = new WeakSet();
-    collectGeminiHiddenFileSelectorTriggersFromRoot(node, candidates, seen, visitedRoots);
-    if (node.shadowRoot) {
-      collectGeminiHiddenFileSelectorTriggersFromRoot(node.shadowRoot, candidates, seen, visitedRoots);
-    }
-    return candidates.find(isGeminiHiddenFileSelectorTrigger) || null;
+    return getGeminiUploadDiscovery().findGeminiHiddenFileSelectorTriggerInNode(node);
   }
 
   function findGeminiHiddenFileSelectorTriggerInMutations(mutations) {
-    if (!isGeminiHost() || !mutations) return null;
-    for (const mutation of Array.from(mutations || [])) {
-      const nodes = [];
-      if (mutation?.target) nodes.push(mutation.target);
-      try {
-        nodes.push(...Array.from(mutation?.addedNodes || []));
-      } catch {
-        // Synthetic mutation records may not expose iterable node lists.
-      }
-      for (const node of nodes) {
-        const trigger = findGeminiHiddenFileSelectorTriggerInNode(node);
-        if (trigger) return trigger;
-      }
-    }
-    return null;
+    return getGeminiUploadDiscovery().findGeminiHiddenFileSelectorTriggerInMutations(mutations);
   }
 
   function activateGeminiHiddenFileSelectorTriggerSafely(trigger) {
-    if (!isGeminiHiddenFileSelectorTrigger(trigger)) return false;
-    try {
-      for (const type of ["pointerdown", "mousedown", "mouseup"]) {
-        trigger.dispatchEvent?.(createGeminiUploadMenuEvent(type));
-      }
-      if (typeof trigger.click === "function") {
-        trigger.click();
-      } else {
-        trigger.dispatchEvent?.(createGeminiUploadMenuEvent("click"));
-      }
-      return true;
-    } catch {
-      try {
-        trigger.dispatchEvent?.(createGeminiUploadMenuEvent("click"));
-        return true;
-      } catch {
-        return false;
-      }
-    }
+    return getGeminiUploadDiscovery().activateGeminiHiddenFileSelectorTriggerSafely(trigger);
   }
 
-  async function waitForGeminiUploadFilesMenuItem(timeoutMs = 3000) {
-    let menuItem = findGeminiUploadFilesMenuItem();
-    if (menuItem) return menuItem;
-
-    if (typeof MutationObserver !== "function") {
-      return null;
-    }
-
-    return await new Promise((resolve) => {
-      let settled = false;
-      let observer = null;
-      let timeoutId = 0;
-      const finish = (force = false) => {
-        if (settled) return;
-        menuItem = findGeminiUploadFilesMenuItem();
-        if (!menuItem && !force) return;
-        settled = true;
-        if (observer) {
-          try {
-            observer.disconnect();
-          } catch {
-            // Best-effort cleanup only.
-          }
-        }
-        if (timeoutId) clearTimeout(timeoutId);
-        resolve(menuItem || null);
-      };
-
-      try {
-        observer = new MutationObserver(() => finish(false));
-        observer.observe(document.body || document.documentElement || document, {
-          childList: true,
-          subtree: true
-        });
-      } catch {
-        observer = null;
-      }
-
-      const raf =
-        typeof window !== "undefined" && typeof window.requestAnimationFrame === "function"
-          ? window.requestAnimationFrame
-          : null;
-      if (raf) {
-        try {
-          raf(() => finish(false));
-        } catch {
-          finish(false);
-        }
-      }
-
-      timeoutId = setTimeout(() => finish(true), timeoutMs);
-    });
+  function waitForGeminiUploadFilesMenuItem(timeoutMs = 3000) {
+    return getGeminiUploadDiscovery().waitForGeminiUploadFilesMenuItem(timeoutMs);
   }
 
   async function waitForGeminiFileInput(timeoutMs = 3000, event = null, input = null, details = null) {
@@ -6767,41 +6619,7 @@
   }
 
   function isLikelyGeminiUploadClickTarget(target) {
-    const candidate = normalizeTarget(target);
-    const explicitSelectors = [
-      'button[aria-label="Open upload file menu"]',
-      'button[data-test-id="local-images-files-uploader-button"]',
-      'button[role="menuitem"][aria-label="Upload files. Documents, data, code files"]',
-      "button.hidden-local-file-image-selector-button[xapfileselectortrigger]"
-    ];
-    for (const selector of explicitSelectors) {
-      try {
-        const matched = candidate?.matches?.(selector) ? candidate : candidate?.closest?.(selector);
-        if (matched) return true;
-      } catch {
-        // Host-controlled selectors can fail; use metadata checks below.
-      }
-    }
-
-    const meta = describeElementForDebug(candidate);
-    const testId = candidate?.getAttribute?.("data-test-id") || candidate?.dataset?.testId || "";
-    if (testId === "local-images-files-uploader-button") return true;
-    if (meta?.ariaLabel === "Open upload file menu") return true;
-    if (
-      meta?.role === "menuitem" &&
-      meta?.ariaLabel === "Upload files. Documents, data, code files"
-    ) {
-      return true;
-    }
-    if (
-      /\bhidden-local-file-image-selector-button\b/.test(meta?.className || "") &&
-      candidate?.hasAttribute?.("xapfileselectortrigger")
-    ) {
-      return true;
-    }
-
-    const haystack = `${meta?.ariaLabel || ""} ${meta?.title || ""} ${meta?.textSnippet || ""} ${meta?.className || ""}`.toLowerCase();
-    return /\b(upload|file|files|attach)\b/.test(haystack);
+    return getGeminiUploadDiscovery().isLikelyGeminiUploadClickTarget(target);
   }
 
   function describeGeminiHandoffDiscovery(discovery) {
@@ -7376,77 +7194,15 @@
   }
 
   function isRejectedGeminiUploadMenuItem(candidate) {
-    const meta = describeElementForDebug(candidate);
-    const haystack = `${meta?.ariaLabel || ""} ${meta?.title || ""} ${meta?.textSnippet || ""}`.toLowerCase();
-    return haystack.includes("drive") || haystack.includes("photos") || haystack.includes("notebooklm");
+    return getGeminiUploadDiscovery().isRejectedGeminiUploadMenuItem(candidate);
   }
 
   function scoreGeminiUploadMenuItem(candidate) {
-    if (!candidate || isRejectedGeminiUploadMenuItem(candidate)) return 0;
-    const meta = describeElementForDebug(candidate);
-    const label = meta?.ariaLabel || "";
-    const text = meta?.textSnippet || "";
-    const role = meta?.role || "";
-    if (role === "menuitem" && label === "Upload files. Documents, data, code files") return 100;
-    if (role === "menuitem" && /^files$/i.test(label || text)) return 95;
-    if (role === "menuitem" && /upload files/i.test(label)) return 80;
-    if (role === "menuitem" && /upload files/i.test(text)) return 70;
-    if (/\bfiles\b/i.test(label) || /\bfiles\b/i.test(text)) return 60;
-    if (/upload files/i.test(label) || /upload files/i.test(text)) return 50;
-    return 0;
+    return getGeminiUploadDiscovery().scoreGeminiUploadMenuItem(candidate);
   }
 
   function discoverGeminiUploadOverlayItem(details) {
-    const roots = [];
-    const stats = { openShadowRootCount: 0 };
-    collectRootsWithOpenShadow(document, roots, new WeakSet(), stats);
-    const candidates = [];
-    const seen = new WeakSet();
-    const selectors = [
-      ".cdk-overlay-container",
-      ".cdk-overlay-pane",
-      'mat-action-list[role="menu"]',
-      '[role="menuitem"]',
-      "button"
-    ];
-
-    const addCandidate = (candidate, source) => {
-      if (!candidate || seen.has(candidate)) return;
-      seen.add(candidate);
-      if (candidate.matches?.(".cdk-overlay-container, .cdk-overlay-pane, mat-action-list")) {
-        return;
-      }
-      const score = scoreGeminiUploadMenuItem(candidate);
-      candidates.push({ candidate, source, score });
-    };
-
-    roots.forEach((root) => {
-      selectors.forEach((selector) => {
-        try {
-          root.querySelectorAll?.(selector).forEach((candidate) => addCandidate(candidate, selector));
-        } catch {
-          // Keep diagnostics best-effort.
-        }
-      });
-    });
-
-    const selected = candidates
-      .filter(({ score }) => score > 0)
-      .sort((a, b) => b.score - a.score)[0]?.candidate || null;
-
-    if (details) {
-      details.openShadowRootCount = Math.max(Number(details.openShadowRootCount || 0), stats.openShadowRootCount);
-      details.overlayItemCount = candidates.length;
-      details.overlayCandidates = candidates
-        .slice(0, 20)
-        .map(({ candidate, source, score }) => ({
-          ...describeElementForDebug(candidate, source),
-          score
-        }));
-      details.selectedOverlayItem = describeElementForDebug(selected, "gemini-upload-overlay-item");
-    }
-
-    return selected;
+    return getGeminiUploadDiscovery().discoverGeminiUploadOverlayItem(details);
   }
 
   function countGeminiAttachmentIndicators() {
@@ -7916,37 +7672,15 @@
   }
 
   function isForbiddenGeminiUploadButton(candidate) {
-    const className = String(candidate?.className || candidate?.getAttribute?.("class") || "");
-    return /\bhidden-local-(?:file-image-selector|upload|file-upload)-button\b/.test(className);
+    return getGeminiUploadDiscovery().isForbiddenGeminiUploadButton(candidate);
   }
 
   function isAllowedGeminiUploadMenuOpener(candidate) {
-    if (!candidate || isForbiddenGeminiUploadButton(candidate)) return false;
-    if (!isGeminiUploadMenuButtonVisible(candidate)) return false;
-    if (hasGeminiUploadMenuIntent(describeElementForDebug(candidate)) && !isUnsafeGeminiUploadMenuButton(candidate)) {
-      return true;
-    }
-    return isSafeGeminiUploadMenuButton(candidate);
+    return getGeminiUploadDiscovery().isAllowedGeminiUploadMenuOpener(candidate);
   }
 
   function clickElementSafely(candidate) {
-    if (!candidate || isForbiddenGeminiUploadButton(candidate) || !isGeminiUploadMenuButtonVisible(candidate)) return false;
-    try {
-      candidate.click?.();
-      return true;
-    } catch {
-      try {
-        candidate.dispatchEvent?.(
-          new MouseEvent("click", {
-            bubbles: true,
-            cancelable: true
-          })
-        );
-        return true;
-      } catch {
-        return false;
-      }
-    }
+    return getGeminiUploadDiscovery().clickElementSafely(candidate);
   }
 
   function isGeminiGhostIngressFileInput(candidate) {

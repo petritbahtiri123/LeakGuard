@@ -102,6 +102,7 @@
     "src/content/adapters/openaiAdapter.js",
     "src/content/adapters/geminiDiagnosticsAdapter.js",
     "src/content/adapters/geminiAdapter.js",
+    "src/content/adapters/geminiUploadDiscovery.js",
     "src/content/adapters/claudeAdapter.js",
     "src/content/adapters/grokAdapter.js",
     "src/content/adapters/grokFileHandoff.js",

@@ -38,6 +38,7 @@ const testFiles = [
   "tests/prompt_pollution.test.js",
   "tests/live_typing_composer_behavior.test.js",
   "tests/adapter_contracts.test.js",
+  "tests/gemini_upload_discovery.test.js",
   "tests/grok_file_handoff.test.js",
   "tests/content_event_bindings.test.js",
   "tests/content_modal_ui.test.js",
