@@ -91,7 +91,7 @@ The browser helper API lives in `tests/e2e/helpers/extensionFixture.mjs`:
 - `expectBlocked(page)`
 - `expectNoUnsafeOriginalFilename(page, unsafeName)`
 
-Generated fake file fixtures live in `tests/e2e/helpers/e2eFileFixtures.mjs`. They cover TXT, ENV, JSON, LOG, MD, PDF, DOCX, XLSX, PNG, JPG, WEBP, malformed PDF, malformed image, unsupported binary, 2-5 file sets, and a 6-large-file blocked set.
+Generated fake file fixtures live in `tests/e2e/helpers/e2eFileFixtures.mjs`. They cover TXT, ENV, JSON, LOG, MD, PDF, DOCX, XLSX, PNG, JPG, WEBP, malformed PDF, malformed image, unsupported binary, small multi-file sets up to 21 files, and a 6-large-file blocked set.
 
 ## Coverage Groups
 

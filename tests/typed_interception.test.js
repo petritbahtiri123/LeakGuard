@@ -810,6 +810,22 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
     "paste rewrites should verify that the original pasted text is not left beside redacted content"
   );
   assert.ok(
+    pasteSource.indexOf("rememberWhatsAppTextPaste(input, pasted, event);") <
+      pasteSource.indexOf("await maybeHandleChatGptLargeTextPaste(event, input, pasted, quickAnalysis)"),
+    "WhatsApp paste dedupe must be remembered before async large-paste checks can let paired beforeinput append duplicates"
+  );
+  assert.ok(
+    pasteSource.includes(
+      [
+        "rememberWhatsAppTextPaste(input, pasted, event);",
+        "    consumeInterceptionEvent(event);",
+        "",
+        "    if (await maybeHandleChatGptLargeTextPaste(event, input, pasted, quickAnalysis))"
+      ].join("\n")
+    ),
+    "risky paste events must be consumed before awaited branches let the host insert raw or duplicate text"
+  );
+  assert.ok(
     contentSource.includes("buildRiskFingerprint") &&
       contentSource.includes("pendingDecisionFingerprint") &&
       contentSource.includes("pendingDecisionPromise"),
@@ -865,6 +881,40 @@ function testPerplexityStyleRewriteVerificationToleratesWhitespaceNormalization(
     matchesComposerPlan(plan, `password is [PWM_1]\n${rawSecret}`),
     false,
     "rewrite verification must still fail if raw sensitive text remains"
+  );
+}
+
+function testWhatsAppParagraphComposerSerializationAvoidsInnerTextBlankLineInflation() {
+  const textNode = (value) => ({
+    nodeType: 3,
+    nodeValue: value
+  });
+  const elementNode = (tagName, children = []) => ({
+    nodeType: 1,
+    tagName,
+    childNodes: children,
+    textContent: children.map((child) => child.nodeValue || child.textContent || "").join("")
+  });
+  const lines = [
+    "AWS_ACCESS_KEY_ID=[PWM_1]",
+    "AWS_SECRET_ACCESS_KEY=[PWM_2]",
+    "DATABASE_URL=postgres://qa_user:[PWM_3]@db.internal.example:5432/prod",
+    "AdminPassword=[PWM_3]",
+    "",
+    "[PWM_4]"
+  ];
+  const composer = {
+    tagName: "DIV",
+    isContentEditable: true,
+    getAttribute: (name) => (name === "contenteditable" ? "true" : null),
+    innerText: `${lines.join("\n\n")}\n\n`,
+    childNodes: lines.concat([""]).map((line) => elementNode("P", line ? [textNode(line)] : []))
+  };
+
+  assert.strictEqual(
+    ComposerHelpers.getInputText(composer),
+    lines.join("\n"),
+    "WhatsApp paragraph nodes should serialize without DOM-added blank lines"
   );
 }
 
@@ -1231,6 +1281,198 @@ async function testRewriteFailureModalSuppression() {
   harness.setModalOpen(true);
   await harness.showRewriteFailure("paste", { ...details, actual: { length: 11, lineCount: 1, placeholderCount: 0 } });
   assert.strictEqual(calls.modals, 1, "open modal should suppress additional rewrite failure modals");
+
+  harness.setModalOpen(false);
+  await harness.showRewriteFailure("paste", {
+    ...details,
+    safeWhatsAppPlaceholderRewrite: true,
+    actual: { length: 275, lineCount: 22, placeholderCount: 9 },
+    expected: { length: 264, lineCount: 11, placeholderCount: 9 }
+  });
+  assert.strictEqual(
+    calls.modals,
+    1,
+    "safe WhatsApp placeholder rewrite mismatches should not show a false failure modal"
+  );
+}
+
+async function testWhatsAppPasteSafePlaceholderVerificationFailureDoesNotShowFalseModal() {
+  const safePlaceholderPasteSource = contentSource.includes(
+    "function shouldAcceptWhatsAppSafePlaceholderPasteVerification"
+  )
+    ? extractFunctionSource(contentSource, "shouldAcceptWhatsAppSafePlaceholderPasteVerification")
+    : [
+        "function shouldAcceptWhatsAppSafePlaceholderPasteVerification(expectedText, actualText) {",
+        "  const expected = normalizeComposerText(expectedText);",
+        "  const actual = normalizeComposerText(actualText);",
+        "  return Boolean(isWhatsAppHost() && expected && actual && containsVisiblePlaceholderToken(expected) && containsVisiblePlaceholderToken(actual) && actualContainsExpectedPlaceholders(expected, actual) && !hasUnsafeVisibleSecret(actual));",
+        "}"
+      ].join("\n");
+  const createHarness = (options = {}) => {
+    const factory = new Function(
+      "deps",
+      [
+        "const calls = { rewrites: 0, failures: 0, refreshes: 0, debug: [] };",
+        "function normalizeComposerText(value) { return deps.normalizeComposerText(value); }",
+        "function spliceSelectionText(originalText, selection, insertedText) { return deps.spliceSelectionText(originalText, selection, insertedText); }",
+        "function isWhatsAppHost() { return deps.isWhatsAppHost; }",
+        "function containsVisiblePlaceholderToken(text) { return /\\[(?:PWM|NET|PUB_HOST)_\\d+\\]/.test(String(text || '')); }",
+        "function actualContainsExpectedPlaceholders(expectedText, actualText) { return deps.actualContainsExpectedPlaceholders(expectedText, actualText); }",
+        "function listPlaceholderTokens(text) { return String(text || '').match(/\\[(?:PWM|NET|PUB_HOST)_\\d+\\]/g) || []; }",
+        "function isReasonablyCloseRewriteLength(expectedText, actualText) { return Math.abs(normalizeComposerText(expectedText).length - normalizeComposerText(actualText).length) <= Math.max(80, Math.ceil(normalizeComposerText(expectedText).length * 0.35)); }",
+        "function hasUnsafeVisibleSecret(text) { return deps.hasUnsafeVisibleSecret(text); }",
+        "function getDebugTextLength(text) { return String(text || '').length; }",
+        "function countDebugPlaceholders(text) { return (String(text || '').match(/\\[(?:PWM|NET|PUB_HOST)_\\d+\\]/g) || []).length; }",
+        "function debugReveal(label, payload) { calls.debug.push({ label, payload }); }",
+        "async function rewriteComposerTransactionally() { calls.rewrites += 1; return { ok: false, actual: deps.actualText, strategy: 'forced-failed-verification' }; }",
+        "function collectFailureDetails(_input, expectedText, actualText, context) { return { expectedText, actualText, context }; }",
+        "async function showRewriteFailure(context, details) { calls.failures += 1; calls.failureContext = context; calls.failureDetails = details; }",
+        "function refreshBadgeFromCurrentInput() { calls.refreshes += 1; }",
+        safePlaceholderPasteSource,
+        extractFunctionSource(contentSource, "applyPasteDecision"),
+        "return { applyPasteDecision, calls };"
+      ].join("\n\n")
+    );
+    return factory({
+      normalizeComposerText: ComposerHelpers.normalizeComposerText,
+      spliceSelectionText,
+      isWhatsAppHost: options.isWhatsAppHost !== false,
+      actualText: options.actualText,
+      actualContainsExpectedPlaceholders:
+        globalThis.PWM.RewriteVerificationText.actualContainsExpectedPlaceholders,
+      hasUnsafeVisibleSecret:
+        options.hasUnsafeVisibleSecret ||
+        ((text) => /sk-proj-StillRawSecretValue1234567890abcdef/.test(String(text || "")))
+    });
+  };
+  const rawText = [
+    "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE",
+    "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+    "GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz123456",
+    "DATABASE_URL=postgres://qa_user:RawDbSecretValue123456@db.internal.example:5432/prod",
+    "AdminPassword=RawDbSecretValue123456"
+  ].join("\n");
+  const redactedText = [
+    "AWS_ACCESS_KEY_ID=[PWM_1]",
+    "AWS_SECRET_ACCESS_KEY=[PWM_2]",
+    "GITHUB_TOKEN=[PWM_3]",
+    "DATABASE_URL=postgres://qa_user:[PWM_4]@db.internal.example:5432/prod",
+    "AdminPassword=[PWM_4]"
+  ].join("\n");
+
+  const safeHarness = createHarness({ actualText: redactedText });
+  const safeOk = await safeHarness.applyPasteDecision(
+    { text: redactedText },
+    rawText,
+    { start: 0, end: rawText.length },
+    redactedText,
+    "paste",
+    { rawInsertedText: rawText }
+  );
+
+  assert.strictEqual(safeOk, true, "safe WhatsApp placeholder paste should not show a false rewrite failure");
+  assert.strictEqual(safeHarness.calls.failures, 0, "safe placeholder paste should suppress the false failure modal");
+
+  const paragraphExpandedText = `${redactedText.split("\n").join("\n\n")}\n\n`;
+  const paragraphHarness = createHarness({ actualText: paragraphExpandedText });
+  const paragraphOk = await paragraphHarness.applyPasteDecision(
+    { text: paragraphExpandedText },
+    rawText,
+    { start: 0, end: rawText.length },
+    redactedText,
+    "paste",
+    { rawInsertedText: rawText }
+  );
+
+  assert.strictEqual(paragraphOk, true, "safe WhatsApp paragraph-expanded paste should verify safely");
+  assert.strictEqual(
+    paragraphHarness.calls.failures,
+    0,
+    "WhatsApp DOM-added paragraph blank lines should not show a false rewrite failure"
+  );
+
+  const unsafeHarness = createHarness({
+    actualText: `${redactedText}\nOPENAI_API_KEY=sk-proj-StillRawSecretValue1234567890abcdef`
+  });
+  const unsafeOk = await unsafeHarness.applyPasteDecision(
+    { text: unsafeHarness.calls.actualText },
+    rawText,
+    { start: 0, end: rawText.length },
+    redactedText,
+    "paste",
+    { rawInsertedText: rawText }
+  );
+
+  assert.strictEqual(unsafeOk, false, "raw visible secrets must still fail closed");
+  assert.strictEqual(unsafeHarness.calls.failures, 1, "unsafe actual composer text should still show the failure modal");
+
+  const duplicateHarness = createHarness({
+    actualText: `${redactedText}\n${redactedText}`
+  });
+  const duplicateOk = await duplicateHarness.applyPasteDecision(
+    { text: redactedText },
+    rawText,
+    { start: 0, end: rawText.length },
+    redactedText,
+    "paste",
+    { rawInsertedText: rawText }
+  );
+
+  assert.strictEqual(duplicateOk, false, "duplicated sanitized WhatsApp paste should not be accepted");
+  assert.strictEqual(duplicateHarness.calls.failures, 1, "duplicated sanitized text should still surface verification failure");
+
+  const nonWhatsAppHarness = createHarness({ actualText: redactedText, isWhatsAppHost: false });
+  const nonWhatsAppOk = await nonWhatsAppHarness.applyPasteDecision(
+    { text: redactedText },
+    rawText,
+    { start: 0, end: rawText.length },
+    redactedText,
+    "paste",
+    { rawInsertedText: rawText }
+  );
+
+  assert.strictEqual(nonWhatsAppOk, false, "safe placeholder acceptance should stay scoped to WhatsApp paste");
+  assert.strictEqual(nonWhatsAppHarness.calls.failures, 1);
+}
+
+function testWhatsAppSplitCredentialPlaceholderIsNotUnsafeVisibleSecret() {
+  const factory = new Function(
+    "deps",
+    [
+      "const ANY_PLACEHOLDER_TOKEN_REGEX = /\\[(?:PWM|NET|PUB_HOST)_\\d+\\]/g;",
+      "const PLACEHOLDER_TOKEN_REGEX = /\\[(?:PWM|NET|PUB_HOST)_\\d+\\]/g;",
+      "function analyzeText(text) { return deps.analyzeText(text); }",
+      extractFunctionSource(contentSource, "containsVisiblePlaceholderToken"),
+      extractFunctionSource(contentSource, "isHighConfidenceRewriteFinding"),
+      extractFunctionSource(contentSource, "hasUnsafeVisibleSecret"),
+      "return { hasUnsafeVisibleSecret };"
+    ].join("\n\n")
+  );
+  const harness = factory({
+    analyzeText: (text) => {
+      const findings = analyze(text);
+      return {
+        findings,
+        secretFindings: findings.filter((finding) => finding.type !== "PUBLIC_IPV4")
+      };
+    }
+  });
+  const splitSanitized = [
+    "DATABASE_URL=postgres://qa_user:",
+    "[PWM_7]@db.internal.example:5432/prod",
+    "AdminPassword=[PWM_7]"
+  ].join("\n");
+
+  assert.strictEqual(
+    harness.hasUnsafeVisibleSecret(splitSanitized),
+    false,
+    "WhatsApp line wrapping after URL credential prefix should stay safe when the placeholder is visible"
+  );
+  assert.strictEqual(
+    harness.hasUnsafeVisibleSecret("DATABASE_URL=postgres://qa_user:RawDbSecretValue123456@db.internal.example:5432/prod"),
+    true,
+    "raw DB URL credentials must still be treated as unsafe visible secrets"
+  );
 }
 
 async function testTransactionalRewriteFallbackRemovesRawDuplicate() {
@@ -1284,6 +1526,7 @@ async function testWhatsAppSendButtonClickOwnsSafeTextForVerifiedReplay() {
       "function getInputText(target) { return target.text; }",
       "function analyzeText() { return { findings: [], placeholderNormalized: false }; }",
       "function analysisNeedsEventOwnership() { return false; }",
+      "function shouldBypassWhatsAppSanitizedImageSend() { return false; }",
       "function consumeInterceptionEvent() { calls.consumed += 1; }",
       "function createSyntheticSubmitInterceptionEvent(target, options) { return { target, leakGuardSendButton: options.sendButton, leakGuardReplayViaClick: options.replayViaClick }; }",
       "async function maybeHandleSubmit(event) { calls.submitEvents += 1; calls.submitEvent = event; }",
@@ -1342,6 +1585,7 @@ function createWhatsAppSubmitHarness(options = {}) {
       "let extensionRuntimeAvailable = true;",
       "let modalOpen = false;",
       "let bypassNextSubmit = false;",
+      "let whatsAppBypassSanitizedImageSubmitUntil = 0;",
       "const WHATSAPP_TEXT_SEND_GUARD_MS = 5000;",
       "const whatsAppPendingTextSendInputs = new WeakSet();",
       "const whatsAppPendingTextSendTimers = new WeakMap();",
@@ -1376,6 +1620,7 @@ function createWhatsAppSubmitHarness(options = {}) {
       "function getInputText(target) { return target.text; }",
       "function analyzeText() { calls.quickAnalyses += 1; return { findings: [], placeholderNormalized: false }; }",
       "function analysisNeedsEventOwnership() { return false; }",
+      "function shouldBypassWhatsAppSanitizedImageSend() { return false; }",
       "async function analyzeTextWithAiAssist(value) {",
       "  calls.aiAnalyses += 1;",
       "  return { findings: [], secretFindings: [], placeholderNormalized: false, normalizedText: value };",
@@ -1479,6 +1724,7 @@ async function testWhatsAppEmptyComposerClickEnterAndSubmitAreIgnoredSafely() {
       "function getInputText(target) { return target.text; }",
       "function analyzeText() { calls.analyses += 1; return { findings: [], placeholderNormalized: false }; }",
       "function analysisNeedsEventOwnership() { return false; }",
+      "function shouldBypassWhatsAppSanitizedImageSend() { return false; }",
       "function consumeInterceptionEvent() { calls.consumed += 1; }",
       "async function maybeHandleSubmit() { calls.submitEvents += 1; }",
       "async function blockWhatsAppTextSend(reason) { calls.blocks += 1; calls.reason = reason; }",
@@ -1642,8 +1888,10 @@ async function testWhatsAppSecondSubmitOrEnterWhilePendingDoesNotStartRetryPath(
 function testWhatsAppEditorActionEmitsSingleDataBearingInsert() {
   const factory = new Function(
     "normalizeComposerText",
+    "options",
     [
       "const calls = { commands: [], events: [] };",
+      "const preventDefaultPaste = Boolean(options?.preventDefaultPaste);",
       "let modelText = '';",
       "const selection = { removeAllRanges() {}, addRange() {} };",
       "const range = { selectNodeContents() {} };",
@@ -1665,7 +1913,7 @@ function testWhatsAppEditorActionEmitsSingleDataBearingInsert() {
       "  focus() {},",
       "  dispatchEvent(event) {",
       "    calls.events.push({ type: event.type, inputType: event.inputType || '', data: event.data == null ? null : String(event.data), clipboardText: event.clipboardData?.getData?.('text/plain') || '' });",
-      "    if (event.type === 'paste') { modelText += event.clipboardData?.getData?.('text/plain') || ''; return true; }",
+      "    if (event.type === 'paste') { modelText += event.clipboardData?.getData?.('text/plain') || ''; if (preventDefaultPaste) event.preventDefault(); return !event.defaultPrevented; }",
       "    if ((event.type === 'beforeinput' || event.type === 'input') && event.data && /^insert/.test(event.inputType || '')) {",
       "      modelText += event.data;",
       "    }",
@@ -1680,6 +1928,7 @@ function testWhatsAppEditorActionEmitsSingleDataBearingInsert() {
       extractFunctionSource(contentSource, "runWhatsAppEditorCommand"),
       extractFunctionSource(contentSource, "attachEventDataTransfer"),
       extractFunctionSource(contentSource, "createWhatsAppPlainTextTransfer"),
+      extractFunctionSource(contentSource, "markSanitizedTextRewriteEvent"),
       extractFunctionSource(contentSource, "dispatchWhatsAppEditorPasteEvent"),
       extractFunctionSource(contentSource, "insertWhatsAppComposerTextThroughEditor"),
       "return { input, calls, insertWhatsAppComposerTextThroughEditor, getText: () => modelText };"
@@ -1727,6 +1976,219 @@ function testWhatsAppEditorActionEmitsSingleDataBearingInsert() {
     [],
     "WhatsApp multiline rewrite should not dispatch extra data-bearing synthetic input events"
   );
+
+  const handledPasteHarness = factory(ComposerHelpers.normalizeComposerText, { preventDefaultPaste: true });
+  const handledPasteText = [
+    "LGQA_WHATSAPP_PREVENT_DEFAULT first [PWM_1]",
+    "LGQA_WHATSAPP_PREVENT_DEFAULT second [PWM_2]"
+  ].join("\n");
+  const handledPasteInserted = handledPasteHarness.insertWhatsAppComposerTextThroughEditor(
+    handledPasteHarness.input,
+    handledPasteText
+  );
+
+  assert.strictEqual(
+    handledPasteInserted,
+    true,
+    "WhatsApp paste handlers may preventDefault after accepting sanitized text"
+  );
+  assert.strictEqual(
+    handledPasteHarness.getText(),
+    handledPasteText,
+    "preventDefault on handled paste should still let LeakGuard verify settled sanitized text"
+  );
+}
+
+async function testWhatsAppEditorActionAcceptsSafePlaceholderVerification() {
+  const expected = [
+    "DATABASE_URL=postgres://qa_user:[PWM_1]@db.internal.example:5432/prod",
+    "AdminPassword=[PWM_1]"
+  ].join("\n");
+  const actual = [
+    "DATABASE_URL=postgres://qa_user:",
+    "[PWM_1]@db.internal.example:5432/prod",
+    "AdminPassword=[PWM_1]"
+  ].join("\n");
+  const original = [
+    "DATABASE_URL=postgres://qa_user:RawDbSecretValue123456@db.internal.example:5432/prod",
+    "AdminPassword=RawDbSecretValue123456"
+  ].join("\n");
+  const findings = [{ raw: "RawDbSecretValue123456", severity: "high", score: 90 }];
+  const factory = new Function(
+    "deps",
+    [
+      "const calls = { verifications: 0 };",
+      "const WHATSAPP_REWRITE_INSERT_TIMEOUT_MS = 700;",
+      "const input = { text: deps.actual };",
+      "function normalizeComposerText(value) { return deps.normalizeComposerText(value); }",
+      "function buildComposerWritePlan(_input, text) { const canonical = normalizeComposerText(text); return { canonical, writeText: canonical, acceptableTexts: [canonical] }; }",
+      "function debugWhatsAppComposerSync() {}",
+      "function suppressFollowupInputScan() {}",
+      "async function clearWhatsAppComposerThroughEditor() { return { ok: true, actual: '', strategy: 'test-clear' }; }",
+      "function insertWhatsAppComposerTextThroughEditor(target) { target.text = deps.actual; return true; }",
+      "async function waitForWhatsAppComposerText(target) { return { ok: false, actual: normalizeComposerText(target.text) }; }",
+      "function getInputText(target) { return normalizeComposerText(target.text); }",
+      "async function verifyComposerRewriteSafe(args) { calls.verifications += 1; return deps.verifyComposerRewriteSafe(args); }",
+      "function shouldAcceptWhatsAppSafePlaceholderPasteVerification(expectedText, actualText) { return deps.acceptSafe(expectedText, actualText); }",
+      extractFunctionSource(contentSource, "applyWhatsAppEditorActionComposerText"),
+      "return { applyWhatsAppEditorActionComposerText, calls, input };"
+    ].join("\n\n")
+  );
+  const harness = factory({
+    actual,
+    normalizeComposerText: ComposerHelpers.normalizeComposerText,
+    acceptSafe: (expectedText, actualText) => {
+      const tokens = (text) => String(text || "").match(/\[(?:PWM|NET|PUB_HOST)_\d+\]/g) || [];
+      return (
+        globalThis.PWM.RewriteVerificationText.actualContainsExpectedPlaceholders(expectedText, actualText) &&
+        tokens(expectedText).length === tokens(actualText).length &&
+        !String(actualText || "").includes("RawDbSecretValue123456")
+      );
+    },
+    verifyComposerRewriteSafe: ({ expectedText, originalText, findings: rewriteFindings, context, actualText }) =>
+      globalThis.PWM.RewriteVerificationText.evaluateComposerVerificationCandidates(
+        {
+          candidates: [{ source: "stable", text: actualText }],
+          expectedText,
+          originalText,
+          findings: rewriteFindings,
+          context
+        },
+        {
+          normalizeComposerText: ComposerHelpers.normalizeComposerText,
+          normalizeEditorInnerText: ComposerHelpers.normalizeEditorInnerText,
+          analyzeText: (text) => {
+            const secretFindings = [];
+            for (const match of String(text || "").matchAll(/RawDbSecretValue123456/g)) {
+              secretFindings.push({
+                raw: match[0],
+                severity: "high",
+                score: 90,
+                start: match.index,
+                end: match.index + match[0].length
+              });
+            }
+            return { findings: secretFindings, secretFindings };
+          }
+        }
+      )
+  });
+
+  const result = await harness.applyWhatsAppEditorActionComposerText(harness.input, expected, {
+    context: "submit",
+    originalText: original,
+    findings
+  });
+
+  assert.strictEqual(
+    result.ok,
+    true,
+    "WhatsApp send rewrite should accept safe shared verification when layout differs around placeholders"
+  );
+  assert.strictEqual(harness.calls.verifications, 1, "safe mismatch should be delegated to rewrite verification");
+  assert.strictEqual(result.actual, actual);
+}
+
+async function testWhatsAppEditorActionAcceptsSafePlaceholderFallbackAfterVerificationMiss() {
+  const expected = [
+    "DO NOT USE",
+    "AWS_ACCESS_KEY_ID=[PWM_1]",
+    "AWS_SECRET_ACCESS_KEY=[PWM_2]",
+    "GITHUB_TOKEN=[PWM_3]",
+    "OPENAI_API_KEY=[PWM_4]",
+    "STRIPE_SECRET_KEY=[PWM_5]",
+    "SLACK_WEBHOOK=[PWM_6]",
+    "DATABASE_URL=postgres://qa_user:[PWM_7]@db.internal.example:5432/prod",
+    "AdminPassword=[PWM_7]",
+    "",
+    "[PWM_8]"
+  ].join("\n");
+  const actual = [
+    "DO NOT USE",
+    "",
+    "AWS_ACCESS_KEY_ID=[PWM_1]",
+    "",
+    "AWS_SECRET_ACCESS_KEY=[PWM_2]",
+    "",
+    "GITHUB_TOKEN=[PWM_3]",
+    "",
+    "OPENAI_API_KEY=[PWM_4]",
+    "",
+    "STRIPE_SECRET_KEY=[PWM_5]",
+    "",
+    "SLACK_WEBHOOK=[PWM_6]",
+    "",
+    "DATABASE_URL=postgres://qa_user:[PWM_7]@db.internal.example:5432/prod",
+    "",
+    "AdminPassword=[PWM_7]",
+    "",
+    "",
+    "",
+    "",
+    "[PWM_8]"
+  ].join("\n");
+  const original = [
+    "DO NOT USE",
+    "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE",
+    "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+    "GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz123456",
+    "OPENAI_API_KEY=sk-proj-LGQAFakeOpenAIKey1234567890abcdef",
+    "STRIPE_SECRET_KEY=RedactionLayoutStripeValue123456",
+    "SLACK_WEBHOOK=RedactionLayoutSlackWebhookValue123456",
+    "DATABASE_URL=postgres://qa_user:RawDbSecretValue123456@db.internal.example:5432/prod",
+    "AdminPassword=RawDbSecretValue123456",
+    "",
+    "AnotherSecretValue123456"
+  ].join("\n");
+  const factory = new Function(
+    "deps",
+    [
+      "const calls = { verifications: 0 };",
+      "const WHATSAPP_REWRITE_INSERT_TIMEOUT_MS = 700;",
+      "const input = { text: deps.actual };",
+      "function normalizeComposerText(value) { return deps.normalizeComposerText(value); }",
+      "function buildComposerWritePlan(_input, text) { const canonical = normalizeComposerText(text); return { canonical, writeText: canonical, acceptableTexts: [canonical] }; }",
+      "function debugWhatsAppComposerSync() {}",
+      "function suppressFollowupInputScan() {}",
+      "async function clearWhatsAppComposerThroughEditor() { return { ok: true, actual: '', strategy: 'test-clear' }; }",
+      "function insertWhatsAppComposerTextThroughEditor(target) { target.text = deps.actual; return true; }",
+      "async function waitForWhatsAppComposerText(target) { return { ok: false, actual: normalizeComposerText(target.text) }; }",
+      "function getInputText(target) { return normalizeComposerText(target.text); }",
+      "async function verifyComposerRewriteSafe() { calls.verifications += 1; return { ok: false, actual: deps.actual, strategy: 'forced-live-layout-mismatch' }; }",
+      "function shouldAcceptWhatsAppSafePlaceholderPasteVerification(expectedText, actualText) { return deps.acceptSafe(expectedText, actualText); }",
+      extractFunctionSource(contentSource, "applyWhatsAppEditorActionComposerText"),
+      "return { applyWhatsAppEditorActionComposerText, calls, input };"
+    ].join("\n\n")
+  );
+  const harness = factory({
+    actual,
+    normalizeComposerText: ComposerHelpers.normalizeComposerText,
+    acceptSafe: (expectedText, actualText) => {
+      const tokens = (text) => String(text || "").match(/\[(?:PWM|NET|PUB_HOST)_\d+\]/g) || [];
+      return (
+        globalThis.PWM.RewriteVerificationText.actualContainsExpectedPlaceholders(expectedText, actualText) &&
+        tokens(expectedText).length === tokens(actualText).length &&
+        Math.abs(
+          globalThis.PWM.RewriteVerificationText.normalizeVerificationText(expectedText).length -
+            globalThis.PWM.RewriteVerificationText.normalizeVerificationText(actualText).length
+        ) <= 80 &&
+        !String(actualText || "").includes("RawDbSecretValue123456")
+      );
+    }
+  });
+
+  const result = await harness.applyWhatsAppEditorActionComposerText(harness.input, expected, {
+    context: "paste",
+    originalText: original
+  });
+
+  assert.strictEqual(
+    result.ok,
+    true,
+    "WhatsApp paste rewrite should accept safe placeholder layout when strict verification misses"
+  );
+  assert.strictEqual(harness.calls.verifications, 1);
+  assert.strictEqual(result.actual, actual);
 }
 
 async function testWhatsAppRewriteUsesSyncedComposerPathBeforeAppendProneStrategies() {
@@ -1994,6 +2456,94 @@ async function testSubmitTransactionalHelperFailsClosedOnRawRestore() {
   assert.strictEqual(calls.failureDetails.actualText, rawText, "failure details should preserve the unsafe actual text summary input");
 }
 
+async function testWhatsAppExactComposerStateAcceptsSafeMultilinePlaceholderLayout() {
+  const expected = [
+    "DO NOT USE",
+    "AWS_ACCESS_KEY_ID=[PWM_1]",
+    "AWS_SECRET_ACCESS_KEY=[PWM_2]",
+    "GITHUB_TOKEN=[PWM_3]",
+    "OPENAI_API_KEY=[PWM_4]",
+    "STRIPE_SECRET_KEY=[PWM_5]",
+    "SLACK_WEBHOOK=[PWM_6]",
+    "DATABASE_URL=postgres://qa_user:[PWM_7]@db.internal.example:5432/prod",
+    "AdminPassword=[PWM_7]",
+    "",
+    "[PWM_8]"
+  ].join("\n");
+  const actual = [
+    "DO NOT USE",
+    "",
+    "AWS_ACCESS_KEY_ID=[PWM_1]",
+    "",
+    "AWS_SECRET_ACCESS_KEY=[PWM_2]",
+    "",
+    "GITHUB_TOKEN=[PWM_3]",
+    "",
+    "OPENAI_API_KEY=[PWM_4]",
+    "",
+    "STRIPE_SECRET_KEY=[PWM_5]",
+    "",
+    "SLACK_WEBHOOK=[PWM_6]",
+    "",
+    "DATABASE_URL=postgres://qa_user:",
+    "[PWM_7]@db.internal.example:5432/prod",
+    "",
+    "AdminPassword=[PWM_7]",
+    "",
+    "",
+    "[PWM_8]",
+    ""
+  ].join("\n");
+  const factory = new Function(
+    "deps",
+    [
+      "const calls = { verifications: 0 };",
+      "const ANY_PLACEHOLDER_TOKEN_REGEX = /\\[(?:PWM|NET|PUB_HOST)_\\d+\\]/g;",
+      "const PLACEHOLDER_TOKEN_REGEX = ANY_PLACEHOLDER_TOKEN_REGEX;",
+      "function normalizeComposerText(value) { return deps.normalizeComposerText(value); }",
+      "function buildComposerWritePlan(_input, text) { const canonical = normalizeComposerText(text); return { canonical, writeText: canonical, acceptableTexts: [canonical] }; }",
+      "async function readStableComposerText() { return deps.actual; }",
+      "function debugLogSnapshot() {}",
+      "async function verifyComposerRewriteSafe() { calls.verifications += 1; return { ok: false, actual: deps.actual, strategy: 'forced-layout-mismatch' }; }",
+      "function getInputText() { return deps.actual; }",
+      "function isWhatsAppHost() { return true; }",
+      "function analyzeText(text) { return deps.analyzeText(text); }",
+      "function isReasonablyCloseRewriteLength(expectedText, actualText) { return deps.isReasonablyCloseRewriteLength(expectedText, actualText); }",
+      "function listPlaceholderTokens(text) { return deps.listPlaceholderTokens(text); }",
+      "function actualContainsExpectedPlaceholders(expectedText, actualText) { return deps.actualContainsExpectedPlaceholders(expectedText, actualText); }",
+      extractFunctionSource(contentSource, "containsVisiblePlaceholderToken"),
+      extractFunctionSource(contentSource, "isHighConfidenceRewriteFinding"),
+      extractFunctionSource(contentSource, "hasUnsafeVisibleSecret"),
+      extractFunctionSource(contentSource, "shouldAcceptWhatsAppSafePlaceholderPasteVerification"),
+      extractFunctionSource(contentSource, "ensureExactComposerState"),
+      "return { ensureExactComposerState, calls };"
+    ].join("\n\n")
+  );
+  const harness = factory({
+    actual,
+    normalizeComposerText: ComposerHelpers.normalizeComposerText,
+    isReasonablyCloseRewriteLength:
+      globalThis.PWM.RewriteVerificationText.isReasonablyCloseRewriteLength,
+    listPlaceholderTokens: globalThis.PWM.RewriteVerificationText.listPlaceholderTokens,
+    actualContainsExpectedPlaceholders:
+      globalThis.PWM.RewriteVerificationText.actualContainsExpectedPlaceholders,
+    analyzeText: (text) => {
+      const findings = analyze(text);
+      return {
+        findings,
+        secretFindings: findings.filter((finding) => finding.type !== "PUBLIC_IPV4")
+      };
+    }
+  });
+
+  assert.strictEqual(
+    await harness.ensureExactComposerState({}, expected, { context: "submit" }),
+    true,
+    "final WhatsApp pre-send verification should accept safe multiline placeholder layout"
+  );
+  assert.strictEqual(harness.calls.verifications, 1);
+}
+
 async function testStaleTypedRewriteFailureKeepsSanitizedEditorUsable() {
   const createHarness = (options = {}) => {
     const factory = new Function(
@@ -2122,12 +2672,15 @@ function run() {
   testPauseBypassGatesPasteAndSendAfterPolicy();
   testContentScriptBindsBeforeInputAndKeepsFallbackGuard();
   testPerplexityStyleRewriteVerificationToleratesWhitespaceNormalization();
+  testWhatsAppParagraphComposerSerializationAvoidsInnerTextBlankLineInflation();
   testTypedDebugDiagnosticsSummarizeOnly();
   return Promise.resolve()
     .then(() => testGenericRewriteVerificationSafeCases())
     .then(() => testMultilineCollapseRetryAndFailures())
     .then(() => testRewriteVerificationFailClosedCases())
     .then(() => testRewriteFailureModalSuppression())
+    .then(() => testWhatsAppPasteSafePlaceholderVerificationFailureDoesNotShowFalseModal())
+    .then(() => testWhatsAppSplitCredentialPlaceholderIsNotUnsafeVisibleSecret())
     .then(() => testTransactionalRewriteFallbackRemovesRawDuplicate())
     .then(() => testWhatsAppSendButtonClickOwnsSafeTextForVerifiedReplay())
     .then(() => testWhatsAppSendButtonClickFailsClosedWithoutComposer())
@@ -2137,11 +2690,14 @@ function run() {
     .then(() => testWhatsAppSafeTextVariantsUseVerifiedReplayWithoutRedaction())
     .then(() => testWhatsAppSecondSubmitOrEnterWhilePendingDoesNotStartRetryPath())
     .then(() => testWhatsAppEditorActionEmitsSingleDataBearingInsert())
+    .then(() => testWhatsAppEditorActionAcceptsSafePlaceholderVerification())
+    .then(() => testWhatsAppEditorActionAcceptsSafePlaceholderFallbackAfterVerificationMiss())
     .then(() => testWhatsAppRewriteUsesSyncedComposerPathBeforeAppendProneStrategies())
     .then(() => testWhatsAppSyncedRewriteFailureDoesNotRestoreThroughAppendProneFallback())
     .then(() => testWhatsAppTransactionalSyncedFailureDoesNotAppendFallbackCopies())
     .then(() => testWhatsAppTransactionalCorruptedDraftDoesNotAttemptAnotherRewrite())
     .then(() => testSubmitTransactionalHelperFailsClosedOnRawRestore())
+    .then(() => testWhatsAppExactComposerStateAcceptsSafeMultilinePlaceholderLayout())
     .then(() => testStaleTypedRewriteFailureKeepsSanitizedEditorUsable())
     .then(() => {
       console.log("PASS typed beforeinput interception regressions");

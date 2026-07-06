@@ -599,6 +599,37 @@ async function testUserProtectedSitesRegisterOnlyWithPermission() {
   );
 }
 
+async function testInstalledHookReloadsOpenBuiltinProtectedTabsOnly() {
+  const { sandbox } = createBackgroundSandbox();
+  const queriedPatterns = [];
+  const reloadedTabs = [];
+  const tabsByPattern = new Map([
+    ["https://web.whatsapp.com/*", [{ id: 12 }, { id: 12 }]],
+    ["https://chatgpt.com/*", [{ id: 14 }]]
+  ]);
+
+  sandbox.PWM.ext.tabs.query = async ({ url }) => {
+    queriedPatterns.push(url);
+    return tabsByPattern.get(url) || [];
+  };
+  sandbox.PWM.ext.tabs.reload = async (tabId) => {
+    reloadedTabs.push(tabId);
+  };
+
+  const count = await sandbox.reloadOpenBuiltinProtectedTabs();
+
+  assert.ok(
+    queriedPatterns.includes("https://web.whatsapp.com/*"),
+    "installed hook recovery should inspect the built-in WhatsApp target"
+  );
+  assert.deepStrictEqual(
+    reloadedTabs.sort((left, right) => left - right),
+    [12, 14],
+    "open built-in protected tabs should reload once each after extension update"
+  );
+  assert.strictEqual(count, 2);
+}
+
 async function testManagedProtectedSitesCannotBeToggledOrDeleted() {
   const { sandbox } = createBackgroundSandbox({
     allowSiteRemoval: true,
@@ -863,6 +894,7 @@ async function run() {
   await testProtectedSiteRegistryKeepsStableDynamicScriptIds();
   await testManagedProtectedSitesRegisterWithoutUserSiteToggle();
   await testUserProtectedSitesRegisterOnlyWithPermission();
+  await testInstalledHookReloadsOpenBuiltinProtectedTabsOnly();
   await testManagedProtectedSitesCannotBeToggledOrDeleted();
   await testAuditEventsStayMetadataOnlyAndBounded();
   await testAuditRetentionPurgesOldMetadata();

@@ -427,6 +427,12 @@ export async function getFileEvents(page) {
   return await page.evaluate(() => window.__leakguardE2E.fileEvents);
 }
 
+export async function getWhatsAppPreviewState(page) {
+  return await page.evaluate(() => {
+    return window.__leakguardE2E.getWhatsAppPreviewState?.() || null;
+  });
+}
+
 export async function expectNoRawSecretVisible(page, secret) {
   const visibleText = await page.evaluate(() => {
     const controls = Array.from(document.querySelectorAll("textarea, input, [contenteditable]"))
@@ -505,7 +511,13 @@ export async function uploadFile(page, fileOrFiles) {
   await page.setInputFiles("#file-input", files);
 }
 
-export async function dragDropFile(page, fileOrFiles) {
+export async function uploadWhatsAppAttachFile(page, fileOrFiles) {
+  const files = normalizePayloads(fileOrFiles);
+  await page.locator("#whatsapp-attach-button").click();
+  await page.setInputFiles("#whatsapp-file-input", files);
+}
+
+async function dragDropFileToSelector(page, fileOrFiles, selector) {
   const payloads = serializablePayloads(fileOrFiles);
   const dataTransfer = await page.evaluateHandle((files) => {
     const transfer = new DataTransfer();
@@ -520,11 +532,19 @@ export async function dragDropFile(page, fileOrFiles) {
     return transfer;
   }, payloads);
 
-  const dropZone = page.locator("#drop-zone");
+  const dropZone = page.locator(selector);
   await dropZone.dispatchEvent("dragenter", { dataTransfer });
   await dropZone.dispatchEvent("dragover", { dataTransfer });
   await dropZone.dispatchEvent("drop", { dataTransfer });
   await dataTransfer.dispose();
+}
+
+export async function dragDropFile(page, fileOrFiles) {
+  await dragDropFileToSelector(page, fileOrFiles, "#drop-zone");
+}
+
+export async function dragDropWhatsAppFile(page, fileOrFiles) {
+  await dragDropFileToSelector(page, fileOrFiles, "#whatsapp-composer");
 }
 
 export async function pasteImageFromClipboard(page, file) {
@@ -544,6 +564,31 @@ export async function pasteImageFromClipboard(page, file) {
       clipboardData: transfer
     }));
   }, payload);
+}
+
+export async function pasteImageFromSystemClipboard(page, file) {
+  const [payload] = serializablePayloads(file);
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"], {
+    origin: new URL(page.url()).origin
+  });
+  const clipboardReady = await page.evaluate(async (image) => {
+    if (!navigator.clipboard?.write || typeof ClipboardItem !== "function") return false;
+    const binary = atob(image.base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    const blob = new Blob([bytes], { type: image.mimeType });
+    await navigator.clipboard.write([
+      new ClipboardItem({
+        [image.mimeType]: blob
+      })
+    ]);
+    return true;
+  }, payload);
+  expect(clipboardReady, "browser clipboard image write should be available").toBe(true);
+  await composerLocator(page).focus();
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+V" : "Control+V");
 }
 
 export async function dispatchFileDrop(page, fileOrPayload) {

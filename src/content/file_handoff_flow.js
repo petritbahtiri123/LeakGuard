@@ -17,6 +17,7 @@
       documentRef = typeof document !== "undefined" ? document : null,
       dispatchSanitizedFileEvent = () => false,
       downloadGeminiSanitizedFileFallback = async () => false,
+      FileTypeRegistry = globalThis.PWM?.FileTypeRegistry || {},
       assignSafeFileAttachErrorMetadata = noop,
       emitDebug = noop,
       findGeminiFileInput = () => ({ fileInput: null }),
@@ -37,10 +38,12 @@
       isProtectedFileDropDriver = () => false,
       locationRef = typeof location !== "undefined" ? location : null,
       logSanitizedFileHandoffFailure = noop,
+      prepareFileInputForHandoff = () => () => {},
       queuePendingSanitizedFileHandoff = () => false,
       readSanitizedFileTextForFallback = async () => "",
       refreshBadgeFromCurrentInput = noop,
       resolveFileInputForHandoff = () => null,
+      resolveWhatsAppDocumentDropInputForHandoff = async () => null,
       scheduleDmzOverlayCleanup = noop,
       sendRuntimeMessage = async () => null,
       setBadge = noop,
@@ -50,6 +53,11 @@
       tryGeminiSanitizedFileAttach = async () => false
     } = deps;
     const WHATSAPP_FILE_ATTACH_UNSUPPORTED_REASON = "whatsapp_file_attachments_unsupported";
+    const WHATSAPP_PDF_MIME_TYPE = "application/pdf";
+    const WHATSAPP_DOCX_MIME_TYPE =
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    const WHATSAPP_XLSX_MIME_TYPE =
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
     function isFileOnlySanitizedPayload(payload) {
       return Boolean(payload?.allowFileOnlyHandoff && !String(payload?.redactedText || "").trim());
@@ -57,6 +65,183 @@
 
     function isWhatsAppDriver(id) {
       return String(id || "").toLowerCase() === "whatsapp";
+    }
+
+    function isRedactedPngFile(file) {
+      return Boolean(
+        file &&
+          String(file.type || "").split(";")[0].trim().toLowerCase() === "image/png" &&
+          /\.redacted\.png$/i.test(String(file.name || ""))
+      );
+    }
+
+    function getFileExtension(file) {
+      const name = String(file?.name || "").split(/[\\/]/).pop().toLowerCase();
+      if (name === ".env") return ".env";
+      const index = name.lastIndexOf(".");
+      if (index <= 0 || index === name.length - 1) return "";
+      return name.slice(index);
+    }
+
+    function getMimeType(file) {
+      return String(file?.type || "").split(";")[0].trim().toLowerCase();
+    }
+
+    function isRedactedPdfFile(file) {
+      return Boolean(
+        file &&
+          getMimeType(file) === WHATSAPP_PDF_MIME_TYPE &&
+          /\.redacted\.pdf$/i.test(String(file.name || ""))
+      );
+    }
+
+    function isRedactedDocxFile(file) {
+      return Boolean(
+        file &&
+          getMimeType(file) === WHATSAPP_DOCX_MIME_TYPE &&
+          /\.redacted\.docx$/i.test(String(file.name || ""))
+      );
+    }
+
+    function isRedactedXlsxFile(file) {
+      return Boolean(
+        file &&
+          getMimeType(file) === WHATSAPP_XLSX_MIME_TYPE &&
+          /\.redacted\.xlsx$/i.test(String(file.name || ""))
+      );
+    }
+
+    function isSanitizedTextDocumentFile(file) {
+      if (!file || typeof FileTypeRegistry.classifyFileType !== "function") return false;
+      const classification = FileTypeRegistry.classifyFileType({
+        fileName: file.name,
+        mimeType: file.type
+      });
+      return Boolean(
+        classification?.status === FileTypeRegistry.FILE_TYPE_STATUS?.SUPPORTED &&
+          classification?.family === "text"
+      );
+    }
+
+    function getWhatsAppAttachAdapter() {
+      return getFileHandoffAdapterById("whatsapp") || getFileHandoffAdapterForLocation();
+    }
+
+    function isWhatsAppSanitizedDropHandoffEnabled(adapter, context) {
+      return Boolean(
+        context === "drop" &&
+          adapter?.id === "whatsapp" &&
+          adapter.supportsSanitizedDropHandoff === true
+      );
+    }
+
+    function getWhatsAppInvalidAttachKind(file, capabilities) {
+      const extension = getFileExtension(file);
+      const mimeType = getMimeType(file);
+      if (capabilities.imageCapable && (extension === ".png" || mimeType === "image/png")) return "image";
+      if (capabilities.pdfCapable && (extension === ".pdf" || mimeType === WHATSAPP_PDF_MIME_TYPE)) return "pdf";
+      if (capabilities.docxCapable && (extension === ".docx" || mimeType === WHATSAPP_DOCX_MIME_TYPE)) return "docx";
+      if (capabilities.xlsxCapable && (extension === ".xlsx" || mimeType === WHATSAPP_XLSX_MIME_TYPE)) return "xlsx";
+      if (capabilities.textDocumentCapable && isSanitizedTextDocumentFile(file)) {
+        return "text-document";
+      }
+      if (capabilities.pdfCapable) return "pdf";
+      if (capabilities.docxCapable) return "docx";
+      if (capabilities.xlsxCapable) return "xlsx";
+      if (capabilities.textDocumentCapable) return "text-document";
+      return "image";
+    }
+
+    function getWhatsAppAttachVerification(context, sanitizedFile) {
+      const adapter = getWhatsAppAttachAdapter();
+      const isWhatsAppSanitizedHandoff = Boolean(
+        (context === "file-input" || isWhatsAppSanitizedDropHandoffEnabled(adapter, context)) &&
+          isWhatsAppDriver(getCurrentHandoffDriverId()) &&
+          adapter?.id === "whatsapp"
+      );
+      if (!isWhatsAppSanitizedHandoff) {
+        return { shouldVerify: false, valid: false, kind: "", invalidReason: "" };
+      }
+      const imageCapable = adapter.supportsSanitizedImageAttachHandoff === true;
+      const pdfCapable = adapter.supportsSanitizedPdfAttachHandoff === true;
+      const textDocumentCapable = adapter.supportsSanitizedTextDocumentAttachHandoff === true;
+      const docxCapable = adapter.supportsSanitizedDocxAttachHandoff === true;
+      const xlsxCapable = adapter.supportsSanitizedXlsxAttachHandoff === true;
+      if (imageCapable && isRedactedPngFile(sanitizedFile)) {
+        return { shouldVerify: true, valid: true, kind: "image", invalidReason: "" };
+      }
+      if (pdfCapable && isRedactedPdfFile(sanitizedFile)) {
+        return { shouldVerify: true, valid: true, kind: "pdf", invalidReason: "" };
+      }
+      if (docxCapable && isRedactedDocxFile(sanitizedFile)) {
+        return { shouldVerify: true, valid: true, kind: "docx", invalidReason: "" };
+      }
+      if (xlsxCapable && isRedactedXlsxFile(sanitizedFile)) {
+        return { shouldVerify: true, valid: true, kind: "xlsx", invalidReason: "" };
+      }
+      if (textDocumentCapable && isSanitizedTextDocumentFile(sanitizedFile)) {
+        return { shouldVerify: true, valid: true, kind: "text-document", invalidReason: "" };
+      }
+      if (imageCapable || pdfCapable || textDocumentCapable || docxCapable || xlsxCapable) {
+        const invalidKind = getWhatsAppInvalidAttachKind(sanitizedFile, {
+          imageCapable,
+          pdfCapable,
+          textDocumentCapable,
+          docxCapable,
+          xlsxCapable
+        });
+        return {
+          shouldVerify: true,
+          valid: false,
+          kind: invalidKind,
+          invalidReason:
+            invalidKind === "pdf"
+              ? "sanitized_pdf_file_invalid"
+              : invalidKind === "docx"
+                ? "sanitized_docx_file_invalid"
+              : invalidKind === "xlsx"
+                ? "sanitized_xlsx_file_invalid"
+              : invalidKind === "text-document"
+                ? "sanitized_text_document_file_invalid"
+                : "sanitized_image_file_invalid"
+        };
+      }
+      return { shouldVerify: false, valid: false, kind: "", invalidReason: "" };
+    }
+
+    function isWhatsAppSanitizedAttachFileKind(file, kind) {
+      return kind === "image"
+        ? isRedactedPngFile(file)
+        : kind === "pdf"
+          ? isRedactedPdfFile(file)
+        : kind === "docx"
+          ? isRedactedDocxFile(file)
+        : kind === "xlsx"
+          ? isRedactedXlsxFile(file)
+        : kind === "text-document"
+          ? isSanitizedTextDocumentFile(file)
+          : false;
+    }
+
+    function verifyWhatsAppSanitizedAttach(fileInput, sanitizedFile, kind) {
+      const assignedFiles = Array.from(fileInput?.files || []);
+      return (
+        assignedFiles.length === 1 &&
+        assignedFiles[0] === sanitizedFile &&
+        isWhatsAppSanitizedAttachFileKind(assignedFiles[0], kind)
+      );
+    }
+
+    function shouldUseWhatsAppDocumentDropInput(kind) {
+      return Boolean(kind && kind !== "image");
+    }
+
+    function getWhatsAppAttachDebugLabel(kind, suffix) {
+      if (kind === "text-document") return `file-handoff:whatsapp-text-document-attach-${suffix}`;
+      if (kind === "pdf") return `file-handoff:whatsapp-pdf-attach-${suffix}`;
+      if (kind === "docx") return `file-handoff:whatsapp-docx-attach-${suffix}`;
+      if (kind === "xlsx") return `file-handoff:whatsapp-xlsx-attach-${suffix}`;
+      return `file-handoff:whatsapp-image-attach-${suffix}`;
     }
 
     function isSafeSanitizedPayload(payload) {
@@ -100,9 +285,42 @@
       }
 
       if (context === "file-input") {
-        return handOffSanitizedFileInput(event?.target, transfer, {
+        const whatsappVerification = getWhatsAppAttachVerification(context, sanitizedFile);
+        if (whatsappVerification.shouldVerify && !whatsappVerification.valid) {
+          emitDebug(getWhatsAppAttachDebugLabel(whatsappVerification.kind, "verification-failed"), {
+            context,
+            reason: whatsappVerification.invalidReason,
+            sanitizedFile: describeFileForDebug(sanitizedFile)
+          });
+          return false;
+        }
+        const assigned = handOffSanitizedFileInput(event?.target, transfer, {
           dispatchInput: true
         });
+        if (!assigned || !whatsappVerification.shouldVerify) return assigned;
+        if (verifyWhatsAppSanitizedAttach(event?.target, sanitizedFile, whatsappVerification.kind)) {
+          emitDebug(getWhatsAppAttachDebugLabel(whatsappVerification.kind, "verified"), {
+            context,
+            sanitizedFile: describeFileForDebug(sanitizedFile)
+          });
+          return true;
+        }
+        emitDebug(getWhatsAppAttachDebugLabel(whatsappVerification.kind, "verification-failed"), {
+          context,
+          reason: "assigned_file_mismatch",
+          sanitizedFile: describeFileForDebug(sanitizedFile)
+        });
+        try {
+          event.target.value = "";
+        } catch {
+          // The raw file remains blocked; clearing is best-effort after a failed sanitized assignment.
+        }
+        try {
+          event.target.files = [];
+        } catch {
+          // Some browsers expose FileList as read-only; the event remains consumed and fails closed.
+        }
+        return false;
       }
 
       if (context === "drop") {
@@ -111,6 +329,140 @@
           transfer.dropEffect = "copy";
         } catch {
           // Some synthetic DataTransfer objects expose dropEffect as read-only.
+        }
+        const whatsappVerification = getWhatsAppAttachVerification(context, sanitizedFile);
+        if (whatsappVerification.shouldVerify && !whatsappVerification.valid) {
+          emitDebug(getWhatsAppAttachDebugLabel(whatsappVerification.kind, "verification-failed"), {
+            context,
+            reason: whatsappVerification.invalidReason,
+            sanitizedFile: describeFileForDebug(sanitizedFile)
+          });
+          return false;
+        }
+        if (whatsappVerification.shouldVerify) {
+          const fileInput = resolveFileInputForHandoff(event, input, {
+            expectedFiles: [sanitizedFile]
+          });
+          if (fileInput) {
+            const assigned = handOffSanitizedFileInput(fileInput, transfer, {
+              dispatchInput: true
+            });
+            if (!assigned) {
+              emitDebug(getWhatsAppAttachDebugLabel(whatsappVerification.kind, "verification-failed"), {
+                context,
+                reason: "drop_file_input_assignment_failed",
+                sanitizedFile: describeFileForDebug(sanitizedFile)
+              });
+              return false;
+            }
+            if (verifyWhatsAppSanitizedAttach(fileInput, sanitizedFile, whatsappVerification.kind)) {
+              emitDebug(getWhatsAppAttachDebugLabel(whatsappVerification.kind, "drop-input-verified"), {
+                context,
+                sanitizedFile: describeFileForDebug(sanitizedFile)
+              });
+              return true;
+            }
+            emitDebug(getWhatsAppAttachDebugLabel(whatsappVerification.kind, "verification-failed"), {
+              context,
+              reason: "drop_file_input_mismatch",
+              sanitizedFile: describeFileForDebug(sanitizedFile)
+            });
+            try {
+              fileInput.value = "";
+            } catch {
+              // The raw file remains blocked; clearing is best-effort after a failed sanitized assignment.
+            }
+            try {
+              fileInput.files = [];
+            } catch {
+              // Some browsers expose FileList as read-only; the event remains consumed and fails closed.
+            }
+            return false;
+          }
+          if (shouldUseWhatsAppDocumentDropInput(whatsappVerification.kind)) {
+            const documentInput = await resolveWhatsAppDocumentDropInputForHandoff(event, input, [sanitizedFile]);
+            if (documentInput) {
+              const assigned = handOffSanitizedFileInput(documentInput, transfer, {
+                dispatchInput: true
+              });
+              if (assigned && verifyWhatsAppSanitizedAttach(documentInput, sanitizedFile, whatsappVerification.kind)) {
+                emitDebug(getWhatsAppAttachDebugLabel(whatsappVerification.kind, "drop-document-input-verified"), {
+                  context,
+                  sanitizedFile: describeFileForDebug(sanitizedFile)
+                });
+                return true;
+              }
+              emitDebug(getWhatsAppAttachDebugLabel(whatsappVerification.kind, "verification-failed"), {
+                context,
+                reason: "drop_document_file_input_assignment_failed",
+                sanitizedFile: describeFileForDebug(sanitizedFile)
+              });
+              try {
+                documentInput.value = "";
+              } catch {
+                // The raw file remains blocked; clearing is best-effort after a failed sanitized assignment.
+              }
+              try {
+                documentInput.files = [];
+              } catch {
+                // Some browsers expose FileList as read-only; the event remains consumed and fails closed.
+              }
+              return false;
+            }
+            emitDebug(getWhatsAppAttachDebugLabel(whatsappVerification.kind, "verification-failed"), {
+              context,
+              reason: "drop_document_file_input_not_found",
+              sanitizedFile: describeFileForDebug(sanitizedFile)
+            });
+            return false;
+          }
+          const resolvedInput = resolveFileInputForHandoff(event, input, {
+            expectedFiles: [sanitizedFile],
+            allowIncompatible: true
+          });
+          if (resolvedInput) {
+            const assigned = handOffSanitizedFileInput(resolvedInput, transfer, {
+              dispatchInput: true,
+              prepareInput: prepareFileInputForHandoff
+            });
+            if (!assigned) {
+              emitDebug(getWhatsAppAttachDebugLabel(whatsappVerification.kind, "verification-failed"), {
+                context,
+                reason: "drop_prepared_file_input_assignment_failed",
+                sanitizedFile: describeFileForDebug(sanitizedFile)
+              });
+              return false;
+            }
+            if (verifyWhatsAppSanitizedAttach(resolvedInput, sanitizedFile, whatsappVerification.kind)) {
+              emitDebug(getWhatsAppAttachDebugLabel(whatsappVerification.kind, "drop-prepared-input-verified"), {
+                context,
+                sanitizedFile: describeFileForDebug(sanitizedFile)
+              });
+              return true;
+            }
+            emitDebug(getWhatsAppAttachDebugLabel(whatsappVerification.kind, "verification-failed"), {
+              context,
+              reason: "drop_file_input_mismatch",
+              sanitizedFile: describeFileForDebug(sanitizedFile)
+            });
+            try {
+              resolvedInput.value = "";
+            } catch {
+              // The raw file remains blocked; clearing is best-effort after a failed sanitized assignment.
+            }
+            try {
+              resolvedInput.files = [];
+            } catch {
+              // Some browsers expose FileList as read-only; the event remains consumed and fails closed.
+            }
+            return false;
+          }
+          emitDebug(getWhatsAppAttachDebugLabel(whatsappVerification.kind, "verification-failed"), {
+            context,
+            reason: "drop_file_input_not_found",
+            sanitizedFile: describeFileForDebug(sanitizedFile)
+          });
+          return false;
         }
         return dispatchSanitizedFileEvent(target, "drop", transfer);
       }
@@ -256,12 +608,36 @@
       const adapter = context?.adapter || driver.adapter || getFileHandoffAdapterForLocation();
       debugFileHandoffAdapterSelected(adapter, "handoff");
       if (isWhatsAppDriver(driver?.id)) {
+        const canUseSanitizedDrop = isWhatsAppSanitizedDropHandoffEnabled(adapter, context?.context);
+        if (canUseSanitizedDrop) {
+          if (!isSafeSanitizedPayload(payload)) {
+            setDmzOverlayState("Raw file blocked", "failed");
+            return { ok: false, stage: "failed", reason: "unsafe_sanitized_payload" };
+          }
+          emitDebug("file-handoff:whatsapp-sanitized-drop-attempt", {
+            site: driver.id,
+            adapter: describeFileHandoffAdapter(adapter),
+            context: context?.context || "",
+            sanitizedFile: describeFileForDebug(payload.sanitizedFile)
+          });
+          if (await handOffSanitizedLocalFile(context.event, context.input, payload.sanitizedFile, "drop")) {
+            setDmzOverlayState("Attached sanitized file", "attached");
+            return { ok: true, stage: "file", strategy: "whatsapp-sanitized-drop-handoff" };
+          }
+          setDmzOverlayState("Raw file blocked", "failed");
+          return {
+            ok: false,
+            stage: "failed",
+            reason: "whatsapp_sanitized_drop_handoff_failed",
+            message: "LeakGuard blocked the raw WhatsApp file drop because sanitized drop handoff could not be verified."
+          };
+        }
         setDmzOverlayState("Raw file blocked", "failed");
         return {
           ok: false,
           stage: "failed",
           reason: WHATSAPP_FILE_ATTACH_UNSUPPORTED_REASON,
-          message: "LeakGuard blocks WhatsApp Web file attachments in this text-only phase. No raw file was uploaded."
+          message: "LeakGuard blocks unsupported WhatsApp Web file attachments in this phase. No raw file was uploaded."
         };
       }
       if (!driver?.canHandle?.(locationRef, documentRef)) {

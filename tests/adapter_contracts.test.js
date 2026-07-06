@@ -24,6 +24,8 @@ require(path.join(repoRoot, "src/content/adapters/grokAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/xAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/whatsappAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/index.js"));
+require(path.join(repoRoot, "src/shared/fileTypeRegistry.js"));
+require(path.join(repoRoot, "src/content/file_handoff_flow.js"));
 require(path.join(repoRoot, "src/shared/runtime_scripts.js"));
 
 const hostMatching = globalThis.PWM.HostMatching;
@@ -212,6 +214,51 @@ function testUploadAndUnsafeClickPredicatesStayPresent() {
   assert.strictEqual(whatsapp.resolveUploadTrigger(), null, "WhatsApp upload trigger resolution should stay disabled");
   assert.strictEqual(whatsapp.resolveFileInput(), null, "WhatsApp file input resolution should stay disabled");
   assert.strictEqual(whatsapp.isUploadClickTarget(), false, "WhatsApp upload click detection should stay disabled");
+  assert.strictEqual(
+    whatsapp.supportsSanitizedTextDocumentAttachHandoff,
+    true,
+    "WhatsApp should expose only the narrow sanitized text-document attach capability"
+  );
+  assert.strictEqual(
+    whatsapp.supportsSanitizedPdfAttachHandoff,
+    true,
+    "WhatsApp should expose only the narrow sanitized PDF attach capability"
+  );
+  assert.strictEqual(
+    whatsapp.supportsSanitizedDocxAttachHandoff,
+    true,
+    "WhatsApp should expose only the narrow sanitized DOCX attach capability"
+  );
+  assert.strictEqual(
+    whatsapp.supportsSanitizedXlsxAttachHandoff,
+    true,
+    "WhatsApp should expose only the narrow sanitized XLSX attach capability"
+  );
+  assert.strictEqual(
+    whatsapp.supportsSanitizedMultiFileAttachHandoff,
+    true,
+    "WhatsApp should expose only the narrow sanitized multi-file attach capability"
+  );
+  assert.strictEqual(
+    whatsapp.supportsSanitizedDropHandoff,
+    true,
+    "WhatsApp should expose only the narrow sanitized drag/drop handoff capability"
+  );
+  assert.strictEqual(
+    whatsapp.supportsMultiFileHandoff,
+    false,
+    "WhatsApp must not enable generic multi-file handoff"
+  );
+  assert.strictEqual(
+    whatsapp.supportsDirectDropReplay,
+    false,
+    "WhatsApp must not enable raw direct drop replay"
+  );
+  assert.strictEqual(
+    whatsapp.supportsDirectFileInputAssignment,
+    false,
+    "WhatsApp document support must not enable raw direct file input assignment"
+  );
 
   ["gemini", "grok"].forEach((id) => {
     assert.strictEqual(
@@ -254,12 +301,112 @@ function testGeminiFallbackWriterLoadsAfterAdaptersBeforeContentWiring() {
   );
 }
 
-testAdapterRegistryExposesExpectedProviders();
-testHostMatchingRoutesExpectedUrlsToAdapters();
-testUnsupportedHostnamesDoNotReceiveSpecialAdapterBehavior();
-testAdapterParityCapabilitiesStayStable();
-testPendingAttachIsEnabledForBuiltInProviders();
-testUploadAndUnsafeClickPredicatesStayPresent();
-testGeminiFallbackWriterLoadsAfterAdaptersBeforeContentWiring();
+async function testWhatsAppXlsxAttachVerifierRequiresRedactedXlsx() {
+  const fileInput = {
+    tagName: "INPUT",
+    type: "file",
+    files: [],
+    events: [],
+    dispatchEvent(event) {
+      this.events.push(event.type);
+      return true;
+    }
+  };
+  const sanitizedXlsx = {
+    name: "lgqa-wa-doc.redacted.xlsx",
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    size: 256
+  };
+  const flow = globalThis.PWM.createFileHandoffFlow({
+    createSanitizedDataTransfer: (file) => ({ files: [file] }),
+    describeFileForDebug: (file) => ({ name: file?.name || "", type: file?.type || "", size: file?.size || 0 }),
+    getCurrentHandoffDriverId: () => "whatsapp",
+    getFileHandoffAdapterById: () => ({
+      id: "whatsapp",
+      supportsSanitizedXlsxAttachHandoff: true
+    }),
+    getFileHandoffAdapterForLocation: () => ({
+      id: "whatsapp",
+      supportsSanitizedXlsxAttachHandoff: true
+    }),
+    handOffSanitizedFileInput: (targetInput, transfer) => {
+      targetInput.files = transfer.files;
+      targetInput.dispatchEvent({ type: "input", bubbles: true, composed: true });
+      targetInput.dispatchEvent({ type: "change", bubbles: true, composed: true });
+      return true;
+    }
+  });
 
-console.log("PASS adapter contract regressions");
+  const ok = await flow.handOffSanitizedLocalFile(
+    { type: "change", target: fileInput },
+    null,
+    sanitizedXlsx,
+    "file-input"
+  );
+
+  assert.strictEqual(ok, true, "WhatsApp should accept a sanitized rebuilt XLSX");
+  assert.strictEqual(fileInput.files.length, 1);
+  assert.strictEqual(fileInput.files[0], sanitizedXlsx);
+  assert.deepStrictEqual(fileInput.events, ["input", "change"]);
+
+  for (const invalid of [
+    { name: "lgqa-wa-doc.xlsx", type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", size: 64 },
+    { name: "lgqa-wa-doc.redacted.docx", type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", size: 64 },
+    { name: "lgqa-wa-doc.redacted.xlsx", type: "application/octet-stream", size: 64 },
+    { name: "lgqa-wa-doc.redacted.pdf", type: "application/pdf", size: 64 }
+  ]) {
+    const invalidFileInput = {
+      tagName: "INPUT",
+      type: "file",
+      files: [],
+      events: [],
+      dispatchEvent(event) {
+        this.events.push(event.type);
+        return true;
+      }
+    };
+    const invalidFlow = globalThis.PWM.createFileHandoffFlow({
+      createSanitizedDataTransfer: (file) => ({ files: [file] }),
+      describeFileForDebug: (file) => ({ name: file?.name || "", type: file?.type || "", size: file?.size || 0 }),
+      getCurrentHandoffDriverId: () => "whatsapp",
+      getFileHandoffAdapterById: () => ({
+        id: "whatsapp",
+        supportsSanitizedXlsxAttachHandoff: true
+      }),
+      getFileHandoffAdapterForLocation: () => ({
+        id: "whatsapp",
+        supportsSanitizedXlsxAttachHandoff: true
+      }),
+      handOffSanitizedFileInput: () => {
+        throw new Error(`${invalid.name} must be rejected before XLSX assignment`);
+      }
+    });
+
+    const invalidOk = await invalidFlow.handOffSanitizedLocalFile(
+      { type: "change", target: invalidFileInput },
+      null,
+      invalid,
+      "file-input"
+    );
+
+    assert.strictEqual(invalidOk, false, `${invalid.name} should be rejected for WhatsApp Phase 3D`);
+    assert.strictEqual(invalidFileInput.files.length, 0);
+    assert.deepStrictEqual(invalidFileInput.events, []);
+  }
+}
+
+(async () => {
+  testAdapterRegistryExposesExpectedProviders();
+  testHostMatchingRoutesExpectedUrlsToAdapters();
+  testUnsupportedHostnamesDoNotReceiveSpecialAdapterBehavior();
+  testAdapterParityCapabilitiesStayStable();
+  testPendingAttachIsEnabledForBuiltInProviders();
+  testUploadAndUnsafeClickPredicatesStayPresent();
+  await testWhatsAppXlsxAttachVerifierRequiresRedactedXlsx();
+  testGeminiFallbackWriterLoadsAfterAdaptersBeforeContentWiring();
+
+  console.log("PASS adapter contract regressions");
+})().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

@@ -435,6 +435,7 @@
     listDataTransferFiles,
     dataTransferHasUnavailableFileItems,
     normalizeClipboardImageDataTransfer,
+    isSupportedClipboardImageMimeType,
     readLocalTextFileFromDataTransfer,
     createSanitizedTextFile,
     redactSensitiveFileName

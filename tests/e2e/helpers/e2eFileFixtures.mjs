@@ -25,13 +25,14 @@ function makePdf(text, options = {}) {
     return bufferFromText(`%PDF-1.4\nLGQA_MALFORMED_PDF ${text}\ntruncated`);
   }
 
+  const encryptMarker = options.encrypted ? " /Encrypt 6 0 R" : "";
   const streamText = options.imageOnly
     ? "q\n10 0 0 10 0 0 cm\n/Im1 Do\nQ\n"
     : `BT\n/F1 12 Tf\n72 720 Td\n(${escapePdfText(text)}) Tj\nET\n`;
   const stream = Buffer.from(streamText, "binary");
   return Buffer.concat([
     Buffer.from("%PDF-1.4\n", "binary"),
-    Buffer.from("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n", "binary"),
+    Buffer.from(`1 0 obj\n<< /Type /Catalog /Pages 2 0 R${encryptMarker} >>\nendobj\n`, "binary"),
     Buffer.from("2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n", "binary"),
     Buffer.from("3 0 obj\n<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>\nendobj\n", "binary"),
     Buffer.from(`4 0 obj\n<< /Length ${stream.length} >>\nstream\n`, "binary"),
@@ -142,13 +143,87 @@ export const textFileFixtures = [
   (() => {
     const body = textBody("MD_FILE");
     return payload("lgqa-markdown-secret.md", "text/markdown", bufferFromText(`# QA\n\n${body.text}`), body);
+  })(),
+  (() => {
+    const secret = "sk-proj-LGQACSVFileKey1234567890abcdef1234567890";
+    const text = [
+      "marker,openai_api_key,database_url",
+      `LGQA_CSV_FILE,${secret},postgres://admin:FakePass123@db.example.com:5432/customerdb`
+    ].join("\n");
+    return payload("lgqa-csv-secret.csv", "text/csv", bufferFromText(text), {
+      secret,
+      text
+    });
+  })(),
+  (() => {
+    const body = textBody("YAML_FILE");
+    const text = `marker: LGQA_YAML_FILE\nservice_password: ${body.secret}\n`;
+    return payload("lgqa-yaml-secret.yaml", "text/yaml", bufferFromText(text), {
+      secret: body.secret,
+      text
+    });
+  })(),
+  (() => {
+    const body = textBody("PEM_FILE");
+    const text = [
+      "-----BEGIN PRIVATE KEY-----",
+      body.secret,
+      "-----END PRIVATE KEY-----"
+    ].join("\n");
+    return payload("lgqa-pem-secret.pem", "text/plain", bufferFromText(text), {
+      secret: body.secret,
+      text
+    });
+  })(),
+  (() => {
+    const body = textBody("PS1_FILE");
+    const text = `$ServicePassword = "${body.secret}"\nWrite-Host "LGQA_PS1_FILE"\n`;
+    return payload("lgqa-ps1-secret.ps1", "text/plain", bufferFromText(text), {
+      secret: body.secret,
+      text
+    });
+  })(),
+  (() => {
+    const body = textBody("PY_FILE");
+    const text = `SERVICE_PASSWORD = "${body.secret}"\nprint("LGQA_PY_FILE")\n`;
+    return payload("lgqa-python-secret.py", "text/x-python", bufferFromText(text), {
+      secret: body.secret,
+      text
+    });
+  })(),
+  (() => {
+    const secret = "sk-proj-LGQASQLFileKey1234567890abcdef1234567890";
+    const text = `-- LGQA_SQL_FILE\n-- OPENAI_API_KEY=${secret}\nCREATE USER app WITH PASSWORD 'FakePass123';\n`;
+    return payload("lgqa-sql-secret.sql", "text/plain", bufferFromText(text), {
+      secret,
+      text
+    });
+  })(),
+  (() => {
+    const body = textBody("DOCKERFILE");
+    const text = `FROM alpine\nENV SERVICE_PASSWORD=${body.secret}\n`;
+    return payload("Dockerfile", "text/plain", bufferFromText(text), {
+      secret: body.secret,
+      text
+    });
+  })(),
+  (() => {
+    const body = textBody("MAKEFILE");
+    const text = `deploy:\n\tSERVICE_PASSWORD=${body.secret} ./deploy.sh\n`;
+    return payload("Makefile", "text/plain", bufferFromText(text), {
+      secret: body.secret,
+      text
+    });
   })()
 ];
 
 export const documentFileFixtures = [
   (() => {
     const body = textBody("PDF_FILE");
-    return payload("lgqa-pdf-secret.pdf", "application/pdf", makePdf(body.text), body);
+    return payload("lgqa-pdf-secret.pdf", "application/pdf", makePdf(body.text), {
+      ...body,
+      expectedOutputName: "lgqa-pdf-secret.redacted.pdf"
+    });
   })(),
   (() => {
     const body = textBody("DOCX_FILE");
@@ -156,7 +231,10 @@ export const documentFileFixtures = [
       "lgqa-docx-secret.docx",
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
       makeDocx(body.text),
-      body
+      {
+        ...body,
+        expectedOutputName: "lgqa-docx-secret.redacted.docx"
+      }
     );
   })(),
   (() => {
@@ -165,7 +243,10 @@ export const documentFileFixtures = [
       "lgqa-xlsx-secret.xlsx",
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       makeXlsx(body.text),
-      body
+      {
+        ...body,
+        expectedOutputName: "lgqa-xlsx-secret.redacted.xlsx"
+      }
     );
   })()
 ];
@@ -175,10 +256,30 @@ export function malformedPdfFixture() {
   return payload("lgqa-malformed-secret.pdf", "application/pdf", makePdf(body.text, { malformed: true }), body);
 }
 
+export function encryptedPdfFixture() {
+  const body = textBody("ENCRYPTED_PDF");
+  return payload("lgqa-encrypted-secret.pdf", "application/pdf", makePdf(body.text, { encrypted: true }), body);
+}
+
+export function imageOnlyPdfFixture() {
+  const body = textBody("IMAGE_ONLY_PDF");
+  return payload("lgqa-image-only-secret.pdf", "application/pdf", makePdf(body.text, { imageOnly: true }), body);
+}
+
+export function malformedDocxFixture() {
+  const body = textBody("MALFORMED_DOCX");
+  return payload(
+    "lgqa-malformed-secret.docx",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    bufferFromText(`not a docx ${body.text}`),
+    body
+  );
+}
+
 export function unsupportedFileFixture(options = {}) {
   const body = textBody("UNSUPPORTED_FILE");
   const name = options.name || "lgqa-unsupported-secret.bin";
-  return payload(name, "application/octet-stream", bufferFromText(body.text), {
+  return payload(name, options.mimeType || "application/octet-stream", bufferFromText(body.text), {
     secret: body.secret,
     text: body.text
   });

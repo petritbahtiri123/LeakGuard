@@ -415,6 +415,9 @@ function createHarness(options = {}) {
     normalizeVisiblePlaceholders: normalizeComposerText,
     spliceSelectionText,
     isSanitizedFileHandoffEvent: () => false,
+    isSanitizedTextRewriteEvent: () => false,
+    shouldSuppressDuplicateWhatsAppTextPaste: () => false,
+    rememberWhatsAppTextPaste: () => {},
     isGeminiHost: () => false,
     maybeHandleGeminiEditorPaste: async () => false,
     dataTransferHasFiles: () => false,
@@ -457,6 +460,7 @@ function createHarness(options = {}) {
     shouldAutoRedactTypedSecrets: () => false,
     isWhatsAppHost: () => false,
     shouldOwnWhatsAppTextSend: () => false,
+    shouldBypassWhatsAppSanitizedImageSend: () => false,
     markWhatsAppTextSendPending: () => true,
     createWhatsAppVerifiedSendOptions: () => ({}),
     clearWhatsAppTextSendPending: () => {},
@@ -515,6 +519,7 @@ function createHarness(options = {}) {
   const factory = new Function(
     ...Object.keys(dependencies),
     [
+      "let whatsAppBypassSanitizedImageSubmitUntil = 0;",
       extractFunctionSource(contentSource, "getEditorRiskState"),
       extractFunctionSource(contentSource, "clearEditorRiskState"),
       extractFunctionSource(contentSource, "noteActiveRiskEditor"),

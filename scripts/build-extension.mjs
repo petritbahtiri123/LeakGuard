@@ -25,6 +25,7 @@ const BUILD_TARGETS = Object.freeze([
   Object.freeze({ browser: "firefox", mode: "consumer", folder: "firefox" }),
   Object.freeze({ browser: "firefox", mode: "enterprise", folder: "firefox-enterprise" })
 ]);
+const LOCAL_DEBUG_MODE = "debug";
 const OCR_SIZE_BUDGETS = Object.freeze({
   currentInstalledWarningBytes: 50 * 1024 * 1024,
   hardReviewInstalledBytes: 100 * 1024 * 1024,
@@ -32,7 +33,7 @@ const OCR_SIZE_BUDGETS = Object.freeze({
   chromeZipHardLimitBytes: 2 * 1024 * 1024 * 1024
 });
 const supportedBrowsers = new Set(BUILD_TARGETS.map((target) => target.browser));
-const supportedModes = new Set(BUILD_TARGETS.map((target) => target.mode));
+const supportedModes = new Set([...BUILD_TARGETS.map((target) => target.mode), LOCAL_DEBUG_MODE]);
 
 function pathExists(targetPath) {
   try {
@@ -273,6 +274,7 @@ function assertNoReleaseSourceMaps(targetRoot) {
 }
 
 function resolveTargetName(browser, mode = "consumer") {
+  if (mode === LOCAL_DEBUG_MODE) return `${browser}-debug`;
   return mode === "enterprise" ? `${browser}-enterprise` : browser;
 }
 
@@ -382,8 +384,10 @@ function buildTarget(browser, mode = "consumer") {
     copyDirContents(path.join(repoRoot, dir), path.join(targetRoot, dir));
   }
 
-  stripContentDebugDiagnostics(targetRoot);
-  stripDebugLoggerDiagnostics(targetRoot);
+  if (mode !== LOCAL_DEBUG_MODE) {
+    stripContentDebugDiagnostics(targetRoot);
+    stripDebugLoggerDiagnostics(targetRoot);
+  }
   copyOnnxRuntime(targetRoot);
   stripSourceMappingUrls(targetRoot);
   assertNoReleaseSourceMaps(targetRoot);
@@ -426,12 +430,12 @@ function parseArgs(argv) {
 
 function printUsage() {
   process.stderr.write(
-    "Usage: node scripts/build-extension.mjs --browser chrome|firefox --mode consumer|enterprise\n"
+    "Usage: node scripts/build-extension.mjs --browser chrome|firefox --mode consumer|enterprise|debug\n"
   );
 }
 
 function validateArgs(browser, mode) {
-  if (!supportedBrowsers.has(browser) || !supportedModes.has(mode)) {
+  if (!supportedBrowsers.has(browser) || !supportedModes.has(mode) || (mode === LOCAL_DEBUG_MODE && browser !== "chrome")) {
     printUsage();
     process.exitCode = 1;
     return false;

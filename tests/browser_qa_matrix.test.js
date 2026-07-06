@@ -7,21 +7,13 @@ const repoRoot = path.join(__dirname, "..");
 const {
   BROWSER_QA_FAILURE_CODES
 } = require(path.join(repoRoot, "tests/helpers/browserQaAssertions.js"));
+const {
+  SUPPORTED_TEXT_EXTENSIONS,
+  SUPPORTED_TEXT_BASENAMES
+} = require(path.join(repoRoot, "src/shared/fileTypeRegistry.js"));
 
 const REQUIRED_SUPPORTED_EXTENSIONS = [
-  ".txt",
-  ".env",
-  ".json",
-  ".yaml",
-  ".yml",
-  ".log",
-  ".md",
-  ".html",
-  ".js",
-  ".ps1",
-  ".ini",
-  ".xml",
-  ".csv",
+  ...Array.from(SUPPORTED_TEXT_EXTENSIONS).sort(),
   ".pdf",
   ".docx",
   ".xlsx",
@@ -30,6 +22,7 @@ const REQUIRED_SUPPORTED_EXTENSIONS = [
   ".jpeg",
   ".webp"
 ];
+const REQUIRED_SUPPORTED_BASENAMES = Array.from(SUPPORTED_TEXT_BASENAMES).sort();
 
 const REQUIRED_UNSUPPORTED_IDS = [
   "unsupported-gif",
@@ -98,11 +91,16 @@ async function assertFullCoverageMatrix() {
   const harness = await loadHarness();
   const matrix = harness.getBrowserQaCoverageMatrix({ matrixMode: "full" });
   const supportedExtensions = new Set(matrix.supportedFiles.map((entry) => entry.extension));
+  const supportedFileNames = new Set(matrix.supportedFiles.map((entry) => String(entry.fileName || "")));
   const unsupportedIds = new Set(matrix.unsupportedFiles.map((entry) => entry.id));
   const followUpExtensions = new Set(matrix.followUpFiles.map((entry) => entry.extension));
 
   for (const extension of REQUIRED_SUPPORTED_EXTENSIONS) {
     assert.ok(supportedExtensions.has(extension), `full matrix should include ${extension}`);
+  }
+  for (const basename of REQUIRED_SUPPORTED_BASENAMES) {
+    const expectedFileName = basename.charAt(0).toUpperCase() + basename.slice(1);
+    assert.ok(supportedFileNames.has(expectedFileName), `full matrix should include ${expectedFileName}`);
   }
   for (const id of REQUIRED_UNSUPPORTED_IDS) {
     assert.ok(unsupportedIds.has(id), `full matrix should include ${id}`);
@@ -146,7 +144,17 @@ async function assertFullCoverageMatrix() {
   }
   assert.ok(matrix.followUpInputPaths.includes("drag/drop text"), "text drag/drop should be documented as follow-up");
   assert.strictEqual(matrix.whatsAppTextOnly.target, "https://web.whatsapp.com/*");
-  for (const inputPath of ["send button click", "Enter-to-send", "file attachment attempt"]) {
+  for (const inputPath of [
+    "send button click",
+    "Enter-to-send",
+    "single text-document attachment",
+    "single PDF attachment",
+    "single DOCX attachment",
+    "single XLSX attachment",
+    "multi-file attachment",
+    "drag/drop file attachment",
+    "unsupported file attachment attempt"
+  ]) {
     assert.ok(matrix.whatsAppTextOnly.inputPaths.includes(inputPath), `WhatsApp QA should include ${inputPath}`);
   }
   for (const requiredCase of [
@@ -159,7 +167,19 @@ async function assertFullCoverageMatrix() {
     "rewrite verification failure blocks send",
     "programmatic replay does not recurse",
     "second-click retry is not accepted as success",
-    "attachment attempt remains unsupported and blocked"
+    "single canonical LeakGuard text-like attachment assigns only a sanitized document",
+    "Dockerfile and Makefile attachments assign only sanitized documents",
+    "single PDF attachment assigns only a sanitized rebuilt PDF",
+    "single DOCX attachment assigns only a sanitized rebuilt DOCX",
+    "single XLSX attachment assigns only a sanitized rebuilt XLSX",
+    "encrypted/malformed/image-only PDF attachment remains blocked",
+    "2-20 small supported multi-file attachments assign only sanitized files",
+    "21+ small or 6+ large WhatsApp multi-file attachments block before read",
+    "unsupported extensionless WhatsApp attachment remains blocked",
+    "unsupported or failing WhatsApp multi-file batch blocks all-or-nothing",
+    "1-20 small supported WhatsApp drag/drop files assign only sanitized files",
+    "21+ small or 6+ large WhatsApp drag/drop files block before read",
+    "unsupported or failing WhatsApp drag/drop batch blocks all-or-nothing"
   ]) {
     assert.ok(
       matrix.whatsAppTextOnly.requiredCases.includes(requiredCase),
@@ -172,6 +192,9 @@ async function assertFullCoverageMatrix() {
   }
 
   assert.equal(harness.isHarnessTextCaptureFileName("sample.yaml", "text/yaml"), true);
+  assert.equal(harness.isHarnessTextCaptureFileName("Dockerfile", ""), true);
+  assert.equal(harness.isHarnessTextCaptureFileName("Makefile", ""), true);
+  assert.equal(harness.isHarnessTextCaptureFileName("extensionless", "text/yaml"), true);
   assert.equal(harness.isHarnessTextCaptureFileName("sample.tfvars", ""), false);
   assert.equal(harness.isHarnessTextCaptureFileName("sample.properties", ""), false);
   assert.equal(harness.isHarnessTextCaptureFileName("sample.png", "image/png"), false);

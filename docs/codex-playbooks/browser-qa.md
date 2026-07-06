@@ -70,7 +70,7 @@ Fast matrix:
 - Controls: debug metadata-only checks, sanitized handoff checks, unsupported/malformed fail-closed checks.
 
 Full matrix adds browser-path file input coverage for:
-- Text: `.txt`, `.env`, `.json`, `.yaml`, `.yml`, `.log`, `.md`, `.html`, `.js`, `.ps1`, `.ini`, `.xml`, `.csv`.
+- Text: canonical `FileTypeRegistry.SUPPORTED_TEXT_EXTENSIONS`, plus basename-only `Dockerfile` and `Makefile`.
 - Documents: `.pdf`, `.docx`, `.xlsx`.
 - Images: `.png`, `.jpg`, `.jpeg`, `.webp`.
 - Unsupported/unsafe controls: `.gif`, `.bmp`, `.ico`, `.svg`, unknown binary, malformed PDF/DOCX/XLSX, encrypted PDF, image-only PDF, legacy/macro Office formats.

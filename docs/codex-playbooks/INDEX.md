@@ -26,6 +26,12 @@ Use this as a compact router. Read a full playbook only when the current task ma
 - Do not use when: the issue is generic detector scoring or non-Gemini upload scanning.
 - Keywords: gemini, drag, drop, file ingestion, quill, contenteditable, editor
 
+## WhatsApp multiline rewrite mismatch
+- Path: `docs/codex-playbooks/whatsapp-multiline-rewrite-mismatch.md`
+- Use when: WhatsApp Web receives sanitized multiline placeholders, but LeakGuard still shows `Rewrite mismatch blocked` or `Rewrite verification failed`.
+- Do not use when: raw values remain visible in the composer, a detector misses the secret, or the issue is unrelated to WhatsApp editor verification.
+- Keywords: whatsapp, multiline, paste, rewrite mismatch, rewrite verification, defaultPrevented, placeholder
+
 ## File handoff/fail closed
 - Path: `docs/codex-playbooks/file-handoff-fail-closed.md`
 - Use when: protected-site paste/drop/file input, sanitized handoff, pending attach, regenerated document output, image redaction, or unsupported-file handling fails.
