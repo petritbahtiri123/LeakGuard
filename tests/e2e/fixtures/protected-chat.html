@@ -140,8 +140,8 @@
             </div>
           </div>
           <button id="whatsapp-attach-button" data-testid="whatsapp-attach-button" aria-label="Attach" type="button">Attach</button>
-          <input id="whatsapp-media-file-input" type="file" accept="image/png,image/jpeg,image/webp,image/*" multiple hidden>
-          <input id="whatsapp-file-input" type="file" accept="image/png,image/jpeg,image/webp,.txt,.md,.markdown,.env,.log,.json,.yaml,.yml,.pem,.key,.toml,.xml,.csv,.ini,.conf,.cfg,.ps1,.sh,.bash,.zsh,.bat,.cmd,.py,.js,.jsx,.ts,.tsx,.html,.css,.scss,.java,.c,.cpp,.h,.hpp,.cs,.go,.rs,.rb,.php,.sql,.pdf,.docx,.xlsx,text/plain,application/json,text/markdown,text/csv,text/yaml,application/xml,text/html,text/css,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" multiple hidden>
+          <input id="whatsapp-media-file-input" type="file" accept="image/png,image/jpeg,image/webp,image/*" hidden>
+          <input id="whatsapp-file-input" type="file" accept="image/png,image/jpeg,image/webp,.txt,.md,.markdown,.env,.log,.json,.yaml,.yml,.pem,.key,.toml,.xml,.csv,.ini,.conf,.cfg,.ps1,.sh,.bash,.zsh,.bat,.cmd,.py,.js,.jsx,.ts,.tsx,.html,.css,.scss,.java,.c,.cpp,.h,.hpp,.cs,.go,.rs,.rb,.php,.sql,.pdf,.docx,.xlsx,text/plain,application/json,text/markdown,text/csv,text/yaml,application/xml,text/html,text/css,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" multiple hidden disabled>
           <div id="whatsapp-preview-modal" data-testid="whatsapp-preview-modal" hidden>
             <div id="whatsapp-preview-area" data-testid="whatsapp-preview-area"></div>
             <button id="whatsapp-preview-send-button" data-testid="whatsapp-preview-send-button" type="button">Send image</button>
@@ -704,6 +704,7 @@
           whatsappShell.remove();
         } else if (modeUsesWhatsAppComposer()) {
           whatsappShell.hidden = false;
+          fileInput.disabled = true;
           textareaShell.remove();
           editableShell.remove();
         } else {
@@ -787,6 +788,7 @@
 
         if (whatsappAttachButton && whatsappFileInput) {
           whatsappAttachButton.addEventListener("click", () => {
+            whatsappFileInput.disabled = false;
             whatsappFileInput.click();
           });
           whatsappFileInputs.forEach((input) => {

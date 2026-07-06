@@ -584,6 +584,7 @@
     locationRef: location,
     logSanitizedFileHandoffFailure,
     queuePendingSanitizedFileHandoff,
+    prepareFileInputForHandoff: prepareFileInputForSanitizedHandoff,
     readSanitizedFileTextForFallback,
     refreshBadgeFromCurrentInput,
     resolveFileInputForHandoff,
@@ -1241,6 +1242,10 @@
     if (!isWhatsAppHost() || context !== "drop") return false;
     const adapter = getFileHandoffAdapterById("whatsapp") || getFileHandoffAdapterForLocation();
     return adapter?.id === "whatsapp" && adapter.supportsSanitizedDropHandoff === true;
+  }
+
+  function isWhatsAppHandoffContext() {
+    return isWhatsAppHost() || getCurrentHandoffDriverId() === "whatsapp";
   }
 
   function isWhatsAppSanitizedFileHandoffContext(context = "file-input") {
@@ -8629,17 +8634,30 @@
     return expectedFiles.every((file) => tokens.some((token) => fileMatchesAcceptTokenForHandoff(file, token)));
   }
 
-  function scoreFileInputForHandoff(fileInput, source, files) {
+  function scoreFileInputForHandoff(fileInput, source, files, options = {}) {
     if (!isFileInputElement(fileInput) || fileInput.disabled) return -1;
     const expectedFiles = Array.from(files || []).filter(Boolean);
-    if (!fileInputAcceptsHandoffFiles(fileInput, expectedFiles)) return -1;
-    let score = 1;
+    const acceptsFiles = fileInputAcceptsHandoffFiles(fileInput, expectedFiles);
+    if (!acceptsFiles && options?.allowIncompatible !== true) return -1;
+    let score = acceptsFiles ? 1 : 0;
     if (String(source || "").includes("target")) score += 2;
     if (String(source || "").includes("form")) score += 1;
     if (expectedFiles.length > 1 && fileInput.multiple === true) score += 4;
     const accept = String(fileInput.accept || fileInput.getAttribute?.("accept") || "").trim();
-    if (accept) score += 3;
+    if (accept && acceptsFiles) score += 3;
     return score;
+  }
+
+  function getFileInputDiscoveryScope(target) {
+    const explicitWhatsAppScope = target?.closest?.("[data-shell='whatsapp']");
+    if (explicitWhatsAppScope) return explicitWhatsAppScope;
+    if (isWhatsAppHandoffContext()) {
+      return (
+        target?.closest?.("[data-shell='whatsapp'], footer, [role='dialog'], form, main") ||
+        null
+      );
+    }
+    return target?.closest?.("[role='dialog'], form, main, body") || null;
   }
 
   function discoverFileInputForHandoff(event, input, options = {}) {
@@ -8654,6 +8672,7 @@
     collectFileInputsFromAncestry(event?.target, addCandidate);
 
     const target = normalizeTarget(event?.target);
+    const discoveryScope = getFileInputDiscoveryScope(target);
     const preferredSelectors = [
       "input[type='file'][accept*='text']",
       "input[type='file'][accept*='.txt']",
@@ -8664,7 +8683,7 @@
     ];
     for (const selector of preferredSelectors) {
       try {
-        target?.closest?.("[role='dialog'], form, main, body")?.querySelectorAll?.(selector).forEach((candidate) => {
+        discoveryScope?.querySelectorAll?.(selector).forEach((candidate) => {
           addCandidate(candidate, "target-scope");
         });
       } catch {
@@ -8677,7 +8696,9 @@
     input?.closest?.("form")?.querySelectorAll?.("input[type='file']").forEach((candidate) => {
       addCandidate(candidate, "composer-form");
     });
-    collectFileInputsFromRoot(document, addCandidate, new WeakSet());
+    if (!(isWhatsAppHandoffContext() && discoveryScope)) {
+      collectFileInputsFromRoot(document, addCandidate, new WeakSet());
+    }
 
     const expectedFiles = Array.from(options?.expectedFiles || []).filter(Boolean);
     const rankedCandidates = candidates
@@ -8685,7 +8706,7 @@
         input: candidate,
         source,
         index,
-        score: scoreFileInputForHandoff(candidate, source, expectedFiles)
+        score: scoreFileInputForHandoff(candidate, source, expectedFiles, options)
       }))
       .filter((candidate) => candidate.score >= 0)
       .sort((left, right) => right.score - left.score || left.index - right.index);
@@ -8697,7 +8718,7 @@
       candidates: candidates.map(({ input: candidate, source }) =>
         ({
           ...describeFileInputForDebug(candidate, source),
-          compatible: scoreFileInputForHandoff(candidate, source, expectedFiles) >= 0
+          compatible: fileInputAcceptsHandoffFiles(candidate, expectedFiles)
         })
       )
     });
@@ -8763,18 +8784,19 @@
 
   function resolveFileInputForHandoff(event, input, options = {}) {
     const expectedFiles = Array.from(options?.expectedFiles || []).filter(Boolean);
+    const allowIncompatible = options?.allowIncompatible === true;
     if (fileDragDiscoveryCompleted) {
       if (
         isFileInputElement(lastDiscoveredFileInput) &&
         !lastDiscoveredFileInput.disabled &&
-        fileInputAcceptsHandoffFiles(lastDiscoveredFileInput, expectedFiles)
+        (allowIncompatible || fileInputAcceptsHandoffFiles(lastDiscoveredFileInput, expectedFiles))
       ) {
         return lastDiscoveredFileInput;
       }
-      if (!expectedFiles.length) return null;
+      if (!expectedFiles.length && !allowIncompatible) return null;
     }
 
-    const fileInput = discoverFileInputForHandoff(event, input, { expectedFiles });
+    const fileInput = discoverFileInputForHandoff(event, input, { expectedFiles, allowIncompatible });
     lastDiscoveredFileInput = fileInput;
     fileDragDiscoveryCompleted = true;
     fileDragDiscoveryScheduled = false;
@@ -8797,6 +8819,78 @@
       if (sessionId !== fileDragSessionId) return;
       resolveFileInputForHandoff({ target }, input);
     }, 0);
+  }
+
+  function buildAcceptTokensForHandoffFiles(files) {
+    const tokens = [];
+    const seen = new Set();
+    const addToken = (token) => {
+      const value = String(token || "").trim();
+      const key = value.toLowerCase();
+      if (!value || seen.has(key)) return;
+      seen.add(key);
+      tokens.push(value);
+    };
+    Array.from(files || []).filter(Boolean).forEach((file) => {
+      addToken(getSafeFileExtensionForAccept(file));
+      addToken(String(file?.type || "").split(";")[0].trim());
+    });
+    return tokens;
+  }
+
+  function prepareFileInputForSanitizedHandoff(fileInput, files) {
+    if (!isFileInputElement(fileInput)) return () => {};
+    const expectedFiles = Array.from(files || []).filter(Boolean);
+    const originalAcceptAttribute = fileInput.getAttribute?.("accept");
+    const originalAcceptProperty = fileInput.accept;
+    const originalMultiple = fileInput.multiple;
+    let changed = false;
+    if (!fileInputAcceptsHandoffFiles(fileInput, expectedFiles)) {
+      const existingTokens = String(fileInput.accept || originalAcceptAttribute || "")
+        .split(",")
+        .map((token) => token.trim())
+        .filter(Boolean);
+      const nextAccept = [...existingTokens, ...buildAcceptTokensForHandoffFiles(expectedFiles)].join(",");
+      try {
+        fileInput.setAttribute?.("accept", nextAccept);
+        fileInput.accept = nextAccept;
+        changed = true;
+      } catch {
+        // Assignment verification below still fails closed if WhatsApp cannot accept the sanitized files.
+      }
+    }
+    if (expectedFiles.length > 1 && fileInput.multiple !== true) {
+      try {
+        fileInput.multiple = true;
+        fileInput.setAttribute?.("multiple", "");
+        changed = true;
+      } catch {
+        // Assignment verification below still fails closed if count/order cannot be preserved.
+      }
+    }
+    return () => {
+      if (!changed) return;
+      try {
+        if (originalAcceptAttribute == null) {
+          fileInput.removeAttribute?.("accept");
+        } else {
+          fileInput.setAttribute?.("accept", originalAcceptAttribute);
+        }
+        fileInput.accept = originalAcceptProperty;
+      } catch {
+        // Best-effort restoration after sanitized-only assignment.
+      }
+      try {
+        fileInput.multiple = originalMultiple;
+        if (originalMultiple) {
+          fileInput.setAttribute?.("multiple", "");
+        } else {
+          fileInput.removeAttribute?.("multiple");
+        }
+      } catch {
+        // Best-effort restoration after sanitized-only assignment.
+      }
+    };
   }
 
   function handleFileDragDetected(event) {
@@ -8824,7 +8918,11 @@
     const markAsSanitized = handoffOptions.markSanitized !== false;
     const events = [];
     const transferFiles = Array.from(transfer.files || []);
+    let restorePreparedInput = null;
     try {
+      if (typeof handoffOptions.prepareInput === "function") {
+        restorePreparedInput = handoffOptions.prepareInput(fileInput, transferFiles);
+      }
       fileInput.files = transfer.files;
       if (details) details.inputFilesAssignmentSucceeded = true;
       if (Number(fileInput.files?.length || 0) <= 0) {
@@ -8886,6 +8984,10 @@
         // The original raw file must remain blocked if sanitized file assignment fails.
       }
       return false;
+    } finally {
+      if (typeof restorePreparedInput === "function") {
+        restorePreparedInput();
+      }
     }
   }
 
@@ -9911,8 +10013,11 @@
     if (!transfer) return false;
     const verifyWhatsAppBatch = options.verifyWhatsAppBatch === true;
     const originalFiles = Array.from(options.originalFiles || []);
-    const assignSanitizedBatchToInput = (fileInput) => {
-      const assigned = handOffSanitizedFileInput(fileInput, transfer, { dispatchInput: true });
+    const assignSanitizedBatchToInput = (fileInput, options = {}) => {
+      const assigned = handOffSanitizedFileInput(fileInput, transfer, {
+        dispatchInput: true,
+        prepareInput: options.prepareInput
+      });
       if (!assigned || !verifyWhatsAppBatch) return assigned;
       const verification = verifyWhatsAppSanitizedMultiFileAttach(fileInput, sanitizedFiles, originalFiles);
       if (verification.ok) {
@@ -9936,6 +10041,7 @@
       return assignSanitizedBatchToInput(event.target);
     }
 
+    const target = event?.target || input || document.activeElement;
     const shouldUseWhatsAppDropInputHandoff = context === "drop" && verifyWhatsAppBatch;
     if (shouldUseWhatsAppDropInputHandoff) {
       const fileInput = resolveFileInputForHandoff(event, input, {
@@ -9948,8 +10054,30 @@
         });
         return true;
       }
+      if (!fileInput) {
+        const fallbackInput = resolveFileInputForHandoff(event, input, {
+          expectedFiles: sanitizedFiles,
+          allowIncompatible: true
+        });
+        if (
+          fallbackInput &&
+          assignSanitizedBatchToInput(fallbackInput, { prepareInput: prepareFileInputForSanitizedHandoff })
+        ) {
+          debugFileAttachMetadata("file-handoff:whatsapp-multi-file-drop-prepared-input-verified", {
+            fileCount: sanitizedFiles.length,
+            files: Array.from(sanitizedFiles || []).map(describeFileForDebug)
+          });
+          return true;
+        }
+        debugFileAttachMetadata("file-handoff:whatsapp-multi-file-drop-prepared-input-verification-failed", {
+          reason: fallbackInput ? "prepared_file_input_assignment_failed" : "file_input_not_found",
+          expectedCount: sanitizedFiles.length,
+          files: Array.from(sanitizedFiles || []).map(describeFileForDebug)
+        });
+        return false;
+      }
       debugFileAttachMetadata("file-handoff:whatsapp-multi-file-drop-input-verification-failed", {
-        reason: fileInput ? "file_input_assignment_failed" : "file_input_not_found",
+        reason: "file_input_assignment_failed",
         expectedCount: sanitizedFiles.length,
         files: Array.from(sanitizedFiles || []).map(describeFileForDebug)
       });
@@ -9961,7 +10089,6 @@
       return true;
     }
 
-    const target = event?.target || input || document.activeElement;
     if (context === "drop") {
       try {
         transfer.dropEffect = "copy";

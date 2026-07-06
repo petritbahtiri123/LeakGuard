@@ -748,6 +748,7 @@ test.describe("@whatsapp @text WhatsApp-like reproduction contract", () => {
 
     await dragDropWhatsAppFile(page, file);
     await waitForWhatsAppSanitizedDocument(page, file);
+    await expect.poll(async () => (await getWhatsAppPreviewState(page))?.sanitized).toBe(true);
 
     const preview = await getWhatsAppPreviewState(page);
     expect(preview?.visible, `${file.name} drop should open only sanitized preview`).toBe(true);
