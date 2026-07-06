@@ -63,6 +63,7 @@
   const FileProcessingUi = globalThis.PWM?.FileProcessingUi || {};
   const WhatsAppCapabilities = globalThis.PWM?.WhatsAppCapabilities || {};
   const WhatsAppTextFlow = globalThis.PWM?.WhatsAppTextFlow || {};
+  const WhatsAppSelectors = globalThis.PWM?.WhatsAppSelectors || {};
   const {
     canExtractForAdapterHandoff,
     processFileForAdapterHandoff
@@ -359,6 +360,7 @@
   let fileProcessingUi = null;
   let whatsAppCapabilities = null;
   let whatsAppTextFlow = null;
+  let whatsAppSelectors = null;
   let replayVerification = null;
   let syntheticFileListCapabilityCache = null;
   let inputFileAssignmentCapabilityCache = null;
@@ -8409,139 +8411,35 @@
     return tokens;
   }
 
-  function shouldUseWhatsAppDocumentInputForFiles(files) {
-    const expectedFiles = Array.from(files || []).filter(Boolean);
-    return Boolean(expectedFiles.length && expectedFiles.some((file) => !isSupportedWhatsAppAttachImageFile(file)));
-  }
-
-  function isWhatsAppDocumentFileInputForHandoff(fileInput, files, options = {}) {
-    if (!isFileInputElement(fileInput)) return false;
-    if (fileInput.disabled && options.allowDisabled !== true) return false;
-    const expectedFiles = Array.from(files || []).filter(Boolean);
-    if (!fileInputAcceptsHandoffFiles(fileInput, expectedFiles)) return false;
-    const accept = String(fileInput.accept || fileInput.getAttribute?.("accept") || "").trim().toLowerCase();
-    if (accept === "*" || accept === "*/*") return true;
-    return Boolean(accept && expectedFiles.some((file) => !isSupportedWhatsAppAttachImageFile(file)));
-  }
-
-  function findWhatsAppDocumentFileInputForHandoff(files) {
-    try {
-      return Array.from(document.querySelectorAll("input[type='file']")).find((candidate) =>
-        isWhatsAppDocumentFileInputForHandoff(candidate, files)
-      ) || null;
-    } catch {
-      return null;
+  function getWhatsAppSelectors() {
+    if (whatsAppSelectors) return whatsAppSelectors;
+    if (typeof WhatsAppSelectors.createWhatsAppSelectors !== "function") {
+      whatsAppSelectors = Object.freeze({
+        shouldUseWhatsAppDocumentInputForFiles: () => false,
+        resolveWhatsAppDocumentDropInputForHandoff: async () => null
+      });
+      return whatsAppSelectors;
     }
-  }
 
-  function findDisabledWhatsAppDocumentFileInputForHandoff(files) {
-    try {
-      return Array.from(document.querySelectorAll("input[type='file']")).find((candidate) =>
-        candidate.disabled &&
-          Boolean(candidate.closest?.("[data-shell='whatsapp'], footer, [data-testid='conversation-panel-wrapper'], [role='application'], main")) &&
-          isWhatsAppDocumentFileInputForHandoff(candidate, files, { allowDisabled: true })
-      ) || null;
-    } catch {
-      return null;
-    }
-  }
-
-  function findWhatsAppAttachButtonForDocumentHandoff() {
-    try {
-      return Array.from(document.querySelectorAll("button[aria-label], [role='button'][aria-label]")).find((candidate) =>
-        String(candidate.getAttribute?.("aria-label") || "").trim().toLowerCase() === "attach" &&
-          Boolean(candidate.closest?.("[data-shell='whatsapp'], footer, [data-testid='conversation-panel-wrapper'], [role='application'], main"))
-      ) || null;
-    } catch {
-      return null;
-    }
-  }
-
-  function findWhatsAppDocumentMenuItemForHandoff() {
-    try {
-      return Array.from(document.querySelectorAll("button[aria-label], [role='menuitem'][aria-label]")).find((candidate) =>
-        String(candidate.getAttribute?.("aria-label") || "").trim().toLowerCase() === "document"
-      ) || null;
-    } catch {
-      return null;
-    }
-  }
-
-  function waitForWhatsAppDocumentFileInput(files, timeoutMs = 1200) {
-    const expectedFiles = Array.from(files || []).filter(Boolean);
-    const existing = findWhatsAppDocumentFileInputForHandoff(expectedFiles);
-    if (existing) return Promise.resolve(existing);
-    return new Promise((resolve) => {
-      let settled = false;
-      let observer = null;
-      let timer = 0;
-      const finish = (input = null) => {
-        if (settled) return;
-        settled = true;
-        if (observer) {
-          try {
-            observer.disconnect();
-          } catch {
-            // Best-effort cleanup for a short-lived DOM wait.
-          }
-        }
-        if (timer) clearTimeout(timer);
-        resolve(input);
-      };
-      const check = () => {
-        const input = findWhatsAppDocumentFileInputForHandoff(expectedFiles);
-        if (input) finish(input);
-      };
-      try {
-        observer = new MutationObserver(check);
-        observer.observe(document.documentElement || document.body, { childList: true, subtree: true });
-      } catch {
-        observer = null;
-      }
-      timer = setTimeout(() => finish(null), timeoutMs);
-      setTimeout(check, 0);
+    whatsAppSelectors = WhatsAppSelectors.createWhatsAppSelectors({
+      documentRef: document,
+      setTimeoutFn: setTimeout,
+      clearTimeoutFn: clearTimeout,
+      MutationObserverRef: typeof MutationObserver === "function" ? MutationObserver : null,
+      isFileInputElement,
+      fileInputAcceptsHandoffFiles,
+      isSupportedWhatsAppAttachImageFile,
+      isWhatsAppHandoffContext
     });
+    return whatsAppSelectors;
+  }
+
+  function shouldUseWhatsAppDocumentInputForFiles(files) {
+    return getWhatsAppSelectors().shouldUseWhatsAppDocumentInputForFiles(files);
   }
 
   async function resolveWhatsAppDocumentDropInputForHandoff(event, input, files) {
-    const expectedFiles = Array.from(files || []).filter(Boolean);
-    if (!isWhatsAppHandoffContext() || !shouldUseWhatsAppDocumentInputForFiles(expectedFiles)) return null;
-    const existing = findWhatsAppDocumentFileInputForHandoff(expectedFiles);
-    if (existing) return existing;
-    const disabledExisting = findDisabledWhatsAppDocumentFileInputForHandoff(expectedFiles);
-    if (disabledExisting) {
-      try {
-        disabledExisting.disabled = false;
-        disabledExisting.removeAttribute?.("disabled");
-        return disabledExisting;
-      } catch {
-        return null;
-      }
-    }
-
-    const attachButton = findWhatsAppAttachButtonForDocumentHandoff();
-    if (!attachButton) return null;
-    try {
-      attachButton.click();
-    } catch {
-      return null;
-    }
-
-    const afterAttachInput = findWhatsAppDocumentFileInputForHandoff(expectedFiles);
-    if (afterAttachInput) return afterAttachInput;
-
-    let documentMenuItem = findWhatsAppDocumentMenuItemForHandoff();
-    if (!documentMenuItem) {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      documentMenuItem = findWhatsAppDocumentMenuItemForHandoff();
-    }
-    if (!documentMenuItem) return null;
-    try {
-      documentMenuItem.click();
-    } catch {
-      return null;
-    }
-    return waitForWhatsAppDocumentFileInput(expectedFiles);
+    return getWhatsAppSelectors().resolveWhatsAppDocumentDropInputForHandoff(event, input, files);
   }
 
   function prepareFileInputForSanitizedHandoff(fileInput, files) {

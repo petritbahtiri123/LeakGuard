@@ -1444,6 +1444,7 @@ async function run() {
   const adapterIndexes = adapterScripts.map((script) => contentScripts.indexOf(script));
   const whatsAppCapabilitiesIndex = contentScripts.indexOf("content/whatsapp/whatsappCapabilities.js");
   const whatsAppTextFlowIndex = contentScripts.indexOf("content/whatsapp/whatsappTextFlow.js");
+  const whatsAppSelectorsIndex = contentScripts.indexOf("content/whatsapp/whatsappSelectors.js");
   const geminiFallbackWriterIndex = contentScripts.indexOf("content/adapters/geminiFallbackWriter.js");
   const safeSnapshotsIndex = contentScripts.indexOf("content/diagnostics/safeSnapshots.js");
   const fileProcessingUiIndex = contentScripts.indexOf("content/files/fileProcessingUi.js");
@@ -1500,6 +1501,7 @@ async function run() {
   assert.ok(adapterIndexes.every((index) => index > -1), "content scripts should include site adapter helpers");
   assert.ok(whatsAppCapabilitiesIndex > -1, "content scripts should include WhatsApp capability helpers");
   assert.ok(whatsAppTextFlowIndex > -1, "content scripts should include WhatsApp text flow helpers");
+  assert.ok(whatsAppSelectorsIndex > -1, "content scripts should include WhatsApp selector helpers");
   assert.ok(geminiFallbackWriterIndex > -1, "content scripts should include Gemini fallback writer helpers");
   assert.ok(safeSnapshotsIndex > -1, "content scripts should include safe snapshot helpers");
   assert.ok(fileProcessingUiIndex > -1, "content scripts should include file processing UI helpers");
@@ -1537,7 +1539,8 @@ async function run() {
       adapterOrderAligned &&
       adapterIndexes.at(-1) < whatsAppCapabilitiesIndex &&
       whatsAppCapabilitiesIndex < whatsAppTextFlowIndex &&
-      whatsAppTextFlowIndex < geminiFallbackWriterIndex &&
+      whatsAppTextFlowIndex < whatsAppSelectorsIndex &&
+      whatsAppSelectorsIndex < geminiFallbackWriterIndex &&
       geminiFallbackWriterIndex < safeSnapshotsIndex &&
       safeSnapshotsIndex < fileProcessingUiIndex &&
       fileProcessingUiIndex < fileAttachPipelineIndex &&

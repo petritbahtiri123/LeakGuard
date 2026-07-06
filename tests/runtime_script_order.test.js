@@ -152,6 +152,9 @@ function testContentRuntimeScriptOrder() {
   assertAfterAll(contentScripts, "content/whatsapp/whatsappTextFlow.js", [
     "content/whatsapp/whatsappCapabilities.js"
   ], "content scripts");
+  assertAfterAll(contentScripts, "content/whatsapp/whatsappSelectors.js", [
+    "content/whatsapp/whatsappCapabilities.js"
+  ], "content scripts");
   assertAfterAll(contentScripts, "shared/transformOutboundPromptWithAi.js", [
     "shared/detector.js",
     "shared/transformOutboundPrompt.js",
