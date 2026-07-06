@@ -48,6 +48,10 @@ const fileHandoffFlowSource = fs.readFileSync(
   path.join(repoRoot, "src/content/file_handoff_flow.js"),
   "utf8"
 );
+const geminiFileHandoffSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/adapters/geminiFileHandoff.js"),
+  "utf8"
+);
 const contentEventBindingsSource = fs.readFileSync(
   path.join(repoRoot, "src/content/bootstrap/eventBindings.js"),
   "utf8"
@@ -81,6 +85,7 @@ require(path.join(repoRoot, "src/content/adapters/openaiAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/geminiDiagnosticsAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/geminiAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/geminiUploadDiscovery.js"));
+require(path.join(repoRoot, "src/content/adapters/geminiFileHandoff.js"));
 require(path.join(repoRoot, "src/content/adapters/claudeAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/grokAdapter.js"));
 require(path.join(repoRoot, "src/content/adapters/grokFileHandoff.js"));
@@ -1086,6 +1091,7 @@ function createHarness(overrides = {}) {
     WhatsAppTextFlow: globalThis.PWM.WhatsAppTextFlow || {},
     WhatsAppSelectors: globalThis.PWM.WhatsAppSelectors || {},
     GeminiUploadDiscovery: globalThis.PWM.GeminiUploadDiscovery || {},
+    GeminiFileHandoff: globalThis.PWM.GeminiFileHandoff || {},
     GrokFileHandoff: globalThis.PWM.GrokFileHandoff || {},
     StreamingFileRedactor: globalThis.PWM.StreamingFileRedactor || {},
     PLACEHOLDER_TOKEN_REGEX: globalThis.PWM.PLACEHOLDER_TOKEN_REGEX,
@@ -1335,6 +1341,7 @@ function createHarness(overrides = {}) {
       "let fileInputInterception = null;",
       "let fileProcessingUi = null;",
       "let geminiUploadDiscovery = null;",
+      "let geminiFileHandoff = null;",
       "let grokFileHandoff = null;",
       "let whatsAppCapabilities = null;",
       "let whatsAppTextFlow = null;",
@@ -1592,7 +1599,10 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "findGeminiFileDataInputInNode"),
       extractFunctionSource(contentSource, "findGeminiFileDataInputInMutations"),
       extractFunctionSource(contentSource, "createGeminiFirefoxFilePickerGuard"),
+      extractFunctionSource(contentSource, "countGeminiAttachmentIndicators"),
+      extractFunctionSource(contentSource, "waitForGeminiAttachmentIndicators"),
       extractFunctionSource(contentSource, "getGeminiUploadDiscovery"),
+      extractFunctionSource(contentSource, "getGeminiFileHandoff"),
       extractFunctionSource(contentSource, "openGeminiUploadMenuSafely"),
       extractFunctionSource(contentSource, "isSafeGeminiUploadFilesMenuItem"),
       extractFunctionSource(contentSource, "collectGeminiUploadFilesMenuItemsFromRoot"),
@@ -1607,6 +1617,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "waitForGeminiUploadFilesMenuItem"),
       extractFunctionSource(contentSource, "discoverGeminiUploadOverlayItem"),
       extractFunctionSource(contentSource, "describeGeminiOverlayExposure"),
+      extractFunctionSource(contentSource, "isGeminiGhostIngressFileInput"),
       extractFunctionSource(contentSource, "waitForGeminiFileInput"),
       extractFunctionSource(contentSource, "verifyGeminiFirefoxFileInputBridgeAssignment"),
       extractFunctionSource(contentSource, "primeGeminiFirefoxUploadTarget"),
@@ -1647,6 +1658,7 @@ function createHarness(overrides = {}) {
       ...fileHandoffFlowHarnessSource({ includeLegacyLocalFile: false }),
       extractFunctionSource(contentSource, "isForbiddenGeminiUploadButton"),
       extractFunctionSource(contentSource, "isAllowedGeminiUploadMenuOpener"),
+      extractFunctionSource(contentSource, "clickElementSafely"),
       extractFunctionSource(contentSource, "shouldUseContentFileExtractionPipeline"),
       extractFunctionSource(contentSource, "isImageContentExtractionResult"),
       extractFunctionSource(contentSource, "getContentExtractionBlockedTitle"),
@@ -2235,6 +2247,7 @@ function createHandoffHarness({
     FileDropInterception: globalThis.PWM.FileDropInterception || {},
     FileProcessingUi: globalThis.PWM.FileProcessingUi || {},
     GeminiUploadDiscovery: globalThis.PWM.GeminiUploadDiscovery || {},
+    GeminiFileHandoff: globalThis.PWM.GeminiFileHandoff || {},
     GrokFileHandoff: globalThis.PWM.GrokFileHandoff || {},
     navigator: { userAgent },
     location: { hostname },
@@ -2323,7 +2336,6 @@ function createHandoffHarness({
       "let pendingGeminiSanitizedFileObserver = null;",
       "let pendingGeminiSanitizedFileTimer = 0;",
       "let pendingGeminiSanitizedFileClickHandler = null;",
-      "let pendingGeminiGhostIngressClickCleanup = null;",
       "let pendingGrokSanitizedFileHandoff = null;",
       "let pendingGrokSanitizedFileObserver = null;",
       "let pendingGrokSanitizedFileTimer = 0;",
@@ -2336,6 +2348,7 @@ function createHandoffHarness({
       "let whatsAppSelectors = null;",
       "let fileProcessingUi = null;",
       "let geminiUploadDiscovery = null;",
+      "let geminiFileHandoff = null;",
       "let grokFileHandoff = null;",
       "let fileDropInterception = null;",
       "let syntheticFileListCapabilityCache = null;",
@@ -2360,6 +2373,7 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "getPendingSanitizedAttachPromptMessage"),
       extractFunctionSource(contentSource, "describeSanitizedFileOrBatchForDebug"),
       extractFunctionSource(contentSource, "showPendingSanitizedAttachPrompt"),
+      extractFunctionSource(contentSource, "consumeInterceptionEvent"),
       extractFunctionSource(contentSource, "normalizeTarget"),
       extractFunctionSource(contentSource, "isFirefoxRuntime"),
       extractFunctionSource(contentSource, "createSafeCapabilityProbeFile"),
@@ -2456,6 +2470,7 @@ function createHandoffHarness({
       "function prepareFileInputForSanitizedHandoff() { return () => {}; }",
       extractFunctionSource(contentSource, "getSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "handOffSanitizedFileInput"),
+      extractFunctionSource(contentSource, "getGeminiFileHandoff"),
       extractFunctionSource(contentSource, "handOffGeminiSanitizedFileInput"),
       extractFunctionSource(contentSource, "readSanitizedFileTextForFallback"),
       extractFunctionSource(contentSource, "isForbiddenGeminiUploadButton"),
@@ -16812,11 +16827,11 @@ async function testFirefoxGeminiDropQueuesPendingBeforeFailClosedWhenBridgeHandl
 
 function testFirefoxGeminiFileInputBridgeDoesNotReplayOrOpenPicker() {
   const source = [
-    extractFunctionSource(contentSource, "tryFirefoxGeminiFileInputBridge"),
-    extractFunctionSource(contentSource, "waitForGeminiFileInput"),
+    extractFunctionSource(geminiFileHandoffSource, "tryFirefoxGeminiFileInputBridge"),
+    extractFunctionSource(geminiFileHandoffSource, "waitForGeminiFileInput"),
     extractFunctionSource(contentSource, "openGeminiUploadMenuSafely"),
     extractFunctionSource(contentSource, "openGeminiUploadFilesMenuItemSafely"),
-    extractFunctionSource(contentSource, "createGeminiFirefoxFilePickerGuard")
+    extractFunctionSource(geminiFileHandoffSource, "createGeminiFirefoxFilePickerGuard")
   ].join("\n");
   assert.strictEqual(source.includes("new DragEvent"), false);
   assert.strictEqual(source.includes("dispatchSanitizedFileEvent"), false);

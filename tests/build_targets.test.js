@@ -1436,6 +1436,7 @@ async function run() {
     "content/adapters/geminiDiagnosticsAdapter.js",
     "content/adapters/geminiAdapter.js",
     "content/adapters/geminiUploadDiscovery.js",
+    "content/adapters/geminiFileHandoff.js",
     "content/adapters/claudeAdapter.js",
     "content/adapters/grokAdapter.js",
     "content/adapters/grokFileHandoff.js",

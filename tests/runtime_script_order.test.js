@@ -152,6 +152,10 @@ function testContentRuntimeScriptOrder() {
   assertAfterAll(contentScripts, "content/adapters/geminiUploadDiscovery.js", [
     "content/adapters/geminiAdapter.js"
   ], "content scripts");
+  assertAfterAll(contentScripts, "content/adapters/geminiFileHandoff.js", [
+    "content/adapters/geminiAdapter.js",
+    "content/adapters/geminiUploadDiscovery.js"
+  ], "content scripts");
   assertAfterAll(contentScripts, "content/adapters/grokFileHandoff.js", [
     "content/adapters/grokAdapter.js"
   ], "content scripts");
