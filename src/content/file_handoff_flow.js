@@ -330,7 +330,9 @@
           return false;
         }
         if (whatsappVerification.shouldVerify) {
-          const fileInput = resolveFileInputForHandoff(event, input);
+          const fileInput = resolveFileInputForHandoff(event, input, {
+            expectedFiles: [sanitizedFile]
+          });
           if (!fileInput) {
             emitDebug(getWhatsAppAttachDebugLabel(whatsappVerification.kind, "verification-failed"), {
               context,

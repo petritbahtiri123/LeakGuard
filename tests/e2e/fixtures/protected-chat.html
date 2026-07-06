@@ -140,6 +140,7 @@
             </div>
           </div>
           <button id="whatsapp-attach-button" data-testid="whatsapp-attach-button" aria-label="Attach" type="button">Attach</button>
+          <input id="whatsapp-media-file-input" type="file" accept="image/png,image/jpeg,image/webp,image/*" multiple hidden>
           <input id="whatsapp-file-input" type="file" accept="image/png,image/jpeg,image/webp,.txt,.md,.markdown,.env,.log,.json,.yaml,.yml,.pem,.key,.toml,.xml,.csv,.ini,.conf,.cfg,.ps1,.sh,.bash,.zsh,.bat,.cmd,.py,.js,.jsx,.ts,.tsx,.html,.css,.scss,.java,.c,.cpp,.h,.hpp,.cs,.go,.rs,.rb,.php,.sql,.pdf,.docx,.xlsx,text/plain,application/json,text/markdown,text/csv,text/yaml,application/xml,text/html,text/css,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" multiple hidden>
           <div id="whatsapp-preview-modal" data-testid="whatsapp-preview-modal" hidden>
             <div id="whatsapp-preview-area" data-testid="whatsapp-preview-area"></div>
@@ -198,7 +199,9 @@
         const editable = document.querySelector("#editable-composer");
         const whatsapp = document.querySelector("#whatsapp-composer");
         const whatsappAttachButton = document.querySelector("#whatsapp-attach-button");
+        const whatsappMediaFileInput = document.querySelector("#whatsapp-media-file-input");
         const whatsappFileInput = document.querySelector("#whatsapp-file-input");
+        const whatsappFileInputs = [whatsappMediaFileInput, whatsappFileInput].filter(Boolean);
         const whatsappPreviewModal = document.querySelector("#whatsapp-preview-modal");
         const whatsappPreviewArea = document.querySelector("#whatsapp-preview-area");
         const whatsappPreviewSendButton = document.querySelector("#whatsapp-preview-send-button");
@@ -231,6 +234,7 @@
             source: "",
             files: [],
             dropOrder: [],
+            unsupportedInput: false,
             dragenterCount: 0,
             dragoverCount: 0,
             dropCount: 0
@@ -597,6 +601,46 @@
             Array.from(dataTransfer?.items || []).some((item) => String(item?.kind || "").toLowerCase() === "file");
         }
 
+        function fileAcceptTokenMatches(file, token) {
+          const value = String(token || "").trim().toLowerCase();
+          if (!value || value === "*" || value === "*/*") return true;
+          const name = String(file?.name || "").toLowerCase();
+          const dotIndex = name.lastIndexOf(".");
+          const extension = dotIndex >= 0 ? name.slice(dotIndex) : "";
+          const mimeType = String(file?.type || "").split(";")[0].trim().toLowerCase();
+          if (value.startsWith(".")) return extension === value;
+          if (value.endsWith("/*")) return mimeType.startsWith(value.slice(0, -1));
+          return mimeType === value;
+        }
+
+        function inputAcceptsAllFiles(input, files) {
+          const inputFiles = Array.from(files || []);
+          const accept = String(input?.accept || "").trim();
+          if (!accept || !inputFiles.length) return true;
+          const tokens = accept.split(",").map((token) => token.trim()).filter(Boolean);
+          if (!tokens.length) return true;
+          return inputFiles.every((file) => tokens.some((token) => fileAcceptTokenMatches(file, token)));
+        }
+
+        async function handleWhatsAppInputFiles(event) {
+          const files = event.target.files;
+          if (!inputAcceptsAllFiles(event.target, files)) {
+            await recordFiles("unsupported-input", files);
+            state.whatsappPreview.visible = false;
+            state.whatsappPreview.sanitized = false;
+            state.whatsappPreview.unsupportedInput = true;
+            state.whatsappPreview.files = [];
+            if (whatsappPreviewModal && whatsappPreviewArea) {
+              whatsappPreviewModal.hidden = true;
+              whatsappPreviewArea.textContent = "This file type is not supported";
+            }
+            renderAppState();
+            return;
+          }
+          state.whatsappPreview.unsupportedInput = false;
+          await renderWhatsAppPreview(files, "input");
+        }
+
         async function renderWhatsAppPreview(files, source = "input") {
           if (!modeUsesWhatsAppComposer()) return;
           const inputFiles = Array.from(files || []);
@@ -745,8 +789,10 @@
           whatsappAttachButton.addEventListener("click", () => {
             whatsappFileInput.click();
           });
-          whatsappFileInput.addEventListener("change", (event) => {
-            renderWhatsAppPreview(event.target.files, "input");
+          whatsappFileInputs.forEach((input) => {
+            input.addEventListener("change", (event) => {
+              handleWhatsAppInputFiles(event);
+            });
           });
         }
 

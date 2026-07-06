@@ -1644,7 +1644,8 @@ function createFileInput({
   disabled = false,
   multiple = false,
   inGeminiUploader = false,
-  name = ""
+  name = "",
+  accept = ".env,text/plain"
 } = {}) {
   const events = [];
   const eventObjects = [];
@@ -1655,7 +1656,7 @@ function createFileInput({
     name,
     disabled,
     hidden: source !== "light-dom",
-    accept: ".env,text/plain",
+    accept,
     multiple,
     files: [],
     events,
@@ -1669,6 +1670,7 @@ function createFileInput({
       if (attributeName === "name") return this.name;
       if (attributeName === "type") return this.type;
       if (attributeName === "class") return "";
+      if (attributeName === "accept") return this.accept;
       return "";
     },
     matches(selector) {
@@ -2365,6 +2367,10 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "describeUploadTriggerForDebug"),
       extractFunctionSource(contentSource, "collectFileInputsFromAncestry"),
       extractFunctionSource(contentSource, "collectFileInputsFromRoot"),
+      extractFunctionSource(contentSource, "getSafeFileExtensionForAccept"),
+      extractFunctionSource(contentSource, "fileMatchesAcceptTokenForHandoff"),
+      extractFunctionSource(contentSource, "fileInputAcceptsHandoffFiles"),
+      extractFunctionSource(contentSource, "scoreFileInputForHandoff"),
       extractFunctionSource(contentSource, "collectFileHandoffElementsFromRoot"),
       extractFunctionSource(contentSource, "isWithinGeminiImagesFilesUploader"),
       extractFunctionSource(contentSource, "scoreGeminiFileInput"),
@@ -14114,6 +14120,78 @@ async function testWhatsAppSanitizedImageAttachVerifierRejectsAssignedMismatch()
   assert.strictEqual(fileInput.files.length, 0);
 }
 
+function testWhatsAppDropResolverRechecksCachedInputAgainstSanitizedFileAccept() {
+  const mediaInput = createFileInput({
+    accept: "image/*,video/mp4",
+    multiple: true
+  });
+  const documentInput = createFileInput({
+    accept: ".txt,.env,.pdf,.docx,.xlsx,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    multiple: true
+  });
+  const target = {
+    nodeType: 1,
+    tagName: "DIV",
+    parentElement: null,
+    closest: () => null
+  };
+  const harness = createHandoffHarness({
+    hostname: "web.whatsapp.com",
+    fileInputs: [mediaInput, documentInput]
+  });
+
+  const cached = harness.resolveFileInputForHandoff({ target }, null);
+  assert.strictEqual(cached, mediaInput, "dragenter discovery should initially cache the first available input");
+
+  const resolved = harness.resolveFileInputForHandoff({ target }, null, {
+    expectedFiles: [
+      {
+        name: "lgqa-wa-pdf-secret.redacted.pdf",
+        type: "application/pdf",
+        size: 128
+      }
+    ]
+  });
+  assert.strictEqual(
+    resolved,
+    documentInput,
+    "WhatsApp sanitized document drops must not reuse a cached media-only input"
+  );
+}
+
+function testWhatsAppDropResolverKeepsCompatibleMediaInputForSanitizedImage() {
+  const mediaInput = createFileInput({
+    accept: "image/*,video/mp4",
+    multiple: true
+  });
+  const documentInput = createFileInput({
+    accept: ".txt,.env,.pdf,.docx,.xlsx,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    multiple: true
+  });
+  const target = {
+    nodeType: 1,
+    tagName: "DIV",
+    parentElement: null,
+    closest: () => null
+  };
+  const harness = createHandoffHarness({
+    hostname: "web.whatsapp.com",
+    fileInputs: [mediaInput, documentInput]
+  });
+
+  harness.resolveFileInputForHandoff({ target }, null);
+  const resolved = harness.resolveFileInputForHandoff({ target }, null, {
+    expectedFiles: [
+      {
+        name: "lgqa-wa-image-secret.redacted.png",
+        type: "image/png",
+        size: 128
+      }
+    ]
+  });
+  assert.strictEqual(resolved, mediaInput, "WhatsApp sanitized image drops should keep the media-compatible input");
+}
+
 function testProtectedDriversShowDmzOverlayOnFileDrag() {
   for (const [hostname, protectedSite] of [
     ["chatgpt.com", true],
@@ -18344,6 +18422,8 @@ function testMultiFileProtectedUploadStaticGuards() {
   await testWhatsAppFileHandoffFailsClosedWithoutTextFallback();
   await testWhatsAppSanitizedImageAttachVerifierRequiresRedactedPng();
   await testWhatsAppSanitizedImageAttachVerifierRejectsAssignedMismatch();
+  testWhatsAppDropResolverRechecksCachedInputAgainstSanitizedFileAccept();
+  testWhatsAppDropResolverKeepsCompatibleMediaInputForSanitizedImage();
   testProtectedDriversShowDmzOverlayOnFileDrag();
   testNonProtectedGenericSiteDoesNotShowDmzOverlayOnFileDrag();
   await testDmzOverlayStatesDuringSanitizedTextFallback();

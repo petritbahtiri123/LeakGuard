@@ -8599,7 +8599,50 @@
     });
   }
 
-  function discoverFileInputForHandoff(event, input) {
+  function getSafeFileExtensionForAccept(file) {
+    const name = String(file?.name || "").split(/[\\/]/).pop().toLowerCase();
+    const dotIndex = name.lastIndexOf(".");
+    return dotIndex >= 0 ? name.slice(dotIndex) : "";
+  }
+
+  function fileMatchesAcceptTokenForHandoff(file, token) {
+    const acceptToken = String(token || "").trim().toLowerCase();
+    if (!acceptToken || acceptToken === "*/*" || acceptToken === "*") return true;
+    const extension = getSafeFileExtensionForAccept(file);
+    const mimeType = String(file?.type || "").split(";")[0].trim().toLowerCase();
+    if (acceptToken.startsWith(".")) return extension === acceptToken;
+    if (acceptToken.endsWith("/*")) {
+      const prefix = acceptToken.slice(0, -1);
+      return Boolean(mimeType && mimeType.startsWith(prefix));
+    }
+    return Boolean(mimeType && mimeType === acceptToken);
+  }
+
+  function fileInputAcceptsHandoffFiles(fileInput, files) {
+    const expectedFiles = Array.from(files || []).filter(Boolean);
+    if (!expectedFiles.length) return true;
+    if (expectedFiles.length > 1 && fileInput?.multiple !== true) return false;
+    const accept = String(fileInput?.accept || fileInput?.getAttribute?.("accept") || "").trim();
+    if (!accept) return true;
+    const tokens = accept.split(",").map((token) => token.trim()).filter(Boolean);
+    if (!tokens.length) return true;
+    return expectedFiles.every((file) => tokens.some((token) => fileMatchesAcceptTokenForHandoff(file, token)));
+  }
+
+  function scoreFileInputForHandoff(fileInput, source, files) {
+    if (!isFileInputElement(fileInput) || fileInput.disabled) return -1;
+    const expectedFiles = Array.from(files || []).filter(Boolean);
+    if (!fileInputAcceptsHandoffFiles(fileInput, expectedFiles)) return -1;
+    let score = 1;
+    if (String(source || "").includes("target")) score += 2;
+    if (String(source || "").includes("form")) score += 1;
+    if (expectedFiles.length > 1 && fileInput.multiple === true) score += 4;
+    const accept = String(fileInput.accept || fileInput.getAttribute?.("accept") || "").trim();
+    if (accept) score += 3;
+    return score;
+  }
+
+  function discoverFileInputForHandoff(event, input, options = {}) {
     const candidates = [];
     const seen = new WeakSet();
     const addCandidate = (candidate, source = "") => {
@@ -8636,12 +8679,26 @@
     });
     collectFileInputsFromRoot(document, addCandidate, new WeakSet());
 
-    const fileInput = candidates.find(({ input: candidate }) => !candidate.disabled)?.input || null;
+    const expectedFiles = Array.from(options?.expectedFiles || []).filter(Boolean);
+    const rankedCandidates = candidates
+      .map(({ input: candidate, source }, index) => ({
+        input: candidate,
+        source,
+        index,
+        score: scoreFileInputForHandoff(candidate, source, expectedFiles)
+      }))
+      .filter((candidate) => candidate.score >= 0)
+      .sort((left, right) => right.score - left.score || left.index - right.index);
+    const fileInput = rankedCandidates[0]?.input || null;
     debugReveal(`file-drag:input-${fileInput ? "found" : "not-found"}`, {
       targetTag: target?.tagName || "",
       candidateCount: candidates.length,
+      expectedFileCount: expectedFiles.length,
       candidates: candidates.map(({ input: candidate, source }) =>
-        describeFileInputForDebug(candidate, source)
+        ({
+          ...describeFileInputForDebug(candidate, source),
+          compatible: scoreFileInputForHandoff(candidate, source, expectedFiles) >= 0
+        })
       )
     });
 
@@ -8704,14 +8761,20 @@
     });
   }
 
-  function resolveFileInputForHandoff(event, input) {
+  function resolveFileInputForHandoff(event, input, options = {}) {
+    const expectedFiles = Array.from(options?.expectedFiles || []).filter(Boolean);
     if (fileDragDiscoveryCompleted) {
-      return isFileInputElement(lastDiscoveredFileInput) && !lastDiscoveredFileInput.disabled
-        ? lastDiscoveredFileInput
-        : null;
+      if (
+        isFileInputElement(lastDiscoveredFileInput) &&
+        !lastDiscoveredFileInput.disabled &&
+        fileInputAcceptsHandoffFiles(lastDiscoveredFileInput, expectedFiles)
+      ) {
+        return lastDiscoveredFileInput;
+      }
+      if (!expectedFiles.length) return null;
     }
 
-    const fileInput = discoverFileInputForHandoff(event, input);
+    const fileInput = discoverFileInputForHandoff(event, input, { expectedFiles });
     lastDiscoveredFileInput = fileInput;
     fileDragDiscoveryCompleted = true;
     fileDragDiscoveryScheduled = false;
@@ -9875,7 +9938,9 @@
 
     const shouldUseWhatsAppDropInputHandoff = context === "drop" && verifyWhatsAppBatch;
     if (shouldUseWhatsAppDropInputHandoff) {
-      const fileInput = resolveFileInputForHandoff(event, input);
+      const fileInput = resolveFileInputForHandoff(event, input, {
+        expectedFiles: sanitizedFiles
+      });
       if (fileInput && assignSanitizedBatchToInput(fileInput)) {
         debugFileAttachMetadata("file-handoff:whatsapp-multi-file-drop-input-verified", {
           fileCount: sanitizedFiles.length,
