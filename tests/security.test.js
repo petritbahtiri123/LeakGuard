@@ -25,6 +25,10 @@ const fileHandoffFlowSource = fs.readFileSync(
   path.join(repoRoot, "src/content/file_handoff_flow.js"),
   "utf8"
 );
+const sanitizedFileHandoffSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/files/sanitizedFileHandoff.js"),
+  "utf8"
+);
 const geminiFallbackWriterSource = fs.readFileSync(
   path.join(repoRoot, "src/content/adapters/geminiFallbackWriter.js"),
   "utf8"
@@ -480,10 +484,10 @@ function testLocalFilePasteDoesNotExposeRawFileContent() {
     "local file paste/drop should use background-owned placeholder redaction"
   );
   assert.ok(
-    localFileSource.includes("createSanitizedTextFile(localFile.file, result.redactedText)") &&
+      localFileSource.includes("createSanitizedTextFile(localFile.file, result.redactedText)") &&
       localFileSource.includes("handOffSanitizedLocalFile(event, input, sanitizedFile, context)") &&
       fileHandoffFlowSource.includes("function handOffSanitizedLocalFile") &&
-      contentSource.includes("fileInput.files = transfer.files") &&
+      sanitizedFileHandoffSource.includes("fileInput.files = transfer.files") &&
       contentSource.includes("function handOffGeminiSanitizedFileUpload") &&
       contentSource.includes("function handOffGrokSanitizedFileUpload") &&
       contentSource.includes("file-handoff:fail-closed"),

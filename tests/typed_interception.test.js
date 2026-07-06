@@ -48,6 +48,10 @@ const fileHandoffFlowSource = fs.readFileSync(
   path.join(repoRoot, "src/content/file_handoff_flow.js"),
   "utf8"
 );
+const sanitizedFileHandoffSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/files/sanitizedFileHandoff.js"),
+  "utf8"
+);
 const geminiFallbackWriterSource = fs.readFileSync(
   path.join(repoRoot, "src/content/adapters/geminiFallbackWriter.js"),
   "utf8"
@@ -526,16 +530,16 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   );
   assert.ok(
     fileHandoffFlowSource.includes("function handOffSanitizedLocalFile") &&
-      contentSource.includes("fileInput.files = transfer.files") &&
-      contentSource.includes("function handOffSanitizedFileInput") &&
+      sanitizedFileHandoffSource.includes("fileInput.files = transfer.files") &&
+      sanitizedFileHandoffSource.includes("function handOffSanitizedFileInput") &&
       fileHandoffFlowSource.includes("resolveFileInputForHandoff(event, input)") &&
       contentSource.includes("isGeminiHost()") &&
       contentSource.includes("isGrokHost()") &&
       contentSource.includes("function handOffGeminiSanitizedFileUpload") &&
       contentSource.includes("function handOffGrokSanitizedFileUpload") &&
       contentSource.includes("file-handoff:fail-closed") &&
-      fileHandoffFlowSource.includes('dispatchSanitizedFileEvent(target, "drop", transfer)') &&
-      fileHandoffFlowSource.includes('dispatchSanitizedFileEvent(target, "paste", transfer)'),
+      sanitizedFileHandoffSource.includes('dispatchSanitizedFileEvent(target, "drop", transfer)') &&
+      sanitizedFileHandoffSource.includes('dispatchSanitizedFileEvent(target, "paste", transfer)'),
     "local file handling should hand off sanitized files through native site upload adapters and fail closed when required handoff fails"
   );
   assert.ok(

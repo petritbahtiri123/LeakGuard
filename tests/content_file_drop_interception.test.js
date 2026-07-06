@@ -104,10 +104,12 @@ require(path.join(repoRoot, "src/content/files/sanitizedFileBatchProcessor.js"))
 require(path.join(repoRoot, "src/content/files/fileHandoffVerification.js"));
 require(path.join(repoRoot, "src/content/files/fileInputPreparation.js"));
 require(path.join(repoRoot, "src/content/files/fileHandoffDiscovery.js"));
+require(path.join(repoRoot, "src/content/files/sanitizedFileHandoff.js"));
 require(path.join(repoRoot, "src/content/files/fileDropInterception.js"));
 require(path.join(repoRoot, "src/content/files/fileInputInterception.js"));
 require(path.join(repoRoot, "src/content/whatsapp/whatsappCapabilities.js"));
 require(path.join(repoRoot, "src/content/whatsapp/whatsappTextFlow.js"));
+require(path.join(repoRoot, "src/content/whatsapp/whatsappSelectors.js"));
 
 const { dataTransferHasFiles } = globalThis.PWM.FilePasteHelpers;
 
@@ -1076,11 +1078,13 @@ function createHarness(overrides = {}) {
     FileHandoffVerification: globalThis.PWM.FileHandoffVerification || {},
     FileInputPreparation: globalThis.PWM.FileInputPreparation || {},
     FileHandoffDiscovery: globalThis.PWM.FileHandoffDiscovery || {},
+    SanitizedFileHandoff: globalThis.PWM.SanitizedFileHandoff || {},
     FileDropInterception: globalThis.PWM.FileDropInterception || {},
     FileInputInterception: globalThis.PWM.FileInputInterception || {},
     FileProcessingUi: globalThis.PWM.FileProcessingUi || {},
     WhatsAppCapabilities: globalThis.PWM.WhatsAppCapabilities || {},
     WhatsAppTextFlow: globalThis.PWM.WhatsAppTextFlow || {},
+    WhatsAppSelectors: globalThis.PWM.WhatsAppSelectors || {},
     GeminiUploadDiscovery: globalThis.PWM.GeminiUploadDiscovery || {},
     GrokFileHandoff: globalThis.PWM.GrokFileHandoff || {},
     StreamingFileRedactor: globalThis.PWM.StreamingFileRedactor || {},
@@ -1334,6 +1338,8 @@ function createHarness(overrides = {}) {
       "let grokFileHandoff = null;",
       "let whatsAppCapabilities = null;",
       "let whatsAppTextFlow = null;",
+      "let whatsAppSelectors = null;",
+      "let sanitizedFileHandoff = null;",
       "let syntheticFileListCapabilityCache = null;",
       "let inputFileAssignmentCapabilityCache = null;",
       "let pendingGeminiSanitizedFileHandoff = null;",
@@ -1411,6 +1417,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "getUnsupportedFileBlockedTitle"),
       extractFunctionSource(contentSource, "getContentFileTypeSupport"),
       extractFunctionSource(contentSource, "getWhatsAppCapabilities"),
+      extractFunctionSource(contentSource, "getWhatsAppSelectors"),
       extractFunctionSource(contentSource, "isSupportedWhatsAppClipboardImagePaste"),
       extractFunctionSource(contentSource, "isWhatsAppSanitizedDropHandoffEnabled"),
       extractFunctionSource(contentSource, "isWhatsAppSanitizedFileHandoffContext"),
@@ -1664,6 +1671,10 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "isExpectedWhatsAppSanitizedMultiFileAttachFile"),
       extractFunctionSource(contentSource, "verifyWhatsAppSanitizedMultiFileAttach"),
       extractFunctionSource(contentSource, "processLocalFileForSanitizedBatch"),
+      extractFunctionSource(contentSource, "shouldUseWhatsAppDocumentInputForFiles"),
+      extractFunctionSource(contentSource, "resolveWhatsAppDocumentDropInputForHandoff"),
+      extractFunctionSource(contentSource, "prepareFileInputForSanitizedHandoff"),
+      extractFunctionSource(contentSource, "getSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "handOffSanitizedFileBatch"),
       extractFunctionSource(contentSource, "maybeHandleMultiFileInsert"),
       extractFunctionSource(contentSource, "maybeHandleLocalFileInsert"),
@@ -2219,6 +2230,8 @@ function createHandoffHarness({
     FilePasteHelpers: globalThis.PWM.FilePasteHelpers,
     FileInputPreparation: globalThis.PWM.FileInputPreparation || {},
     FileHandoffDiscovery: globalThis.PWM.FileHandoffDiscovery || {},
+    SanitizedFileHandoff: globalThis.PWM.SanitizedFileHandoff || {},
+    WhatsAppSelectors: {},
     FileDropInterception: globalThis.PWM.FileDropInterception || {},
     FileProcessingUi: globalThis.PWM.FileProcessingUi || {},
     GeminiUploadDiscovery: globalThis.PWM.GeminiUploadDiscovery || {},
@@ -2319,6 +2332,8 @@ function createHandoffHarness({
       "let pendingGenericSanitizedFileTimer = 0;",
       "let fileInputPreparation = null;",
       "let fileHandoffDiscovery = null;",
+      "let sanitizedFileHandoff = null;",
+      "let whatsAppSelectors = null;",
       "let fileProcessingUi = null;",
       "let geminiUploadDiscovery = null;",
       "let grokFileHandoff = null;",
@@ -2435,6 +2450,11 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "discoverFileInputForHandoff"),
       extractFunctionSource(contentSource, "resolveFileInputForHandoff"),
       extractFunctionSource(contentSource, "waitForGeminiUploadMenuInput"),
+      "function verifyWhatsAppSanitizedMultiFileAttach() { return { ok: false }; }",
+      "function shouldUseWhatsAppDocumentInputForFiles() { return false; }",
+      "async function resolveWhatsAppDocumentDropInputForHandoff() { return null; }",
+      "function prepareFileInputForSanitizedHandoff() { return () => {}; }",
+      extractFunctionSource(contentSource, "getSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "handOffSanitizedFileInput"),
       extractFunctionSource(contentSource, "handOffGeminiSanitizedFileInput"),
       extractFunctionSource(contentSource, "readSanitizedFileTextForFallback"),

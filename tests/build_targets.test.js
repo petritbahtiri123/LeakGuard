@@ -1453,6 +1453,7 @@ async function run() {
   const fileAttachPipelineIndex = contentScripts.indexOf("content/files/fileAttachPipeline.js");
   const fileInputPreparationIndex = contentScripts.indexOf("content/files/fileInputPreparation.js");
   const fileHandoffDiscoveryIndex = contentScripts.indexOf("content/files/fileHandoffDiscovery.js");
+  const sanitizedFileHandoffIndex = contentScripts.indexOf("content/files/sanitizedFileHandoff.js");
   const placeholderRehydratorIndex = contentScripts.indexOf("content/rehydration/placeholderRehydrator.js");
   const responseObserverIndex = contentScripts.indexOf("content/rehydration/responseObserver.js");
   const revealControllerIndex = contentScripts.indexOf("content/rehydration/revealController.js");
@@ -1514,6 +1515,7 @@ async function run() {
   assert.ok(fileAttachPipelineIndex > -1, "content scripts should include file attach pipeline helpers");
   assert.ok(fileInputPreparationIndex > -1, "content scripts should include file input preparation helpers");
   assert.ok(fileHandoffDiscoveryIndex > -1, "content scripts should include file handoff discovery helpers");
+  assert.ok(sanitizedFileHandoffIndex > -1, "content scripts should include sanitized file handoff helpers");
   assert.ok(placeholderRehydratorIndex > -1, "content scripts should include placeholder rehydration helpers");
   assert.ok(responseObserverIndex > -1, "content scripts should include response observer helpers");
   assert.ok(revealControllerIndex > -1, "content scripts should include reveal controller helpers");
@@ -1556,7 +1558,8 @@ async function run() {
       fileProcessingUiIndex < fileAttachPipelineIndex &&
       fileAttachPipelineIndex < fileInputPreparationIndex &&
       fileInputPreparationIndex < fileHandoffDiscoveryIndex &&
-      fileHandoffDiscoveryIndex < placeholderRehydratorIndex &&
+      fileHandoffDiscoveryIndex < sanitizedFileHandoffIndex &&
+      sanitizedFileHandoffIndex < placeholderRehydratorIndex &&
       placeholderRehydratorIndex < responseObserverIndex &&
       responseObserverIndex < revealControllerIndex &&
       revealControllerIndex < debugLoggerIndex &&

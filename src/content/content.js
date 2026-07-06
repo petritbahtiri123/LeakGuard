@@ -61,6 +61,7 @@
   const SanitizedFileBatchProcessor = globalThis.PWM?.SanitizedFileBatchProcessor || {};
   const FileHandoffVerification = globalThis.PWM?.FileHandoffVerification || {};
   const FileHandoffDiscovery = globalThis.PWM?.FileHandoffDiscovery || {};
+  const SanitizedFileHandoff = globalThis.PWM?.SanitizedFileHandoff || {};
   const FileDropInterception = globalThis.PWM?.FileDropInterception || {};
   const FileInputInterception = globalThis.PWM?.FileInputInterception || {};
   const FileInputPreparation = globalThis.PWM?.FileInputPreparation || {};
@@ -184,6 +185,7 @@
   let contentStatusUi = null;
   let geminiUploadDiscovery = null;
   let grokFileHandoff = null;
+  let sanitizedFileHandoff = null;
   let bypassNextSubmit = false;
   let bypassNextSendButtonClick = false;
   let fallbackSendKeySuppressionUntil = 0;
@@ -7196,6 +7198,46 @@
     return getFileInputPreparation().prepareFileInputForSanitizedHandoff(fileInput, files);
   }
 
+  function getSanitizedFileHandoff() {
+    if (sanitizedFileHandoff) return sanitizedFileHandoff;
+    if (typeof SanitizedFileHandoff.createSanitizedFileHandoff !== "function") {
+      sanitizedFileHandoff = Object.freeze({
+        handOffSanitizedFileInput: () => false,
+        handOffSanitizedFileBatch: async () => false
+      });
+      return sanitizedFileHandoff;
+    }
+
+    sanitizedFileHandoff = SanitizedFileHandoff.createSanitizedFileHandoff({
+      documentRef: document,
+      EventRef: Event,
+      isFileInputElement,
+      isFirefoxRuntime,
+      canAssignFilesToInput,
+      getCurrentHandoffDriverId,
+      isProtectedFileDropDriver,
+      markFirefoxFileInputTransactionReplaced,
+      markSanitizedFileHandoff,
+      markUntrackedSanitizedFileInputHandoff: (fileInput) => sanitizedFileInputHandoffs.add(fileInput),
+      deleteSanitizedFileHandoffMark,
+      assignSafeFileAttachErrorMetadata,
+      describeFileForDebug,
+      describeFileInputForDebug,
+      debugFileAttachMetadata,
+      debugReveal,
+      logFileInterception,
+      createSanitizedDataTransfer,
+      dispatchSanitizedFileEvent,
+      prepareFileInputForSanitizedHandoff,
+      resolveFileInputForHandoff,
+      shouldUseWhatsAppDocumentInputForFiles,
+      resolveWhatsAppDocumentDropInputForHandoff,
+      verifyWhatsAppSanitizedMultiFileAttach,
+      clearLocalFileInputSelection
+    });
+    return sanitizedFileHandoff;
+  }
+
   function handleFileDragDetected(event) {
     scheduleFileDragSessionReset();
     if (getCurrentHandoffDriver()?.usesDmzOverlay && dataTransferLooksLikeFiles(event?.dataTransfer)) {
@@ -7212,86 +7254,7 @@
   }
 
   function handOffSanitizedFileInput(fileInput, transfer, options) {
-    if (!isFileInputElement(fileInput) || !transfer?.files) return false;
-    if (isFirefoxRuntime() && !canAssignFilesToInput()) return false;
-
-    const handoffOptions = options || {};
-    const details = handoffOptions.details || null;
-    const dispatchInputEvent = handoffOptions.dispatchInput !== false;
-    const markAsSanitized = handoffOptions.markSanitized !== false;
-    const events = [];
-    const transferFiles = Array.from(transfer.files || []);
-    let restorePreparedInput = null;
-    try {
-      if (typeof handoffOptions.prepareInput === "function") {
-        restorePreparedInput = handoffOptions.prepareInput(fileInput, transferFiles);
-      }
-      fileInput.files = transfer.files;
-      if (details) details.inputFilesAssignmentSucceeded = true;
-      if (Number(fileInput.files?.length || 0) <= 0) {
-        if (details) details.failureReason = "input_files_assignment_empty";
-        return false;
-      }
-      if (markAsSanitized) {
-        markSanitizedFileHandoff(fileInput, fileInput.files, { details });
-      } else {
-        sanitizedFileInputHandoffs.add(fileInput);
-      }
-      if (isFirefoxRuntime() && isProtectedFileDropDriver(getCurrentHandoffDriverId())) {
-        markFirefoxFileInputTransactionReplaced(fileInput, fileInput.files);
-      }
-      if (dispatchInputEvent) {
-        fileInput.dispatchEvent(
-          new Event("input", {
-            bubbles: true,
-            cancelable: true,
-            composed: true
-          })
-        );
-        events.push("input");
-        if (details) details.inputEventDispatched = true;
-      }
-      fileInput.dispatchEvent(
-        new Event("change", {
-          bubbles: true,
-          cancelable: true,
-          composed: true
-        })
-      );
-      events.push("change");
-      if (details) details.changeEventDispatched = true;
-      debugFileAttachMetadata("file-handoff:assignment-success", {
-        input: describeFileInputForDebug(fileInput, "resolved"),
-        files: Array.from(fileInput.files || []).map(describeFileForDebug),
-        events
-      });
-      logFileInterception("file replacement success", {
-        input: describeFileInputForDebug(fileInput, "resolved"),
-        files: Array.from(fileInput.files || []).map(describeFileForDebug),
-        events
-      });
-      return true;
-    } catch (error) {
-      if (details) {
-        details.failureReason = "input_assignment_or_event_dispatch_failed";
-        assignSafeFileAttachErrorMetadata(details, error);
-      }
-      debugReveal("file-handoff:assignment-failure", {
-        input: describeFileInputForDebug(fileInput, "resolved"),
-        files: Array.from(transfer.files || []).map(describeFileForDebug)
-      });
-      deleteSanitizedFileHandoffMark(fileInput, transferFiles);
-      try {
-        fileInput.value = "";
-      } catch {
-        // The original raw file must remain blocked if sanitized file assignment fails.
-      }
-      return false;
-    } finally {
-      if (typeof restorePreparedInput === "function") {
-        restorePreparedInput();
-      }
-    }
+    return getSanitizedFileHandoff().handOffSanitizedFileInput(fileInput, transfer, options);
   }
 
   async function handOffGeminiSanitizedFileInput(fileInput, transfer, details, sanitizedFile) {
@@ -8104,114 +8067,7 @@
   }
 
   async function handOffSanitizedFileBatch(event, input, sanitizedFiles, context, options = {}) {
-    const transfer = createSanitizedDataTransfer(sanitizedFiles);
-    if (!transfer) return false;
-    const verifyWhatsAppBatch = options.verifyWhatsAppBatch === true;
-    const originalFiles = Array.from(options.originalFiles || []);
-    const assignSanitizedBatchToInput = (fileInput, options = {}) => {
-      const assigned = handOffSanitizedFileInput(fileInput, transfer, {
-        dispatchInput: true,
-        prepareInput: options.prepareInput
-      });
-      if (!assigned || !verifyWhatsAppBatch) return assigned;
-      const verification = verifyWhatsAppSanitizedMultiFileAttach(fileInput, sanitizedFiles, originalFiles);
-      if (verification.ok) {
-        debugFileAttachMetadata("file-handoff:whatsapp-multi-file-attach-verified", {
-          fileCount: verification.assignedCount,
-          files: Array.from(sanitizedFiles || []).map(describeFileForDebug)
-        });
-        return true;
-      }
-      debugFileAttachMetadata("file-handoff:whatsapp-multi-file-attach-verification-failed", {
-        reason: verification.reason,
-        assignedCount: verification.assignedCount,
-        expectedCount: verification.expectedCount,
-        files: Array.from(sanitizedFiles || []).map(describeFileForDebug)
-      });
-      clearLocalFileInputSelection(fileInput);
-      return false;
-    };
-
-    if (context === "file-input" && isFileInputElement(event?.target)) {
-      return assignSanitizedBatchToInput(event.target);
-    }
-
-    const target = event?.target || input || document.activeElement;
-    const shouldUseWhatsAppDropInputHandoff = context === "drop" && verifyWhatsAppBatch;
-    if (shouldUseWhatsAppDropInputHandoff) {
-      if (shouldUseWhatsAppDocumentInputForFiles(sanitizedFiles)) {
-        const documentInput = await resolveWhatsAppDocumentDropInputForHandoff(event, input, sanitizedFiles);
-        if (documentInput && assignSanitizedBatchToInput(documentInput)) {
-          debugFileAttachMetadata("file-handoff:whatsapp-multi-file-drop-document-input-verified", {
-            fileCount: sanitizedFiles.length,
-            files: Array.from(sanitizedFiles || []).map(describeFileForDebug)
-          });
-          return true;
-        }
-        debugFileAttachMetadata("file-handoff:whatsapp-multi-file-drop-document-input-verification-failed", {
-          reason: documentInput ? "document_file_input_assignment_failed" : "document_file_input_not_found",
-          expectedCount: sanitizedFiles.length,
-          files: Array.from(sanitizedFiles || []).map(describeFileForDebug)
-        });
-        return false;
-      }
-      const fileInput = resolveFileInputForHandoff(event, input, {
-        expectedFiles: sanitizedFiles
-      });
-      if (fileInput && assignSanitizedBatchToInput(fileInput)) {
-        debugFileAttachMetadata("file-handoff:whatsapp-multi-file-drop-input-verified", {
-          fileCount: sanitizedFiles.length,
-          files: Array.from(sanitizedFiles || []).map(describeFileForDebug)
-        });
-        return true;
-      }
-      if (!fileInput) {
-        const fallbackInput = resolveFileInputForHandoff(event, input, {
-          expectedFiles: sanitizedFiles,
-          allowIncompatible: true
-        });
-        if (
-          fallbackInput &&
-          assignSanitizedBatchToInput(fallbackInput, { prepareInput: prepareFileInputForSanitizedHandoff })
-        ) {
-          debugFileAttachMetadata("file-handoff:whatsapp-multi-file-drop-prepared-input-verified", {
-            fileCount: sanitizedFiles.length,
-            files: Array.from(sanitizedFiles || []).map(describeFileForDebug)
-          });
-          return true;
-        }
-        debugFileAttachMetadata("file-handoff:whatsapp-multi-file-drop-prepared-input-verification-failed", {
-          reason: fallbackInput ? "prepared_file_input_assignment_failed" : "file_input_not_found",
-          expectedCount: sanitizedFiles.length,
-          files: Array.from(sanitizedFiles || []).map(describeFileForDebug)
-        });
-        return false;
-      }
-      debugFileAttachMetadata("file-handoff:whatsapp-multi-file-drop-input-verification-failed", {
-        reason: "file_input_assignment_failed",
-        expectedCount: sanitizedFiles.length,
-        files: Array.from(sanitizedFiles || []).map(describeFileForDebug)
-      });
-      return false;
-    }
-
-    const fileInput = resolveFileInputForHandoff(event, input);
-    if (fileInput && assignSanitizedBatchToInput(fileInput)) {
-      return true;
-    }
-
-    if (context === "drop") {
-      try {
-        transfer.dropEffect = "copy";
-      } catch {
-        // Some DataTransfer implementations expose dropEffect as read-only.
-      }
-      return dispatchSanitizedFileEvent(target, "drop", transfer);
-    }
-    if (context === "paste") {
-      return dispatchSanitizedFileEvent(target, "paste", transfer);
-    }
-    return false;
+    return getSanitizedFileHandoff().handOffSanitizedFileBatch(event, input, sanitizedFiles, context, options);
   }
 
   async function maybeHandleMultiFileInsert(event, input, files, context, processingSite, controls) {
