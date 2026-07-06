@@ -1442,6 +1442,8 @@ async function run() {
     "content/adapters/index.js"
   ];
   const adapterIndexes = adapterScripts.map((script) => contentScripts.indexOf(script));
+  const whatsAppCapabilitiesIndex = contentScripts.indexOf("content/whatsapp/whatsappCapabilities.js");
+  const whatsAppTextFlowIndex = contentScripts.indexOf("content/whatsapp/whatsappTextFlow.js");
   const geminiFallbackWriterIndex = contentScripts.indexOf("content/adapters/geminiFallbackWriter.js");
   const safeSnapshotsIndex = contentScripts.indexOf("content/diagnostics/safeSnapshots.js");
   const fileProcessingUiIndex = contentScripts.indexOf("content/files/fileProcessingUi.js");
@@ -1496,6 +1498,8 @@ async function run() {
   );
   assert.ok(hostMatchingIndex > -1, "content scripts should include host matching helpers");
   assert.ok(adapterIndexes.every((index) => index > -1), "content scripts should include site adapter helpers");
+  assert.ok(whatsAppCapabilitiesIndex > -1, "content scripts should include WhatsApp capability helpers");
+  assert.ok(whatsAppTextFlowIndex > -1, "content scripts should include WhatsApp text flow helpers");
   assert.ok(geminiFallbackWriterIndex > -1, "content scripts should include Gemini fallback writer helpers");
   assert.ok(safeSnapshotsIndex > -1, "content scripts should include safe snapshot helpers");
   assert.ok(fileProcessingUiIndex > -1, "content scripts should include file processing UI helpers");
@@ -1531,7 +1535,9 @@ async function run() {
       contentFileExtractionPipelineIndex < hostMatchingIndex &&
       hostMatchingIndex < adapterIndexes[0] &&
       adapterOrderAligned &&
-      adapterIndexes.at(-1) < geminiFallbackWriterIndex &&
+      adapterIndexes.at(-1) < whatsAppCapabilitiesIndex &&
+      whatsAppCapabilitiesIndex < whatsAppTextFlowIndex &&
+      whatsAppTextFlowIndex < geminiFallbackWriterIndex &&
       geminiFallbackWriterIndex < safeSnapshotsIndex &&
       safeSnapshotsIndex < fileProcessingUiIndex &&
       fileProcessingUiIndex < fileAttachPipelineIndex &&

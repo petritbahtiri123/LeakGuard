@@ -65,6 +65,7 @@ const testFiles = [
   "tests/file_interception_modules.test.js",
   "tests/file_processing_ui.test.js",
   "tests/whatsapp_capabilities.test.js",
+  "tests/whatsapp_text_flow.test.js",
   "tests/file_paste_helpers.test.js",
   "tests/streaming_file_redactor.test.js",
   "tests/manual_qa_artifact_safety.test.js",

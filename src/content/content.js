@@ -62,6 +62,7 @@
   const FileInputInterception = globalThis.PWM?.FileInputInterception || {};
   const FileProcessingUi = globalThis.PWM?.FileProcessingUi || {};
   const WhatsAppCapabilities = globalThis.PWM?.WhatsAppCapabilities || {};
+  const WhatsAppTextFlow = globalThis.PWM?.WhatsAppTextFlow || {};
   const {
     canExtractForAdapterHandoff,
     processFileForAdapterHandoff
@@ -192,7 +193,6 @@
   let typedRewriteGeneration = 0;
   let activeRiskEditor = null;
   let suppressInputScanUntil = 0;
-  let recentWhatsAppTextPaste = null;
   const rewriteFailureModalSuppressions = new Map();
   let statusPanelEl = null;
   let statusPanelCollapsed = false;
@@ -358,6 +358,7 @@
   let fileInputInterception = null;
   let fileProcessingUi = null;
   let whatsAppCapabilities = null;
+  let whatsAppTextFlow = null;
   let replayVerification = null;
   let syntheticFileListCapabilityCache = null;
   let inputFileAssignmentCapabilityCache = null;
@@ -984,58 +985,32 @@
     return event?.type === "paste" || isPasteBeforeInput(event);
   }
 
-  function buildTextPasteSignature(text) {
-    const normalized = normalizeComposerText(text);
-    let hash = 2166136261;
-    for (let index = 0; index < normalized.length; index += 1) {
-      hash ^= normalized.charCodeAt(index);
-      hash = Math.imul(hash, 16777619) >>> 0;
+  function getWhatsAppTextFlow() {
+    if (whatsAppTextFlow) return whatsAppTextFlow;
+    if (typeof WhatsAppTextFlow.createWhatsAppTextFlow !== "function") {
+      whatsAppTextFlow = Object.freeze({
+        rememberWhatsAppTextPaste: () => {},
+        shouldSuppressDuplicateWhatsAppTextPaste: () => false
+      });
+      return whatsAppTextFlow;
     }
-    return `${normalized.length}:${(normalized.match(/\n/g) || []).length}:${hash.toString(36)}`;
+
+    whatsAppTextFlow = WhatsAppTextFlow.createWhatsAppTextFlow({
+      isWhatsAppHost,
+      isTextPasteInterceptionEvent,
+      normalizeComposerText,
+      debugReveal,
+      duplicateTextPasteSuppressMs: WHATSAPP_DUPLICATE_TEXT_PASTE_SUPPRESS_MS
+    });
+    return whatsAppTextFlow;
   }
 
   function rememberWhatsAppTextPaste(input, pasted, event) {
-    if (!isWhatsAppHost() || !isTextPasteInterceptionEvent(event) || !pasted) return;
-    recentWhatsAppTextPaste = {
-      input,
-      signature: buildTextPasteSignature(pasted),
-      eventType: String(event?.type || ""),
-      inputType: String(event?.inputType || ""),
-      expiresAt: Date.now() + WHATSAPP_DUPLICATE_TEXT_PASTE_SUPPRESS_MS
-    };
+    return getWhatsAppTextFlow().rememberWhatsAppTextPaste(input, pasted, event);
   }
 
   function shouldSuppressDuplicateWhatsAppTextPaste(input, pasted, event) {
-    if (!isWhatsAppHost() || !isTextPasteInterceptionEvent(event) || !pasted) return false;
-
-    const recent = recentWhatsAppTextPaste;
-    if (!recent) return false;
-    if (Date.now() > recent.expiresAt) {
-      recentWhatsAppTextPaste = null;
-      return false;
-    }
-
-    const currentEventType = String(event?.type || "");
-    const currentInputType = String(event?.inputType || "");
-    const isPairedBrowserPasteEvent =
-      recent.eventType !== currentEventType || recent.inputType !== currentInputType;
-    const duplicate =
-      isPairedBrowserPasteEvent &&
-      recent.input === input &&
-      recent.signature === buildTextPasteSignature(pasted);
-
-    if (duplicate) {
-      recentWhatsAppTextPaste = null;
-      debugReveal("whatsapp:text-paste-duplicate-event-suppressed", {
-        previousEventType: recent.eventType,
-        currentEventType,
-        previousInputType: recent.inputType,
-        currentInputType,
-        length: normalizeComposerText(pasted).length
-      });
-    }
-
-    return duplicate;
+    return getWhatsAppTextFlow().shouldSuppressDuplicateWhatsAppTextPaste(input, pasted, event);
   }
 
   function dataTransferLooksLikeFiles(dataTransfer) {

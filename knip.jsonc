@@ -108,6 +108,7 @@
     "src/content/adapters/whatsappAdapter.js",
     "src/content/adapters/index.js",
     "src/content/whatsapp/whatsappCapabilities.js",
+    "src/content/whatsapp/whatsappTextFlow.js",
     "src/content/adapters/geminiFallbackWriter.js",
     "src/content/diagnostics/safeSnapshots.js",
     "src/content/diagnostics/fileDebugMetadata.js",

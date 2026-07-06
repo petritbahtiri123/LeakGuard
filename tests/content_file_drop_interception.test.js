@@ -101,6 +101,7 @@ require(path.join(repoRoot, "src/content/files/fileHandoffVerification.js"));
 require(path.join(repoRoot, "src/content/files/fileDropInterception.js"));
 require(path.join(repoRoot, "src/content/files/fileInputInterception.js"));
 require(path.join(repoRoot, "src/content/whatsapp/whatsappCapabilities.js"));
+require(path.join(repoRoot, "src/content/whatsapp/whatsappTextFlow.js"));
 
 const { dataTransferHasFiles } = globalThis.PWM.FilePasteHelpers;
 
@@ -1071,6 +1072,7 @@ function createHarness(overrides = {}) {
     FileInputInterception: globalThis.PWM.FileInputInterception || {},
     FileProcessingUi: globalThis.PWM.FileProcessingUi || {},
     WhatsAppCapabilities: globalThis.PWM.WhatsAppCapabilities || {},
+    WhatsAppTextFlow: globalThis.PWM.WhatsAppTextFlow || {},
     StreamingFileRedactor: globalThis.PWM.StreamingFileRedactor || {},
     PLACEHOLDER_TOKEN_REGEX: globalThis.PWM.PLACEHOLDER_TOKEN_REGEX,
     ANY_PLACEHOLDER_TOKEN_REGEX: globalThis.PWM.ANY_PLACEHOLDER_TOKEN_REGEX,
@@ -1310,7 +1312,6 @@ function createHarness(overrides = {}) {
       'const SUPPORTED_WHATSAPP_XLSX_ATTACH_MIME_TYPES = new Set(["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"]);',
       'const UNSUPPORTED_PROTECTED_IMAGE_EXTENSIONS = new Set([".gif", ".bmp", ".ico", ".svg"]);',
       "let suppressInputScanUntil = 0;",
-      "let recentWhatsAppTextPaste = null;",
       "let contentFileTypeSupport = null;",
       "let sanitizedFileBatchProcessor = null;",
       "let fileHandoffVerification = null;",
@@ -1318,6 +1319,7 @@ function createHarness(overrides = {}) {
       "let fileInputInterception = null;",
       "let fileProcessingUi = null;",
       "let whatsAppCapabilities = null;",
+      "let whatsAppTextFlow = null;",
       "let syntheticFileListCapabilityCache = null;",
       "let inputFileAssignmentCapabilityCache = null;",
       "let pendingGeminiSanitizedFileHandoff = null;",
@@ -1371,7 +1373,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "getPasteTransfer"),
       extractFunctionSource(contentSource, "getPastedPlainText"),
       extractFunctionSource(contentSource, "isTextPasteInterceptionEvent"),
-      extractFunctionSource(contentSource, "buildTextPasteSignature"),
+      extractFunctionSource(contentSource, "getWhatsAppTextFlow"),
       extractFunctionSource(contentSource, "rememberWhatsAppTextPaste"),
       extractFunctionSource(contentSource, "shouldSuppressDuplicateWhatsAppTextPaste"),
       extractFunctionSource(contentSource, "dataTransferLooksLikeFiles"),
