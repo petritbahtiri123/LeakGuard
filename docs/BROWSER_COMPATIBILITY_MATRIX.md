@@ -38,7 +38,7 @@ Chrome and Firefox share:
 Supported UTF-8 text-file scanning and protected composer file handling should be checked on each browser before release. Known areas that need manual coverage include:
 
 - drag/drop on Gemini and ChatGPT
-- WhatsApp attach-button text-document support for the canonical LeakGuard text-like list, including `Dockerfile` and `Makefile`; WhatsApp drag/drop remains blocked until Phase 5B
+- WhatsApp attach-button and drag/drop support for 1-5 sanitized files across canonical supported images, text-like files including `Dockerfile` and `Makefile`, PDF, DOCX, and XLSX; 6+ files block before read
 - synthetic file handoff from real file inputs
 - large text files above 4 MiB and up to 50 MB
 - unsupported file warnings, safe pass-through boundaries, and fail-closed blocking when LeakGuard cannot safely continue

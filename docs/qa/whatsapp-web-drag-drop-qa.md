@@ -5,30 +5,43 @@
 - Use only synthetic QA files with fake secrets.
 - Confirm LeakGuard is enabled for `https://web.whatsapp.com/`.
 - Open a disposable WhatsApp Web chat or the local WhatsApp-like E2E fixture.
-- Keep DevTools open only for metadata-only checks. Do not log raw file contents or real secrets.
-- Phase 5A expectation: drag/drop file attach is not supported yet. For every case, confirm LeakGuard blocks the drop before WhatsApp previews or receives files.
+- Keep DevTools checks metadata-only. Do not log raw file contents, raw filenames containing secrets, or real secrets.
+- File paste remains out of scope. Do not treat document/file paste as supported.
+
+## Supported Drop Types
+
+WhatsApp drag/drop supports the same canonical LeakGuard file families as the WhatsApp attach-button path:
+
+- PNG, JPG, JPEG, WEBP
+- canonical text-like files from `FileTypeRegistry`, including `Dockerfile` and `Makefile`
+- PDF
+- DOCX
+- XLSX
 
 ## Single-File Drop
 
-1. Drop one canonical text-like file, such as `.yaml`, `.pem`, `.ps1`, `.py`, `.sql`, `Dockerfile`, or `Makefile`.
-2. Expected: LeakGuard consumes and blocks the raw drop.
-3. Expected: WhatsApp shows no raw preview, no sanitized preview, no send, and no file-event handoff.
-4. Confirm the original raw secret text is not visible in the preview, composer, page, logs, or file-event state.
+1. Drop one supported file.
+2. Confirm LeakGuard consumes the raw `drop` before WhatsApp previews it.
+3. Confirm LeakGuard scans, extracts, redacts, and rebuilds locally.
+4. Expected: WhatsApp preview receives exactly one sanitized `File` object.
+5. Expected: no extracted text is inserted into the WhatsApp composer.
+6. Expected: no unsafe original filename appears in preview, composer, page state, logs, debug output, or file-event state.
 
 ## Two-File Drop
 
-1. Drop two supported files together.
-2. Expected: LeakGuard blocks before handoff.
-3. Expected: no preview appears and no partial file reaches WhatsApp.
-4. Expected: failure output is metadata-only.
+1. Drop two supported files together, such as `Dockerfile` and `Makefile`.
+2. Expected: both files are processed independently.
+3. Expected: output order matches input order.
+4. Expected: WhatsApp receives only sanitized `File` objects.
+5. Expected: no raw preview appears before or after sanitized handoff.
 
 ## Five-File Drop
 
 1. Drop five supported files together.
-2. Use a mixed batch when possible: text-like, PDF, DOCX, XLSX, and another text-like file.
-3. Expected: LeakGuard blocks before handoff.
-4. Expected: no raw or sanitized preview appears.
-5. Expected: WhatsApp receives no `File` objects.
+2. Use a mixed batch when possible: text-like, PDF, DOCX, XLSX, and image or another text-like file.
+3. Expected: all files are sanitized locally.
+4. Expected: output order matches input order.
+5. Expected: WhatsApp receives only the five sanitized files.
 
 ## Mixed Supported Files
 
@@ -40,7 +53,7 @@ Use combinations of:
 - DOCX
 - XLSX
 
-Expected: every mixed drag/drop batch remains blocked until Phase 5B. The attach-button path covers sanitized processing for the supported file families.
+Expected: 1-5 supported mixed files succeed only through sanitized file handoff. No raw fallback, partial handoff, extracted-text fallback, or original filename leak is acceptable.
 
 ## Six-File Block
 
@@ -52,14 +65,15 @@ Expected: every mixed drag/drop batch remains blocked until Phase 5B. The attach
 ## Unsupported File Block
 
 1. Drop an unsupported file, such as `.gif`, `.exe`, `.zip`, `.doc`, `.xls`, or `.bin`.
-2. Expected: LeakGuard blocks the operation.
+2. Expected: LeakGuard blocks the whole operation before read.
 3. Expected: no raw preview, no sanitized preview, no send, and no file-event handoff.
 
 ## One Failed File Blocks All
 
-1. Drop a batch with at least one valid supported file and one file expected to fail extraction or rebuild, such as a malformed PDF or malformed DOCX.
+1. Drop a batch with at least one valid supported file and one file expected to fail extraction, OCR, or rebuild, such as a malformed PDF, malformed DOCX, or malformed image.
 2. Expected: LeakGuard blocks the whole batch.
 3. Expected: no partial sanitized preview and no partial file handoff.
+4. Expected: no raw fallback and no extracted-text fallback into WhatsApp.
 
 ## Raw Preview Must Never Appear
 
@@ -67,9 +81,9 @@ For every drag/drop case:
 
 - `rawPreviewSeen` must remain false in the QA fixture.
 - `rawPreviewBeforeSanitized` must remain false.
+- Raw files must never reach WhatsApp preview/input state.
 - No original filename containing unsafe text should appear in user-visible state.
 - Raw file content must not appear in the composer, preview, sent messages, logs, debug output, or fixture file events.
-- No sanitized drag/drop preview is expected in Phase 5A.
 
 ## Attach-Button Regression
 
@@ -92,3 +106,4 @@ Repeat clipboard checks for:
 - Supported clipboard image paste.
 - Unsupported clipboard image paste blocked.
 - No raw image preview before sanitized handoff.
+- File paste remains out of scope.

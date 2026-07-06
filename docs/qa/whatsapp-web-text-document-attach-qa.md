@@ -137,5 +137,5 @@ After document attach checks, verify these still work:
 ## Still Out Of Scope
 
 - Raw direct file input passthrough.
-- WhatsApp drag/drop file attach. Keep drag/drop blocked until Phase 5B.
+- WhatsApp drag/drop supports 1-5 sanitized files for canonical supported types; see `docs/qa/whatsapp-web-drag-drop-qa.md`.
 - WhatsApp file paste.

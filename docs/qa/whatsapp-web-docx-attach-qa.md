@@ -104,7 +104,7 @@ After DOCX attach checks, verify these still work:
 - WhatsApp attach-button PDF support for exactly one rebuilt sanitized PDF.
 - WhatsApp attach-button XLSX support for exactly one rebuilt sanitized XLSX.
 - WhatsApp attach-button multi-file support for 2-5 supported sanitized files.
-- WhatsApp drag/drop file attach remains blocked until Phase 5B.
+- WhatsApp drag/drop supports 1-5 sanitized files for canonical supported types; see `docs/qa/whatsapp-web-drag-drop-qa.md`.
 
 ## Still Out Of Scope
 

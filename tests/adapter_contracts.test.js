@@ -241,8 +241,8 @@ function testUploadAndUnsafeClickPredicatesStayPresent() {
   );
   assert.strictEqual(
     whatsapp.supportsSanitizedDropHandoff,
-    false,
-    "WhatsApp drag/drop support should stay disabled until the dedicated drag/drop phase"
+    true,
+    "WhatsApp should expose only the narrow sanitized drag/drop handoff capability"
   );
   assert.strictEqual(
     whatsapp.supportsMultiFileHandoff,

@@ -63,4 +63,4 @@ Expected:
 
 ## Out of scope
 
-Videos, arbitrary files, drag/drop file attach until Phase 5B, file paste, 6+ file batches, unsupported mixed batches, and failing image batches remain blocked fail-closed. Single text-document, single-PDF, single-DOCX, and single-XLSX attach checks are covered separately.
+Videos, arbitrary files, file paste, 6+ file batches, unsupported mixed batches, and failing image batches remain blocked fail-closed. WhatsApp drag/drop supports 1-5 sanitized files for canonical supported types. Single text-document, single-PDF, single-DOCX, and single-XLSX attach checks are covered separately.

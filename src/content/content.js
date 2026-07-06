@@ -9921,9 +9921,12 @@
       return assignSanitizedBatchToInput(event.target);
     }
 
-    const fileInput = resolveFileInputForHandoff(event, input);
-    if (fileInput && assignSanitizedBatchToInput(fileInput)) {
-      return true;
+    const shouldUseWhatsAppDropHandoff = context === "drop" && verifyWhatsAppBatch;
+    if (!shouldUseWhatsAppDropHandoff) {
+      const fileInput = resolveFileInputForHandoff(event, input);
+      if (fileInput && assignSanitizedBatchToInput(fileInput)) {
+        return true;
+      }
     }
 
     const target = event?.target || input || document.activeElement;

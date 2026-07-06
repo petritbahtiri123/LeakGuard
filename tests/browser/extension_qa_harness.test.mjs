@@ -339,6 +339,7 @@ function getBrowserQaCoverageMatrix({ matrixMode = BROWSER_QA_MATRIX_MODES.FAST 
         "single DOCX attachment",
         "single XLSX attachment",
         "multi-file attachment",
+        "drag/drop file attachment",
         "unsupported file attachment attempt"
       ],
       requiredCases: [
@@ -361,7 +362,9 @@ function getBrowserQaCoverageMatrix({ matrixMode = BROWSER_QA_MATRIX_MODES.FAST 
         "6+ WhatsApp multi-file attachments block before read",
         "unsupported extensionless WhatsApp attachment remains blocked",
         "unsupported or failing WhatsApp multi-file batch blocks all-or-nothing",
-        "WhatsApp drag/drop file attach remains blocked until Phase 5B"
+        "1-5 supported WhatsApp drag/drop files assign only sanitized files",
+        "6+ WhatsApp drag/drop files block before read",
+        "unsupported or failing WhatsApp drag/drop batch blocks all-or-nothing"
       ]
     },
     followUpInputPaths: ["drag/drop text"],
