@@ -294,7 +294,8 @@ Recommended MVP limit:
 
 - Current max supported text-file size: 50 MB per file.
 - Hard stop: reject larger files with clear UI copy.
-- Rationale: current release keeps file protection text-only, blocks files above the local streaming limit, and uses streaming/chunked redaction for protected composer upload paths above 4 MiB. The extension-owned scanner still scans locally and should remain conservative about UI responsiveness and memory growth.
+- Rationale: the original MVP kept file protection text-only, blocked files above the local streaming limit, and used streaming/chunked redaction for protected composer upload paths above 4 MiB. The extension-owned scanner still scans locally and should remain conservative about UI responsiveness and memory growth.
+- Historical note: this MVP rationale has been superseded for current product scope. See [FILE_CAPABILITY_MATRIX.md](FILE_CAPABILITY_MATRIX.md) and [WHATSAPP_SUPPORT_MATRIX.md](WHATSAPP_SUPPORT_MATRIX.md) for current PDF, DOCX, XLSX, image, and WhatsApp support.
 - Later configurable limit: 5-10 MiB with chunked scanning and cross-chunk boundary handling.
 
 ## Dependency Strategy

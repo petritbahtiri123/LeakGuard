@@ -5658,7 +5658,7 @@ function testFileHandoffAdapterRegistryCoversSupportedSites() {
   assert.strictEqual(
     adapterRegistrySource.includes("pendingAttachEnabled: pendingAttachEnabled?.whatsapp"),
     false,
-    "WhatsApp text-only adapter should not wire pending attach recovery"
+    "WhatsApp narrow adapter should not wire pending attach recovery"
   );
 }
 
@@ -6900,7 +6900,7 @@ function testBuiltInAdaptersEnablePendingAttachRecovery() {
   assert.strictEqual(adapters.whatsapp.supportsMultiFileHandoff, false, "WhatsApp must not enable generic multi-file handoff");
   assert.strictEqual(adapters.whatsapp.supportsDirectDropReplay, false, "WhatsApp must not enable raw direct drop replay");
   assert.strictEqual(adapters.whatsapp.supportsPendingAttach, false, "WhatsApp should not recover pending file attach");
-  assert.strictEqual(adapters.whatsapp.pendingAttachEnabled, false, "WhatsApp text-only adapter should keep pending attach disabled");
+  assert.strictEqual(adapters.whatsapp.pendingAttachEnabled, false, "WhatsApp narrow adapter should keep pending attach disabled");
   assert.ok(
     contentSource.includes("if (id === \"chatgpt\" || id === \"claude\" || id === \"openai\" || id === \"x\" || id === \"generic\")"),
     "existing direct file-input path should stay available for ChatGPT/Claude/OpenAI/X"
@@ -9166,12 +9166,12 @@ async function testWhatsAppFiveMixedSupportedDropPreservesSanitizedOrder() {
   assert.strictEqual(calls.modals.some(([title]) => title === "WhatsApp file upload blocked"), false);
 }
 
-async function testWhatsAppTwentyOneSmallFileDropBlocksBeforeRead() {
+async function testWhatsAppOverLimitSmallFileDropBlocksBeforeRead() {
   const files = Array.from({ length: 21 }, (_, index) =>
     createReadableTextFile({
-      name: `lgqa-wa-drop-twenty-one-${index + 1}.env`,
+      name: `lgqa-wa-drop-over-limit-${index + 1}.env`,
       type: "text/plain",
-      text: "OPENAI_API_KEY=LeakGuardTwentyOneFileApiKey1234567890"
+      text: "OPENAI_API_KEY=LeakGuardOverLimitFileApiKey1234567890"
     })
   );
   const target = createWhatsAppDropTarget();
@@ -9179,10 +9179,10 @@ async function testWhatsAppTwentyOneSmallFileDropBlocksBeforeRead() {
     location: { hostname: "web.whatsapp.com" },
     findComposer: () => null,
     readLocalTextFileFromDataTransfer: async () => {
-      throw new Error("21+ small WhatsApp drops must be blocked before reading");
+      throw new Error("over-limit WhatsApp drops must be blocked before reading");
     },
     processFileForAdapterHandoff: async () => {
-      throw new Error("21+ small WhatsApp drops must be blocked before pipeline processing");
+      throw new Error("over-limit WhatsApp drops must be blocked before pipeline processing");
     }
   });
   const { event } = createEvent({ dataTransfer: createDataTransfer({ files }), target });
@@ -9306,12 +9306,12 @@ async function testWhatsAppFailedFileDropBatchBlocksWholeBatchWithoutPartialDrop
   assert.ok(calls.modals.some(([title]) => title === "Raw file upload blocked"));
 }
 
-async function testWhatsAppTwentyOneSmallFileAttachBlocksBeforeRead() {
-  const rawSecret = "LeakGuardTwentyOneFileApiKey1234567890";
+async function testWhatsAppOverLimitSmallFileAttachBlocksBeforeRead() {
+  const rawSecret = "LeakGuardOverLimitFileApiKey1234567890";
   const fileInput = createFileInput({ multiple: true });
   fileInput.files = Array.from({ length: 21 }, (_, index) =>
     createReadableTextFile({
-      name: `lgqa-wa-twenty-one-${index + 1}-${rawSecret}.env`,
+      name: `lgqa-wa-over-limit-${index + 1}-${rawSecret}.env`,
       type: "text/plain",
       text: `OPENAI_API_KEY=${rawSecret}`
     })
@@ -9320,10 +9320,10 @@ async function testWhatsAppTwentyOneSmallFileAttachBlocksBeforeRead() {
     location: { hostname: "web.whatsapp.com" },
     findComposer: () => null,
     readLocalTextFileFromDataTransfer: async () => {
-      throw new Error("21+ small WhatsApp file batches must be blocked before reading");
+      throw new Error("over-limit WhatsApp file batches must be blocked before reading");
     },
     processFileForAdapterHandoff: async () => {
-      throw new Error("21+ small WhatsApp file batches must be blocked before pipeline processing");
+      throw new Error("over-limit WhatsApp file batches must be blocked before pipeline processing");
     }
   });
 
@@ -9340,7 +9340,7 @@ async function testWhatsAppTwentyOneSmallFileAttachBlocksBeforeRead() {
   assert.match(message, /blocked before reading or processing/);
   assert.match(message, /No raw files were uploaded/);
   assert.strictEqual(message.includes(rawSecret), false);
-  assert.strictEqual(message.includes("lgqa-wa-twenty-one-1"), false);
+  assert.strictEqual(message.includes("lgqa-wa-over-limit-1"), false);
 }
 
 async function testWhatsAppSixLargeFileAttachBlocksBeforeRead() {
@@ -18429,11 +18429,11 @@ function testMultiFileProtectedUploadStaticGuards() {
   await testWhatsAppBasenameTextDocumentDropsRouteToSanitizedBatch();
   await testWhatsAppTenTextDocumentDropsRouteToSanitizedBatch();
   await testWhatsAppFiveMixedSupportedDropPreservesSanitizedOrder();
-  await testWhatsAppTwentyOneSmallFileDropBlocksBeforeRead();
+  await testWhatsAppOverLimitSmallFileDropBlocksBeforeRead();
   await testWhatsAppSixLargeFileDropBlocksBeforeRead();
   await testWhatsAppUnsupportedFileDropBatchBlocksWholeBatchBeforeRead();
   await testWhatsAppFailedFileDropBatchBlocksWholeBatchWithoutPartialDrop();
-  await testWhatsAppTwentyOneSmallFileAttachBlocksBeforeRead();
+  await testWhatsAppOverLimitSmallFileAttachBlocksBeforeRead();
   await testWhatsAppSixLargeFileAttachBlocksBeforeRead();
   await testWhatsAppUnsupportedMultiFileAttachBlocksWholeBatchBeforeRead();
   await testWhatsAppMultiFileAttachFailureBlocksWholeBatchWithoutPartialAssignment();

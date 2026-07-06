@@ -302,7 +302,7 @@ function getBrowserQaCoverageMatrix({ matrixMode = BROWSER_QA_MATRIX_MODES.FAST 
     inputPaths: [
       "typed text",
       "paste text",
-      "WhatsApp Web text-only send guard",
+      "WhatsApp Web text/send guard",
       "file input upload",
       "drag/drop file upload",
       "paste file attachment",
@@ -334,12 +334,16 @@ function getBrowserQaCoverageMatrix({ matrixMode = BROWSER_QA_MATRIX_MODES.FAST 
       inputPaths: [
         "send button click",
         "Enter-to-send",
+        "text paste",
+        "clipboard image paste",
         "single text-document attachment",
         "single PDF attachment",
         "single DOCX attachment",
         "single XLSX attachment",
-        "multi-file attachment",
-        "drag/drop file attachment",
+        "attach-button multi-file attachment",
+        "drag/drop single file attachment",
+        "drag/drop multi-file attachment",
+        "6+ file block",
         "unsupported file attachment attempt"
       ],
       requiredCases: [
@@ -358,12 +362,12 @@ function getBrowserQaCoverageMatrix({ matrixMode = BROWSER_QA_MATRIX_MODES.FAST 
         "single DOCX attachment assigns only a sanitized rebuilt DOCX",
         "single XLSX attachment assigns only a sanitized rebuilt XLSX",
         "encrypted/malformed/image-only PDF attachment remains blocked",
-        "2-20 small supported multi-file attachments assign only sanitized files",
-        "21+ small or 6+ large WhatsApp multi-file attachments block before read",
+        "2-5 supported multi-file attachments assign only sanitized files",
+        "6+ WhatsApp multi-file attachments block before read",
         "unsupported extensionless WhatsApp attachment remains blocked",
         "unsupported or failing WhatsApp multi-file batch blocks all-or-nothing",
-        "1-20 small supported WhatsApp drag/drop files assign only sanitized files",
-        "21+ small or 6+ large WhatsApp drag/drop files block before read",
+        "single-file and 2-5 supported WhatsApp drag/drop files assign only sanitized files",
+        "6+ WhatsApp drag/drop files block before read",
         "unsupported or failing WhatsApp drag/drop batch blocks all-or-nothing"
       ]
     },

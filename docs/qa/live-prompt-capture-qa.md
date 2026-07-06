@@ -92,7 +92,7 @@ Run the text-paste cases from `tests/fixtures/manual/live-site-qa/prompt-compreh
 | Claude | `https://claude.ai/` | Paste and supported text-file upload; verify status cards stay outside composer. |
 | Grok | `https://grok.com/` | Paste and direct drop replay path; verify no duplicate DOM text nodes. |
 | X | `https://x.com/compose/post` | Verify generic protected-site flow does not submit file summaries as prompt text. |
-| WhatsApp Web | `https://web.whatsapp.com/` | Verify drafts and sanitized attachments are protected without sending messages. |
+| WhatsApp Web | `https://web.whatsapp.com/` | Verify drafts, clipboard image paste, single-file attach/drop, and 2-5 file sanitized attach/drop are protected without sending messages; 6+ files block before read. |
 | Generic | Configured protected test site | Verify generic protected-site flow does not submit file summaries as prompt text. |
 
 For each adapter and each case, record:

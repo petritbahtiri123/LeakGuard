@@ -149,6 +149,8 @@ For each browser, run all checklist sections on each site:
 | Grok | `https://grok.com/` |
 | WhatsApp Web | `https://web.whatsapp.com/` |
 
+For WhatsApp Web, use [../WHATSAPP_SUPPORT_MATRIX.md](../WHATSAPP_SUPPORT_MATRIX.md) and the dedicated WhatsApp QA checklists for current support. WhatsApp does not use extracted-text fallback into the composer, supports attach/drop single-file and 2-5 file sanitized handoff only, blocks 6+ files before read, and keeps file paste out of scope except clipboard image paste.
+
 ## 1. Typing
 
 Steps:
@@ -223,6 +225,10 @@ Gemini-specific expected result:
 - Sanitized Gemini fallback inserts once, not duplicated.
 - Manual typing after insertion still works.
 
+WhatsApp-specific expected result:
+- Attach-button single-file and 2-5 file batches use sanitized `File` handoff only.
+- Unsupported files, failing batches, and 6+ files block before read with no raw preview and no extracted-text fallback.
+
 ## 5. Drag/Drop
 
 Steps:
@@ -241,6 +247,10 @@ Gemini-specific expected result:
 - Drop into the Quill/contenteditable editor inserts sanitized content once.
 - If upload handoff is unavailable, fallback sanitized text insertion is used.
 - The editor does not freeze, duplicate prior content, or move text to the wrong composer.
+
+WhatsApp-specific expected result:
+- Drag/drop single-file and 2-5 file batches use sanitized `File` handoff only.
+- Unsupported files, failing batches, and 6+ files block before read with no raw preview and no extracted-text fallback.
 
 ## 6. Generated Text Attachment Behavior
 

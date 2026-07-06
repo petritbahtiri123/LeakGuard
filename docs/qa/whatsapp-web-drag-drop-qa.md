@@ -43,14 +43,6 @@ WhatsApp drag/drop supports the same canonical LeakGuard file families as the Wh
 4. Expected: output order matches input order.
 5. Expected: WhatsApp receives only the five sanitized files.
 
-## Ten-File Drop
-
-1. Drop ten small supported files together.
-2. Expected: all files are sanitized locally.
-3. Expected: output order matches input order.
-4. Expected: WhatsApp receives only the ten sanitized files.
-5. Expected: no raw preview appears before or after sanitized handoff.
-
 ## Mixed Supported Files
 
 Use combinations of:
@@ -61,16 +53,14 @@ Use combinations of:
 - DOCX
 - XLSX
 
-Expected: 1-20 small supported mixed files succeed only through sanitized file handoff. Batches can include up to five large supported files. No raw fallback, partial handoff, extracted-text fallback, or original filename leak is acceptable.
+Expected: one supported file or 2-5 supported mixed files succeed only through sanitized file handoff. No raw fallback, partial handoff, extracted-text fallback, or original filename leak is acceptable.
 
 ## Count Limit Block
 
-1. Drop 21 small supported files together.
+1. Drop six supported files together.
 2. Expected: LeakGuard blocks before reading any file.
 3. Expected: WhatsApp shows no raw preview and receives no files.
 4. Expected: failure reason is metadata-only.
-
-Repeat with six large supported files over the small-file threshold. Expected: LeakGuard blocks before reading any file.
 
 ## Unsupported File Block
 
@@ -104,9 +94,7 @@ Repeat attach-button checks for:
 - PDF, DOCX, and XLSX.
 - Two supported files.
 - Five supported files.
-- Ten small supported files.
-- 21 small files blocked before read.
-- Six large files blocked before read.
+- Six supported files blocked before read.
 - Unsupported file blocked.
 - One failed file in a batch blocks all.
 

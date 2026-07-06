@@ -1,6 +1,6 @@
 # WhatsApp Web Clipboard Image Paste QA
 
-Use this checklist for WhatsApp clipboard-image support. Attach-button image, document, and Phase 4 multi-file attach QA are covered in the related WhatsApp attach checklists. Clipboard document paste, clipboard multi-file paste, and other non-image clipboard files remain unsupported and must fail closed.
+Use this checklist for WhatsApp clipboard-image support. Attach-button image, document, and multi-file attach/drop QA are covered in the related WhatsApp checklists. Clipboard document paste, clipboard multi-file paste, and other non-image clipboard files remain unsupported and must fail closed.
 
 ## Harmless test screenshot
 
