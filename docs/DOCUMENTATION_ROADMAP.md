@@ -1,6 +1,6 @@
 # LeakGuard Documentation Roadmap
 
-Last updated: 2026-05-29
+Last updated: 2026-07-06
 
 This file is the current documentation inventory, cleanup record, and roadmap. It intentionally separates product/user docs, developer docs, enterprise/admin docs, release/store docs, QA docs, and internal architecture notes so future changes can update the right audience without duplicating the same claims everywhere.
 
@@ -16,13 +16,14 @@ Inventory scope for this pass:
 
 | Document | Purpose | Current status |
 | --- | --- | --- |
-| [README.md](../README.md) | Primary project overview, v1.7.0 snapshot, supported sites, security model, build/load basics, and navigation. | Good / keep, but should stay high-level and avoid absorbing detailed guides. |
+| [README.md](../README.md) | Primary project overview, v2.2.1 snapshot, supported sites, security model, build/load basics, and navigation. | Good / keep, but should stay high-level and avoid absorbing detailed guides. |
 | [docs/README.md](README.md) | Central documentation index grouped by audience and use case. | Good / keep. Added in this cleanup. |
 | [INSTALL_GUIDE.md](INSTALL_GUIDE.md) | Local build, browser load, and first-smoke guide for Chrome, Edge-compatible Chromium, and Firefox. | Good / keep. Added in the roadmap follow-up pass. |
 | [PROTECTED_SITES_GUIDE.md](PROTECTED_SITES_GUIDE.md) | Built-in protected sites, user-managed exact-origin rules, optional permission behavior, and enterprise-managed site notes. | Good / keep. Added in the roadmap follow-up pass. |
 | [PLACEHOLDERS_AND_REVEAL.md](PLACEHOLDERS_AND_REVEAL.md) | Placeholder stability, session scope, trusted-placeholder pass-through, file-scanner placeholder isolation, and popup-only secure reveal. | Good / keep. Added in the roadmap follow-up pass. |
-| [FILE_UPLOAD_SCANNING_GUIDE.md](FILE_UPLOAD_SCANNING_GUIDE.md) | User-facing File Scanner and protected composer file handling guide with supported text files, size limits, and unsupported-format boundaries. | Good / keep. Added in the roadmap follow-up pass. |
+| [FILE_UPLOAD_SCANNING_GUIDE.md](FILE_UPLOAD_SCANNING_GUIDE.md) | User-facing File Scanner and protected composer file handling guide with supported text files, size limits, unsupported-format boundaries, and WhatsApp file-path limits. | Good / keep. Added in the roadmap follow-up pass and refreshed for WhatsApp support. |
 | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Common popup, protected-site, reveal, rewrite, upload, Firefox, and enterprise-policy troubleshooting. | Good / keep. Added in the roadmap follow-up pass. |
+| [WHATSAPP_SUPPORT_MATRIX.md](WHATSAPP_SUPPORT_MATRIX.md) | Current WhatsApp Web text, paste, clipboard image, attach-button, drag/drop, multi-file, unsupported-path, browser, and safety matrix. | Good / keep. Added in the WhatsApp docs completion pass. |
 | [NON_GOALS.md](NON_GOALS.md) | Maintained non-goals and unsupported surfaces. | Good / keep. Use when adjusting product claims. |
 | [DETECTION_ENHANCEMENTS.md](DETECTION_ENHANCEMENTS.md) | Current redaction hardening notes for placeholders, prose disclosures, headers, and known-secret reuse. | Good / keep, but review release timeline details during future releases. |
 | [FILE_SCANNER_PLAN.md](FILE_SCANNER_PLAN.md) | File Scanner architecture and future scanner phases. | Historical / keep for architecture context. User-facing behavior now lives in `FILE_UPLOAD_SCANNING_GUIDE.md`. |
@@ -58,6 +59,7 @@ Inventory scope for this pass:
 | [ai/README.md](../ai/README.md) | Local AI training, evaluation, and ONNX export workflow. | Good / keep. Current Onix lifecycle, 50,000-record default, held-out eval, and safety rules are documented. |
 | [code-quality-audit.md](code-quality-audit.md) | Historical internal code quality findings and suggested PR sequence. | Historical / keep for context. Current ownership lives in `REPO_MAP.md`. |
 | [IMPLEMENTATION_ROADMAP.md](IMPLEMENTATION_ROADMAP.md) | Ordered implementation roadmap for deep-research, documentation, release, and code-quality hardening work. | Good / keep. Added after refreshing `deep-research-report.md`. |
+| [roadmap/content-script-modularization-plan.md](roadmap/content-script-modularization-plan.md) | Next-release plan to reduce `src/content/content.js` through test-gated module extraction without behavior changes. | Good / keep. Added in the WhatsApp docs completion pass. |
 
 ### Testing and QA docs
 
@@ -121,12 +123,14 @@ Inventory scope for this pass:
 - `docs/BUG_PLAYBOOK.md`
 - `docs/BUILD_TARGETS.md`
 - `docs/BROWSER_COMPATIBILITY_MATRIX.md`
+- `docs/WHATSAPP_SUPPORT_MATRIX.md`
 - `docs/MANAGED_POLICY_SCHEMA.md`
 - `docs/FIREFOX_AMO_CHECKLIST.md`
 - `docs/STORE_ASSETS_CHECKLIST.md`
 - `docs/RELEASE_PROVENANCE_CHECKLIST.md`
 - `docs/VERSIONING_POLICY.md`
 - `docs/RELEASE_QA_CHECKLIST.md`
+- `docs/qa/whatsapp-web-multi-file-qa.md`
 - `docs/qa/cross-site-manual-checklist.md`
 - `docs/file-handoff-architecture.md`
 - `docs/DETECTION_ENHANCEMENTS.md`
@@ -207,6 +211,14 @@ Inventory scope for this pass:
 - Refreshed [deep-research-report.md](deep-research-report.md) to remove stale citation artifacts and mark completed versus open hardening items.
 - Added [IMPLEMENTATION_ROADMAP.md](IMPLEMENTATION_ROADMAP.md) as the ordered implementation plan for remaining deep-research/code-quality work.
 - Kept runtime behavior untouched and did not modify generated artifacts.
+
+## WhatsApp Support Documentation Pass
+
+- Added [WHATSAPP_SUPPORT_MATRIX.md](WHATSAPP_SUPPORT_MATRIX.md) as the current support matrix for WhatsApp Web text, paste, clipboard image paste, attach-button, drag/drop, multi-file limits, unsupported paths, browser notes, and safety invariants.
+- Added [qa/whatsapp-web-multi-file-qa.md](qa/whatsapp-web-multi-file-qa.md) for 2-5 file attach/drop batches, 6+ before-read blocks, unsupported/failing batch all-or-nothing behavior, and attach/drop parity.
+- Refreshed WhatsApp QA docs so single-file, 2-5 file, 6+ blocked, file-paste-out-of-scope, and no-extracted-text-fallback language is consistent.
+- Added [roadmap/content-script-modularization-plan.md](roadmap/content-script-modularization-plan.md) as the next-release content-script modularization plan.
+- Updated release, browser compatibility, protected-site, file capability, Chrome listing, README, and E2E docs to reflect completed WhatsApp support without changing runtime behavior.
 
 ## Implementation Roadmap Completion Pass
 

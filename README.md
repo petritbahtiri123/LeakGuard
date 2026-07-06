@@ -18,8 +18,8 @@ LeakGuard does not use a backend service, cloud processing, telemetry, or remote
 - A local-first browser privacy guard for supported chat composers
 - A deterministic-first redaction layer for likely secrets, email addresses, and sensitive public IPv4 data
 - A session-scoped placeholder system for replacing raw values with tokens such as `[PWM_1]`, `[PUB_HOST_1]`, and `[NET_1]`
-- A local text-file scanner for selected text files
-- Local text-file paste/drop redaction for supported UTF-8 text files in protected chat composers
+- A local file scanner for supported text/source files, text PDFs, DOCX, XLSX, image metadata, and local image OCR
+- Local protected-composer file handling for supported text, PDF, DOCX, XLSX, and image paths where safe handoff is available
 - Streaming local redaction for larger supported text-file uploads in protected chat composers
 - An optional local AI assist layer over leftover suspicious candidate windows after deterministic detection
 
@@ -56,7 +56,7 @@ https://ko-fi.com/petritbahtiri
 - Built-in protection for `chatgpt.com`, `chat.openai.com`, `claude.ai`, `gemini.google.com`, `grok.com`, `x.com`, and `web.whatsapp.com`
 - User-managed protection for additional exact `http://` or `https://` origins
 - Local-only detection and redaction in the browser
-- Supported local UTF-8 text files pasted, dropped, or selected in protected chat composers can be locally validated, redacted, and replaced with sanitized in-memory files where browser/site handoff works
+- Supported local UTF-8 text files, text PDFs, DOCX documents, XLSX spreadsheets, and PNG/JPG/JPEG/WEBP images pasted, dropped, or selected in protected chat composers can be locally validated, redacted, and replaced with sanitized in-memory files where browser/site handoff works
 - Large supported text-file uploads above 4 MiB and up to 50 MB use streaming/chunked local redaction before sanitized handoff
 - Supported text files above 50 MB are blocked instead of being uploaded raw
 - ChatGPT large paste flows that can become generated `Plain Text` attachments are intercepted and redacted before sanitized text/file handoff
@@ -65,6 +65,7 @@ https://ko-fi.com/petritbahtiri
 - Gemini file-to-text fallback uses size-aware insertion, preserves multiline sanitized text in Firefox, avoids slow `execCommand` paths for medium text, and asks before inserting very large sanitized text into the editor
 - Composer rewrite verification is normalized across supported contenteditable editors while still failing closed if raw high-confidence secrets remain or placeholders are missing
 - Optional local AI assist loads its ONNX Runtime sidecars from packaged extension URLs in Chrome and Firefox
+- WhatsApp Web supports protected text typing, multiline text, text paste, clipboard image paste for PNG/JPG/JPEG/WEBP, attach-button single file, attach-button 2-5 file batches, drag/drop single file, and drag/drop 2-5 file batches; 6+ files and unsupported file families block before read with no raw fallback
 - If sanitized file handoff fails or the file is unsupported/invalid, LeakGuard blocks raw upload and shows a local message
 - Trust-aware placeholder preservation and reuse for session-known `[PWM_N]`, `[NET_N]`, and `[PUB_HOST_N]` tokens
 - Full-value redaction for sensitive HTTP headers such as `Authorization`, `X-API-Key`, auth token headers, `Cookie`, and `Set-Cookie`
@@ -83,7 +84,7 @@ https://ko-fi.com/petritbahtiri
 
 ## How LeakGuard Works
 
-1. On a protected site, LeakGuard watches supported chat composers for paste, typing, send, and supported local text-file paste/drop/file-select events.
+1. On a protected site, LeakGuard watches supported chat composers for paste, typing, send, and supported local file paste/drop/file-select events.
 2. If it finds likely secrets or sensitive public IPv4 hosts/CIDRs, it shows an `Allow once` or `Redact` decision flow.
 3. If you choose `Redact`, it rewrites the composer with stable placeholders such as `[PWM_1]`, `[PUB_HOST_1]`, and `[NET_1]`.
 4. Private raw-to-placeholder mappings stay in the background service worker and `chrome.storage.session` for the active browser session only; on browsers without session storage, LeakGuard uses ephemeral extension memory instead of `storage.local`.
@@ -95,13 +96,14 @@ LeakGuard includes an extension-owned File Scanner page for local files. It read
 
 Supported scanner files for this release: `.txt`, `.md`, `.markdown`, `.env`, `.log`, `.json`, `.yaml`, `.yml`, `.toml`, `.xml`, `.csv`, `.ini`, `.conf`, `.cfg`, `.pem`, `.key`, `.ps1`, `.sh`, `.bash`, `.zsh`, `.bat`, `.cmd`, `.py`, `.js`, `.jsx`, `.ts`, `.tsx`, `.html`, `.css`, `.scss`, `.java`, `.c`, `.cpp`, `.h`, `.hpp`, `.cs`, `.go`, `.rs`, `.rb`, `.php`, `.sql`, `Dockerfile`, `Makefile`, text PDFs, DOCX text, XLSX text, and PNG/JPG/JPEG/WEBP image metadata. Scanner image OCR is English-only, local-only, and limited to PNG/JPG/JPEG/WEBP images.
 
-In v2.2.1, supported local UTF-8 text files, text PDFs, DOCX documents, XLSX spreadsheets, and image metadata pasted, dropped, or selected in protected AI composers can also be locally validated, redacted through the same background-owned placeholder flow, and replaced with sanitized in-memory `File`/`Blob` objects where browser and site upload flows accept synthetic file handoff. Protected composer attach/drop/select/paste-file operations can include up to 20 small files up to 4 MiB each, up to 5 large files above 4 MiB and up to 50 MB each, or mixed batches within both caps; LeakGuard processes each accepted file independently, preserves deterministic order for sanitized handoff, blocks unsupported or failed files without raw fallback, and blocks over-cap batches before reading or upload. Scanner text PDFs can export `.redacted.txt` plus a regenerated `.redacted.pdf` built from sanitized extracted text; scanner DOCX files can export `.redacted.txt` plus a regenerated `.redacted.docx` built from sanitized extracted text, without preserving original styles, images, comments, or metadata; scanner XLSX files can export `.redacted.txt` plus a simple regenerated `.redacted.xlsx` built from sanitized extracted text, without preserving formulas, charts, styles, comments, hidden sheets, metadata, custom XML, calc chains, or media. Protected-site text PDFs, DOCX files, and XLSX files can hand off regenerated `.redacted.pdf`, `.redacted.docx`, or `.redacted.xlsx` outputs only when sanitized generation is complete; truncated or unsafe regeneration falls back to `.redacted.txt` or blocks raw upload. Image metadata and protected-site OCR text outputs are exported as `.redacted.txt`. Protected-site image OCR is settings-controlled and enabled by default for supported image uploads; when enabled, eligible image visual redaction uploads a flattened `.redacted.png` only when OCR boxes are safe enough. Files above 4 MiB and up to 50 MB use streaming/chunked local redaction so LeakGuard does not need to read the full raw file into one string before sanitizing it. Gemini and Grok can stage sanitized large files in a trusted pending attach prompt when the site requires a user-triggered upload flow. This does not guarantee support for every editor or upload control. Unsupported files, invalid UTF-8 files, text files above 50 MB, unreadable documents, OCR failures, and failed sanitized file handoff are blocked from raw upload with a local message.
+In v2.2.1, supported local UTF-8 text files, text PDFs, DOCX documents, XLSX spreadsheets, and image metadata pasted, dropped, or selected in protected AI composers can also be locally validated, redacted through the same background-owned placeholder flow, and replaced with sanitized in-memory `File`/`Blob` objects where browser and site upload flows accept synthetic file handoff. Protected composer attach/drop/select/paste-file operations can include up to 20 small files up to 4 MiB each, up to 5 large files above 4 MiB and up to 50 MB each, or mixed batches within both caps; LeakGuard processes each accepted file independently, preserves deterministic order for sanitized handoff, blocks unsupported or failed files without raw fallback, and blocks over-cap batches before reading or upload. WhatsApp Web is intentionally narrower: text typing, multiline text, text paste, clipboard image paste, attach-button single file, attach-button 2-5 files, drag/drop single file, and drag/drop 2-5 files are supported; 6+ files block before read, unsupported/failing batches block all-or-nothing, and file paste remains out of scope except clipboard image paste. Scanner text PDFs can export `.redacted.txt` plus a regenerated `.redacted.pdf` built from sanitized extracted text; scanner DOCX files can export `.redacted.txt` plus a regenerated `.redacted.docx` built from sanitized extracted text, without preserving original styles, images, comments, or metadata; scanner XLSX files can export `.redacted.txt` plus a simple regenerated `.redacted.xlsx` built from sanitized extracted text, without preserving formulas, charts, styles, comments, hidden sheets, metadata, custom XML, calc chains, or media. Protected-site text PDFs, DOCX files, and XLSX files can hand off regenerated `.redacted.pdf`, `.redacted.docx`, or `.redacted.xlsx` outputs only when sanitized generation is complete; truncated or unsafe regeneration falls back to `.redacted.txt` or blocks raw upload. Image metadata and protected-site OCR text outputs are exported as `.redacted.txt`. Protected-site image OCR is settings-controlled and enabled by default for supported image uploads; when enabled, eligible image visual redaction uploads a flattened `.redacted.png` only when OCR boxes are safe enough. Files above 4 MiB and up to 50 MB use streaming/chunked local redaction so LeakGuard does not need to read the full raw file into one string before sanitizing it. Gemini and Grok can stage sanitized large files in a trusted pending attach prompt when the site requires a user-triggered upload flow. This does not guarantee support for every editor or upload control. Unsupported files, invalid UTF-8 files, text files above 50 MB, unreadable documents, OCR failures, and failed sanitized file handoff are blocked from raw upload with a local message.
 
 File scanner limits:
 
 - 50 MB maximum supported text-file size for local scanner validation and protected composer upload paths
 - streaming/chunked redaction is used for protected composer upload paths above 4 MiB and up to 50 MB
 - protected composer upload and paste-file paths support up to 20 small files up to 4 MiB each, up to 5 large files above 4 MiB and up to 50 MB each, or mixed batches within both caps; over-cap batches are blocked before reading or upload
+- WhatsApp attach/drop paths support single-file and 2-5 file sanitized handoff only; 6+ files block before read, and WhatsApp file paste remains out of scope except clipboard image paste
 - deterministic detection only
 - raw file contents are not stored in extension storage
 - exported JSON reports do not include raw secrets by default
@@ -134,7 +136,7 @@ Training, export, browser smoke tests, and enterprise disable guidance live in [
 - Raw secrets are not sent to external services by the extension.
 - Raw secrets are not persisted in `chrome.storage.local`.
 - Selected file contents are scanned locally and are not stored in extension storage.
-- Supported local text-file paste/drop/file-select content is intercepted locally before raw upload and is not stored in extension storage.
+- Supported local file paste/drop/file-select content is intercepted locally before raw upload and is not stored in extension storage.
 - Large supported text files are streamed/chunked locally for redaction before sanitized file handoff; raw large text is not uploaded by LeakGuard through protected text-file paths.
 - Persistent local storage is limited to normalized protected-site rules.
 - Raw values are kept only in session-scoped background storage so secure reveal can work during the active tab session.
@@ -312,6 +314,7 @@ Common entry points:
 - [docs/PROTECTED_SITES_GUIDE.md](docs/PROTECTED_SITES_GUIDE.md)
 - [docs/PLACEHOLDERS_AND_REVEAL.md](docs/PLACEHOLDERS_AND_REVEAL.md)
 - [docs/FILE_UPLOAD_SCANNING_GUIDE.md](docs/FILE_UPLOAD_SCANNING_GUIDE.md)
+- [docs/WHATSAPP_SUPPORT_MATRIX.md](docs/WHATSAPP_SUPPORT_MATRIX.md)
 - [docs/PRIVACY_POLICY.md](docs/PRIVACY_POLICY.md)
 - [SECURITY_REVIEW.md](SECURITY_REVIEW.md)
 - [docs/BROWSER_COMPATIBILITY_MATRIX.md](docs/BROWSER_COMPATIBILITY_MATRIX.md)

@@ -100,6 +100,7 @@ If safe sanitized file handoff is not available, LeakGuard may insert sanitized 
 
 - ChatGPT large paste flows that can become generated `Plain Text` attachments are intercepted and redacted before sanitized text or file handoff.
 - Built-in adapters can use a trusted pending attach prompt for sanitized file handoff when the site requires a user-triggered upload flow. Pending attach stores sanitized files in memory only and must not replay raw files.
+- WhatsApp Web supports text typing, multiline text, text paste, clipboard image paste for PNG/JPG/JPEG/WEBP, attach-button single file, attach-button 2-5 file batches, drag/drop single file, and drag/drop 2-5 file batches. WhatsApp blocks 6+ files before read, blocks unsupported or failing batches all-or-nothing, never inserts extracted file text into the WhatsApp composer, and keeps file paste out of scope except clipboard image paste.
 
 Unsupported files and failed sanitized handoffs should not be represented as protected.
 
