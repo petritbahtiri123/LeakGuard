@@ -1366,7 +1366,7 @@
     if (!isWhatsAppSanitizedMultiFileAttachEnabled(context)) return false;
     if (typeof dataTransferHasFiles !== "function" || !dataTransferHasFiles(dataTransfer)) return false;
     const files = listLocalTransferFiles(dataTransfer);
-    return files.length >= 2 && files.length <= 5 && files.every(isSupportedWhatsAppMultiFileAttachFile);
+    return files.length >= 2 && files.length <= MAX_MULTI_FILE_SMALL_ATTACHMENTS && files.every(isSupportedWhatsAppMultiFileAttachFile);
   }
 
   async function blockWhatsAppFileAttachment(event) {
@@ -9964,7 +9964,7 @@
   async function maybeHandleMultiFileInsert(event, input, files, context, processingSite, controls) {
     const isWhatsAppBatch = isPotentialWhatsAppMultiFileAttach(files, context);
     const plan = globalThis.PWM.FileAttachPipeline.createMultiFileAttachPlan(files, {
-      maxSmallFiles: isWhatsAppBatch ? 5 : MAX_MULTI_FILE_SMALL_ATTACHMENTS,
+      maxSmallFiles: MAX_MULTI_FILE_SMALL_ATTACHMENTS,
       maxLargeFiles: MAX_MULTI_FILE_LARGE_ATTACHMENTS,
       smallMaxBytes: MULTI_FILE_SMALL_MAX_BYTES,
       supportedMaxBytes: MULTI_FILE_SUPPORTED_MAX_BYTES

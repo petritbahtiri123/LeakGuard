@@ -1,6 +1,6 @@
 # WhatsApp Web PDF Attach QA
 
-Use this checklist for WhatsApp Web PDF document support. The single-file path supports one text PDF selected from the attach button. Phase 4 also supports 2-5 sanitized multi-file attach for supported PDFs, text documents, DOCX files, XLSX files, and images.
+Use this checklist for WhatsApp Web PDF document support. The single-file path supports one text PDF selected from the attach button. The multi-file path supports 2-20 small sanitized files for supported PDFs, text documents, DOCX files, XLSX files, and images.
 
 ## Test Setup
 
@@ -78,8 +78,8 @@ Select two or more files, including combinations of PDFs, supported text documen
 
 Expected:
 
-- 2-5 supported files are sanitized locally and assigned back to WhatsApp only as sanitized `File` objects in input order.
-- 6+ files are blocked before read.
+- 2-20 small supported files are sanitized locally and assigned back to WhatsApp only as sanitized `File` objects in input order.
+- 21+ small files or 6+ large files are blocked before read.
 - Any unsupported or failing file blocks the whole batch all-or-nothing, with no partial handoff.
 
 ## Raw PDF Confirmation
@@ -102,8 +102,8 @@ After PDF attach checks, verify these still work:
 - WhatsApp attach-button text-document support for canonical LeakGuard text-like files, including `Dockerfile` and `Makefile`; unsupported extensionless files remain blocked.
 - WhatsApp attach-button DOCX support for exactly one rebuilt sanitized DOCX.
 - WhatsApp attach-button XLSX support for exactly one rebuilt sanitized XLSX.
-- WhatsApp attach-button multi-file support for 2-5 supported sanitized files.
-- WhatsApp drag/drop supports 1-5 sanitized files for canonical supported types; see `docs/qa/whatsapp-web-drag-drop-qa.md`.
+- WhatsApp attach-button multi-file support for 2-20 small supported sanitized files.
+- WhatsApp drag/drop supports 1-20 small sanitized files for canonical supported types; see `docs/qa/whatsapp-web-drag-drop-qa.md`.
 
 ## Still Out Of Scope
 

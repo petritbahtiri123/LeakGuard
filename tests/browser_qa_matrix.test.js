@@ -173,12 +173,12 @@ async function assertFullCoverageMatrix() {
     "single DOCX attachment assigns only a sanitized rebuilt DOCX",
     "single XLSX attachment assigns only a sanitized rebuilt XLSX",
     "encrypted/malformed/image-only PDF attachment remains blocked",
-    "2-5 supported multi-file attachments assign only sanitized files",
-    "6+ WhatsApp multi-file attachments block before read",
+    "2-20 small supported multi-file attachments assign only sanitized files",
+    "21+ small or 6+ large WhatsApp multi-file attachments block before read",
     "unsupported extensionless WhatsApp attachment remains blocked",
     "unsupported or failing WhatsApp multi-file batch blocks all-or-nothing",
-    "1-5 supported WhatsApp drag/drop files assign only sanitized files",
-    "6+ WhatsApp drag/drop files block before read",
+    "1-20 small supported WhatsApp drag/drop files assign only sanitized files",
+    "21+ small or 6+ large WhatsApp drag/drop files block before read",
     "unsupported or failing WhatsApp drag/drop batch blocks all-or-nothing"
   ]) {
     assert.ok(

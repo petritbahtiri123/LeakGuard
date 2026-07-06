@@ -1,6 +1,6 @@
 # WhatsApp Web Text Document Attach QA
 
-Use this checklist for WhatsApp Web text-document support. The attach-button path supports canonical LeakGuard text-like files from `src/shared/fileTypeRegistry.js`, including extensionless `Dockerfile` and `Makefile`. Phase 5A also supports 2-5 sanitized multi-file attach for supported text documents, PDFs, DOCX files, XLSX files, and images.
+Use this checklist for WhatsApp Web text-document support. The attach-button path supports canonical LeakGuard text-like files from `src/shared/fileTypeRegistry.js`, including extensionless `Dockerfile` and `Makefile`. The multi-file path supports 2-20 small sanitized files for supported text documents, PDFs, DOCX files, XLSX files, and images.
 
 ## Test Setup
 
@@ -108,8 +108,8 @@ Select two or more files, including combinations of supported text documents, su
 
 Expected:
 
-- 2-5 supported files are sanitized locally and assigned back to WhatsApp only as sanitized `File` objects in input order.
-- 6+ files are blocked before read.
+- 2-20 small supported files are sanitized locally and assigned back to WhatsApp only as sanitized `File` objects in input order.
+- 21+ small files or 6+ large files are blocked before read.
 - Any unsupported or failing file blocks the whole batch all-or-nothing, with no partial handoff.
 
 ## Raw Document Confirmation
@@ -132,10 +132,10 @@ After document attach checks, verify these still work:
 - WhatsApp attach-button PDF support for exactly one rebuilt sanitized PDF.
 - WhatsApp attach-button DOCX support for exactly one rebuilt sanitized DOCX.
 - WhatsApp attach-button XLSX support for exactly one rebuilt sanitized XLSX.
-- WhatsApp attach-button multi-file support for 2-5 supported sanitized files.
+- WhatsApp attach-button multi-file support for 2-20 small supported sanitized files.
 
 ## Still Out Of Scope
 
 - Raw direct file input passthrough.
-- WhatsApp drag/drop supports 1-5 sanitized files for canonical supported types; see `docs/qa/whatsapp-web-drag-drop-qa.md`.
+- WhatsApp drag/drop supports 1-20 small sanitized files for canonical supported types; see `docs/qa/whatsapp-web-drag-drop-qa.md`.
 - WhatsApp file paste.

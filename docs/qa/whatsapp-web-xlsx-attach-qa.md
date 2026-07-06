@@ -1,6 +1,6 @@
 # WhatsApp Web XLSX Attach QA
 
-Use this checklist for WhatsApp Web XLSX document support. The single-file path supports one XLSX selected from the attach button and handed to WhatsApp only as a rebuilt sanitized `.redacted.xlsx` file. Phase 4 also supports 2-5 sanitized multi-file attach for supported XLSX files, DOCX files, PDFs, text documents, and images.
+Use this checklist for WhatsApp Web XLSX document support. The single-file path supports one XLSX selected from the attach button and handed to WhatsApp only as a rebuilt sanitized `.redacted.xlsx` file. The multi-file path supports 2-20 small sanitized files for supported XLSX files, DOCX files, PDFs, text documents, and images.
 
 ## Test Setup
 
@@ -89,8 +89,8 @@ Select two or more files, including combinations of supported XLSX files, DOCX f
 
 Expected:
 
-- 2-5 supported files are sanitized locally and assigned back to WhatsApp only as sanitized `File` objects in input order.
-- 6+ files are blocked before read.
+- 2-20 small supported files are sanitized locally and assigned back to WhatsApp only as sanitized `File` objects in input order.
+- 21+ small files or 6+ large files are blocked before read.
 - Any unsupported or failing file blocks the whole batch all-or-nothing, with no partial handoff.
 
 ## Raw XLSX Confirmation
@@ -113,8 +113,8 @@ After XLSX attach checks, verify these still work:
 - WhatsApp attach-button text-document support for canonical LeakGuard text-like files, including `Dockerfile` and `Makefile`; unsupported extensionless files remain blocked.
 - WhatsApp attach-button PDF support for exactly one rebuilt sanitized PDF.
 - WhatsApp attach-button DOCX support for exactly one rebuilt sanitized DOCX.
-- WhatsApp attach-button multi-file support for 2-5 supported sanitized files.
-- WhatsApp drag/drop supports 1-5 sanitized files for canonical supported types; see `docs/qa/whatsapp-web-drag-drop-qa.md`.
+- WhatsApp attach-button multi-file support for 2-20 small supported sanitized files.
+- WhatsApp drag/drop supports 1-20 small sanitized files for canonical supported types; see `docs/qa/whatsapp-web-drag-drop-qa.md`.
 
 ## Still Out Of Scope
 
