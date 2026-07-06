@@ -1449,6 +1449,7 @@ async function run() {
   const safeSnapshotsIndex = contentScripts.indexOf("content/diagnostics/safeSnapshots.js");
   const fileProcessingUiIndex = contentScripts.indexOf("content/files/fileProcessingUi.js");
   const fileAttachPipelineIndex = contentScripts.indexOf("content/files/fileAttachPipeline.js");
+  const fileInputPreparationIndex = contentScripts.indexOf("content/files/fileInputPreparation.js");
   const placeholderRehydratorIndex = contentScripts.indexOf("content/rehydration/placeholderRehydrator.js");
   const responseObserverIndex = contentScripts.indexOf("content/rehydration/responseObserver.js");
   const revealControllerIndex = contentScripts.indexOf("content/rehydration/revealController.js");
@@ -1506,6 +1507,7 @@ async function run() {
   assert.ok(safeSnapshotsIndex > -1, "content scripts should include safe snapshot helpers");
   assert.ok(fileProcessingUiIndex > -1, "content scripts should include file processing UI helpers");
   assert.ok(fileAttachPipelineIndex > -1, "content scripts should include file attach pipeline helpers");
+  assert.ok(fileInputPreparationIndex > -1, "content scripts should include file input preparation helpers");
   assert.ok(placeholderRehydratorIndex > -1, "content scripts should include placeholder rehydration helpers");
   assert.ok(responseObserverIndex > -1, "content scripts should include response observer helpers");
   assert.ok(revealControllerIndex > -1, "content scripts should include reveal controller helpers");
@@ -1544,7 +1546,8 @@ async function run() {
       geminiFallbackWriterIndex < safeSnapshotsIndex &&
       safeSnapshotsIndex < fileProcessingUiIndex &&
       fileProcessingUiIndex < fileAttachPipelineIndex &&
-      fileAttachPipelineIndex < placeholderRehydratorIndex &&
+      fileAttachPipelineIndex < fileInputPreparationIndex &&
+      fileInputPreparationIndex < placeholderRehydratorIndex &&
       placeholderRehydratorIndex < responseObserverIndex &&
       responseObserverIndex < revealControllerIndex &&
       revealControllerIndex < debugLoggerIndex &&

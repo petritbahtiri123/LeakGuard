@@ -176,11 +176,15 @@ function testContentRuntimeScriptOrder() {
   assertAfterAll(contentScripts, "content/files/fileHandoffVerification.js", [
     "content/files/fileTypeSupport.js"
   ], "content scripts");
+  assertAfterAll(contentScripts, "content/files/fileInputPreparation.js", [
+    "content/files/fileHandoffVerification.js"
+  ], "content scripts");
   assertAfterAll(contentScripts, "content/files/fileDropInterception.js", [
     "content/files/fileTransferPolicy.js"
   ], "content scripts");
   assertAfterAll(contentScripts, "content/files/fileInputInterception.js", [
-    "content/files/fileHandoffVerification.js"
+    "content/files/fileHandoffVerification.js",
+    "content/files/fileInputPreparation.js"
   ], "content scripts");
   assertAfterAll(contentScripts, "content/diagnostics/contentDebugFacade.js", [
     "content/diagnostics/debugLogger.js",

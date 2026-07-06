@@ -98,6 +98,7 @@ require(path.join(repoRoot, "src/content/files/fileTypeSupport.js"));
 require(path.join(repoRoot, "src/shared/streamingFileRedactor.js"));
 require(path.join(repoRoot, "src/content/files/sanitizedFileBatchProcessor.js"));
 require(path.join(repoRoot, "src/content/files/fileHandoffVerification.js"));
+require(path.join(repoRoot, "src/content/files/fileInputPreparation.js"));
 require(path.join(repoRoot, "src/content/files/fileDropInterception.js"));
 require(path.join(repoRoot, "src/content/files/fileInputInterception.js"));
 require(path.join(repoRoot, "src/content/whatsapp/whatsappCapabilities.js"));
@@ -1068,6 +1069,7 @@ function createHarness(overrides = {}) {
     ContentFileTypeSupport: globalThis.PWM.ContentFileTypeSupport || {},
     SanitizedFileBatchProcessor: globalThis.PWM.SanitizedFileBatchProcessor || {},
     FileHandoffVerification: globalThis.PWM.FileHandoffVerification || {},
+    FileInputPreparation: globalThis.PWM.FileInputPreparation || {},
     FileDropInterception: globalThis.PWM.FileDropInterception || {},
     FileInputInterception: globalThis.PWM.FileInputInterception || {},
     FileProcessingUi: globalThis.PWM.FileProcessingUi || {},
@@ -1315,6 +1317,7 @@ function createHarness(overrides = {}) {
       "let contentFileTypeSupport = null;",
       "let sanitizedFileBatchProcessor = null;",
       "let fileHandoffVerification = null;",
+      "let fileInputPreparation = null;",
       "let fileDropInterception = null;",
       "let fileInputInterception = null;",
       "let fileProcessingUi = null;",
@@ -2388,8 +2391,7 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "describeUploadTriggerForDebug"),
       extractFunctionSource(contentSource, "collectFileInputsFromAncestry"),
       extractFunctionSource(contentSource, "collectFileInputsFromRoot"),
-      extractFunctionSource(contentSource, "getSafeFileExtensionForAccept"),
-      extractFunctionSource(contentSource, "fileMatchesAcceptTokenForHandoff"),
+      extractFunctionSource(contentSource, "getFileInputPreparation"),
       extractFunctionSource(contentSource, "fileInputAcceptsHandoffFiles"),
       extractFunctionSource(contentSource, "scoreFileInputForHandoff"),
       extractFunctionSource(contentSource, "collectFileHandoffElementsFromRoot"),
