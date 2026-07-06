@@ -60,6 +60,7 @@
   const FileHandoffVerification = globalThis.PWM?.FileHandoffVerification || {};
   const FileDropInterception = globalThis.PWM?.FileDropInterception || {};
   const FileInputInterception = globalThis.PWM?.FileInputInterception || {};
+  const FileProcessingUi = globalThis.PWM?.FileProcessingUi || {};
   const WhatsAppCapabilities = globalThis.PWM?.WhatsAppCapabilities || {};
   const {
     canExtractForAdapterHandoff,
@@ -350,18 +351,12 @@
   let dmzOverlayStatusEl = null;
   let dmzOverlayTimer = 0;
   let dmzFallbackStyleEl = null;
-  let fileProcessingOverlayEl = null;
-  let fileProcessingTitleEl = null;
-  let fileProcessingStatusEl = null;
-  let fileProcessingProgressEl = null;
-  let fileProcessingHideTimer = 0;
-  let pendingAttachPromptEl = null;
-  let pendingAttachPromptSite = "";
   let contentFileTypeSupport = null;
   let sanitizedFileBatchProcessor = null;
   let fileHandoffVerification = null;
   let fileDropInterception = null;
   let fileInputInterception = null;
+  let fileProcessingUi = null;
   let whatsAppCapabilities = null;
   let replayVerification = null;
   let syntheticFileListCapabilityCache = null;
@@ -1514,454 +1509,83 @@
     }
   }
 
-  function getFileProcessingSiteId(site = "") {
-    try {
-      return String(site || getCurrentHandoffDriverId() || "generic");
-    } catch {
-      return String(site || "generic");
+  function getFileProcessingUi() {
+    if (fileProcessingUi) return fileProcessingUi;
+    if (typeof FileProcessingUi.createFileProcessingUi !== "function") {
+      fileProcessingUi = Object.freeze({
+        getFileProcessingSiteId: (site = "") => String(site || getCurrentHandoffDriverId() || "generic"),
+        formatFileProcessingProgress: () => "",
+        describeFileProcessingProgress: () => ({ text: "", bytesProcessed: 0, totalBytes: 0, chunks: 0 }),
+        showFileProcessingOverlay: () => null,
+        updateFileProcessingOverlay: () => null,
+        hideFileProcessingOverlay: () => {},
+        showFileProcessingSuccess: () => {},
+        showFileProcessingError: () => {},
+        clearPendingSanitizedAttachPrompt: () => {},
+        getPendingSanitizedAttachPromptMessage: () =>
+          "File sanitized. Click Upload/Attach to attach the sanitized version.",
+        showPendingSanitizedAttachPrompt: () => null
+      });
+      return fileProcessingUi;
     }
+
+    fileProcessingUi = FileProcessingUi.createFileProcessingUi({
+      documentRef: document,
+      setTimeoutFn: setTimeout,
+      clearTimeoutFn: clearTimeout,
+      getCurrentHandoffDriverId,
+      debugReveal,
+      debugFileAttachMetadata,
+      contentDebugEvents: CONTENT_DEBUG_EVENTS,
+      geminiPendingMessage: GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MESSAGE,
+      grokPendingMessage: GROK_PENDING_SANITIZED_FILE_HANDOFF_MESSAGE,
+      describeSanitizedFileOrBatchForDebug,
+      describeFileHandoffAdapter,
+      getFileHandoffAdapterById,
+      getFileHandoffAdapterForLocation,
+      attachPendingSanitizedFileWithTrustedActivation,
+      insertPendingSanitizedFileText,
+      downloadPendingSanitizedFile,
+      cancelPendingSanitizedFileAttach,
+      handleContentError
+    });
+    return fileProcessingUi;
   }
 
   function formatFileProcessingProgress(progress) {
-    if (progress === null || progress === undefined || progress === false || progress === "") {
-      return "";
-    }
-    if (typeof progress === "number" && Number.isFinite(progress)) {
-      return `${Math.max(0, Math.min(100, Math.round(progress)))}%`;
-    }
-    if (typeof progress === "string") {
-      return progress.replace(/\s+/g, " ").trim().slice(0, 80);
-    }
-
-    const bytesProcessed = Number(progress?.bytesProcessed ?? progress?.processedBytes ?? 0);
-    const totalBytes = Number(progress?.totalBytes ?? progress?.bytesTotal ?? 0);
-    if (totalBytes > 0 && bytesProcessed >= 0) {
-      const percent = Math.max(0, Math.min(100, Math.round((bytesProcessed / totalBytes) * 100)));
-      return `${percent}%`;
-    }
-
-    const chunks = Number(
-      progress?.chunksProcessed ?? progress?.chunkCount ?? progress?.chunks ?? progress?.chunkIndex ?? 0
-    );
-    if (chunks > 0) {
-      return `${chunks} ${chunks === 1 ? "chunk" : "chunks"}`;
-    }
-
-    return "";
-  }
-
-  function describeFileProcessingProgress(progress) {
-    return {
-      text: formatFileProcessingProgress(progress),
-      bytesProcessed: Number(progress?.bytesProcessed ?? progress?.processedBytes ?? 0) || 0,
-      totalBytes: Number(progress?.totalBytes ?? progress?.bytesTotal ?? 0) || 0,
-      chunks: Number(
-        progress?.chunksProcessed ?? progress?.chunkCount ?? progress?.chunks ?? progress?.chunkIndex ?? 0
-      ) || 0
-    };
+    return getFileProcessingUi().formatFileProcessingProgress(progress);
   }
 
   function showFileProcessingOverlay(options = {}) {
-    const site = getFileProcessingSiteId(options.site);
-    const title = String(options.title || "LeakGuard is processing this file locally.");
-    const status = String(options.status || "Processing file locally...");
-    const progressText = formatFileProcessingProgress(options.progress) || "In progress";
-    const blocking = options.blocking !== false;
-
-    if (fileProcessingHideTimer) {
-      clearTimeout(fileProcessingHideTimer);
-      fileProcessingHideTimer = 0;
-    }
-
-    if (typeof document?.createElement !== "function" || !document.documentElement?.appendChild) {
-      debugFileAttachMetadata(CONTENT_DEBUG_EVENTS.FILE_UI_PROCESSING_SHOWN, {
-        site,
-        rendered: false,
-        blocking,
-        status,
-        progress: describeFileProcessingProgress(options.progress)
-      });
-      return null;
-    }
-
-    if (!fileProcessingOverlayEl?.isConnected) {
-      const overlay = document.createElement("div");
-      overlay.className = "pwm-file-processing-overlay";
-      overlay.setAttribute("role", "status");
-      overlay.setAttribute("aria-live", "polite");
-
-      const card = document.createElement("div");
-      card.className = "pwm-file-processing-card";
-
-      const titleEl = document.createElement("p");
-      titleEl.className = "pwm-file-processing-title";
-
-      const statusEl = document.createElement("p");
-      statusEl.className = "pwm-file-processing-status";
-
-      const progressEl = document.createElement("p");
-      progressEl.className = "pwm-file-processing-progress";
-
-      card.append(titleEl, statusEl, progressEl);
-      overlay.appendChild(card);
-      document.documentElement.appendChild(overlay);
-
-      fileProcessingOverlayEl = overlay;
-      fileProcessingTitleEl = titleEl;
-      fileProcessingStatusEl = statusEl;
-      fileProcessingProgressEl = progressEl;
-    }
-
-    fileProcessingOverlayEl.dataset.pwmSite = site;
-    fileProcessingOverlayEl.dataset.pwmBlocking = blocking ? "true" : "false";
-    fileProcessingOverlayEl.dataset.pwmState = "processing";
-    fileProcessingTitleEl.textContent = title;
-    fileProcessingStatusEl.textContent = status;
-    fileProcessingProgressEl.textContent = progressText;
-
-    debugFileAttachMetadata(CONTENT_DEBUG_EVENTS.FILE_UI_PROCESSING_SHOWN, {
-      site,
-      rendered: true,
-      blocking,
-      status,
-      progress: describeFileProcessingProgress(options.progress)
-    });
-    return fileProcessingOverlayEl;
+    return getFileProcessingUi().showFileProcessingOverlay(options);
   }
 
   function updateFileProcessingOverlay(options = {}) {
-    const site = getFileProcessingSiteId(options.site || fileProcessingOverlayEl?.dataset?.pwmSite);
-    if (!fileProcessingOverlayEl?.isConnected) {
-      return showFileProcessingOverlay({
-        site,
-        title: options.title || "LeakGuard is processing this file locally.",
-        status: options.status || "Processing file locally...",
-        progress: options.progress,
-        blocking: options.blocking
-      });
-    }
-
-    const status = options.status === undefined ? fileProcessingStatusEl?.textContent || "" : String(options.status);
-    const progressText = formatFileProcessingProgress(options.progress);
-    if (options.status !== undefined && fileProcessingStatusEl) {
-      fileProcessingStatusEl.textContent = status;
-    }
-    if (fileProcessingProgressEl) {
-      fileProcessingProgressEl.textContent = progressText || fileProcessingProgressEl.textContent || "In progress";
-    }
-    if (options.blocking !== undefined) {
-      fileProcessingOverlayEl.dataset.pwmBlocking = options.blocking === false ? "false" : "true";
-    }
-
-    debugReveal("file-ui:processing-updated", {
-      site,
-      status,
-      progress: describeFileProcessingProgress(options.progress)
-    });
-    return fileProcessingOverlayEl;
+    return getFileProcessingUi().updateFileProcessingOverlay(options);
   }
 
   function hideFileProcessingOverlay(reason = "") {
-    if (fileProcessingHideTimer) {
-      clearTimeout(fileProcessingHideTimer);
-      fileProcessingHideTimer = 0;
-    }
-
-    const overlay = fileProcessingOverlayEl;
-    const site = getFileProcessingSiteId(overlay?.dataset?.pwmSite);
-    fileProcessingOverlayEl = null;
-    fileProcessingTitleEl = null;
-    fileProcessingStatusEl = null;
-    fileProcessingProgressEl = null;
-
-    if (overlay?.parentNode) {
-      try {
-        overlay.parentNode.removeChild(overlay);
-      } catch {
-        // Best-effort cleanup only.
-      }
-    }
-
-    debugFileAttachMetadata("file-ui:processing-hidden", {
-      site,
-      reason,
-      rendered: Boolean(overlay)
-    });
+    return getFileProcessingUi().hideFileProcessingOverlay(reason);
   }
 
   function showFileProcessingSuccess(status = "Sanitized file attached.", options = {}) {
-    const site = getFileProcessingSiteId(options.site);
-    if (fileProcessingOverlayEl?.isConnected) {
-      updateFileProcessingOverlay({
-        site,
-        status,
-        progress: "Complete",
-        blocking: false
-      });
-      fileProcessingOverlayEl.dataset.pwmState = "success";
-    } else {
-      showFileProcessingOverlay({
-        site,
-        title: "LeakGuard finished local file processing.",
-        status,
-        progress: "Complete",
-        blocking: false
-      });
-      if (fileProcessingOverlayEl) {
-        fileProcessingOverlayEl.dataset.pwmState = "success";
-      }
-    }
-    debugReveal("file-ui:success-shown", {
-      site,
-      status
-    });
-    fileProcessingHideTimer = setTimeout(() => {
-      hideFileProcessingOverlay(options.reason || "success");
-    }, Math.max(0, Number(options.hideAfterMs ?? 1200)));
+    return getFileProcessingUi().showFileProcessingSuccess(status, options);
   }
 
   function showFileProcessingError(status = "Raw file upload blocked", options = {}) {
-    const site = getFileProcessingSiteId(options.site);
-    if (fileProcessingOverlayEl?.isConnected) {
-      updateFileProcessingOverlay({
-        site,
-        status,
-        progress: "",
-        blocking: false
-      });
-      fileProcessingOverlayEl.dataset.pwmState = "error";
-    }
-    debugReveal("file-ui:error-shown", {
-      site,
-      status,
-      reason: options.reason || ""
-    });
+    return getFileProcessingUi().showFileProcessingError(status, options);
   }
 
   function clearPendingSanitizedAttachPrompt(reason = "") {
-    const prompt = pendingAttachPromptEl;
-    pendingAttachPromptEl = null;
-    const site = prompt?.dataset?.pwmSite || pendingAttachPromptSite || "";
-    pendingAttachPromptSite = "";
-    if (!prompt) {
-      if (site) {
-        debugFileAttachMetadata("file-ui:pending-prompt-cleared", {
-          site,
-          reason,
-          rendered: false
-        });
-      }
-      return;
-    }
-    try {
-      prompt.dataset.pwmClearReason = reason || "";
-    } catch {
-      // Best-effort diagnostics only.
-    }
-    if (prompt.parentNode) {
-      try {
-        prompt.parentNode.removeChild(prompt);
-      } catch {
-        // Best-effort cleanup only.
-      }
-    }
-    debugFileAttachMetadata("file-ui:pending-prompt-cleared", {
-      site: site || getFileProcessingSiteId(),
-      reason,
-      rendered: true
-    });
+    return getFileProcessingUi().clearPendingSanitizedAttachPrompt(reason);
   }
 
   function getPendingSanitizedAttachPromptMessage(site = "") {
-    const id = String(site || getCurrentHandoffDriverId() || "").toLowerCase();
-    if (id === "gemini") {
-      return GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MESSAGE;
-    }
-    if (id === "grok") {
-      return GROK_PENDING_SANITIZED_FILE_HANDOFF_MESSAGE;
-    }
-    return "File sanitized. Click Upload/Attach to attach the sanitized version.";
+    return getFileProcessingUi().getPendingSanitizedAttachPromptMessage(site);
   }
 
   function showPendingSanitizedAttachPrompt(adapter, pending = null) {
-    let selectedAdapter = null;
-    let options = null;
-    if (pending) {
-      selectedAdapter =
-        typeof adapter === "string"
-          ? getFileHandoffAdapterById(adapter)
-          : adapter || getFileHandoffAdapterForLocation();
-      options = {
-        site: selectedAdapter?.id || pending.site || getCurrentHandoffDriverId(),
-        sanitizedFile: pending.sanitizedFile || null,
-        sanitizedFiles: pending.sanitizedFiles || null,
-        message: pending.message || getPendingSanitizedAttachPromptMessage(selectedAdapter?.id || pending.site),
-        onAttachClick: () => attachPendingSanitizedFileWithTrustedActivation(selectedAdapter, pending),
-        onInsertTextClick: () =>
-          insertPendingSanitizedFileText(
-            selectedAdapter?.id || pending.site || getCurrentHandoffDriverId(),
-            pending.event,
-            pending.input,
-            pending.sanitizedFiles || pending.sanitizedFile
-          ),
-        onDownloadClick: () =>
-          downloadPendingSanitizedFile(
-            selectedAdapter?.id || pending.site || getCurrentHandoffDriverId(),
-            pending.event,
-            pending.input,
-            pending.sanitizedFiles || pending.sanitizedFile
-          ),
-        onCancelClick: () =>
-          cancelPendingSanitizedFileAttach(selectedAdapter?.id || pending.site || getCurrentHandoffDriverId())
-      };
-    } else {
-      options = adapter || {};
-      selectedAdapter = options.adapter || getFileHandoffAdapterById(options.site) || getFileHandoffAdapterForLocation();
-    }
-    const site = options.site || getCurrentHandoffDriverId();
-    const sanitizedFile = options.sanitizedFiles || options.sanitizedFile || null;
-    const pendingFileDebug = describeSanitizedFileOrBatchForDebug(sanitizedFile);
-    const message = options.message || getPendingSanitizedAttachPromptMessage(site);
-    const isMultiFilePendingAttach =
-      (Array.isArray(options.sanitizedFiles) && options.sanitizedFiles.filter(Boolean).length > 1) ||
-      (Array.isArray(options.sanitizedFile) && options.sanitizedFile.filter(Boolean).length > 1);
-
-    clearPendingSanitizedAttachPrompt("replaced");
-    pendingAttachPromptSite = site;
-
-    const runAction = async (label, callback) => {
-      debugReveal(`pending-attach-prompt-${label}`, {
-        site,
-        ...pendingFileDebug
-      });
-      if (label === "attach-clicked") {
-        debugFileAttachMetadata("file-handoff:pending-user-attach-clicked", {
-          site,
-          adapter: describeFileHandoffAdapter(selectedAdapter),
-          ...pendingFileDebug
-        });
-      }
-      if (typeof callback !== "function") return;
-      try {
-        await callback();
-      } catch (error) {
-        handleContentError(error);
-      }
-    };
-
-    if (typeof document?.createElement !== "function" || !document.documentElement?.appendChild) {
-      debugReveal(CONTENT_DEBUG_EVENTS.PENDING_ATTACH_PROMPT_SHOWN, {
-        site,
-        rendered: false,
-        ...pendingFileDebug
-      });
-      debugFileAttachMetadata(CONTENT_DEBUG_EVENTS.FILE_HANDOFF_PENDING_PROMPT_SHOWN, {
-        site,
-        rendered: false,
-        adapter: describeFileHandoffAdapter(selectedAdapter),
-        ...pendingFileDebug
-      });
-      debugFileAttachMetadata(CONTENT_DEBUG_EVENTS.FILE_UI_PENDING_PROMPT_SHOWN, {
-        site,
-        rendered: false,
-        ...pendingFileDebug
-      });
-      return null;
-    }
-
-    const prompt = document.createElement("div");
-    prompt.className = "pwm-pending-attach-prompt";
-    prompt.dataset.pwmSite = site;
-    prompt.setAttribute("role", "status");
-    prompt.setAttribute("aria-live", "polite");
-
-    const card = document.createElement("div");
-    card.className = "pwm-pending-attach-card";
-
-    const title = document.createElement("p");
-    title.className = "pwm-pending-attach-title";
-    title.textContent = isMultiFilePendingAttach ? "LeakGuard sanitized the files" : "LeakGuard sanitized the file";
-
-    const body = document.createElement("p");
-    body.className = "pwm-pending-attach-message";
-    body.textContent = message;
-
-    const actions = document.createElement("div");
-    actions.className = "pwm-pending-attach-actions";
-
-    const makeButton = (className, text, label, callback) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = className;
-      button.textContent = text;
-      button.addEventListener("click", (clickEvent) => {
-        try {
-          clickEvent.preventDefault?.();
-          clickEvent.stopPropagation?.();
-          clickEvent.stopImmediatePropagation?.();
-        } catch {
-          // Host events can be partial.
-        }
-        runAction(label, callback);
-      });
-      return button;
-    };
-
-    actions.appendChild(
-      makeButton(
-        "pwm-pending-attach-btn pwm-pending-attach-primary",
-        isMultiFilePendingAttach ? "Attach sanitized files" : "Attach sanitized file",
-        "attach-clicked",
-        options.onAttachClick
-      )
-    );
-    if (!isMultiFilePendingAttach) {
-      actions.append(
-        makeButton(
-          "pwm-pending-attach-btn",
-          "Insert sanitized text instead",
-          "insert-text-clicked",
-          options.onInsertTextClick
-        ),
-        makeButton(
-          "pwm-pending-attach-btn",
-          "Download sanitized copy",
-          "download-clicked",
-          options.onDownloadClick
-        )
-      );
-    }
-    actions.appendChild(
-      makeButton(
-        "pwm-pending-attach-btn pwm-pending-attach-secondary",
-        "Cancel",
-        "cancelled",
-        options.onCancelClick
-      )
-    );
-
-    card.append(title, body, actions);
-    prompt.appendChild(card);
-    document.documentElement.appendChild(prompt);
-    pendingAttachPromptEl = prompt;
-
-    debugReveal(CONTENT_DEBUG_EVENTS.PENDING_ATTACH_PROMPT_SHOWN, {
-      site,
-      rendered: true,
-      ...pendingFileDebug
-    });
-    debugFileAttachMetadata(CONTENT_DEBUG_EVENTS.FILE_HANDOFF_PENDING_PROMPT_SHOWN, {
-      site,
-      rendered: true,
-      adapter: describeFileHandoffAdapter(selectedAdapter),
-      ...pendingFileDebug
-    });
-    debugFileAttachMetadata(CONTENT_DEBUG_EVENTS.FILE_UI_PENDING_PROMPT_SHOWN, {
-      site,
-      rendered: true,
-      ...pendingFileDebug
-    });
-    return prompt;
+    return getFileProcessingUi().showPendingSanitizedAttachPrompt(adapter, pending);
   }
 
   function getLocalTextPayloadByteLength(text, fallbackBytes = 0) {

@@ -111,6 +111,7 @@
     "src/content/adapters/geminiFallbackWriter.js",
     "src/content/diagnostics/safeSnapshots.js",
     "src/content/diagnostics/fileDebugMetadata.js",
+    "src/content/files/fileProcessingUi.js",
     "src/content/files/fileAttachPipeline.js",
     "src/content/files/sanitizedFileBatchProcessor.js",
     "src/content/files/fileHandoffVerification.js",

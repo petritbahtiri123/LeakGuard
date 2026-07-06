@@ -12,6 +12,10 @@ const fileDebugMetadataSource = fs.readFileSync(
   path.join(repoRoot, "src/content/diagnostics/fileDebugMetadata.js"),
   "utf8"
 );
+const fileProcessingUiSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/files/fileProcessingUi.js"),
+  "utf8"
+);
 const adapterSourceFiles = [
   "src/content/adapters/chatgptAdapter.js",
   "src/content/adapters/openaiAdapter.js",
@@ -82,6 +86,7 @@ require(path.join(repoRoot, "src/content/adapters/index.js"));
 require(path.join(repoRoot, "src/content/adapters/geminiFallbackWriter.js"));
 require(path.join(repoRoot, "src/content/diagnostics/safeSnapshots.js"));
 require(path.join(repoRoot, "src/content/diagnostics/fileDebugMetadata.js"));
+require(path.join(repoRoot, "src/content/files/fileProcessingUi.js"));
 require(path.join(repoRoot, "src/content/diagnostics/debugLogger.js"));
 require(path.join(repoRoot, "src/content/files/fileAttachPipeline.js"));
 require(path.join(repoRoot, "src/content/file_handoff_flow.js"));
@@ -1064,6 +1069,7 @@ function createHarness(overrides = {}) {
     FileHandoffVerification: globalThis.PWM.FileHandoffVerification || {},
     FileDropInterception: globalThis.PWM.FileDropInterception || {},
     FileInputInterception: globalThis.PWM.FileInputInterception || {},
+    FileProcessingUi: globalThis.PWM.FileProcessingUi || {},
     WhatsAppCapabilities: globalThis.PWM.WhatsAppCapabilities || {},
     StreamingFileRedactor: globalThis.PWM.StreamingFileRedactor || {},
     PLACEHOLDER_TOKEN_REGEX: globalThis.PWM.PLACEHOLDER_TOKEN_REGEX,
@@ -1310,6 +1316,7 @@ function createHarness(overrides = {}) {
       "let fileHandoffVerification = null;",
       "let fileDropInterception = null;",
       "let fileInputInterception = null;",
+      "let fileProcessingUi = null;",
       "let whatsAppCapabilities = null;",
       "let syntheticFileListCapabilityCache = null;",
       "let inputFileAssignmentCapabilityCache = null;",
@@ -1324,13 +1331,6 @@ function createHarness(overrides = {}) {
       "let pendingGrokSanitizedFileClickHandler = null;",
       "let pendingGenericSanitizedFileHandoff = null;",
       "let pendingGenericSanitizedFileTimer = 0;",
-      "let fileProcessingOverlayEl = null;",
-      "let fileProcessingTitleEl = null;",
-      "let fileProcessingStatusEl = null;",
-      "let fileProcessingProgressEl = null;",
-      "let fileProcessingHideTimer = 0;",
-      "let pendingAttachPromptEl = null;",
-      "let pendingAttachPromptSite = \"\";",
       "let fileInputProcessingSignatures = new WeakMap();",
       "const whatsAppSanitizedImageHandoffInputs = new WeakMap();",
       "let whatsAppSanitizedImageHandoffUntil = 0;",
@@ -1344,9 +1344,8 @@ function createHarness(overrides = {}) {
       "function hideDmzOverlay() { calls.dmzCleanups.push(\"hide\"); }",
       "function createSanitizedFileHandoffDetails() { return {}; }",
       "async function downloadGeminiSanitizedFileFallback() { return false; }",
-      extractFunctionSource(contentSource, "getFileProcessingSiteId"),
+      extractFunctionSource(contentSource, "getFileProcessingUi"),
       extractFunctionSource(contentSource, "formatFileProcessingProgress"),
-      extractFunctionSource(contentSource, "describeFileProcessingProgress"),
       extractFunctionSource(contentSource, "showFileProcessingOverlay"),
       extractFunctionSource(contentSource, "updateFileProcessingOverlay"),
       extractFunctionSource(contentSource, "hideFileProcessingOverlay"),
@@ -2197,6 +2196,7 @@ function createHandoffHarness({
     MutationObserver: TestMutationObserver,
     FilePasteHelpers: globalThis.PWM.FilePasteHelpers,
     FileDropInterception: globalThis.PWM.FileDropInterception || {},
+    FileProcessingUi: globalThis.PWM.FileProcessingUi || {},
     navigator: { userAgent },
     location: { hostname },
     currentPublicState: {
@@ -2291,13 +2291,7 @@ function createHandoffHarness({
       "let pendingGrokSanitizedFileClickHandler = null;",
       "let pendingGenericSanitizedFileHandoff = null;",
       "let pendingGenericSanitizedFileTimer = 0;",
-      "let fileProcessingOverlayEl = null;",
-      "let fileProcessingTitleEl = null;",
-      "let fileProcessingStatusEl = null;",
-      "let fileProcessingProgressEl = null;",
-      "let fileProcessingHideTimer = 0;",
-      "let pendingAttachPromptEl = null;",
-      "let pendingAttachPromptSite = \"\";",
+      "let fileProcessingUi = null;",
       "let fileDropInterception = null;",
       "let syntheticFileListCapabilityCache = null;",
       "let inputFileAssignmentCapabilityCache = null;",
@@ -2310,9 +2304,8 @@ function createHandoffHarness({
       "function setDmzOverlayState() {}",
       "function setGeminiDmzOverlayState() {}",
       "function hideDmzOverlay() {}",
-      extractFunctionSource(contentSource, "getFileProcessingSiteId"),
+      extractFunctionSource(contentSource, "getFileProcessingUi"),
       extractFunctionSource(contentSource, "formatFileProcessingProgress"),
-      extractFunctionSource(contentSource, "describeFileProcessingProgress"),
       extractFunctionSource(contentSource, "showFileProcessingOverlay"),
       extractFunctionSource(contentSource, "updateFileProcessingOverlay"),
       extractFunctionSource(contentSource, "hideFileProcessingOverlay"),
@@ -6840,7 +6833,7 @@ function testFileAttachPipelineProcessingStageControlsDelegateExactly() {
 }
 
 function testGenericFileHandoffHelpersAndDiagnosticsExist() {
-  const contentBundleSource = `${contentSource}\n${fileHandoffStateSource}\n${fileHandoffPendingSource}\n${fileHandoffFlowSource}`;
+  const contentBundleSource = `${contentSource}\n${fileProcessingUiSource}\n${fileHandoffStateSource}\n${fileHandoffPendingSource}\n${fileHandoffFlowSource}`;
   for (const functionName of [
     "getFileHandoffAdapterForLocation",
     "showFileProcessingOverlay",
@@ -6876,7 +6869,7 @@ function testGenericFileHandoffHelpersAndDiagnosticsExist() {
     "file-ui:success-shown",
     "file-ui:error-shown"
   ]) {
-    assert.ok(contentSource.includes(label), `expected debug label ${label}`);
+    assert.ok(contentBundleSource.includes(label), `expected debug label ${label}`);
   }
 }
 
@@ -6891,7 +6884,7 @@ function testFileProcessingOverlayCssExists() {
     "pwm-pending-attach-card"
   ]) {
     assert.ok(overlayCssSource.includes(`.${className}`), `expected ${className} CSS`);
-    assert.ok(contentSource.includes(className), `expected ${className} content usage`);
+    assert.ok(fileProcessingUiSource.includes(className), `expected ${className} content usage`);
   }
   const overlayRule = /\.pwm-file-processing-overlay\s*\{[^}]+\}/.exec(overlayCssSource)?.[0] || "";
   assert.ok(overlayRule.includes("position: fixed"));

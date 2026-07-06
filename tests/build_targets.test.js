@@ -1444,6 +1444,7 @@ async function run() {
   const adapterIndexes = adapterScripts.map((script) => contentScripts.indexOf(script));
   const geminiFallbackWriterIndex = contentScripts.indexOf("content/adapters/geminiFallbackWriter.js");
   const safeSnapshotsIndex = contentScripts.indexOf("content/diagnostics/safeSnapshots.js");
+  const fileProcessingUiIndex = contentScripts.indexOf("content/files/fileProcessingUi.js");
   const fileAttachPipelineIndex = contentScripts.indexOf("content/files/fileAttachPipeline.js");
   const placeholderRehydratorIndex = contentScripts.indexOf("content/rehydration/placeholderRehydrator.js");
   const responseObserverIndex = contentScripts.indexOf("content/rehydration/responseObserver.js");
@@ -1497,6 +1498,7 @@ async function run() {
   assert.ok(adapterIndexes.every((index) => index > -1), "content scripts should include site adapter helpers");
   assert.ok(geminiFallbackWriterIndex > -1, "content scripts should include Gemini fallback writer helpers");
   assert.ok(safeSnapshotsIndex > -1, "content scripts should include safe snapshot helpers");
+  assert.ok(fileProcessingUiIndex > -1, "content scripts should include file processing UI helpers");
   assert.ok(fileAttachPipelineIndex > -1, "content scripts should include file attach pipeline helpers");
   assert.ok(placeholderRehydratorIndex > -1, "content scripts should include placeholder rehydration helpers");
   assert.ok(responseObserverIndex > -1, "content scripts should include response observer helpers");
@@ -1531,7 +1533,8 @@ async function run() {
       adapterOrderAligned &&
       adapterIndexes.at(-1) < geminiFallbackWriterIndex &&
       geminiFallbackWriterIndex < safeSnapshotsIndex &&
-      safeSnapshotsIndex < fileAttachPipelineIndex &&
+      safeSnapshotsIndex < fileProcessingUiIndex &&
+      fileProcessingUiIndex < fileAttachPipelineIndex &&
       fileAttachPipelineIndex < placeholderRehydratorIndex &&
       placeholderRehydratorIndex < responseObserverIndex &&
       responseObserverIndex < revealControllerIndex &&

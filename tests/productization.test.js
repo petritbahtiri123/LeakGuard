@@ -6,6 +6,10 @@ const { pathToFileURL } = require("url");
 const repoRoot = path.join(__dirname, "..");
 const readme = fs.readFileSync(path.join(repoRoot, "README.md"), "utf8");
 const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
+const fileProcessingUiSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/files/fileProcessingUi.js"),
+  "utf8"
+);
 const revealControllerSource = fs.readFileSync(
   path.join(repoRoot, "src/content/rehydration/revealController.js"),
   "utf8"
@@ -356,6 +360,7 @@ function testPendingAttachPromptDoesNotBlockPageClicks() {
 }
 
 function testFileProcessingUiIsGenericAndProgressive() {
+  const fileProcessingUiBundleSource = `${contentSource}\n${fileProcessingUiSource}`;
   for (const functionName of [
     "showFileProcessingOverlay",
     "updateFileProcessingOverlay",
@@ -374,7 +379,7 @@ function testFileProcessingUiIsGenericAndProgressive() {
     "file-ui:success-shown",
     "file-ui:error-shown"
   ]) {
-    assert.ok(contentSource.includes(label), `expected ${label}`);
+    assert.ok(fileProcessingUiBundleSource.includes(label), `expected ${label}`);
   }
   for (const className of [
     "pwm-file-processing-overlay",
