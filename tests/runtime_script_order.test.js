@@ -108,6 +108,10 @@ function testContentRuntimeScriptOrder() {
     "content/composer_helpers.js",
     "content/input/rewriteVerificationText.js"
   ], "content scripts");
+  assertAfterAll(contentScripts, "content/composer/replayVerification.js", [
+    "content/input/rewriteVerificationText.js",
+    "content/composer_helpers.js"
+  ], "content scripts");
   assertAfterAll(contentScripts, "content/file_handoff_pending.js", [
     "content/file_paste_helpers.js",
     "content/file_handoff_state.js"
@@ -128,6 +132,11 @@ function testContentRuntimeScriptOrder() {
     "content/files/fileExtractionSessionCache.js",
     "content/files/protectedSiteOcrBroker.js"
   ], "content scripts");
+  assertAfterAll(contentScripts, "content/files/fileTypeSupport.js", [
+    "shared/fileTypeRegistry.js",
+    "shared/fileScanner.js",
+    "content/files/contentFileExtractionPipeline.js"
+  ], "content scripts");
   assertAfterAll(contentScripts, "content/files/fileAttachPipeline.js", [
     "content/file_paste_helpers.js",
     "content/file_handoff_flow.js",
@@ -135,6 +144,10 @@ function testContentRuntimeScriptOrder() {
     "content/files/contentFileExtractionPipeline.js",
     "content/adapters/index.js",
     "content/diagnostics/safeSnapshots.js"
+  ], "content scripts");
+  assertAfterAll(contentScripts, "content/whatsapp/whatsappCapabilities.js", [
+    "content/adapters/whatsappAdapter.js",
+    "content/adapters/index.js"
   ], "content scripts");
   assertAfterAll(contentScripts, "shared/transformOutboundPromptWithAi.js", [
     "shared/detector.js",
@@ -144,6 +157,18 @@ function testContentRuntimeScriptOrder() {
   assertAfterAll(contentScripts, "content/files/fileAttachPipeline.js", [
     "content/diagnostics/fileDebugMetadata.js",
     "content/diagnostics/safeSnapshots.js"
+  ], "content scripts");
+  assertAfterAll(contentScripts, "content/files/sanitizedFileBatchProcessor.js", [
+    "content/files/fileAttachPipeline.js"
+  ], "content scripts");
+  assertAfterAll(contentScripts, "content/files/fileHandoffVerification.js", [
+    "content/files/fileTypeSupport.js"
+  ], "content scripts");
+  assertAfterAll(contentScripts, "content/files/fileDropInterception.js", [
+    "content/files/fileTransferPolicy.js"
+  ], "content scripts");
+  assertAfterAll(contentScripts, "content/files/fileInputInterception.js", [
+    "content/files/fileHandoffVerification.js"
   ], "content scripts");
   assertAfterAll(contentScripts, "content/diagnostics/contentDebugFacade.js", [
     "content/diagnostics/debugLogger.js",

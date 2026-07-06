@@ -89,7 +89,13 @@ require(path.join(repoRoot, "src/shared/fileScanner.js"));
 require(path.join(repoRoot, "src/shared/scannerOcr.js"));
 require(path.join(repoRoot, "src/shared/imageRedactor.js"));
 require(path.join(repoRoot, "src/content/files/contentFileExtractionPipeline.js"));
+require(path.join(repoRoot, "src/content/files/fileTypeSupport.js"));
 require(path.join(repoRoot, "src/shared/streamingFileRedactor.js"));
+require(path.join(repoRoot, "src/content/files/sanitizedFileBatchProcessor.js"));
+require(path.join(repoRoot, "src/content/files/fileHandoffVerification.js"));
+require(path.join(repoRoot, "src/content/files/fileDropInterception.js"));
+require(path.join(repoRoot, "src/content/files/fileInputInterception.js"));
+require(path.join(repoRoot, "src/content/whatsapp/whatsappCapabilities.js"));
 
 const { dataTransferHasFiles } = globalThis.PWM.FilePasteHelpers;
 
@@ -1053,6 +1059,12 @@ function createHarness(overrides = {}) {
     FilePasteHelpers: globalThis.PWM.FilePasteHelpers,
     FileScanner: globalThis.PWM.FileScanner || {},
     FileTypeRegistry: globalThis.PWM.FileTypeRegistry || {},
+    ContentFileTypeSupport: globalThis.PWM.ContentFileTypeSupport || {},
+    SanitizedFileBatchProcessor: globalThis.PWM.SanitizedFileBatchProcessor || {},
+    FileHandoffVerification: globalThis.PWM.FileHandoffVerification || {},
+    FileDropInterception: globalThis.PWM.FileDropInterception || {},
+    FileInputInterception: globalThis.PWM.FileInputInterception || {},
+    WhatsAppCapabilities: globalThis.PWM.WhatsAppCapabilities || {},
     StreamingFileRedactor: globalThis.PWM.StreamingFileRedactor || {},
     PLACEHOLDER_TOKEN_REGEX: globalThis.PWM.PLACEHOLDER_TOKEN_REGEX,
     ANY_PLACEHOLDER_TOKEN_REGEX: globalThis.PWM.ANY_PLACEHOLDER_TOKEN_REGEX,
@@ -1293,6 +1305,12 @@ function createHarness(overrides = {}) {
       'const UNSUPPORTED_PROTECTED_IMAGE_EXTENSIONS = new Set([".gif", ".bmp", ".ico", ".svg"]);',
       "let suppressInputScanUntil = 0;",
       "let recentWhatsAppTextPaste = null;",
+      "let contentFileTypeSupport = null;",
+      "let sanitizedFileBatchProcessor = null;",
+      "let fileHandoffVerification = null;",
+      "let fileDropInterception = null;",
+      "let fileInputInterception = null;",
+      "let whatsAppCapabilities = null;",
       "let syntheticFileListCapabilityCache = null;",
       "let inputFileAssignmentCapabilityCache = null;",
       "let pendingGeminiSanitizedFileHandoff = null;",
@@ -1365,6 +1383,8 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "snapshotLocalFileDataTransfer"),
       extractFunctionSource(contentSource, "isFirefoxDataTransferFileUnavailableSnapshot"),
       extractFunctionSource(contentSource, "blockFirefoxGeminiUnavailableDrop"),
+      extractFunctionSource(contentSource, "getFileDropInterception"),
+      extractFunctionSource(contentSource, "getFileInputInterception"),
       extractFunctionSource(contentSource, "hashLocalString"),
       extractFunctionSource(contentSource, "getGeminiDropSessionHash"),
       extractFunctionSource(contentSource, "classifyLocalFile"),
@@ -1374,6 +1394,8 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "shouldBlockUnsupportedFileTransfer"),
       extractFunctionSource(contentSource, "getUnsupportedFileBlockedMessage"),
       extractFunctionSource(contentSource, "getUnsupportedFileBlockedTitle"),
+      extractFunctionSource(contentSource, "getContentFileTypeSupport"),
+      extractFunctionSource(contentSource, "getWhatsAppCapabilities"),
       extractFunctionSource(contentSource, "isSupportedWhatsAppClipboardImagePaste"),
       extractFunctionSource(contentSource, "isWhatsAppSanitizedDropHandoffEnabled"),
       extractFunctionSource(contentSource, "isWhatsAppSanitizedFileHandoffContext"),
@@ -1612,10 +1634,12 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "shouldFailClosedProtectedUnsupportedFileTransfer"),
       extractFunctionSource(contentSource, "createSingleFileDataTransfer"),
       extractFunctionSource(contentSource, "getLocalFileSafeMetadata"),
+      extractFunctionSource(contentSource, "getSanitizedFileBatchProcessor"),
       extractFunctionSource(contentSource, "summarizeMultiFileItem"),
       extractFunctionSource(contentSource, "createBlockedBeforeProcessingItems"),
       extractFunctionSource(contentSource, "createMultiFileStatusSummary"),
       extractFunctionSource(contentSource, "formatMultiFileStatusMessage"),
+      extractFunctionSource(contentSource, "getFileHandoffVerification"),
       extractFunctionSource(contentSource, "isExpectedWhatsAppSanitizedMultiFileAttachFile"),
       extractFunctionSource(contentSource, "verifyWhatsAppSanitizedMultiFileAttach"),
       extractFunctionSource(contentSource, "processLocalFileForSanitizedBatch"),
@@ -2172,6 +2196,7 @@ function createHandoffHarness({
     DataTransfer: TestDataTransfer,
     MutationObserver: TestMutationObserver,
     FilePasteHelpers: globalThis.PWM.FilePasteHelpers,
+    FileDropInterception: globalThis.PWM.FileDropInterception || {},
     navigator: { userAgent },
     location: { hostname },
     currentPublicState: {
@@ -2273,6 +2298,7 @@ function createHandoffHarness({
       "let fileProcessingHideTimer = 0;",
       "let pendingAttachPromptEl = null;",
       "let pendingAttachPromptSite = \"\";",
+      "let fileDropInterception = null;",
       "let syntheticFileListCapabilityCache = null;",
       "let inputFileAssignmentCapabilityCache = null;",
       "const geminiSanitizedDownloadFallbacks = new WeakSet();",
@@ -2528,6 +2554,7 @@ function createDmzOverlayHarness({
 
   const dependencies = {
     location: { hostname },
+    FileDropInterception: globalThis.PWM.FileDropInterception || {},
     document: {
       documentElement,
       createElement
@@ -2556,6 +2583,7 @@ function createDmzOverlayHarness({
       "let dmzOverlayStatusEl = null;",
       "let dmzOverlayTimer = 0;",
       "let fileDragDetectedLogged = false;",
+      "let fileDropInterception = null;",
       "function scheduleFileDragSessionReset() {}",
       "function scheduleFileInputDiscovery() {}",
       extractFunctionSource(contentSource, "normalizeTarget"),
@@ -2573,6 +2601,7 @@ function createDmzOverlayHarness({
       extractFunctionSource(contentSource, "scheduleDmzOverlayCleanup"),
       extractFunctionSource(contentSource, "showDmzOverlay"),
       extractFunctionSource(contentSource, "handleFileDragDetected"),
+      extractFunctionSource(contentSource, "getFileDropInterception"),
       extractFunctionSource(contentSource, "maybeHandleFileDrag"),
       "return { maybeHandleFileDrag, hideDmzOverlay, getOverlay: () => dmzOverlayEl, getStatus: () => dmzOverlayStatusEl };"
     ].join("\n\n")

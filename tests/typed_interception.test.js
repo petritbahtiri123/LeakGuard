@@ -17,6 +17,7 @@ require(path.join(repoRoot, "src/shared/knownSecretReuse.js"));
 require(path.join(repoRoot, "src/shared/transformOutboundPrompt.js"));
 require(path.join(repoRoot, "src/content/composer_helpers.js"));
 require(path.join(repoRoot, "src/content/input/rewriteVerificationText.js"));
+require(path.join(repoRoot, "src/content/composer/replayVerification.js"));
 require(path.join(repoRoot, "src/content/diagnostics/debugLogger.js"));
 const ContentDebugFacade = require(path.join(repoRoot, "src/content/diagnostics/contentDebugFacade.js"));
 
@@ -52,6 +53,10 @@ const geminiFallbackWriterSource = fs.readFileSync(
 );
 const fileAttachPipelineSource = fs.readFileSync(
   path.join(repoRoot, "src/content/files/fileAttachPipeline.js"),
+  "utf8"
+);
+const fileDropInterceptionSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/files/fileDropInterception.js"),
   "utf8"
 );
 const contentEventBindingsSource = fs.readFileSync(
@@ -470,18 +475,21 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
     "file drag/drop interception should bind at window, document, and DOM-root capture before nested targets"
   );
   assert.ok(
-    fileDragSource.includes("event.preventDefault();") &&
-      fileDragSource.includes("event.stopPropagation();") &&
-      fileDragSource.includes("event.stopImmediatePropagation();") &&
-      fileDragSource.includes("event.dataTransfer.dropEffect = \"copy\"") &&
-      fileDragSource.includes("dataTransferLooksLikeFiles(event.dataTransfer)") &&
+    fileDragSource.includes("getFileDropInterception().maybeHandleFileDrag(event") &&
+      fileDropInterceptionSource.includes("event.preventDefault();") &&
+      fileDropInterceptionSource.includes("event.stopPropagation();") &&
+      fileDropInterceptionSource.includes("event.stopImmediatePropagation();") &&
+      fileDropInterceptionSource.includes("event.dataTransfer.dropEffect = \"copy\"") &&
+      fileDropInterceptionSource.includes("dataTransferLooksLikeFiles(event?.dataTransfer)") &&
       !fileDragSource.includes("findComposer(") &&
       !fileDragSource.includes("consumeInterceptionEvent(event);") &&
-      !fileDragSource.includes("querySelectorAll") &&
-      !fileDragSource.includes("getBoundingClientRect") &&
-      !fileDragSource.includes("getClientRects") &&
-      !fileDragSource.includes("offsetWidth") &&
-      !fileDragSource.includes("offsetHeight"),
+      !fileDropInterceptionSource.includes("findComposer(") &&
+      !fileDropInterceptionSource.includes("consumeInterceptionEvent(event);") &&
+      !fileDropInterceptionSource.includes("querySelectorAll") &&
+      !fileDropInterceptionSource.includes("getBoundingClientRect") &&
+      !fileDropInterceptionSource.includes("getClientRects") &&
+      !fileDropInterceptionSource.includes("offsetWidth") &&
+      !fileDropInterceptionSource.includes("offsetHeight"),
     "file dragenter/dragover should synchronously own file drags without composer detection, DOM traversal, or layout reads"
   );
   assert.ok(
@@ -846,7 +854,13 @@ function testPerplexityStyleRewriteVerificationToleratesWhitespaceNormalization(
     "normalizeComposerText",
     "normalizeEditorInnerText",
     "PLACEHOLDER_TOKEN_REGEX",
+    "ReplayVerification",
     [
+      "let replayVerification = null;",
+      "function getInputText(input) { return input?.value || input?.text || \"\"; }",
+      "function analyzeText() { return { findings: [], secretFindings: [] }; }",
+      "function debugRewriteVerification() {}",
+      extractFunctionSource(contentSource, "getReplayVerification"),
       extractFunctionSource(contentSource, "normalizeVerificationText"),
       extractFunctionSource(contentSource, "normalizeLooseVerificationText"),
       extractFunctionSource(contentSource, "listExpectedPlaceholders"),
@@ -859,7 +873,8 @@ function testPerplexityStyleRewriteVerificationToleratesWhitespaceNormalization(
     normalizeVisiblePlaceholders,
     ComposerHelpers.normalizeComposerText,
     ComposerHelpers.normalizeEditorInnerText,
-    PLACEHOLDER_TOKEN_REGEX
+    PLACEHOLDER_TOKEN_REGEX,
+    globalThis.PWM.ReplayVerification
   );
   const rawSecret = "blablabmy password is blablabmy password is blablabmy";
   const expected = "password is [PWM_1]";
@@ -934,9 +949,12 @@ function createRewriteVerificationHarness(overrides = {}) {
       "const suppressFollowupInputScan = deps.suppressFollowupInputScan;",
       "const writePlainTextToContentEditablePreservingNewlines = deps.writePlainTextToContentEditablePreservingNewlines;",
       "const analyzeText = deps.analyzeText;",
+      "const ReplayVerification = deps.ReplayVerification;",
+      "let replayVerification = null;",
       "const window = {};",
       "globalThis.PWM.DebugLogger = { ...(globalThis.PWM.DebugLogger || {}), debugEvent: (label, payload) => deps.logs.push({ label, payload }) };",
       "function debugReveal(label, payload) { deps.logs.push({ label, payload }); }",
+      extractFunctionSource(contentSource, "getReplayVerification"),
       extractFunctionSource(contentSource, "normalizeVerificationText"),
       extractFunctionSource(contentSource, "normalizeLooseVerificationText"),
       extractFunctionSource(contentSource, "listExpectedPlaceholders"),
@@ -966,6 +984,7 @@ function createRewriteVerificationHarness(overrides = {}) {
     normalizeComposerText: ComposerHelpers.normalizeComposerText,
     normalizeEditorInnerText: ComposerHelpers.normalizeEditorInnerText,
     PLACEHOLDER_TOKEN_REGEX,
+    ReplayVerification: globalThis.PWM.ReplayVerification,
     getInputText: (input) => ComposerHelpers.normalizeComposerText(input.text || ""),
     isContentEditable: (input) => input?.contentEditable === true,
     readStableComposerText: async (input) => ComposerHelpers.normalizeComposerText(input.text || ""),
@@ -1441,7 +1460,14 @@ function testWhatsAppSplitCredentialPlaceholderIsNotUnsafeVisibleSecret() {
     [
       "const ANY_PLACEHOLDER_TOKEN_REGEX = /\\[(?:PWM|NET|PUB_HOST)_\\d+\\]/g;",
       "const PLACEHOLDER_TOKEN_REGEX = /\\[(?:PWM|NET|PUB_HOST)_\\d+\\]/g;",
+      "const ReplayVerification = deps.ReplayVerification;",
+      "let replayVerification = null;",
+      "function normalizeComposerText(text) { return String(text || \"\"); }",
+      "function normalizeEditorInnerText(text) { return String(text || \"\"); }",
+      "function getInputText() { return \"\"; }",
       "function analyzeText(text) { return deps.analyzeText(text); }",
+      "function debugRewriteVerification() {}",
+      extractFunctionSource(contentSource, "getReplayVerification"),
       extractFunctionSource(contentSource, "containsVisiblePlaceholderToken"),
       extractFunctionSource(contentSource, "isHighConfidenceRewriteFinding"),
       extractFunctionSource(contentSource, "hasUnsafeVisibleSecret"),
@@ -1449,6 +1475,7 @@ function testWhatsAppSplitCredentialPlaceholderIsNotUnsafeVisibleSecret() {
     ].join("\n\n")
   );
   const harness = factory({
+    ReplayVerification: globalThis.PWM.ReplayVerification,
     analyzeText: (text) => {
       const findings = analyze(text);
       return {
@@ -2500,10 +2527,14 @@ async function testWhatsAppExactComposerStateAcceptsSafeMultilinePlaceholderLayo
       "const calls = { verifications: 0 };",
       "const ANY_PLACEHOLDER_TOKEN_REGEX = /\\[(?:PWM|NET|PUB_HOST)_\\d+\\]/g;",
       "const PLACEHOLDER_TOKEN_REGEX = ANY_PLACEHOLDER_TOKEN_REGEX;",
+      "const ReplayVerification = deps.ReplayVerification;",
+      "let replayVerification = null;",
       "function normalizeComposerText(value) { return deps.normalizeComposerText(value); }",
+      "function normalizeEditorInnerText(value) { return deps.normalizeComposerText(value); }",
       "function buildComposerWritePlan(_input, text) { const canonical = normalizeComposerText(text); return { canonical, writeText: canonical, acceptableTexts: [canonical] }; }",
       "async function readStableComposerText() { return deps.actual; }",
       "function debugLogSnapshot() {}",
+      "function debugRewriteVerification() {}",
       "async function verifyComposerRewriteSafe() { calls.verifications += 1; return { ok: false, actual: deps.actual, strategy: 'forced-layout-mismatch' }; }",
       "function getInputText() { return deps.actual; }",
       "function isWhatsAppHost() { return true; }",
@@ -2511,6 +2542,7 @@ async function testWhatsAppExactComposerStateAcceptsSafeMultilinePlaceholderLayo
       "function isReasonablyCloseRewriteLength(expectedText, actualText) { return deps.isReasonablyCloseRewriteLength(expectedText, actualText); }",
       "function listPlaceholderTokens(text) { return deps.listPlaceholderTokens(text); }",
       "function actualContainsExpectedPlaceholders(expectedText, actualText) { return deps.actualContainsExpectedPlaceholders(expectedText, actualText); }",
+      extractFunctionSource(contentSource, "getReplayVerification"),
       extractFunctionSource(contentSource, "containsVisiblePlaceholderToken"),
       extractFunctionSource(contentSource, "isHighConfidenceRewriteFinding"),
       extractFunctionSource(contentSource, "hasUnsafeVisibleSecret"),
@@ -2521,6 +2553,7 @@ async function testWhatsAppExactComposerStateAcceptsSafeMultilinePlaceholderLayo
   );
   const harness = factory({
     actual,
+    ReplayVerification: globalThis.PWM.ReplayVerification,
     normalizeComposerText: ComposerHelpers.normalizeComposerText,
     isReasonablyCloseRewriteLength:
       globalThis.PWM.RewriteVerificationText.isReasonablyCloseRewriteLength,

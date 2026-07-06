@@ -259,6 +259,23 @@ function testUploadAndUnsafeClickPredicatesStayPresent() {
     false,
     "WhatsApp document support must not enable raw direct file input assignment"
   );
+  const enabledWhatsAppCapabilities = Object.keys(whatsapp)
+    .filter((key) => key.startsWith("supports") && whatsapp[key] === true)
+    .sort();
+  assert.deepStrictEqual(
+    enabledWhatsAppCapabilities,
+    [
+      "supportsClipboardImagePasteHandoff",
+      "supportsSanitizedDocxAttachHandoff",
+      "supportsSanitizedDropHandoff",
+      "supportsSanitizedImageAttachHandoff",
+      "supportsSanitizedMultiFileAttachHandoff",
+      "supportsSanitizedPdfAttachHandoff",
+      "supportsSanitizedTextDocumentAttachHandoff",
+      "supportsSanitizedXlsxAttachHandoff"
+    ].sort(),
+    "WhatsApp enabled capabilities should stay exact and narrow"
+  );
 
   ["gemini", "grok"].forEach((id) => {
     assert.strictEqual(

@@ -27,6 +27,7 @@
     ChatGptComposerSync,
     PlaceholderFamilies = {}
   } = globalThis.PWM;
+  const ReplayVerification = globalThis.PWM?.ReplayVerification || {};
   const {
     normalizeComposerText,
     normalizeEditorInnerText,
@@ -54,6 +55,12 @@
   } = FilePasteHelpers || {};
   const FileScanner = globalThis.PWM?.FileScanner || {};
   const FileTypeRegistry = globalThis.PWM?.FileTypeRegistry || {};
+  const ContentFileTypeSupport = globalThis.PWM?.ContentFileTypeSupport || {};
+  const SanitizedFileBatchProcessor = globalThis.PWM?.SanitizedFileBatchProcessor || {};
+  const FileHandoffVerification = globalThis.PWM?.FileHandoffVerification || {};
+  const FileDropInterception = globalThis.PWM?.FileDropInterception || {};
+  const FileInputInterception = globalThis.PWM?.FileInputInterception || {};
+  const WhatsAppCapabilities = globalThis.PWM?.WhatsAppCapabilities || {};
   const {
     canExtractForAdapterHandoff,
     processFileForAdapterHandoff
@@ -276,16 +283,6 @@
     "Raw image upload blocked. This image type is not supported for safe redaction.";
   const SUPPORTED_IMAGE_REDACTION_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
   const SUPPORTED_IMAGE_REDACTION_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
-  const SUPPORTED_WHATSAPP_PDF_ATTACH_EXTENSIONS = new Set([".pdf"]);
-  const SUPPORTED_WHATSAPP_PDF_ATTACH_MIME_TYPES = new Set(["application/pdf"]);
-  const SUPPORTED_WHATSAPP_DOCX_ATTACH_EXTENSIONS = new Set([".docx"]);
-  const SUPPORTED_WHATSAPP_DOCX_ATTACH_MIME_TYPES = new Set([
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-  ]);
-  const SUPPORTED_WHATSAPP_XLSX_ATTACH_EXTENSIONS = new Set([".xlsx"]);
-  const SUPPORTED_WHATSAPP_XLSX_ATTACH_MIME_TYPES = new Set([
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-  ]);
   const UNSUPPORTED_PROTECTED_IMAGE_EXTENSIONS = new Set([".gif", ".bmp", ".ico", ".svg"]);
   const FILE_DRAG_SESSION_RESET_MS = 5000;
   const MAX_MULTI_FILE_SMALL_ATTACHMENTS =
@@ -360,6 +357,13 @@
   let fileProcessingHideTimer = 0;
   let pendingAttachPromptEl = null;
   let pendingAttachPromptSite = "";
+  let contentFileTypeSupport = null;
+  let sanitizedFileBatchProcessor = null;
+  let fileHandoffVerification = null;
+  let fileDropInterception = null;
+  let fileInputInterception = null;
+  let whatsAppCapabilities = null;
+  let replayVerification = null;
   let syntheticFileListCapabilityCache = null;
   let inputFileAssignmentCapabilityCache = null;
   const fileInputProcessingSignatures = new WeakMap();
@@ -1226,153 +1230,152 @@
       : "Raw file upload blocked";
   }
 
+  function getContentFileTypeSupport() {
+    if (contentFileTypeSupport) return contentFileTypeSupport;
+    if (typeof ContentFileTypeSupport.createContentFileTypeSupport !== "function") {
+      contentFileTypeSupport = Object.freeze({
+        isSupportedWhatsAppAttachImageFile: () => false,
+        isSupportedWhatsAppTextDocumentAttachFile: () => false,
+        isSupportedWhatsAppPdfAttachFile: () => false,
+        isSupportedWhatsAppDocxAttachFile: () => false,
+        isSupportedWhatsAppXlsxAttachFile: () => false,
+        isSupportedWhatsAppMultiFileAttachFile: () => false,
+        isSingleSupportedWhatsAppFileAttach: () => false,
+        isSupportedWhatsAppMultiFileAttach: () => false
+      });
+      return contentFileTypeSupport;
+    }
+
+    contentFileTypeSupport = ContentFileTypeSupport.createContentFileTypeSupport({
+      fileScanner: FileScanner,
+      fileTypeRegistry: FileTypeRegistry,
+      shouldUseContentFileExtractionPipeline,
+      getLocalFileExtension,
+      getLocalFileMimeType,
+      dataTransferHasFiles,
+      listLocalTransferFiles,
+      maxWhatsAppMultiFileAttachments: MAX_MULTI_FILE_SMALL_ATTACHMENTS
+    });
+    return contentFileTypeSupport;
+  }
+
+  function getWhatsAppCapabilities() {
+    if (whatsAppCapabilities) return whatsAppCapabilities;
+    if (typeof WhatsAppCapabilities.createWhatsAppCapabilities !== "function") {
+      whatsAppCapabilities = Object.freeze({
+        isSupportedWhatsAppClipboardImagePaste: () => false,
+        isWhatsAppSanitizedDropHandoffEnabled: () => false,
+        isWhatsAppHandoffContext: () => false,
+        isWhatsAppSanitizedFileHandoffContext: (context = "file-input") => context === "file-input",
+        isWhatsAppSanitizedMultiFileAttachEnabled: () => false,
+        isPotentialWhatsAppMultiFileAttach: () => false
+      });
+      return whatsAppCapabilities;
+    }
+    whatsAppCapabilities = WhatsAppCapabilities.createWhatsAppCapabilities({
+      isWhatsAppHost,
+      getCurrentHandoffDriverId,
+      getFileHandoffAdapterById,
+      getFileHandoffAdapterForLocation,
+      dataTransferHasFiles,
+      listLocalTransferFiles,
+      filePasteHelpers: globalThis.PWM?.FilePasteHelpers || {}
+    });
+    return whatsAppCapabilities;
+  }
+
 
   function isSupportedWhatsAppClipboardImagePaste(dataTransfer, context = "paste") {
-    if (!isWhatsAppHost() || context !== "paste") return false;
-    if (typeof dataTransferHasFiles !== "function" || !dataTransferHasFiles(dataTransfer)) return false;
-    const files = listLocalTransferFiles(dataTransfer);
-    if (files.length !== 1) return false;
-    const helper = globalThis.PWM?.FilePasteHelpers || {};
-    if (typeof helper.isSupportedClipboardImageMimeType !== "function") return false;
-    if (!helper.isSupportedClipboardImageMimeType(files[0]?.type)) return false;
-    const adapter = getFileHandoffAdapterById("whatsapp") || getFileHandoffAdapterForLocation();
-    return adapter?.id === "whatsapp" && adapter.supportsClipboardImagePasteHandoff === true;
+    return getWhatsAppCapabilities().isSupportedWhatsAppClipboardImagePaste(dataTransfer, context);
   }
 
   function isWhatsAppSanitizedDropHandoffEnabled(context = "drop") {
-    if (!isWhatsAppHost() || context !== "drop") return false;
-    const adapter = getFileHandoffAdapterById("whatsapp") || getFileHandoffAdapterForLocation();
-    return adapter?.id === "whatsapp" && adapter.supportsSanitizedDropHandoff === true;
+    return getWhatsAppCapabilities().isWhatsAppSanitizedDropHandoffEnabled(context);
   }
 
   function isWhatsAppHandoffContext() {
-    return isWhatsAppHost() || getCurrentHandoffDriverId() === "whatsapp";
+    return getWhatsAppCapabilities().isWhatsAppHandoffContext();
   }
 
   function isWhatsAppSanitizedFileHandoffContext(context = "file-input") {
-    return context === "file-input" || isWhatsAppSanitizedDropHandoffEnabled(context);
+    return getWhatsAppCapabilities().isWhatsAppSanitizedFileHandoffContext(context);
   }
 
   function isSupportedWhatsAppAttachImageFile(file) {
-    if (!file || !shouldUseContentFileExtractionPipeline(file)) return false;
-    return (
-      SUPPORTED_IMAGE_REDACTION_EXTENSIONS.has(getLocalFileExtension(file)) &&
-      SUPPORTED_IMAGE_REDACTION_MIME_TYPES.has(getLocalFileMimeType(file))
-    );
+    return getContentFileTypeSupport().isSupportedWhatsAppAttachImageFile(file);
   }
 
   function isSupportedWhatsAppImageAttach(dataTransfer, context = "file-input") {
     if (!isWhatsAppHost() || !isWhatsAppSanitizedFileHandoffContext(context)) return false;
-    if (typeof dataTransferHasFiles !== "function" || !dataTransferHasFiles(dataTransfer)) return false;
-    const files = listLocalTransferFiles(dataTransfer);
-    if (files.length !== 1 || !isSupportedWhatsAppAttachImageFile(files[0])) return false;
+    const support = getContentFileTypeSupport();
+    if (!support.isSingleSupportedWhatsAppFileAttach(dataTransfer, support.isSupportedWhatsAppAttachImageFile)) return false;
     const adapter = getFileHandoffAdapterById("whatsapp") || getFileHandoffAdapterForLocation();
     return adapter?.id === "whatsapp" && adapter.supportsSanitizedImageAttachHandoff === true;
   }
 
   function isSupportedWhatsAppTextDocumentAttachFile(file) {
-    if (!file) return false;
-    if (typeof FileTypeRegistry.classifyFileType === "function") {
-      const classification = FileTypeRegistry.classifyFileType({
-        fileName: file.name,
-        mimeType: file.type
-      });
-      if (classification?.status !== FileTypeRegistry.FILE_TYPE_STATUS?.SUPPORTED || classification?.family !== "text") {
-        return false;
-      }
-      return typeof FileScanner.isSupportedTextFile !== "function" || FileScanner.isSupportedTextFile(file.name, file.type);
-    }
-    return typeof FileScanner.isSupportedTextFile === "function" && FileScanner.isSupportedTextFile(file.name, file.type);
+    return getContentFileTypeSupport().isSupportedWhatsAppTextDocumentAttachFile(file);
   }
 
   function isSupportedWhatsAppTextDocumentAttach(dataTransfer, context = "file-input") {
     if (!isWhatsAppHost() || !isWhatsAppSanitizedFileHandoffContext(context)) return false;
-    if (typeof dataTransferHasFiles !== "function" || !dataTransferHasFiles(dataTransfer)) return false;
-    const files = listLocalTransferFiles(dataTransfer);
-    if (files.length !== 1 || !isSupportedWhatsAppTextDocumentAttachFile(files[0])) return false;
+    const support = getContentFileTypeSupport();
+    if (!support.isSingleSupportedWhatsAppFileAttach(dataTransfer, support.isSupportedWhatsAppTextDocumentAttachFile)) return false;
     const adapter = getFileHandoffAdapterById("whatsapp") || getFileHandoffAdapterForLocation();
     return adapter?.id === "whatsapp" && adapter.supportsSanitizedTextDocumentAttachHandoff === true;
   }
 
   function isSupportedWhatsAppPdfAttachFile(file) {
-    if (!file || !shouldUseContentFileExtractionPipeline(file)) return false;
-    return (
-      SUPPORTED_WHATSAPP_PDF_ATTACH_EXTENSIONS.has(getLocalFileExtension(file)) &&
-      SUPPORTED_WHATSAPP_PDF_ATTACH_MIME_TYPES.has(getLocalFileMimeType(file))
-    );
+    return getContentFileTypeSupport().isSupportedWhatsAppPdfAttachFile(file);
   }
 
   function isSupportedWhatsAppPdfAttach(dataTransfer, context = "file-input") {
     if (!isWhatsAppHost() || !isWhatsAppSanitizedFileHandoffContext(context)) return false;
-    if (typeof dataTransferHasFiles !== "function" || !dataTransferHasFiles(dataTransfer)) return false;
-    const files = listLocalTransferFiles(dataTransfer);
-    if (files.length !== 1 || !isSupportedWhatsAppPdfAttachFile(files[0])) return false;
+    const support = getContentFileTypeSupport();
+    if (!support.isSingleSupportedWhatsAppFileAttach(dataTransfer, support.isSupportedWhatsAppPdfAttachFile)) return false;
     const adapter = getFileHandoffAdapterById("whatsapp") || getFileHandoffAdapterForLocation();
     return adapter?.id === "whatsapp" && adapter.supportsSanitizedPdfAttachHandoff === true;
   }
 
   function isSupportedWhatsAppDocxAttachFile(file) {
-    if (!file || !shouldUseContentFileExtractionPipeline(file)) return false;
-    return (
-      SUPPORTED_WHATSAPP_DOCX_ATTACH_EXTENSIONS.has(getLocalFileExtension(file)) &&
-      SUPPORTED_WHATSAPP_DOCX_ATTACH_MIME_TYPES.has(getLocalFileMimeType(file))
-    );
+    return getContentFileTypeSupport().isSupportedWhatsAppDocxAttachFile(file);
   }
 
   function isSupportedWhatsAppDocxAttach(dataTransfer, context = "file-input") {
     if (!isWhatsAppHost() || !isWhatsAppSanitizedFileHandoffContext(context)) return false;
-    if (typeof dataTransferHasFiles !== "function" || !dataTransferHasFiles(dataTransfer)) return false;
-    const files = listLocalTransferFiles(dataTransfer);
-    if (files.length !== 1 || !isSupportedWhatsAppDocxAttachFile(files[0])) return false;
+    const support = getContentFileTypeSupport();
+    if (!support.isSingleSupportedWhatsAppFileAttach(dataTransfer, support.isSupportedWhatsAppDocxAttachFile)) return false;
     const adapter = getFileHandoffAdapterById("whatsapp") || getFileHandoffAdapterForLocation();
     return adapter?.id === "whatsapp" && adapter.supportsSanitizedDocxAttachHandoff === true;
   }
 
   function isSupportedWhatsAppXlsxAttachFile(file) {
-    if (!file || !shouldUseContentFileExtractionPipeline(file)) return false;
-    return (
-      SUPPORTED_WHATSAPP_XLSX_ATTACH_EXTENSIONS.has(getLocalFileExtension(file)) &&
-      SUPPORTED_WHATSAPP_XLSX_ATTACH_MIME_TYPES.has(getLocalFileMimeType(file))
-    );
+    return getContentFileTypeSupport().isSupportedWhatsAppXlsxAttachFile(file);
   }
 
   function isSupportedWhatsAppXlsxAttach(dataTransfer, context = "file-input") {
     if (!isWhatsAppHost() || !isWhatsAppSanitizedFileHandoffContext(context)) return false;
-    if (typeof dataTransferHasFiles !== "function" || !dataTransferHasFiles(dataTransfer)) return false;
-    const files = listLocalTransferFiles(dataTransfer);
-    if (files.length !== 1 || !isSupportedWhatsAppXlsxAttachFile(files[0])) return false;
+    const support = getContentFileTypeSupport();
+    if (!support.isSingleSupportedWhatsAppFileAttach(dataTransfer, support.isSupportedWhatsAppXlsxAttachFile)) return false;
     const adapter = getFileHandoffAdapterById("whatsapp") || getFileHandoffAdapterForLocation();
     return adapter?.id === "whatsapp" && adapter.supportsSanitizedXlsxAttachHandoff === true;
   }
 
   function isWhatsAppSanitizedMultiFileAttachEnabled(context = "file-input") {
-    if (!isWhatsAppHost() || !isWhatsAppSanitizedFileHandoffContext(context)) return false;
-    const adapter = getFileHandoffAdapterById("whatsapp") || getFileHandoffAdapterForLocation();
-    return adapter?.id === "whatsapp" && adapter.supportsSanitizedMultiFileAttachHandoff === true;
+    return getWhatsAppCapabilities().isWhatsAppSanitizedMultiFileAttachEnabled(context);
   }
 
   function isPotentialWhatsAppMultiFileAttach(files, context = "file-input") {
-    return Boolean(
-      isWhatsAppSanitizedMultiFileAttachEnabled(context) &&
-        Array.from(files || []).length > 1
-    );
+    return getWhatsAppCapabilities().isPotentialWhatsAppMultiFileAttach(files, context);
   }
 
   function isSupportedWhatsAppMultiFileAttachFile(file) {
-    return Boolean(
-      isSupportedWhatsAppAttachImageFile(file) ||
-        isSupportedWhatsAppTextDocumentAttachFile(file) ||
-        isSupportedWhatsAppPdfAttachFile(file) ||
-        isSupportedWhatsAppDocxAttachFile(file) ||
-        isSupportedWhatsAppXlsxAttachFile(file)
-    );
+    return getContentFileTypeSupport().isSupportedWhatsAppMultiFileAttachFile(file);
   }
 
   function isSupportedWhatsAppMultiFileAttach(dataTransfer, context = "file-input") {
     if (!isWhatsAppSanitizedMultiFileAttachEnabled(context)) return false;
-    if (typeof dataTransferHasFiles !== "function" || !dataTransferHasFiles(dataTransfer)) return false;
-    const files = listLocalTransferFiles(dataTransfer);
-    return files.length >= 2 && files.length <= MAX_MULTI_FILE_SMALL_ATTACHMENTS && files.every(isSupportedWhatsAppMultiFileAttachFile);
+    return getContentFileTypeSupport().isSupportedWhatsAppMultiFileAttach(dataTransfer);
   }
 
   async function blockWhatsAppFileAttachment(event) {
@@ -2140,96 +2143,85 @@
     };
   }
 
+  function getReplayVerification() {
+    if (replayVerification) return replayVerification;
+    if (typeof ReplayVerification.createReplayVerification !== "function") {
+      replayVerification = globalThis.PWM.RewriteVerificationText;
+      return replayVerification;
+    }
+    replayVerification = ReplayVerification.createReplayVerification({
+      rewriteVerificationText: globalThis.PWM.RewriteVerificationText,
+      normalizeComposerText,
+      normalizeEditorInnerText,
+      getInputText,
+      analyzeText,
+      debug: debugRewriteVerification
+    });
+    return replayVerification;
+  }
+
   function normalizeVerificationText(text) {
-    return globalThis.PWM.RewriteVerificationText.normalizeVerificationText(text);
+    return getReplayVerification().normalizeVerificationText(text);
   }
 
   function normalizeLooseVerificationText(text) {
-    return globalThis.PWM.RewriteVerificationText.normalizeLooseVerificationText(text);
+    return getReplayVerification().normalizeLooseVerificationText(text);
   }
 
   function listExpectedPlaceholders(text) {
-    return globalThis.PWM.RewriteVerificationText.listExpectedPlaceholders(text);
+    return getReplayVerification().listExpectedPlaceholders(text);
   }
 
   function listPlaceholderTokens(text) {
-    return globalThis.PWM.RewriteVerificationText.listPlaceholderTokens(text);
+    return getReplayVerification().listPlaceholderTokens(text);
   }
 
   function samePlaceholderTokenSet(expectedText, actualText) {
-    return globalThis.PWM.RewriteVerificationText.samePlaceholderTokenSet(expectedText, actualText);
+    return getReplayVerification().samePlaceholderTokenSet(expectedText, actualText);
   }
 
   function actualContainsExpectedPlaceholders(expectedText, actualText) {
-    return globalThis.PWM.RewriteVerificationText.actualContainsExpectedPlaceholders(expectedText, actualText);
+    return getReplayVerification().actualContainsExpectedPlaceholders(expectedText, actualText);
   }
 
   function countVerificationLineBreaks(text) {
-    return globalThis.PWM.RewriteVerificationText.countVerificationLineBreaks(text);
+    return getReplayVerification().countVerificationLineBreaks(text);
   }
 
   function countVerificationLines(text) {
-    return globalThis.PWM.RewriteVerificationText.countVerificationLines(text);
+    return getReplayVerification().countVerificationLines(text);
   }
 
   function lineCollapseTokens(text) {
-    return globalThis.PWM.RewriteVerificationText.lineCollapseTokens(text);
+    return getReplayVerification().lineCollapseTokens(text);
   }
 
   function detectMultilineCollapse(expected, actual) {
-    return globalThis.PWM.RewriteVerificationText.detectMultilineCollapse(expected, actual);
+    return getReplayVerification().detectMultilineCollapse(expected, actual);
   }
 
   function isReasonablyCloseRewriteLength(expectedText, actualText) {
-    return globalThis.PWM.RewriteVerificationText.isReasonablyCloseRewriteLength(expectedText, actualText);
+    return getReplayVerification().isReasonablyCloseRewriteLength(expectedText, actualText);
   }
 
   function collectComposerVerificationCandidates(input, initialActualText) {
-    const candidates = [];
-    const seen = new Set();
-    const addCandidate = (source, value) => {
-      if (typeof value !== "string") return;
-      const normalized = normalizeComposerText(value);
-      const key = `${source}:${normalized}`;
-      if (seen.has(key)) return;
-      seen.add(key);
-      candidates.push({ source, text: normalized });
-    };
-
-    if (typeof initialActualText === "string") {
-      addCandidate("stable", initialActualText);
-    }
-    addCandidate("getInputText", getInputText(input));
-    addCandidate("innerText", input?.innerText || "");
-    addCandidate("textContent", input?.textContent || "");
-    addCandidate("normalizedInnerText", normalizeEditorInnerText(input?.innerText || ""));
-
-    const baseCandidates = [...candidates];
-    for (const candidate of baseCandidates) {
-      addCandidate(`${candidate.source}:normalized`, normalizeComposerText(candidate.text));
-    }
-
-    return candidates;
+    return getReplayVerification().collectComposerVerificationCandidates(input, initialActualText);
   }
 
   function isHighConfidenceRewriteFinding(finding) {
-    return globalThis.PWM.RewriteVerificationText.isHighConfidenceRewriteFinding(finding);
+    return getReplayVerification().isHighConfidenceRewriteFinding(finding);
   }
 
   function collectOriginalRawSecretValues(originalText, findings) {
-    return globalThis.PWM.RewriteVerificationText.collectOriginalRawSecretValues(originalText, findings, {
-      analyzeText
-    });
+    return getReplayVerification().collectOriginalRawSecretValues(originalText, findings);
   }
 
   function candidateHasHighConfidenceSecret(candidateText, rawSecretValues) {
-    return globalThis.PWM.RewriteVerificationText.candidateHasHighConfidenceSecret(candidateText, rawSecretValues, {
-      analyzeText
-    });
+    return getReplayVerification().candidateHasHighConfidenceSecret(candidateText, rawSecretValues);
   }
 
   function summarizeVerificationCandidate(source, text, expectedText) {
-    return globalThis.PWM.RewriteVerificationText.summarizeVerificationCandidate(source, text, expectedText);
+    return getReplayVerification().summarizeVerificationCandidate(source, text, expectedText);
   }
 
   function debugRewriteVerification(label, payload) {
@@ -2237,13 +2229,13 @@
   }
 
   function evaluateComposerVerificationCandidates({ candidates, expectedText, originalText, findings, context }) {
-    return globalThis.PWM.RewriteVerificationText.evaluateComposerVerificationCandidates(
-      { candidates, expectedText, originalText, findings, context },
-      {
-        analyzeText,
-        debug: debugRewriteVerification
-      }
-    );
+    return getReplayVerification().evaluateComposerVerificationCandidates({
+      candidates,
+      expectedText,
+      originalText,
+      findings,
+      context
+    });
   }
 
   async function verifyComposerRewriteSafe({
@@ -2315,28 +2307,7 @@
   }
 
   function matchesComposerPlan(plan, actualText) {
-    const acceptableTexts = Array.isArray(plan.acceptableTexts) ? plan.acceptableTexts : [plan.canonical];
-    if (acceptableTexts.includes(actualText)) {
-      return true;
-    }
-
-    const normalizedActual = normalizeVerificationText(actualText);
-    if (
-      acceptableTexts.some(
-        (candidate) =>
-          normalizeVerificationText(candidate) === normalizedActual &&
-          actualContainsExpectedPlaceholders(candidate, actualText)
-      )
-    ) {
-      return true;
-    }
-
-    const looseActual = normalizeLooseVerificationText(actualText);
-    return acceptableTexts.some(
-      (candidate) =>
-        normalizeLooseVerificationText(candidate) === looseActual &&
-        actualContainsExpectedPlaceholders(candidate, actualText)
-    );
+    return getReplayVerification().matchesComposerPlan(plan, actualText);
   }
 
   function ensureBadge() {
@@ -9915,233 +9886,96 @@
     };
   }
 
-  function summarizeMultiFileItem(index, status, file, code = "") {
-    return globalThis.PWM.FileAttachPipeline.createMultiFileItemSummary({
-      index,
-      status,
-      code,
-      metadata: getLocalFileSafeMetadata(file)
+  function getSanitizedFileBatchProcessor() {
+    if (sanitizedFileBatchProcessor) return sanitizedFileBatchProcessor;
+    if (typeof SanitizedFileBatchProcessor.createSanitizedFileBatchProcessor !== "function") {
+      sanitizedFileBatchProcessor = Object.freeze({
+        summarizeMultiFileItem: () => ({}),
+        createBlockedBeforeProcessingItems: () => [],
+        createMultiFileStatusSummary: () => ({ files: [] }),
+        formatMultiFileStatusMessage: () =>
+          "LeakGuard blocked or sanitized this protected upload batch. No raw files were uploaded.",
+        processLocalFileForSanitizedBatch: async () => ({
+          ok: false,
+          status: "failed",
+          code: "file_processing_exception"
+        }),
+        processLocalFilesForSanitizedBatch: async () => []
+      });
+      return sanitizedFileBatchProcessor;
+    }
+
+    sanitizedFileBatchProcessor = SanitizedFileBatchProcessor.createSanitizedFileBatchProcessor({
+      fileAttachPipeline: globalThis.PWM.FileAttachPipeline,
+      shouldUseContentFileExtractionPipeline,
+      processFileForAdapterHandoff,
+      localFileFromContentExtractionResult,
+      readLocalTextFileFromDataTransfer,
+      createSingleFileDataTransfer,
+      streamRedactLocalTextFile,
+      classifyLocalTextPayloadSize,
+      analyzeText,
+      requestRedaction,
+      createSanitizedTextFile,
+      getLocalFileSafeMetadata,
+      debugFileAttachMetadata
     });
+    return sanitizedFileBatchProcessor;
+  }
+
+  function summarizeMultiFileItem(index, status, file, code = "") {
+    return getSanitizedFileBatchProcessor().summarizeMultiFileItem(index, status, file, code);
   }
 
   function createBlockedBeforeProcessingItems(files, code = "blocked_by_policy") {
-    return Array.from(files || []).map((file, index) => ({
-      ok: false,
-      status: "blocked",
-      code,
-      summary: summarizeMultiFileItem(index, "blocked", file, code)
-    }));
+    return getSanitizedFileBatchProcessor().createBlockedBeforeProcessingItems(files, code);
   }
 
   function createMultiFileStatusSummary(sanitizedItems, blockedItems) {
-    return globalThis.PWM.FileAttachPipeline.createMultiFileStatusSummary({
-      sanitizedItems,
-      blockedItems
-    });
+    return getSanitizedFileBatchProcessor().createMultiFileStatusSummary(sanitizedItems, blockedItems);
   }
 
   function formatMultiFileStatusMessage(summary, options = {}) {
-    return globalThis.PWM.FileAttachPipeline.formatMultiFileStatusMessage(summary, options);
+    return getSanitizedFileBatchProcessor().formatMultiFileStatusMessage(summary, options);
+  }
+
+  function getFileHandoffVerification() {
+    if (fileHandoffVerification) return fileHandoffVerification;
+    if (typeof FileHandoffVerification.createFileHandoffVerification !== "function") {
+      fileHandoffVerification = Object.freeze({
+        isExpectedWhatsAppSanitizedMultiFileAttachFile: () => false,
+        verifyWhatsAppSanitizedMultiFileAttach: () => ({
+          ok: false,
+          reason: "verification_unavailable",
+          assignedCount: 0,
+          expectedCount: 0
+        })
+      });
+      return fileHandoffVerification;
+    }
+
+    fileHandoffVerification = FileHandoffVerification.createFileHandoffVerification({
+      getLocalFileExtension,
+      getLocalFileMimeType,
+      isSupportedWhatsAppTextDocumentAttachFile
+    });
+    return fileHandoffVerification;
   }
 
   function isExpectedWhatsAppSanitizedMultiFileAttachFile(file) {
-    const extension = getLocalFileExtension(file);
-    const mimeType = getLocalFileMimeType(file);
-    const name = String(file?.name || "");
-    if (extension === ".png" || mimeType === "image/png") {
-      return mimeType === "image/png" && /\.redacted\.png$/i.test(name);
-    }
-    if (extension === ".pdf" || mimeType === "application/pdf") {
-      return mimeType === "application/pdf" && /\.redacted\.pdf$/i.test(name);
-    }
-    if (extension === ".docx" || mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
-      return (
-        mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" &&
-        /\.redacted\.docx$/i.test(name)
-      );
-    }
-    if (extension === ".xlsx" || mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") {
-      return (
-        mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" &&
-        /\.redacted\.xlsx$/i.test(name)
-      );
-    }
-    return isSupportedWhatsAppTextDocumentAttachFile(file);
+    return getFileHandoffVerification().isExpectedWhatsAppSanitizedMultiFileAttachFile(file);
   }
 
   function verifyWhatsAppSanitizedMultiFileAttach(fileInput, sanitizedFiles, originalFiles = []) {
-    const expectedFiles = Array.from(sanitizedFiles || []).filter(Boolean);
-    const assignedFiles = Array.from(fileInput?.files || []);
-    const rawOriginals = new Set(Array.from(originalFiles || []));
-    if (assignedFiles.length !== expectedFiles.length) {
-      return {
-        ok: false,
-        reason: "assigned_file_count_mismatch",
-        assignedCount: assignedFiles.length,
-        expectedCount: expectedFiles.length
-      };
-    }
-    for (let index = 0; index < expectedFiles.length; index += 1) {
-      const assignedFile = assignedFiles[index];
-      const expectedFile = expectedFiles[index];
-      if (assignedFile !== expectedFile) {
-        return {
-          ok: false,
-          reason: "assigned_file_order_or_identity_mismatch",
-          assignedCount: assignedFiles.length,
-          expectedCount: expectedFiles.length
-        };
-      }
-      if (rawOriginals.has(assignedFile)) {
-        return {
-          ok: false,
-          reason: "raw_original_file_assigned",
-          assignedCount: assignedFiles.length,
-          expectedCount: expectedFiles.length
-        };
-      }
-      if (!isExpectedWhatsAppSanitizedMultiFileAttachFile(assignedFile)) {
-        return {
-          ok: false,
-          reason: "assigned_file_type_invalid",
-          assignedCount: assignedFiles.length,
-          expectedCount: expectedFiles.length
-        };
-      }
-    }
-    return {
-      ok: true,
-      reason: "",
-      assignedCount: assignedFiles.length,
-      expectedCount: expectedFiles.length
-    };
+    return getFileHandoffVerification().verifyWhatsAppSanitizedMultiFileAttach(
+      fileInput,
+      sanitizedFiles,
+      originalFiles
+    );
   }
 
   async function processLocalFileForSanitizedBatch(file, index, context) {
-    try {
-      const contentExtractionResult = shouldUseContentFileExtractionPipeline(file)
-        ? await processFileForAdapterHandoff({ file, context })
-        : null;
-      const localFile = contentExtractionResult
-        ? localFileFromContentExtractionResult(contentExtractionResult)
-        : await readLocalTextFileFromDataTransfer(createSingleFileDataTransfer(file));
-
-      if (!localFile.handled || !localFile.ok) {
-        if (localFile.code === "streaming_required" && localFile.sourceFile) {
-          const streamResult = await streamRedactLocalTextFile(localFile.sourceFile, localFile.file);
-          if (streamResult?.action === "redacted" && streamResult.sanitizedFile) {
-            return {
-              ok: true,
-              status: "sanitized",
-              sanitizedFile: streamResult.sanitizedFile,
-              localFile,
-              analysis: {
-                normalizedText: "",
-                secretFindings: Array.from({ length: Number(streamResult.findingsCount || 0) }, () => ({})),
-                findings: []
-              },
-              result: { redactedText: "", replacements: [] },
-              streamed: true,
-              summary: summarizeMultiFileItem(index, "sanitized", file, "")
-            };
-          }
-          return {
-            ok: false,
-            status: "failed",
-            code: streamResult?.action === "blocked" ? "file_exceeds_supported_size" : "redaction_failed",
-            message: "LeakGuard blocked one raw file because streaming sanitization failed.",
-            summary: summarizeMultiFileItem(
-              index,
-              streamResult?.action === "blocked" ? "blocked" : "failed",
-              file,
-              streamResult?.action === "blocked" ? "file_exceeds_supported_size" : "redaction_failed"
-            )
-          };
-        }
-        const blockCode = localFile.code || contentExtractionResult?.fallbackReason || "file_scan_failed";
-        const blockedByPolicy = blockCode === "unsupported_file_type" || blockCode === "blocked_by_policy";
-        const status = localFile.handled || blockedByPolicy ? "blocked" : "failed";
-        return {
-          ok: false,
-          status,
-          code: blockCode,
-          message: localFile.message || "LeakGuard blocked one raw file because local scanning failed.",
-          summary: summarizeMultiFileItem(index, status, file, blockCode)
-        };
-      }
-
-      const imageRedactionMode = localFile.imageRedactionMode === true || localFile.fileOnlyUpload === true;
-      const sizeInfo = imageRedactionMode
-        ? { zone: "fast", bytes: Math.max(0, Number(localFile.file?.sizeBytes || 0)) }
-        : classifyLocalTextPayloadSize({ text: localFile.text, sizeBytes: localFile.file?.sizeBytes });
-      if (sizeInfo.zone === "blocked") {
-        return {
-          ok: false,
-          status: "blocked",
-          code: "file_exceeds_supported_size",
-          message: "LeakGuard blocked one raw file because it exceeds safe multi-file local processing limits.",
-          summary: summarizeMultiFileItem(index, "blocked", file, "file_exceeds_supported_size")
-        };
-      }
-
-      let analysis;
-      let result;
-      let sanitizedFile;
-      if (contentExtractionResult?.status === "ready") {
-        const contentExtractionFileOnly = localFile.fileOnlyUpload === true || contentExtractionResult.fileOnlyUpload === true;
-        result = {
-          redactedText: contentExtractionFileOnly ? "" : contentExtractionResult.sanitizedText,
-          replacements: []
-        };
-        sanitizedFile = contentExtractionResult.sanitizedFile;
-        analysis = {
-          normalizedText: contentExtractionResult.sanitizedText,
-          secretFindings: Array.from(
-            { length: Number(contentExtractionResult.metadata?.scan?.findingsCount || 0) },
-            () => ({})
-          ),
-          findings: []
-        };
-      } else {
-        analysis = analyzeText(localFile.text);
-        result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
-        sanitizedFile = createSanitizedTextFile(localFile.file, result.redactedText);
-      }
-
-      if (!sanitizedFile) {
-        return {
-          ok: false,
-          status: "failed",
-          code: "sanitized_file_create_failed",
-          message: "LeakGuard blocked one raw file because sanitized output could not be created.",
-          summary: summarizeMultiFileItem(index, "failed", file, "sanitized_file_create_failed")
-        };
-      }
-
-      return {
-        ok: true,
-        status: "sanitized",
-        sanitizedFile,
-        localFile,
-        analysis,
-        result,
-        imageRedactionMode,
-        summary: summarizeMultiFileItem(index, "sanitized", file, "")
-      };
-    } catch (error) {
-      debugFileAttachMetadata("file-handoff:multi-file-item-processing-failed", {
-        context,
-        error,
-        file: getLocalFileSafeMetadata(file)
-      });
-      return {
-        ok: false,
-        status: "failed",
-        code: "file_processing_exception",
-        message: "LeakGuard blocked one raw file because local sanitization failed.",
-        summary: summarizeMultiFileItem(index, "failed", file, "file_processing_exception")
-      };
-    }
+    return getSanitizedFileBatchProcessor().processLocalFileForSanitizedBatch(file, index, context);
   }
 
   async function handOffSanitizedFileBatch(event, input, sanitizedFiles, context, options = {}) {
@@ -10332,9 +10166,7 @@
 
     let processed;
     try {
-      processed = await Promise.all(
-        files.map((file, index) => processLocalFileForSanitizedBatch(file, index, context))
-      );
+      processed = await getSanitizedFileBatchProcessor().processLocalFilesForSanitizedBatch(files, context);
     } catch {
       debugFileAttachMetadata("file-handoff:multi-file-redaction-failed", {
         site: processingSite,
@@ -11329,42 +11161,48 @@
     }
   }
 
+  function getFileDropInterception() {
+    if (fileDropInterception) return fileDropInterception;
+    if (typeof FileDropInterception.createFileDropInterception !== "function") {
+      fileDropInterception = Object.freeze({
+        maybeHandleFileDrag: () => undefined
+      });
+      return fileDropInterception;
+    }
+    fileDropInterception = FileDropInterception.createFileDropInterception({
+      dataTransferLooksLikeFiles,
+      handleFileDragDetected
+    });
+    return fileDropInterception;
+  }
+
   function maybeHandleFileDrag(event) {
-    if (!dataTransferLooksLikeFiles(event.dataTransfer)) {
-      return;
-    }
+    return getFileDropInterception().maybeHandleFileDrag(event, {
+      extensionRuntimeAvailable,
+      modalOpen
+    });
+  }
 
-    event.preventDefault();
-    event.stopPropagation();
-    if (typeof event.stopImmediatePropagation === "function") {
-      event.stopImmediatePropagation();
+  function getFileInputInterception() {
+    if (fileInputInterception) return fileInputInterception;
+    if (typeof FileInputInterception.createFileInputInterception !== "function") {
+      fileInputInterception = Object.freeze({
+        shouldHandleFileInputChange: () => false,
+        createSelectedTransfer: (files) => ({ files: Array.from(files || []), types: ["Files"], items: [] }),
+        hasSelectedFiles: () => false,
+        shouldContinueWithoutComposer: () => false
+      });
+      return fileInputInterception;
     }
-
-    if (event.dataTransfer) {
-      try {
-        event.dataTransfer.dropEffect = "copy";
-      } catch {
-        // Some DataTransfer implementations expose dropEffect as read-only.
-      }
-    }
-
-    handleFileDragDetected(event);
-
-    if (!extensionRuntimeAvailable || modalOpen) {
-      return;
-    }
+    fileInputInterception = FileInputInterception.createFileInputInterception({
+      dataTransferHasFiles
+    });
+    return fileInputInterception;
   }
 
   async function maybeHandleFileInputChange(event) {
-    if (
-      !extensionRuntimeAvailable ||
-      modalOpen ||
-      event.defaultPrevented ||
-      !event.target ||
-      event.target.tagName !== "INPUT" ||
-      String(event.target.type || "").toLowerCase() !== "file" ||
-      typeof dataTransferHasFiles !== "function"
-    ) {
+    const inputInterception = getFileInputInterception();
+    if (!inputInterception.shouldHandleFileInputChange(event, { extensionRuntimeAvailable, modalOpen })) {
       return;
     }
 
@@ -11435,7 +11273,7 @@
       return;
     }
 
-    if (!dataTransferHasFiles({ files: event.target.files, types: ["Files"], items: [] })) {
+    if (!inputInterception.hasSelectedFiles(event.target.files)) {
       return;
     }
 
@@ -11468,11 +11306,7 @@
     }
 
     const input = findComposer(event.target);
-    const selectedTransfer = {
-      files: selectedFiles,
-      types: ["Files"],
-      items: []
-    };
+    const selectedTransfer = inputInterception.createSelectedTransfer(selectedFiles);
     const hasContentExtractionFile =
       selectedFiles.length === 1 && shouldUseContentFileExtractionPipeline(selectedFiles[0]);
     const hasSupportedWhatsAppAttach =
@@ -11487,14 +11321,19 @@
       shouldFailClosedProtectedUnsupportedFileTransfer(selectedTransferPolicy);
     const hasWhatsAppFileInputSelection = isWhatsAppHost() && selectedFiles.length > 0;
     if (
-      !input &&
-      !isGeminiHost() &&
-      !hasContentExtractionFile &&
-      !hasFailClosedProtectedUnsupportedFile &&
-      !hasSupportedWhatsAppAttach &&
-      !hasWhatsAppFileInputSelection
+      !inputInterception.shouldContinueWithoutComposer({
+        input,
+        isGeminiHost: isGeminiHost(),
+        hasContentExtractionFile,
+        hasFailClosedProtectedUnsupportedFile,
+        hasSupportedWhatsAppAttach,
+        hasWhatsAppFileInputSelection,
+        isFirefoxRuntime: isFirefoxRuntime(),
+        isProtectedFileDropDriver: isProtectedFileDropDriver(getCurrentHandoffDriverId()),
+        currentHandoffDriverId: getCurrentHandoffDriverId()
+      })
     ) {
-      if (!(isFirefoxRuntime() && isProtectedFileDropDriver(getCurrentHandoffDriverId()))) return;
+      return;
     }
 
     fileInputProcessingSignatures.set(event.target, selectedSignature);
