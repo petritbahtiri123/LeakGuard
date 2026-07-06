@@ -14120,16 +14120,17 @@ async function testWhatsAppSanitizedImageAttachVerifierRejectsAssignedMismatch()
   assert.strictEqual(fileInput.files.length, 0);
 }
 
-async function testWhatsAppSanitizedPdfDropUsesPreparedInputWhenNoCompatibleInput() {
+async function testWhatsAppSanitizedPdfDropUsesDocumentInputWhenNoCompatibleInput() {
   const sanitizedPdf = {
     name: "lgqa-wa-doc.redacted.pdf",
     type: "application/pdf",
     size: 256
   };
-  const fileInput = createFileInput({ accept: "image/*", multiple: false });
+  const mediaInput = createFileInput({ accept: "image/*", multiple: false });
+  const documentInput = createFileInput({ accept: "*", multiple: true });
   const target = { tagName: "DIV" };
   const prepared = [];
-  let restored = false;
+  let documentInputResolved = false;
   const flow = globalThis.PWM.createFileHandoffFlow({
     createSanitizedDataTransfer: (file) => {
       assert.strictEqual(file, sanitizedPdf);
@@ -14157,23 +14158,25 @@ async function testWhatsAppSanitizedPdfDropUsesPreparedInputWhenNoCompatibleInpu
     },
     prepareFileInputForHandoff: (targetInput, files) => {
       prepared.push({ targetInput, files: Array.from(files || []) });
-      return () => {
-        restored = true;
-      };
+      return () => {};
     },
-    resolveFileInputForHandoff: (_event, _input, options = {}) => (options.allowIncompatible ? fileInput : null)
+    resolveFileInputForHandoff: (_event, _input, options = {}) => (options.allowIncompatible ? mediaInput : null),
+    resolveWhatsAppDocumentDropInputForHandoff: async (_event, _input, files) => {
+      documentInputResolved = true;
+      assert.strictEqual(files[0], sanitizedPdf);
+      return documentInput;
+    }
   });
 
   const ok = await flow.handOffSanitizedLocalFile({ type: "drop", target }, null, sanitizedPdf, "drop");
 
-  assert.strictEqual(ok, true, "WhatsApp should assign a prepared sanitized input when no compatible input exists");
-  assert.strictEqual(fileInput.files.length, 1);
-  assert.strictEqual(fileInput.files[0], sanitizedPdf);
-  assert.deepStrictEqual(fileInput.events, ["input", "change"]);
-  assert.strictEqual(prepared.length, 1);
-  assert.strictEqual(prepared[0].targetInput, fileInput);
-  assert.strictEqual(prepared[0].files[0], sanitizedPdf);
-  assert.strictEqual(restored, true);
+  assert.strictEqual(ok, true, "WhatsApp document drops should use the document input path when no compatible input exists");
+  assert.strictEqual(documentInputResolved, true);
+  assert.strictEqual(documentInput.files.length, 1);
+  assert.strictEqual(documentInput.files[0], sanitizedPdf);
+  assert.deepStrictEqual(documentInput.events, ["input", "change"]);
+  assert.strictEqual(mediaInput.files.length, 0, "WhatsApp document drops must not be assigned to the media-only input");
+  assert.strictEqual(prepared.length, 0, "WhatsApp document drops should not mutate a media-only input accept list");
 }
 
 async function testWhatsAppPreparedDropInputFailsOnAssignedIdentityMismatch() {
@@ -14222,7 +14225,7 @@ function testWhatsAppDropResolverRechecksCachedInputAgainstSanitizedFileAccept()
     multiple: true
   });
   const documentInput = createFileInput({
-    accept: ".txt,.env,.pdf,.docx,.xlsx,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    accept: "image/png,image/jpeg,image/webp,.txt,.env,.pdf,.docx,.xlsx,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     multiple: true
   });
   const target = {
@@ -18250,6 +18253,8 @@ function testMultiFileProtectedUploadStaticGuards() {
   assert.ok(contentSource.includes("multi_file_all_blocked"), "all-blocked batches should have a stable fail-closed reason");
   assert.ok(contentSource.includes("verifyWhatsAppSanitizedMultiFileAttach"), "WhatsApp multi-file attach should verify sanitized batch assignment");
   assert.ok(contentSource.includes("whatsapp-multi-file-drop-input-verified"), "WhatsApp multi-file drops should prefer verified sanitized file-input assignment");
+  assert.ok(contentSource.includes("resolveWhatsAppDocumentDropInputForHandoff"), "WhatsApp document-like drops should resolve the document input path instead of media preview input");
+  assert.ok(contentSource.includes("whatsapp-multi-file-drop-document-input-verified"), "WhatsApp multi-file document drops should verify document input assignment");
   assert.ok(contentSource.includes("whatsapp-multi-file-drop-prepared-input-verified"), "WhatsApp multi-file drops should verify prepared sanitized input assignment when no compatible input exists");
   assert.strictEqual(contentSource.includes("maxSmallFiles: isWhatsAppBatch ? 5 : MAX_MULTI_FILE_SMALL_ATTACHMENTS"), false, "WhatsApp should share the canonical small-file batch cap instead of hard-coding 5");
   assert.strictEqual(contentSource.includes("files.length <= 5 && files.every(isSupportedWhatsAppMultiFileAttachFile)"), false, "WhatsApp supported-batch detection should not hard-code a five-file cap");
@@ -18265,7 +18270,7 @@ function testMultiFileProtectedUploadStaticGuards() {
   await testWhatsAppSanitizedTextDocumentAttachVerifierRequiresCanonicalTextType();
   await testWhatsAppSanitizedPdfAttachVerifierRequiresRedactedPdf();
   await testWhatsAppSanitizedDocxAttachVerifierRequiresRedactedDocx();
-  await testWhatsAppSanitizedPdfDropUsesPreparedInputWhenNoCompatibleInput();
+  await testWhatsAppSanitizedPdfDropUsesDocumentInputWhenNoCompatibleInput();
   await testWhatsAppPreparedDropInputFailsOnAssignedIdentityMismatch();
   await testFileDragoverIsAcceptedWithoutComposerTarget();
   await testFileDragoverIsAcceptedWithoutHelperLoaded();

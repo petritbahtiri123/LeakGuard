@@ -43,6 +43,7 @@
       readSanitizedFileTextForFallback = async () => "",
       refreshBadgeFromCurrentInput = noop,
       resolveFileInputForHandoff = () => null,
+      resolveWhatsAppDocumentDropInputForHandoff = async () => null,
       scheduleDmzOverlayCleanup = noop,
       sendRuntimeMessage = async () => null,
       setBadge = noop,
@@ -231,6 +232,10 @@
       );
     }
 
+    function shouldUseWhatsAppDocumentDropInput(kind) {
+      return Boolean(kind && kind !== "image");
+    }
+
     function getWhatsAppAttachDebugLabel(kind, suffix) {
       if (kind === "text-document") return `file-handoff:whatsapp-text-document-attach-${suffix}`;
       if (kind === "pdf") return `file-handoff:whatsapp-pdf-attach-${suffix}`;
@@ -338,28 +343,98 @@
           const fileInput = resolveFileInputForHandoff(event, input, {
             expectedFiles: [sanitizedFile]
           });
-          const resolvedInput = fileInput || resolveFileInputForHandoff(event, input, {
+          if (fileInput) {
+            const assigned = handOffSanitizedFileInput(fileInput, transfer, {
+              dispatchInput: true
+            });
+            if (!assigned) {
+              emitDebug(getWhatsAppAttachDebugLabel(whatsappVerification.kind, "verification-failed"), {
+                context,
+                reason: "drop_file_input_assignment_failed",
+                sanitizedFile: describeFileForDebug(sanitizedFile)
+              });
+              return false;
+            }
+            if (verifyWhatsAppSanitizedAttach(fileInput, sanitizedFile, whatsappVerification.kind)) {
+              emitDebug(getWhatsAppAttachDebugLabel(whatsappVerification.kind, "drop-input-verified"), {
+                context,
+                sanitizedFile: describeFileForDebug(sanitizedFile)
+              });
+              return true;
+            }
+            emitDebug(getWhatsAppAttachDebugLabel(whatsappVerification.kind, "verification-failed"), {
+              context,
+              reason: "drop_file_input_mismatch",
+              sanitizedFile: describeFileForDebug(sanitizedFile)
+            });
+            try {
+              fileInput.value = "";
+            } catch {
+              // The raw file remains blocked; clearing is best-effort after a failed sanitized assignment.
+            }
+            try {
+              fileInput.files = [];
+            } catch {
+              // Some browsers expose FileList as read-only; the event remains consumed and fails closed.
+            }
+            return false;
+          }
+          if (shouldUseWhatsAppDocumentDropInput(whatsappVerification.kind)) {
+            const documentInput = await resolveWhatsAppDocumentDropInputForHandoff(event, input, [sanitizedFile]);
+            if (documentInput) {
+              const assigned = handOffSanitizedFileInput(documentInput, transfer, {
+                dispatchInput: true
+              });
+              if (assigned && verifyWhatsAppSanitizedAttach(documentInput, sanitizedFile, whatsappVerification.kind)) {
+                emitDebug(getWhatsAppAttachDebugLabel(whatsappVerification.kind, "drop-document-input-verified"), {
+                  context,
+                  sanitizedFile: describeFileForDebug(sanitizedFile)
+                });
+                return true;
+              }
+              emitDebug(getWhatsAppAttachDebugLabel(whatsappVerification.kind, "verification-failed"), {
+                context,
+                reason: "drop_document_file_input_assignment_failed",
+                sanitizedFile: describeFileForDebug(sanitizedFile)
+              });
+              try {
+                documentInput.value = "";
+              } catch {
+                // The raw file remains blocked; clearing is best-effort after a failed sanitized assignment.
+              }
+              try {
+                documentInput.files = [];
+              } catch {
+                // Some browsers expose FileList as read-only; the event remains consumed and fails closed.
+              }
+              return false;
+            }
+            emitDebug(getWhatsAppAttachDebugLabel(whatsappVerification.kind, "verification-failed"), {
+              context,
+              reason: "drop_document_file_input_not_found",
+              sanitizedFile: describeFileForDebug(sanitizedFile)
+            });
+            return false;
+          }
+          const resolvedInput = resolveFileInputForHandoff(event, input, {
             expectedFiles: [sanitizedFile],
             allowIncompatible: true
           });
           if (resolvedInput) {
             const assigned = handOffSanitizedFileInput(resolvedInput, transfer, {
               dispatchInput: true,
-              prepareInput: fileInput ? null : prepareFileInputForHandoff
+              prepareInput: prepareFileInputForHandoff
             });
             if (!assigned) {
               emitDebug(getWhatsAppAttachDebugLabel(whatsappVerification.kind, "verification-failed"), {
                 context,
-                reason: fileInput ? "drop_file_input_assignment_failed" : "drop_prepared_file_input_assignment_failed",
+                reason: "drop_prepared_file_input_assignment_failed",
                 sanitizedFile: describeFileForDebug(sanitizedFile)
               });
               return false;
             }
             if (verifyWhatsAppSanitizedAttach(resolvedInput, sanitizedFile, whatsappVerification.kind)) {
-              emitDebug(getWhatsAppAttachDebugLabel(
-                whatsappVerification.kind,
-                fileInput ? "drop-input-verified" : "drop-prepared-input-verified"
-              ), {
+              emitDebug(getWhatsAppAttachDebugLabel(whatsappVerification.kind, "drop-prepared-input-verified"), {
                 context,
                 sanitizedFile: describeFileForDebug(sanitizedFile)
               });
