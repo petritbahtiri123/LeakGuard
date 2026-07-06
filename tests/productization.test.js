@@ -10,6 +10,10 @@ const fileProcessingUiSource = fs.readFileSync(
   path.join(repoRoot, "src/content/files/fileProcessingUi.js"),
   "utf8"
 );
+const contentStatusUiSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/ui/contentStatusUi.js"),
+  "utf8"
+);
 const revealControllerSource = fs.readFileSync(
   path.join(repoRoot, "src/content/rehydration/revealController.js"),
   "utf8"
@@ -284,8 +288,9 @@ function testBuiltInProtectedSitesRemainStaticAndAligned(manifest) {
 }
 
 function testPanelAndManagementUiAreWired() {
-  assert.ok(contentSource.includes("pwm-panel"), "content script should create the top-center status menu");
-  assert.ok(contentSource.includes("Manage Sites"), "panel should expose a settings shortcut");
+  const statusUiBundleSource = `${contentSource}\n${contentStatusUiSource}`;
+  assert.ok(statusUiBundleSource.includes("pwm-panel"), "content script should create the top-center status menu");
+  assert.ok(statusUiBundleSource.includes("Manage Sites"), "panel should expose a settings shortcut");
   assert.ok(overlaySource.includes(".pwm-panel"), "panel styles should live in overlay.css");
   assert.ok(
     /\.pwm-panel-header\s*\{[\s\S]*?flex-wrap:\s*wrap;/.test(overlaySource),

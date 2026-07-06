@@ -190,8 +190,12 @@ function testContentRuntimeScriptOrder() {
     "content/diagnostics/debugLogger.js",
     "content/diagnostics/fileDebugMetadata.js"
   ], "content scripts");
+  assertAfterAll(contentScripts, "content/ui/contentStatusUi.js", [
+    "content/diagnostics/contentDebugFacade.js"
+  ], "content scripts");
   assertAfterAll(contentScripts, "content/bootstrap/eventBindings.js", [
     "content/diagnostics/contentDebugFacade.js",
+    "content/ui/contentStatusUi.js",
     "content/files/fileAttachPipeline.js",
     "content/files/pendingSanitizedFileHandoff.js"
   ], "content scripts");

@@ -55,6 +55,7 @@
   } = FilePasteHelpers || {};
   const FileScanner = globalThis.PWM?.FileScanner || {};
   const FileTypeRegistry = globalThis.PWM?.FileTypeRegistry || {};
+  const ContentStatusUi = globalThis.PWM?.ContentStatusUi || {};
   const ContentFileTypeSupport = globalThis.PWM?.ContentFileTypeSupport || {};
   const SanitizedFileBatchProcessor = globalThis.PWM?.SanitizedFileBatchProcessor || {};
   const FileHandoffVerification = globalThis.PWM?.FileHandoffVerification || {};
@@ -175,9 +176,7 @@
       protectionEnforced: false
     }
   };
-  let badgeEl = null;
-  let lastBadgeText = "";
-  let badgeHideTimer = 0;
+  let contentStatusUi = null;
   let bypassNextSubmit = false;
   let bypassNextSendButtonClick = false;
   let fallbackSendKeySuppressionUntil = 0;
@@ -196,13 +195,6 @@
   let activeRiskEditor = null;
   let suppressInputScanUntil = 0;
   const rewriteFailureModalSuppressions = new Map();
-  let statusPanelEl = null;
-  let statusPanelCollapsed = false;
-  let statusPanelProtectionValueEl = null;
-  let statusPanelSiteValueEl = null;
-  let statusPanelComposerValueEl = null;
-  let statusPanelSessionValueEl = null;
-  let statusPanelPauseBtn = null;
   let extensionRuntimeAvailable = true;
   const rawFileDropInterceptions = new WeakSet();
   const fileDragEventRoots = new WeakSet();
@@ -1913,17 +1905,6 @@
     return getReplayVerification().matchesComposerPlan(plan, actualText);
   }
 
-  function ensureBadge() {
-    if (badgeEl) return badgeEl;
-
-    badgeEl = document.createElement("div");
-    badgeEl.className = "pwm-badge";
-    badgeEl.setAttribute("aria-live", "polite");
-    document.documentElement.appendChild(badgeEl);
-
-    return badgeEl;
-  }
-
   async function openProtectedSitesUi() {
     const response = await sendRuntimeMessage({
       type: "PWM_OPEN_POPUP_SITE_MANAGER"
@@ -1942,128 +1923,6 @@
     });
   }
 
-  function setStatusPanelCollapsed(collapsed) {
-    const panel = ensureStatusPanel();
-    const toggle = panel.querySelector(".pwm-panel-toggle");
-    const body = panel.querySelector(".pwm-panel-body");
-
-    statusPanelCollapsed = Boolean(collapsed);
-    panel.classList.toggle("is-collapsed", statusPanelCollapsed);
-    body.hidden = statusPanelCollapsed;
-    toggle.setAttribute("aria-expanded", String(!statusPanelCollapsed));
-    toggle.textContent = statusPanelCollapsed ? "Expand" : "Collapse";
-  }
-
-  function ensureStatusPanel() {
-    if (statusPanelEl?.isConnected) {
-      return statusPanelEl;
-    }
-
-    statusPanelEl = document.createElement("aside");
-    statusPanelEl.className = "pwm-panel";
-    statusPanelEl.setAttribute("aria-live", "polite");
-
-    const header = document.createElement("div");
-    header.className = "pwm-panel-header";
-
-    const brandWrap = document.createElement("div");
-    brandWrap.className = "pwm-panel-brand";
-
-    const eyebrow = document.createElement("p");
-    eyebrow.className = "pwm-panel-eyebrow";
-    eyebrow.textContent = "Local-only protection";
-
-    const title = document.createElement("h2");
-    title.className = "pwm-panel-title";
-    title.textContent = "LeakGuard";
-
-    const toggle = document.createElement("button");
-    toggle.className = "pwm-panel-toggle";
-    toggle.type = "button";
-    toggle.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation?.();
-      setStatusPanelCollapsed(!statusPanelCollapsed);
-    });
-
-    brandWrap.append(eyebrow, title);
-    header.append(brandWrap, toggle);
-
-    const body = document.createElement("div");
-    body.className = "pwm-panel-body";
-
-    const makeRow = (labelText) => {
-      const row = document.createElement("div");
-      row.className = "pwm-panel-row";
-
-      const label = document.createElement("span");
-      label.className = "pwm-panel-label";
-      label.textContent = labelText;
-
-      const value = document.createElement("strong");
-      value.className = "pwm-panel-value";
-
-      row.append(label, value);
-      body.appendChild(row);
-      return value;
-    };
-
-    statusPanelProtectionValueEl = makeRow("Protection");
-    statusPanelSiteValueEl = makeRow("Site");
-    statusPanelComposerValueEl = makeRow("Composer");
-    statusPanelSessionValueEl = makeRow("Session");
-
-    const actions = document.createElement("div");
-    actions.className = "pwm-panel-actions";
-
-    const manageBtn = document.createElement("button");
-    manageBtn.className = "pwm-btn pwm-panel-manage";
-    manageBtn.type = "button";
-    manageBtn.textContent = "Manage Sites";
-    manageBtn.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation?.();
-      openProtectedSitesUi()
-        .then((response) => {
-          if (!response?.opened) {
-            setBadge("Open LeakGuard from the toolbar to manage sites");
-            hideBadgeSoon(2800);
-          }
-        })
-        .catch(() => {
-          openOptionsPage().catch(() => {
-            setBadge("LeakGuard settings unavailable");
-            hideBadgeSoon(2200);
-          });
-      });
-    });
-
-    statusPanelPauseBtn = document.createElement("button");
-    statusPanelPauseBtn.className = "pwm-btn pwm-panel-pause";
-    statusPanelPauseBtn.type = "button";
-    statusPanelPauseBtn.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation?.();
-      const protection = getActiveProtection();
-      setProtectionPaused(!protection.paused).catch((error) => {
-        setBadge(error?.message || "Protection pause unavailable");
-        hideBadgeSoon(2800);
-      });
-    });
-
-    actions.append(statusPanelPauseBtn, manageBtn);
-    body.appendChild(actions);
-
-    statusPanelEl.append(header, body);
-    document.documentElement.appendChild(statusPanelEl);
-    setStatusPanelCollapsed(statusPanelCollapsed);
-
-    return statusPanelEl;
-  }
-
   function getActiveProtection() {
     return {
       paused: false,
@@ -2074,68 +1933,45 @@
     };
   }
 
+  function getContentStatusUi() {
+    if (contentStatusUi) return contentStatusUi;
+    if (typeof ContentStatusUi.createContentStatusUi !== "function") {
+      contentStatusUi = Object.freeze({
+        setBadge: () => null,
+        hideBadgeSoon: () => 0,
+        ensureStatusPanel: () => null,
+        updateStatusPanel: () => null
+      });
+      return contentStatusUi;
+    }
+
+    contentStatusUi = ContentStatusUi.createContentStatusUi({
+      documentRef: document,
+      windowRef: window,
+      locationRef: location,
+      getActiveProtection,
+      getPlaceholderCount: () => currentPublicState.placeholderCount,
+      openProtectedSitesUi,
+      openOptionsPage,
+      setProtectionPaused
+    });
+    return contentStatusUi;
+  }
+
+  function ensureStatusPanel() {
+    return getContentStatusUi().ensureStatusPanel();
+  }
+
   function updateStatusPanel(snapshot = {}) {
-    ensureStatusPanel();
-
-    const protection = getActiveProtection();
-    if (protection.protectionEnforced) {
-      statusPanelProtectionValueEl.textContent = "Enforced by policy";
-    } else if (protection.paused) {
-      statusPanelProtectionValueEl.textContent = "Paused";
-    } else {
-      statusPanelProtectionValueEl.textContent = "Active";
-    }
-
-    if (statusPanelPauseBtn) {
-      statusPanelPauseBtn.hidden = !protection.allowProtectionPause;
-      statusPanelPauseBtn.textContent = protection.paused ? "Resume Protection" : "Pause Protection";
-    }
-
-    statusPanelSiteValueEl.textContent = location.host || "Protected site";
-
-    if (!snapshot.hasComposer) {
-      statusPanelComposerValueEl.textContent = "Waiting for composer";
-    } else if (snapshot.detectedCount > 0) {
-      statusPanelComposerValueEl.textContent = `${snapshot.detectedCount} sensitive item${
-        snapshot.detectedCount === 1 ? "" : "s"
-      } detected`;
-    } else if (snapshot.placeholderNormalized) {
-      statusPanelComposerValueEl.textContent = "Canonical placeholders ready";
-    } else {
-      statusPanelComposerValueEl.textContent = "No sensitive items detected";
-    }
-
-    const placeholderCount = Number(currentPublicState.placeholderCount || 0);
-    statusPanelSessionValueEl.textContent = `${placeholderCount} placeholder${
-      placeholderCount === 1 ? "" : "s"
-    } active`;
+    return getContentStatusUi().updateStatusPanel(snapshot);
   }
 
   function setBadge(text) {
-    const el = ensureBadge();
-
-    if (!text) {
-      el.textContent = "";
-      el.classList.remove("is-visible");
-      lastBadgeText = "";
-      return;
-    }
-
-    if (text !== lastBadgeText) {
-      el.textContent = text;
-      lastBadgeText = text;
-    }
-
-    el.classList.add("is-visible");
+    return getContentStatusUi().setBadge(text);
   }
 
   function hideBadgeSoon(delay = 1800) {
-    window.clearTimeout(badgeHideTimer);
-    badgeHideTimer = window.setTimeout(() => {
-      if (badgeEl) {
-        badgeEl.classList.remove("is-visible");
-      }
-    }, delay);
+    return getContentStatusUi().hideBadgeSoon(delay);
   }
 
   function applyPublicState(state) {

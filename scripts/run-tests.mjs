@@ -39,6 +39,7 @@ const testFiles = [
   "tests/live_typing_composer_behavior.test.js",
   "tests/adapter_contracts.test.js",
   "tests/content_event_bindings.test.js",
+  "tests/content_status_ui.test.js",
   "tests/file_debug_metadata.test.js",
   "tests/file_drop_payload_shape.test.js",
   "tests/file_drop_streaming_guards.test.js",

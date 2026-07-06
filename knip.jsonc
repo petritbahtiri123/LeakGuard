@@ -126,6 +126,7 @@
     "src/content/rehydration/revealController.js",
     "src/content/diagnostics/debugLogger.js",
     "src/content/diagnostics/contentDebugFacade.js",
+    "src/content/ui/contentStatusUi.js",
     "src/content/bootstrap/eventBindings.js",
     "src/content/content.js",
     "src/content/overlay.css",
