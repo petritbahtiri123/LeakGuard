@@ -9716,54 +9716,6 @@
     };
   }
 
-  function verifyWhatsAppSanitizedMultiFileDrop(transfer, sanitizedFiles, originalFiles = []) {
-    const expectedFiles = Array.from(sanitizedFiles || []).filter(Boolean);
-    const assignedFiles = Array.from(transfer?.files || []);
-    const rawOriginals = new Set(Array.from(originalFiles || []));
-    if (assignedFiles.length !== expectedFiles.length) {
-      return {
-        ok: false,
-        reason: "drop_file_count_mismatch",
-        assignedCount: assignedFiles.length,
-        expectedCount: expectedFiles.length
-      };
-    }
-    for (let index = 0; index < expectedFiles.length; index += 1) {
-      const assignedFile = assignedFiles[index];
-      const expectedFile = expectedFiles[index];
-      if (assignedFile !== expectedFile) {
-        return {
-          ok: false,
-          reason: "drop_file_order_or_identity_mismatch",
-          assignedCount: assignedFiles.length,
-          expectedCount: expectedFiles.length
-        };
-      }
-      if (rawOriginals.has(assignedFile)) {
-        return {
-          ok: false,
-          reason: "raw_original_file_dropped",
-          assignedCount: assignedFiles.length,
-          expectedCount: expectedFiles.length
-        };
-      }
-      if (!isExpectedWhatsAppSanitizedMultiFileAttachFile(assignedFile)) {
-        return {
-          ok: false,
-          reason: "drop_file_type_invalid",
-          assignedCount: assignedFiles.length,
-          expectedCount: expectedFiles.length
-        };
-      }
-    }
-    return {
-      ok: true,
-      reason: "",
-      assignedCount: assignedFiles.length,
-      expectedCount: expectedFiles.length
-    };
-  }
-
   async function processLocalFileForSanitizedBatch(file, index, context) {
     try {
       const contentExtractionResult = shouldUseContentFileExtractionPipeline(file)
@@ -9921,12 +9873,27 @@
       return assignSanitizedBatchToInput(event.target);
     }
 
-    const shouldUseWhatsAppDropHandoff = context === "drop" && verifyWhatsAppBatch;
-    if (!shouldUseWhatsAppDropHandoff) {
+    const shouldUseWhatsAppDropInputHandoff = context === "drop" && verifyWhatsAppBatch;
+    if (shouldUseWhatsAppDropInputHandoff) {
       const fileInput = resolveFileInputForHandoff(event, input);
       if (fileInput && assignSanitizedBatchToInput(fileInput)) {
+        debugFileAttachMetadata("file-handoff:whatsapp-multi-file-drop-input-verified", {
+          fileCount: sanitizedFiles.length,
+          files: Array.from(sanitizedFiles || []).map(describeFileForDebug)
+        });
         return true;
       }
+      debugFileAttachMetadata("file-handoff:whatsapp-multi-file-drop-input-verification-failed", {
+        reason: fileInput ? "file_input_assignment_failed" : "file_input_not_found",
+        expectedCount: sanitizedFiles.length,
+        files: Array.from(sanitizedFiles || []).map(describeFileForDebug)
+      });
+      return false;
+    }
+
+    const fileInput = resolveFileInputForHandoff(event, input);
+    if (fileInput && assignSanitizedBatchToInput(fileInput)) {
+      return true;
     }
 
     const target = event?.target || input || document.activeElement;
@@ -9935,23 +9902,6 @@
         transfer.dropEffect = "copy";
       } catch {
         // Some DataTransfer implementations expose dropEffect as read-only.
-      }
-      if (verifyWhatsAppBatch) {
-        const verification = verifyWhatsAppSanitizedMultiFileDrop(transfer, sanitizedFiles, originalFiles);
-        if (verification.ok) {
-          debugFileAttachMetadata("file-handoff:whatsapp-multi-file-drop-verified", {
-            fileCount: verification.assignedCount,
-            files: Array.from(sanitizedFiles || []).map(describeFileForDebug)
-          });
-        } else {
-          debugFileAttachMetadata("file-handoff:whatsapp-multi-file-drop-verification-failed", {
-            reason: verification.reason,
-            assignedCount: verification.assignedCount,
-            expectedCount: verification.expectedCount,
-            files: Array.from(sanitizedFiles || []).map(describeFileForDebug)
-          });
-          return false;
-        }
       }
       return dispatchSanitizedFileEvent(target, "drop", transfer);
     }

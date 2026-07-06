@@ -1618,7 +1618,6 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "formatMultiFileStatusMessage"),
       extractFunctionSource(contentSource, "isExpectedWhatsAppSanitizedMultiFileAttachFile"),
       extractFunctionSource(contentSource, "verifyWhatsAppSanitizedMultiFileAttach"),
-      extractFunctionSource(contentSource, "verifyWhatsAppSanitizedMultiFileDrop"),
       extractFunctionSource(contentSource, "processLocalFileForSanitizedBatch"),
       extractFunctionSource(contentSource, "handOffSanitizedFileBatch"),
       extractFunctionSource(contentSource, "maybeHandleMultiFileInsert"),
@@ -8773,6 +8772,7 @@ async function testWhatsAppSingleContentFileDropRoutesToSanitizedHandoff() {
 
   for (const testCase of cases) {
     const target = createWhatsAppDropTarget();
+    const resolvedInput = createFileInput({ multiple: true });
     const { raw } = testCase;
     const sanitizedFile = {
       name: testCase.sanitized.name,
@@ -8808,6 +8808,7 @@ async function testWhatsAppSingleContentFileDropRoutesToSanitizedHandoff() {
           fallbackReason: ""
         };
       },
+      resolveFileInputForHandoff: () => resolvedInput,
       readLocalTextFileFromDataTransfer: async () => {
         throw new Error(`${raw.name} WhatsApp content drop must use the extraction pipeline`);
       }
@@ -8823,13 +8824,14 @@ async function testWhatsAppSingleContentFileDropRoutesToSanitizedHandoff() {
     assert.strictEqual(pipelineCalls, 1, `${raw.name} should use the extraction pipeline`);
     assert.strictEqual(calls.redactions.length, 0, `${raw.name} pipeline output should not be double-redacted`);
     assert.strictEqual(calls.createdFiles.length, 0, `${raw.name} pipeline output should not be rebuilt as text`);
-    assert.deepStrictEqual(target.events, ["drop"], `${raw.name} should dispatch one sanitized WhatsApp drop`);
-    assert.strictEqual(target.eventObjects[0].dataTransfer.files.length, 1);
-    assert.strictEqual(target.eventObjects[0].dataTransfer.files[0], sanitizedFile);
-    assert.notStrictEqual(target.eventObjects[0].dataTransfer.files[0], raw);
+    assert.deepStrictEqual(target.events, [], `${raw.name} should not rely on synthetic WhatsApp drop replay`);
+    assert.deepStrictEqual(resolvedInput.events, ["input", "change"]);
+    assert.strictEqual(resolvedInput.files.length, 1);
+    assert.strictEqual(resolvedInput.files[0], sanitizedFile);
+    assert.notStrictEqual(resolvedInput.files[0], raw);
     assert.strictEqual(calls.textFallbacks.length, 0, `${raw.name} must not insert extracted text into WhatsApp`);
     assert.strictEqual(calls.modals.some(([title]) => title === "WhatsApp file upload blocked"), false);
-    const assignedText = await target.eventObjects[0].dataTransfer.files[0].text();
+    const assignedText = await resolvedInput.files[0].text();
     assert.strictEqual(assignedText.includes("LeakGuardFileApiKey1234567890"), false);
     assert.strictEqual(assignedText.includes("sk-proj-WADropImageShouldNotUpload"), false);
   }
@@ -8843,9 +8845,11 @@ async function testWhatsAppSingleTextDocumentDropRoutesToSanitizedHandoff() {
     text: `OPENAI_API_KEY=${rawSecret}\nDROP=true`
   });
   const target = createWhatsAppDropTarget();
+  const resolvedInput = createFileInput({ multiple: true });
   const { maybeHandleDrop, calls } = createHarness({
     location: { hostname: "web.whatsapp.com" },
     findComposer: () => null,
+    resolveFileInputForHandoff: () => resolvedInput,
     createSanitizedTextFile: (file, text) => {
       const sanitizedFile = {
         name: file.name,
@@ -8870,12 +8874,13 @@ async function testWhatsAppSingleTextDocumentDropRoutesToSanitizedHandoff() {
   assert.strictEqual(calls.reads.length, 1);
   assert.strictEqual(calls.redactions.length, 1);
   assert.strictEqual(calls.createdFiles.length, 1);
-  assert.deepStrictEqual(target.events, ["drop"]);
-  assert.strictEqual(target.eventObjects[0].dataTransfer.files[0], calls.createdFiles[0].sanitizedFile);
-  assert.notStrictEqual(target.eventObjects[0].dataTransfer.files[0], rawFile);
+  assert.deepStrictEqual(target.events, [], "WhatsApp single-file drops should not rely on synthetic drop replay");
+  assert.deepStrictEqual(resolvedInput.events, ["input", "change"]);
+  assert.strictEqual(resolvedInput.files[0], calls.createdFiles[0].sanitizedFile);
+  assert.notStrictEqual(resolvedInput.files[0], rawFile);
   assert.strictEqual(calls.textFallbacks.length, 0, "WhatsApp must not insert dropped document text");
   assert.strictEqual(calls.modals.some(([title]) => title === "WhatsApp file upload blocked"), false);
-  const assignedText = await target.eventObjects[0].dataTransfer.files[0].text();
+  const assignedText = await resolvedInput.files[0].text();
   assert.strictEqual(assignedText.includes(rawSecret), false);
   assert.ok(assignedText.includes("[PWM_1]"));
   assert.strictEqual(calls.modals.flat().join("\n").includes(rawSecret), false);
@@ -8932,15 +8937,14 @@ async function testWhatsAppBasenameTextDocumentDropsRouteToSanitizedBatch() {
   assert.strictEqual(result.ok, true, "Dockerfile and Makefile drops should attach as a sanitized batch");
   assert.strictEqual(calls.reads.length, 2);
   assert.strictEqual(calls.createdFiles.length, 2);
-  assert.deepStrictEqual(target.events, ["drop"]);
-  assert.deepStrictEqual(target.eventObjects[0].dataTransfer.files, calls.createdFiles.map((entry) => entry.sanitizedFile));
-  assert.deepStrictEqual(target.eventObjects[0].dataTransfer.files.map((file) => file.name), ["Dockerfile", "Makefile"]);
-  assert.strictEqual(resolvedInput.files.length, 0, "WhatsApp multi-file drops should use sanitized drop handoff, not file-input assignment");
-  assert.deepStrictEqual(resolvedInput.events, []);
-  assert.strictEqual(target.eventObjects[0].dataTransfer.files.some((file) => files.includes(file)), false);
+  assert.deepStrictEqual(target.events, [], "WhatsApp multi-file drops should not rely on synthetic drop replay");
+  assert.deepStrictEqual(resolvedInput.files, calls.createdFiles.map((entry) => entry.sanitizedFile));
+  assert.deepStrictEqual(resolvedInput.files.map((file) => file.name), ["Dockerfile", "Makefile"]);
+  assert.deepStrictEqual(resolvedInput.events, ["input", "change"]);
+  assert.strictEqual(resolvedInput.files.some((file) => files.includes(file)), false);
   assert.strictEqual(calls.textFallbacks.length, 0);
   assert.strictEqual(calls.modals.some(([title]) => title === "WhatsApp file upload blocked"), false);
-  for (const assigned of target.eventObjects[0].dataTransfer.files) {
+  for (const assigned of resolvedInput.files) {
     const text = await assigned.text();
     assert.strictEqual(text.includes(rawSecret), false);
     assert.ok(text.includes("[PWM_1]"));
@@ -8998,13 +9002,12 @@ async function testWhatsAppTenTextDocumentDropsRouteToSanitizedBatch() {
   assert.strictEqual(calls.reads.length, 10);
   assert.strictEqual(calls.redactions.length, 10);
   assert.strictEqual(calls.createdFiles.length, 10);
-  assert.deepStrictEqual(target.events, ["drop"]);
-  assert.deepStrictEqual(target.eventObjects[0].dataTransfer.files, calls.createdFiles.map((entry) => entry.sanitizedFile));
-  assert.deepStrictEqual(target.eventObjects[0].dataTransfer.files.map((file) => file.name), files.map((file) => file.name));
-  assert.strictEqual(resolvedInput.files.length, 0, "WhatsApp 10-file drops should use sanitized drop handoff, not file-input assignment");
-  assert.deepStrictEqual(resolvedInput.events, []);
-  assert.strictEqual(target.eventObjects[0].dataTransfer.files.some((file) => files.includes(file)), false);
-  for (const assigned of target.eventObjects[0].dataTransfer.files) {
+  assert.deepStrictEqual(target.events, [], "WhatsApp 10-file drops should not rely on synthetic drop replay");
+  assert.deepStrictEqual(resolvedInput.files, calls.createdFiles.map((entry) => entry.sanitizedFile));
+  assert.deepStrictEqual(resolvedInput.files.map((file) => file.name), files.map((file) => file.name));
+  assert.deepStrictEqual(resolvedInput.events, ["input", "change"]);
+  assert.strictEqual(resolvedInput.files.some((file) => files.includes(file)), false);
+  for (const assigned of resolvedInput.files) {
     const text = await assigned.text();
     assert.strictEqual(text.includes(rawSecret), false);
     assert.ok(text.includes("[PWM_1]"));
@@ -9051,10 +9054,12 @@ async function testWhatsAppFiveMixedSupportedDropPreservesSanitizedOrder() {
   };
   const sanitizedOutputs = {};
   const target = createWhatsAppDropTarget();
+  const resolvedInput = createFileInput({ multiple: true });
   let pipelineCalls = 0;
   const { maybeHandleDrop, calls } = createHarness({
     location: { hostname: "web.whatsapp.com" },
     findComposer: () => null,
+    resolveFileInputForHandoff: () => resolvedInput,
     canExtractForAdapterHandoff: (file) => file !== files[0],
     processFileForAdapterHandoff: async ({ file, context }) => {
       pipelineCalls += 1;
@@ -9136,16 +9141,17 @@ async function testWhatsAppFiveMixedSupportedDropPreservesSanitizedOrder() {
   assert.strictEqual(result.ok, true, "five mixed WhatsApp drops should attach as a sanitized batch");
   assert.strictEqual(calls.reads.length, 1);
   assert.strictEqual(pipelineCalls, 4);
-  assert.deepStrictEqual(target.events, ["drop"]);
-  assert.deepStrictEqual(target.eventObjects[0].dataTransfer.files, files.map((file) => sanitizedOutputs[file.name]));
-  assert.deepStrictEqual(target.eventObjects[0].dataTransfer.files.map((file) => file.name), [
+  assert.deepStrictEqual(target.events, [], "WhatsApp mixed drops should not rely on synthetic drop replay");
+  assert.deepStrictEqual(resolvedInput.files, files.map((file) => sanitizedOutputs[file.name]));
+  assert.deepStrictEqual(resolvedInput.files.map((file) => file.name), [
     "lgqa-wa-drop-mixed-one.csv",
     "lgqa-wa-drop-mixed-two.redacted.png",
     "lgqa-wa-drop-mixed-three.redacted.pdf",
     "lgqa-wa-drop-mixed-four.redacted.docx",
     "lgqa-wa-drop-mixed-five.redacted.xlsx"
   ]);
-  for (const assigned of target.eventObjects[0].dataTransfer.files) {
+  assert.deepStrictEqual(resolvedInput.events, ["input", "change"]);
+  for (const assigned of resolvedInput.files) {
     assert.strictEqual(files.includes(assigned), false);
     const text = await assigned.text();
     assert.strictEqual(Object.values(rawSecrets).some((raw) => text.includes(raw)), false);
@@ -9290,7 +9296,7 @@ async function testWhatsAppFailedFileDropBatchBlocksWholeBatchWithoutPartialDrop
   assert.strictEqual(event.defaultPrevented, true);
   assert.strictEqual(calls.reads.length, 3);
   assert.strictEqual(calls.createdFiles.length, 2);
-  assert.deepStrictEqual(target.events, [], "WhatsApp must not receive partial sanitized drops");
+  assert.deepStrictEqual(target.events, [], "WhatsApp must not receive partial sanitized handoff");
   assert.ok(calls.modals.some(([title]) => title === "Raw file upload blocked"));
 }
 
@@ -18069,11 +18075,11 @@ function testMultiFileProtectedUploadStaticGuards() {
   assert.ok(contentSource.includes("multi_file_sanitized_handoff_failed"), "sanitized handoff failure should fail closed with a stable reason");
   assert.ok(contentSource.includes("multi_file_all_blocked"), "all-blocked batches should have a stable fail-closed reason");
   assert.ok(contentSource.includes("verifyWhatsAppSanitizedMultiFileAttach"), "WhatsApp multi-file attach should verify sanitized batch assignment");
-  assert.ok(contentSource.includes("verifyWhatsAppSanitizedMultiFileDrop"), "WhatsApp multi-file drops should verify sanitized batch assignment");
+  assert.ok(contentSource.includes("whatsapp-multi-file-drop-input-verified"), "WhatsApp multi-file drops should verify sanitized file-input assignment");
   assert.strictEqual(contentSource.includes("maxSmallFiles: isWhatsAppBatch ? 5 : MAX_MULTI_FILE_SMALL_ATTACHMENTS"), false, "WhatsApp should share the canonical small-file batch cap instead of hard-coding 5");
   assert.strictEqual(contentSource.includes("files.length <= 5 && files.every(isSupportedWhatsAppMultiFileAttachFile)"), false, "WhatsApp supported-batch detection should not hard-code a five-file cap");
-  assert.ok(contentSource.includes('const shouldUseWhatsAppDropHandoff = context === "drop" && verifyWhatsAppBatch'), "WhatsApp multi-file drops should not fall back to file-input assignment before sanitized drop dispatch");
-  assert.ok(contentSource.includes("if (!shouldUseWhatsAppDropHandoff)"), "file-input batch handoff should stay available outside verified WhatsApp drops");
+  assert.ok(contentSource.includes('const shouldUseWhatsAppDropInputHandoff = context === "drop" && verifyWhatsAppBatch'), "WhatsApp multi-file drops should use sanitized file-input assignment");
+  assert.strictEqual(contentSource.includes('const shouldUseWhatsAppDropHandoff = context === "drop" && verifyWhatsAppBatch'), false, "WhatsApp multi-file drops must not treat synthetic drop replay as verified success");
   assert.ok(contentSource.includes("whatsapp_multi_file_batch_failed"), "WhatsApp multi-file partial failures should block the whole batch");
   assert.ok(contentSource.includes("multi-file-sanitized-file-handoff"), "successful batches should report a deterministic sanitized strategy");
   assert.strictEqual(/queuePendingSanitizedFileHandoff[\s\S]{0,240}sanitizedItems/.test(contentSource), false, "multi-file batches must not queue pending attach with raw or ambiguous file state");
