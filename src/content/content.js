@@ -60,6 +60,7 @@
   const ContentFileTypeSupport = globalThis.PWM?.ContentFileTypeSupport || {};
   const SanitizedFileBatchProcessor = globalThis.PWM?.SanitizedFileBatchProcessor || {};
   const FileHandoffVerification = globalThis.PWM?.FileHandoffVerification || {};
+  const FileHandoffDiscovery = globalThis.PWM?.FileHandoffDiscovery || {};
   const FileDropInterception = globalThis.PWM?.FileDropInterception || {};
   const FileInputInterception = globalThis.PWM?.FileInputInterception || {};
   const FileInputPreparation = globalThis.PWM?.FileInputPreparation || {};
@@ -354,6 +355,7 @@
   let contentFileTypeSupport = null;
   let sanitizedFileBatchProcessor = null;
   let fileHandoffVerification = null;
+  let fileHandoffDiscovery = null;
   let fileDropInterception = null;
   let fileInputInterception = null;
   let fileInputPreparation = null;
@@ -6714,104 +6716,78 @@
     fileDragSessionResetTimer = setTimeout(clearFileDragSession, FILE_DRAG_SESSION_RESET_MS);
   }
 
-  function collectFileInputsFromAncestry(target, addCandidate) {
-    let node = normalizeTarget(target);
-    const visited = new WeakSet();
-
-    while (node && !visited.has(node)) {
-      visited.add(node);
-      addCandidate(node, "target-ancestry");
-
-      try {
-        node.querySelectorAll?.("input[type='file']").forEach((candidate) => {
-          addCandidate(candidate, "target-ancestry");
-        });
-      } catch {
-        // Host-controlled elements can reject selectors; keep the fail-closed path intact.
-      }
-
-      const rootNode = node.getRootNode?.();
-      node = node.parentElement || rootNode?.host || null;
+  function getFileHandoffDiscovery() {
+    if (fileHandoffDiscovery) return fileHandoffDiscovery;
+    if (typeof FileHandoffDiscovery.createFileHandoffDiscovery !== "function") {
+      fileHandoffDiscovery = Object.freeze({
+        collectFileInputsFromAncestry: () => {},
+        collectFileInputsFromRoot: () => {},
+        describeUploadTriggerForDebug: (trigger, source = "") => describeElementForDebug(trigger, source),
+        collectFileHandoffElementsFromRoot: () => {},
+        collectRootsWithOpenShadow: () => {},
+        candidateMatchesAnySelector: () => false,
+        getAdapterUploadClickCandidates: () => [],
+        isUnsafeFileHandoffClickTarget: () => true,
+        isLikelyGenericUploadClickTarget: () => false,
+        collectAdapterSelectorCandidates: () => [],
+        scoreFileInputForHandoff: () => -1,
+        getFileInputDiscoveryScope: () => null,
+        discoverFileInputForHandoff: () => null,
+        resolveFileInputForHandoff: () => null,
+        resolveGenericAdapterFileInput: () => null,
+        findGenericAdapterUploadTrigger: () => null,
+        activateAdapterUploadElementSafely: () => false,
+        waitForGenericAdapterFileInput: async () => null,
+        attachGenericPendingWithTrustedActivation: async () => false
+      });
+      return fileHandoffDiscovery;
     }
+
+    fileHandoffDiscovery = FileHandoffDiscovery.createFileHandoffDiscovery({
+      documentRef: document,
+      MutationObserverRef: typeof MutationObserver === "function" ? MutationObserver : null,
+      setTimeoutFn: setTimeout,
+      clearTimeoutFn: clearTimeout,
+      isFileInputElement,
+      normalizeTarget,
+      fileInputAcceptsHandoffFiles,
+      isWhatsAppHandoffContext,
+      describeElementForDebug,
+      describeFileForDebug,
+      describeFileHandoffAdapter,
+      describeFileInputForDebug,
+      debugReveal,
+      createGeminiUploadMenuEvent,
+      createSanitizedFileHandoffDetails,
+      createSanitizedDataTransferForHandoff,
+      handOffSanitizedFileInput,
+      isFileHandoffAdapterPendingAttachEnabled,
+      logSanitizedFileHandoffFailure,
+      clearPendingSanitizedFileHandoff
+    });
+    return fileHandoffDiscovery;
+  }
+
+  function collectFileInputsFromAncestry(target, addCandidate) {
+    return getFileHandoffDiscovery().collectFileInputsFromAncestry(target, addCandidate);
   }
 
   function collectFileInputsFromRoot(root, addCandidate, visitedRoots) {
-    if (!root || visitedRoots.has(root)) return;
-    visitedRoots.add(root);
-
-    try {
-      root.querySelectorAll?.("input[type='file']").forEach((candidate) => {
-        addCandidate(candidate, root === document ? "document" : "shadow-root");
-      });
-    } catch {
-      // Some host-controlled roots can reject selectors; skip them and keep scanning others.
-    }
-
-    let elements = [];
-    try {
-      elements = Array.from(root.querySelectorAll?.("*") || []);
-    } catch {
-      elements = [];
-    }
-
-    elements.forEach((element) => {
-      if (element?.shadowRoot) {
-        collectFileInputsFromRoot(element.shadowRoot, addCandidate, visitedRoots);
-      }
-    });
+    return getFileHandoffDiscovery().collectFileInputsFromRoot(root, addCandidate, visitedRoots);
   }
 
   function describeUploadTriggerForDebug(trigger, source = "") {
-    return describeElementForDebug(trigger, source);
+    return getFileHandoffDiscovery().describeUploadTriggerForDebug(trigger, source);
   }
 
   function collectFileHandoffElementsFromRoot(root, addInput, addUploadTrigger, visitedRoots, stats) {
-    if (!root || visitedRoots.has(root)) return;
-    visitedRoots.add(root);
-
-    try {
-      root.querySelectorAll?.("input[type='file']").forEach((candidate) => {
-        addInput(candidate, root === document ? "document" : "shadow-root");
-      });
-    } catch {
-      // Host-controlled roots can reject selectors; keep scanning other roots.
-    }
-
-    const uploadSelectors = [
-      'button[aria-label="Add files"]',
-      'button[aria-label="Open upload file menu"]',
-      '[role="button"][aria-label*="add files" i]',
-      '[role="button"][aria-label*="upload" i]',
-      'button[aria-label*="upload" i]',
-      'button[aria-label*="file" i]',
-      'button[aria-label*="attach" i]',
-      "button"
-    ];
-    for (const selector of uploadSelectors) {
-      try {
-        root.querySelectorAll?.(selector).forEach((candidate) => {
-          addUploadTrigger(candidate, selector, root === document ? "document" : "shadow-root");
-        });
-      } catch {
-        // Case-insensitive attribute selectors are not universally available in synthetic DOMs.
-      }
-    }
-
-    let elements = [];
-    try {
-      elements = Array.from(root.querySelectorAll?.("*") || []);
-    } catch {
-      elements = [];
-    }
-
-    elements.forEach((element) => {
-      if (element?.shadowRoot) {
-        if (stats) {
-          stats.openShadowRootCount += 1;
-        }
-        collectFileHandoffElementsFromRoot(element.shadowRoot, addInput, addUploadTrigger, visitedRoots, stats);
-      }
-    });
+    return getFileHandoffDiscovery().collectFileHandoffElementsFromRoot(
+      root,
+      addInput,
+      addUploadTrigger,
+      visitedRoots,
+      stats
+    );
   }
 
   function isWithinGeminiImagesFilesUploader(candidate) {
@@ -6930,267 +6906,47 @@
   }
 
   function collectRootsWithOpenShadow(root, roots, visitedRoots, stats) {
-    if (!root || visitedRoots.has(root)) return;
-    visitedRoots.add(root);
-    roots.push(root);
-
-    let elements = [];
-    try {
-      elements = Array.from(root.querySelectorAll?.("*") || []);
-    } catch {
-      elements = [];
-    }
-
-    elements.forEach((element) => {
-      if (element?.shadowRoot) {
-        if (stats) stats.openShadowRootCount += 1;
-        collectRootsWithOpenShadow(element.shadowRoot, roots, visitedRoots, stats);
-      }
-    });
+    return getFileHandoffDiscovery().collectRootsWithOpenShadow(root, roots, visitedRoots, stats);
   }
 
   function candidateMatchesAnySelector(candidate, selectors) {
-    if (!candidate || !Array.isArray(selectors)) return false;
-    return selectors.some((selector) => {
-      try {
-        return Boolean(candidate.matches?.(selector));
-      } catch {
-        return false;
-      }
-    });
+    return getFileHandoffDiscovery().candidateMatchesAnySelector(candidate, selectors);
   }
 
   function getAdapterUploadClickCandidates(eventOrTarget) {
-    const rawCandidates = [];
-    try {
-      if (typeof eventOrTarget?.composedPath === "function") {
-        rawCandidates.push(...eventOrTarget.composedPath());
-      }
-    } catch {
-      // Host event paths are best-effort.
-    }
-    rawCandidates.push(eventOrTarget?.target || eventOrTarget);
-
-    const candidates = [];
-    const seen = new WeakSet();
-    for (const rawCandidate of rawCandidates) {
-      const candidate = normalizeTarget(rawCandidate);
-      if (!candidate || seen.has(candidate)) continue;
-      seen.add(candidate);
-      candidates.push(candidate);
-
-      try {
-        const closest = candidate.closest?.("button, label, input[type='file'], [role='button'], [role='menuitem']");
-        if (closest && !seen.has(closest)) {
-          seen.add(closest);
-          candidates.push(closest);
-        }
-      } catch {
-        // Synthetic and host-controlled nodes can reject selectors.
-      }
-    }
-    return candidates;
+    return getFileHandoffDiscovery().getAdapterUploadClickCandidates(eventOrTarget);
   }
 
   function isUnsafeFileHandoffClickTarget(adapter, candidate) {
-    if (!candidate) return true;
-    if (candidate.disabled) return true;
-    if (candidateMatchesAnySelector(candidate, adapter?.unsafeClickSelectors || [])) return true;
-    const meta = describeElementForDebug(candidate);
-    const haystack = `${meta?.ariaLabel || ""} ${meta?.title || ""} ${meta?.textSnippet || ""} ${meta?.className || ""}`.toLowerCase();
-    return /\b(?:send|submit|mic|microphone|voice|record|settings|close|remove|delete|drive|photos?|cloud|import)\b/.test(
-      haystack
-    );
+    return getFileHandoffDiscovery().isUnsafeFileHandoffClickTarget(adapter, candidate);
   }
 
   function isLikelyGenericUploadClickTarget(adapter, eventOrTarget) {
-    return getAdapterUploadClickCandidates(eventOrTarget).some((candidate) => {
-      if (!candidate || isUnsafeFileHandoffClickTarget(adapter, candidate)) return false;
-      if (isFileInputElement(candidate)) return true;
-
-      const tag = String(candidate.tagName || "").toUpperCase();
-      const meta = describeElementForDebug(candidate);
-      const role = String(meta?.role || "").toLowerCase();
-      if (tag !== "BUTTON" && tag !== "LABEL" && tag !== "INPUT" && role !== "button" && role !== "menuitem") {
-        return false;
-      }
-      if (candidateMatchesAnySelector(candidate, adapter?.uploadButtonSelectors || [])) return true;
-      if (candidateMatchesAnySelector(candidate, adapter?.uploadMenuItemSelectors || [])) return true;
-
-      const haystack = `${meta?.ariaLabel || ""} ${meta?.title || ""} ${meta?.textSnippet || ""} ${meta?.className || ""}`.toLowerCase();
-      return /\b(?:upload|attach|files?|add)\b/.test(haystack);
-    });
+    return getFileHandoffDiscovery().isLikelyGenericUploadClickTarget(adapter, eventOrTarget);
   }
 
   function collectAdapterSelectorCandidates(adapter, selectors, event, input) {
-    const candidates = [];
-    const seen = new WeakSet();
-    const addCandidate = (candidate, source = "") => {
-      const normalized = normalizeTarget(candidate);
-      if (!normalized || seen.has(normalized)) return;
-      seen.add(normalized);
-      candidates.push({ candidate: normalized, source });
-    };
-
-    const target = normalizeTarget(event?.target);
-    for (const selector of selectors || []) {
-      try {
-        target?.closest?.("[role='dialog'], form, main, body")?.querySelectorAll?.(selector).forEach((candidate) => {
-          addCandidate(candidate, "target-scope");
-        });
-      } catch {
-        // Keep broad discovery available below.
-      }
-      try {
-        input?.closest?.("form")?.querySelectorAll?.(selector).forEach((candidate) => {
-          addCandidate(candidate, "composer-form");
-        });
-      } catch {
-        // Continue best-effort discovery.
-      }
-    }
-
-    const roots = [];
-    collectRootsWithOpenShadow(document, roots, new WeakSet(), null);
-    for (const root of roots) {
-      for (const selector of selectors || []) {
-        try {
-          root.querySelectorAll?.(selector).forEach((candidate) => {
-            addCandidate(candidate, root === document ? "document" : "shadow-root");
-          });
-        } catch {
-          // Some adapter selectors are intentionally modern and may not parse everywhere.
-        }
-      }
-    }
-
-    return candidates;
+    return getFileHandoffDiscovery().collectAdapterSelectorCandidates(adapter, selectors, event, input);
   }
 
   function resolveGenericAdapterFileInput(adapter, event, input) {
-    const candidates = collectAdapterSelectorCandidates(adapter, adapter?.fileInputSelectors || ["input[type='file']"], event, input)
-      .map(({ candidate }) => candidate)
-      .filter((candidate) => isFileInputElement(candidate) && !candidate.disabled);
-    if (candidates.length) return candidates[0];
-    return resolveFileInputForHandoff(event, input);
+    return getFileHandoffDiscovery().resolveGenericAdapterFileInput(adapter, event, input);
   }
 
   function findGenericAdapterUploadTrigger(adapter, event, input) {
-    const candidates = collectAdapterSelectorCandidates(adapter, adapter?.uploadButtonSelectors || [], event, input)
-      .map(({ candidate }) => candidate)
-      .filter((candidate) => !isFileInputElement(candidate) && isLikelyGenericUploadClickTarget(adapter, candidate));
-    return candidates[0] || null;
+    return getFileHandoffDiscovery().findGenericAdapterUploadTrigger(adapter, event, input);
   }
 
   function activateAdapterUploadElementSafely(adapter, candidate) {
-    if (!candidate || isFileInputElement(candidate) || isUnsafeFileHandoffClickTarget(adapter, candidate)) {
-      return false;
-    }
-    if (!isLikelyGenericUploadClickTarget(adapter, candidate)) return false;
-    try {
-      for (const type of ["pointerdown", "mousedown", "mouseup", "click"]) {
-        candidate.dispatchEvent(createGeminiUploadMenuEvent(type));
-      }
-      return true;
-    } catch {
-      return false;
-    }
+    return getFileHandoffDiscovery().activateAdapterUploadElementSafely(adapter, candidate);
   }
 
-  async function waitForGenericAdapterFileInput(adapter, timeoutMs = 2500, event = null, input = null) {
-    let fileInput = adapter?.resolveFileInput?.(event, input, adapter) || resolveGenericAdapterFileInput(adapter, event, input);
-    if (fileInput) return fileInput;
-    if (typeof MutationObserver !== "function") return null;
-
-    return await new Promise((resolve) => {
-      let settled = false;
-      let observer = null;
-      let timeoutId = 0;
-      const finish = (force = false) => {
-        if (settled) return;
-        fileInput = adapter?.resolveFileInput?.(event, input, adapter) || resolveGenericAdapterFileInput(adapter, event, input);
-        if (!fileInput && !force) return;
-        settled = true;
-        if (observer) {
-          try {
-            observer.disconnect();
-          } catch {
-            // Best-effort cleanup only.
-          }
-        }
-        if (timeoutId) clearTimeout(timeoutId);
-        resolve(fileInput || null);
-      };
-
-      try {
-        observer = new MutationObserver(() => finish(false));
-        observer.observe(document.documentElement || document, {
-          childList: true,
-          subtree: true
-        });
-      } catch {
-        observer = null;
-      }
-      setTimeout(() => finish(false), 0);
-      timeoutId = setTimeout(() => finish(true), timeoutMs);
-    });
+  function waitForGenericAdapterFileInput(adapter, timeoutMs = 2500, event = null, input = null) {
+    return getFileHandoffDiscovery().waitForGenericAdapterFileInput(adapter, timeoutMs, event, input);
   }
 
   async function attachGenericPendingWithTrustedActivation(adapter, pending) {
-    if (!adapter || !isFileHandoffAdapterPendingAttachEnabled(adapter) || !pending?.sanitizedFile) {
-      return false;
-    }
-    const event = pending.event || { type: `pending-${adapter.id}-sanitized-file`, target: pending.target || null };
-    let fileInput = adapter.resolveFileInput?.(event, pending.input, adapter) || resolveGenericAdapterFileInput(adapter, event, pending.input);
-
-    if (!fileInput) {
-      const uploadTrigger =
-        adapter.resolveUploadTrigger?.(event, pending.input, adapter) ||
-        findGenericAdapterUploadTrigger(adapter, event, pending.input);
-      if (uploadTrigger) {
-        activateAdapterUploadElementSafely(adapter, uploadTrigger);
-      }
-      const menuItem = adapter.resolveUploadMenuItem?.(event, pending.input, adapter);
-      if (menuItem) {
-        activateAdapterUploadElementSafely(adapter, menuItem);
-      }
-      fileInput = await waitForGenericAdapterFileInput(adapter, 2500, event, pending.input);
-    }
-
-    if (!fileInput) {
-      debugReveal("file-handoff:pending-input-not-found", {
-        site: adapter.id,
-        adapter: describeFileHandoffAdapter(adapter),
-        sanitizedFile: describeFileForDebug(pending.sanitizedFile)
-      });
-      return false;
-    }
-
-    debugReveal("file-handoff:pending-input-captured", {
-      site: adapter.id,
-      input: describeFileInputForDebug(fileInput, `pending-${adapter.id}-file-input`),
-      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
-    });
-    const details = createSanitizedFileHandoffDetails(event, pending.sanitizedFile, `${adapter.id}:pending-user-attach`);
-    const transfer = createSanitizedDataTransferForHandoff(pending.sanitizedFile, details);
-    const assigned = transfer
-      ? handOffSanitizedFileInput(fileInput, transfer, {
-          dispatchInput: true,
-          details
-        })
-      : false;
-    if (!assigned) {
-      details.failureReason = details.failureReason || "pending_user_attach_assignment_failed";
-      logSanitizedFileHandoffFailure(details);
-      return false;
-    }
-    debugReveal("file-handoff:pending-assigned", {
-      site: adapter.id,
-      input: describeFileInputForDebug(fileInput, `pending-${adapter.id}-file-input`),
-      sanitizedFile: describeFileForDebug(pending.sanitizedFile)
-    });
-    clearPendingSanitizedFileHandoff(adapter, "assigned");
-    return true;
+    return getFileHandoffDiscovery().attachGenericPendingWithTrustedActivation(adapter, pending);
   }
 
   function isRejectedGeminiUploadMenuItem(candidate) {
@@ -7299,95 +7055,15 @@
   }
 
   function scoreFileInputForHandoff(fileInput, source, files, options = {}) {
-    if (!isFileInputElement(fileInput) || fileInput.disabled) return -1;
-    const expectedFiles = Array.from(files || []).filter(Boolean);
-    const acceptsFiles = fileInputAcceptsHandoffFiles(fileInput, expectedFiles);
-    if (!acceptsFiles && options?.allowIncompatible !== true) return -1;
-    let score = acceptsFiles ? 1 : 0;
-    if (String(source || "").includes("target")) score += 2;
-    if (String(source || "").includes("form")) score += 1;
-    if (expectedFiles.length > 1 && fileInput.multiple === true) score += 4;
-    const accept = String(fileInput.accept || fileInput.getAttribute?.("accept") || "").trim();
-    if (accept && acceptsFiles) score += 3;
-    return score;
+    return getFileHandoffDiscovery().scoreFileInputForHandoff(fileInput, source, files, options);
   }
 
   function getFileInputDiscoveryScope(target) {
-    const explicitWhatsAppScope = target?.closest?.("[data-shell='whatsapp']");
-    if (explicitWhatsAppScope) return explicitWhatsAppScope;
-    if (isWhatsAppHandoffContext()) {
-      return (
-        target?.closest?.("[data-shell='whatsapp'], footer, [role='dialog'], form, main") ||
-        null
-      );
-    }
-    return target?.closest?.("[role='dialog'], form, main, body") || null;
+    return getFileHandoffDiscovery().getFileInputDiscoveryScope(target);
   }
 
   function discoverFileInputForHandoff(event, input, options = {}) {
-    const candidates = [];
-    const seen = new WeakSet();
-    const addCandidate = (candidate, source = "") => {
-      if (!isFileInputElement(candidate) || seen.has(candidate)) return;
-      seen.add(candidate);
-      candidates.push({ input: candidate, source });
-    };
-
-    collectFileInputsFromAncestry(event?.target, addCandidate);
-
-    const target = normalizeTarget(event?.target);
-    const discoveryScope = getFileInputDiscoveryScope(target);
-    const preferredSelectors = [
-      "input[type='file'][accept*='text']",
-      "input[type='file'][accept*='.txt']",
-      "input[type='file'][accept*='.md']",
-      "input[type='file'][accept*='.json']",
-      "input[type='file'][accept*='.csv']",
-      "input[type='file']"
-    ];
-    for (const selector of preferredSelectors) {
-      try {
-        discoveryScope?.querySelectorAll?.(selector).forEach((candidate) => {
-          addCandidate(candidate, "target-scope");
-        });
-      } catch {
-        // Host-controlled selectors can fail; broader discovery below remains fail-closed.
-      }
-    }
-    target?.closest?.("form")?.querySelectorAll?.("input[type='file']").forEach((candidate) => {
-      addCandidate(candidate, "target-form");
-    });
-    input?.closest?.("form")?.querySelectorAll?.("input[type='file']").forEach((candidate) => {
-      addCandidate(candidate, "composer-form");
-    });
-    if (!(isWhatsAppHandoffContext() && discoveryScope)) {
-      collectFileInputsFromRoot(document, addCandidate, new WeakSet());
-    }
-
-    const expectedFiles = Array.from(options?.expectedFiles || []).filter(Boolean);
-    const rankedCandidates = candidates
-      .map(({ input: candidate, source }, index) => ({
-        input: candidate,
-        source,
-        index,
-        score: scoreFileInputForHandoff(candidate, source, expectedFiles, options)
-      }))
-      .filter((candidate) => candidate.score >= 0)
-      .sort((left, right) => right.score - left.score || left.index - right.index);
-    const fileInput = rankedCandidates[0]?.input || null;
-    debugReveal(`file-drag:input-${fileInput ? "found" : "not-found"}`, {
-      targetTag: target?.tagName || "",
-      candidateCount: candidates.length,
-      expectedFileCount: expectedFiles.length,
-      candidates: candidates.map(({ input: candidate, source }) =>
-        ({
-          ...describeFileInputForDebug(candidate, source),
-          compatible: fileInputAcceptsHandoffFiles(candidate, expectedFiles)
-        })
-      )
-    });
-
-    return fileInput;
+    return getFileHandoffDiscovery().discoverFileInputForHandoff(event, input, options);
   }
 
   async function waitForGeminiUploadMenuInput() {

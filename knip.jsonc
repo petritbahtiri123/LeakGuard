@@ -120,6 +120,7 @@
     "src/content/files/sanitizedFileBatchProcessor.js",
     "src/content/files/fileHandoffVerification.js",
     "src/content/files/fileInputPreparation.js",
+    "src/content/files/fileHandoffDiscovery.js",
     "src/content/files/fileDropInterception.js",
     "src/content/files/fileInputInterception.js",
     "src/content/files/pendingSanitizedFileHandoff.js",

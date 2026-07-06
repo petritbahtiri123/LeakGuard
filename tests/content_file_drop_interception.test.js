@@ -103,6 +103,7 @@ require(path.join(repoRoot, "src/shared/streamingFileRedactor.js"));
 require(path.join(repoRoot, "src/content/files/sanitizedFileBatchProcessor.js"));
 require(path.join(repoRoot, "src/content/files/fileHandoffVerification.js"));
 require(path.join(repoRoot, "src/content/files/fileInputPreparation.js"));
+require(path.join(repoRoot, "src/content/files/fileHandoffDiscovery.js"));
 require(path.join(repoRoot, "src/content/files/fileDropInterception.js"));
 require(path.join(repoRoot, "src/content/files/fileInputInterception.js"));
 require(path.join(repoRoot, "src/content/whatsapp/whatsappCapabilities.js"));
@@ -1074,6 +1075,7 @@ function createHarness(overrides = {}) {
     SanitizedFileBatchProcessor: globalThis.PWM.SanitizedFileBatchProcessor || {},
     FileHandoffVerification: globalThis.PWM.FileHandoffVerification || {},
     FileInputPreparation: globalThis.PWM.FileInputPreparation || {},
+    FileHandoffDiscovery: globalThis.PWM.FileHandoffDiscovery || {},
     FileDropInterception: globalThis.PWM.FileDropInterception || {},
     FileInputInterception: globalThis.PWM.FileInputInterception || {},
     FileProcessingUi: globalThis.PWM.FileProcessingUi || {},
@@ -1324,6 +1326,7 @@ function createHarness(overrides = {}) {
       "let sanitizedFileBatchProcessor = null;",
       "let fileHandoffVerification = null;",
       "let fileInputPreparation = null;",
+      "let fileHandoffDiscovery = null;",
       "let fileDropInterception = null;",
       "let fileInputInterception = null;",
       "let fileProcessingUi = null;",
@@ -1425,6 +1428,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "isPotentialWhatsAppMultiFileAttach"),
       extractFunctionSource(contentSource, "isSupportedWhatsAppMultiFileAttachFile"),
       extractFunctionSource(contentSource, "isSupportedWhatsAppMultiFileAttach"),
+      extractFunctionSource(contentSource, "isWhatsAppHandoffContext"),
       extractFunctionSource(contentSource, "blockWhatsAppFileAttachment"),
       extractFunctionSource(contentSource, "getContentExtractionBlockedMessage"),
       extractFunctionSource(contentSource, "getLocalTextPayloadByteLength"),
@@ -1554,6 +1558,9 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "formatSanitizedFileFallbackText"),
       extractFunctionSource(contentSource, "formatGeminiSanitizedFileFallbackText"),
       extractFunctionSource(contentSource, "tryGeminiSanitizedFileAttach"),
+      extractFunctionSource(contentSource, "getFileInputPreparation"),
+      extractFunctionSource(contentSource, "fileInputAcceptsHandoffFiles"),
+      extractFunctionSource(contentSource, "getFileHandoffDiscovery"),
       extractFunctionSource(contentSource, "collectFileInputsFromAncestry"),
       extractFunctionSource(contentSource, "collectFileHandoffElementsFromRoot"),
       extractFunctionSource(contentSource, "isWithinGeminiImagesFilesUploader"),
@@ -2210,6 +2217,8 @@ function createHandoffHarness({
     DataTransfer: TestDataTransfer,
     MutationObserver: TestMutationObserver,
     FilePasteHelpers: globalThis.PWM.FilePasteHelpers,
+    FileInputPreparation: globalThis.PWM.FileInputPreparation || {},
+    FileHandoffDiscovery: globalThis.PWM.FileHandoffDiscovery || {},
     FileDropInterception: globalThis.PWM.FileDropInterception || {},
     FileProcessingUi: globalThis.PWM.FileProcessingUi || {},
     GeminiUploadDiscovery: globalThis.PWM.GeminiUploadDiscovery || {},
@@ -2308,6 +2317,8 @@ function createHandoffHarness({
       "let pendingGrokSanitizedFileClickHandler = null;",
       "let pendingGenericSanitizedFileHandoff = null;",
       "let pendingGenericSanitizedFileTimer = 0;",
+      "let fileInputPreparation = null;",
+      "let fileHandoffDiscovery = null;",
       "let fileProcessingUi = null;",
       "let geminiUploadDiscovery = null;",
       "let grokFileHandoff = null;",
@@ -2358,6 +2369,7 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "isGrokHost"),
       extractFunctionSource(contentSource, "isChatGptHost"),
       extractFunctionSource(contentSource, "isClaudeHost"),
+      extractFunctionSource(contentSource, "isWhatsAppHandoffContext"),
       extractFunctionSource(contentSource, "getCurrentHandoffDriverId"),
       extractFunctionSource(contentSource, "getActiveProtection"),
       extractFunctionSource(contentSource, "isProtectedFileDropDriver"),
@@ -2403,6 +2415,7 @@ function createHandoffHarness({
       extractFunctionSource(contentSource, "queuePendingGenericSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "hasPendingGrokSanitizedFileHandoff"),
       extractFunctionSource(contentSource, "getPendingGrokSanitizedFileHandoffDebug"),
+      extractFunctionSource(contentSource, "getFileHandoffDiscovery"),
       extractFunctionSource(contentSource, "describeUploadTriggerForDebug"),
       extractFunctionSource(contentSource, "collectFileInputsFromAncestry"),
       extractFunctionSource(contentSource, "collectFileInputsFromRoot"),

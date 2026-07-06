@@ -144,6 +144,7 @@
         "content/files/sanitizedFileBatchProcessor.js",
         "content/files/fileHandoffVerification.js",
         "content/files/fileInputPreparation.js",
+        "content/files/fileHandoffDiscovery.js",
         "content/files/fileDropInterception.js",
         "content/files/fileInputInterception.js",
         "content/files/pendingSanitizedFileHandoff.js",
