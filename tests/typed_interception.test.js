@@ -39,6 +39,7 @@ const {
 } = ComposerHelpers;
 
 const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
+const contentModalUiSource = fs.readFileSync(path.join(repoRoot, "src/content/ui/contentModalUi.js"), "utf8");
 const rewriteVerificationTextSource = fs.readFileSync(
   path.join(repoRoot, "src/content/input/rewriteVerificationText.js"),
   "utf8"
@@ -407,6 +408,7 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   const pasteSource = extractFunctionSource(contentSource, "maybeHandlePaste");
   const submitSource = extractFunctionSource(contentSource, "maybeHandleSubmit");
   const fallbackSendSource = extractFunctionSource(contentSource, "maybeHandleFallbackSendKey");
+  const modalSource = `${contentSource}\n${contentModalUiSource}`;
 
   assert.ok(
     contentSource.includes('"beforeinput"'),
@@ -572,15 +574,15 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
     "Firefox file input events should be captured before page handlers and before delayed scanning"
   );
   assert.ok(
-    contentSource.includes('event.key === "Enter" || event.key === " "'),
+    modalSource.includes('event.key === "Enter" || event.key === " "'),
     "decision modal should consume Enter and Space so modal confirmation does not leak through to host send handlers"
   );
   assert.ok(
-    contentSource.includes("event.stopPropagation();"),
+    modalSource.includes("event.stopPropagation();"),
     "decision modal keyboard handling should stop propagation before the host page sees modal confirmation keys"
   );
   assert.ok(
-    contentSource.includes("event.stopImmediatePropagation"),
+    modalSource.includes("event.stopImmediatePropagation"),
     "decision modal keyboard handling should stop immediate propagation to block host-level send races"
   );
   assert.ok(
@@ -711,18 +713,18 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
     "content script should surface a softer warning state for medium-confidence typed detections"
   );
   assert.ok(
-    contentSource.includes('window.addEventListener("keyup", onKeyPassthrough, true);') &&
-      contentSource.includes('window.addEventListener("keypress", onKeyPassthrough, true);'),
+    modalSource.includes('addEventListener?.("keyup", onKeyPassthrough, true);') &&
+      modalSource.includes('addEventListener?.("keypress", onKeyPassthrough, true);'),
     "decision modal should consume confirm/cancel keys across keydown, keypress, and keyup while open"
   );
   assert.ok(
-    contentSource.includes('window.addEventListener("beforeinput", onModalPassthrough, true);') &&
-      contentSource.includes('window.addEventListener("input", onModalPassthrough, true);') &&
-      contentSource.includes('window.addEventListener("paste", onModalPassthrough, true);'),
+    modalSource.includes('addEventListener?.("beforeinput", onModalPassthrough, true);') &&
+      modalSource.includes('addEventListener?.("input", onModalPassthrough, true);') &&
+      modalSource.includes('addEventListener?.("paste", onModalPassthrough, true);'),
     "message modals should consume typing and paste events so host composers cannot change underneath errors"
   );
   assert.ok(
-    contentSource.includes('finish({ action: getFocusedAction() || "redact" });'),
+    modalSource.includes('finish({ action: getFocusedAction() || "redact" });'),
     "decision modal should fail closed to redaction when Enter is pressed and focus is ambiguous"
   );
   assert.ok(

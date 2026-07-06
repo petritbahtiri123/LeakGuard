@@ -5,6 +5,7 @@ const path = require("path");
 const repoRoot = path.join(__dirname, "..");
 
 require(path.join(repoRoot, "src/content/composer_helpers.js"));
+require(path.join(repoRoot, "src/content/ui/contentModalUi.js"));
 
 const {
   buildRiskFingerprint,
@@ -513,12 +514,14 @@ function createHarness(options = {}) {
     },
     handleContentError: (error) => {
       throw error;
-    }
+    },
+    ContentModalUi: globalThis.PWM.ContentModalUi || {}
   };
 
   const factory = new Function(
     ...Object.keys(dependencies),
     [
+      "let contentModalUi = null;",
       "let whatsAppBypassSanitizedImageSubmitUntil = 0;",
       extractFunctionSource(contentSource, "getEditorRiskState"),
       extractFunctionSource(contentSource, "clearEditorRiskState"),
@@ -528,8 +531,7 @@ function createHarness(options = {}) {
       extractFunctionSource(contentSource, "analysisNeedsEventOwnership"),
       extractFunctionSource(contentSource, "isKnownSanitizedPlaceholderToken"),
       extractFunctionSource(contentSource, "analysisHasOnlySanitizedPlaceholderFindings"),
-      extractFunctionSource(contentSource, "closeModal"),
-      extractFunctionSource(contentSource, "appendFindingRow"),
+      extractFunctionSource(contentSource, "getContentModalUi"),
       extractFunctionSource(contentSource, "showDecisionModal"),
       extractFunctionSource(contentSource, "showMessageModal"),
       extractFunctionSource(contentSource, "promptForSensitiveContentDecision"),

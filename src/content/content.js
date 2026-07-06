@@ -55,6 +55,7 @@
   } = FilePasteHelpers || {};
   const FileScanner = globalThis.PWM?.FileScanner || {};
   const FileTypeRegistry = globalThis.PWM?.FileTypeRegistry || {};
+  const ContentModalUi = globalThis.PWM?.ContentModalUi || {};
   const ContentStatusUi = globalThis.PWM?.ContentStatusUi || {};
   const ContentFileTypeSupport = globalThis.PWM?.ContentFileTypeSupport || {};
   const SanitizedFileBatchProcessor = globalThis.PWM?.SanitizedFileBatchProcessor || {};
@@ -176,6 +177,7 @@
       protectionEnforced: false
     }
   };
+  let contentModalUi = null;
   let contentStatusUi = null;
   let bypassNextSubmit = false;
   let bypassNextSendButtonClick = false;
@@ -2597,336 +2599,38 @@
     };
   }
 
-  function closeModal(backdrop, onClose) {
-    if (backdrop?.parentNode) {
-      backdrop.parentNode.removeChild(backdrop);
+  function getContentModalUi() {
+    if (contentModalUi) return contentModalUi;
+    if (typeof ContentModalUi.createContentModalUi !== "function") {
+      contentModalUi = Object.freeze({
+        showDecisionModal: async () => ({ action: "cancel" }),
+        showMessageModal: async () => {},
+        showGeminiLargeTextConfirmationModal: async () => ({ action: "cancel" })
+      });
+      return contentModalUi;
     }
 
-    modalOpen = false;
-
-    if (typeof onClose === "function") {
-      onClose();
-    }
-  }
-
-  function appendFindingRow(container) {
-    const row = document.createElement("div");
-    row.className = "pwm-finding";
-    row.textContent = "Sensitive item detected";
-    container.appendChild(row);
-  }
-
-  function showDecisionModal(findings, mode, _options = {}) {
-    if (modalOpen) {
-      return Promise.resolve({ action: "cancel" });
-    }
-
-    modalOpen = true;
-    return new Promise((resolve) => {
-      const backdrop = document.createElement("div");
-      backdrop.className = "pwm-modal-backdrop";
-
-      const modal = document.createElement("div");
-      modal.className = "pwm-modal";
-      modal.setAttribute("role", "dialog");
-      modal.setAttribute("aria-modal", "true");
-      modal.tabIndex = -1;
-
-      const title = document.createElement("h2");
-      title.textContent = "LeakGuard detected sensitive content";
-
-      const desc = document.createElement("p");
-      desc.textContent =
-        mode === "paste"
-          ? "This pasted content appears to contain sensitive material. Redact it before it reaches the chat input, or cancel the paste."
-          : mode === "input"
-            ? "This typed content may contain sensitive material. Redact it before it stays in the chat input, or cancel the edit."
-          : "This message appears to contain sensitive material. Redact it before sending, or cancel the send.";
-
-      const findingsWrap = document.createElement("div");
-      findingsWrap.className = "pwm-findings";
-      findings.slice(0, 8).forEach(() => appendFindingRow(findingsWrap));
-
-      const actions = document.createElement("div");
-      actions.className = "pwm-actions";
-
-      const cancelBtn = document.createElement("button");
-      cancelBtn.className = "pwm-btn";
-      cancelBtn.type = "button";
-      cancelBtn.textContent = "Cancel";
-
-      const redactBtn = document.createElement("button");
-      redactBtn.className = "pwm-btn pwm-btn-primary";
-      redactBtn.type = "button";
-      redactBtn.textContent = "Redact";
-
-      const finish = (result) => {
-        window.removeEventListener("keydown", onKeyDown, true);
-        window.removeEventListener("keypress", onKeyPassthrough, true);
-        window.removeEventListener("keyup", onKeyPassthrough, true);
-        closeModal(backdrop);
-        resolve(result);
-      };
-
-      const getFocusedAction = () => {
-        const active = document.activeElement;
-        if (active === redactBtn) return "redact";
-        if (active === cancelBtn) return "cancel";
-        if (modal.contains(active)) return "redact";
-        return null;
-      };
-
-      const consumeModalEvent = (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        if (typeof event.stopImmediatePropagation === "function") {
-          event.stopImmediatePropagation();
-        }
-      };
-
-      const onKeyDown = (event) => {
-        if (event.key === "Escape") {
-          consumeModalEvent(event);
-          finish({ action: "cancel" });
-          return;
-        }
-
-        if (event.key === "Enter" || event.key === " ") {
-          consumeModalEvent(event);
-          finish({ action: getFocusedAction() || "redact" });
-        }
-      };
-
-      const onKeyPassthrough = (event) => {
-        if (event.key === "Escape" || event.key === "Enter" || event.key === " ") {
-          consumeModalEvent(event);
-        }
-      };
-
-      cancelBtn.addEventListener("click", (event) => {
-        consumeModalEvent(event);
-        finish({ action: "cancel" });
-      });
-      redactBtn.addEventListener("click", (event) => {
-        consumeModalEvent(event);
-        finish({ action: "redact" });
-      });
-
-      backdrop.addEventListener("click", (event) => {
-        if (event.target === backdrop) {
-          consumeModalEvent(event);
-          finish({ action: "cancel" });
-        }
-      });
-
-      actions.append(cancelBtn);
-      actions.appendChild(redactBtn);
-      modal.append(title, desc, findingsWrap, actions);
-      backdrop.appendChild(modal);
-      document.documentElement.appendChild(backdrop);
-
-      window.addEventListener("keydown", onKeyDown, true);
-      window.addEventListener("keypress", onKeyPassthrough, true);
-      window.addEventListener("keyup", onKeyPassthrough, true);
-      redactBtn.focus();
+    contentModalUi = ContentModalUi.createContentModalUi({
+      documentRef: document,
+      windowRef: window,
+      getModalOpen: () => modalOpen,
+      setModalOpen: (value) => {
+        modalOpen = Boolean(value);
+      }
     });
+    return contentModalUi;
+  }
+
+  function showDecisionModal(findings, mode, options = {}) {
+    return getContentModalUi().showDecisionModal(findings, mode, options);
   }
 
   function showMessageModal(titleText, bodyText) {
-    if (modalOpen) {
-      return Promise.resolve();
-    }
-
-    modalOpen = true;
-
-    return new Promise((resolve) => {
-      const backdrop = document.createElement("div");
-      backdrop.className = "pwm-modal-backdrop";
-
-      const modal = document.createElement("div");
-      modal.className = "pwm-modal";
-      modal.setAttribute("role", "dialog");
-      modal.setAttribute("aria-modal", "true");
-      modal.tabIndex = -1;
-
-      const title = document.createElement("h2");
-      title.textContent = titleText;
-
-      const desc = document.createElement("p");
-      desc.textContent = bodyText;
-
-      const actions = document.createElement("div");
-      actions.className = "pwm-actions";
-
-      const closeBtn = document.createElement("button");
-      closeBtn.className = "pwm-btn pwm-btn-primary";
-      closeBtn.type = "button";
-      closeBtn.textContent = "Close";
-
-      const consumeModalEvent = (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        if (typeof event.stopImmediatePropagation === "function") {
-          event.stopImmediatePropagation();
-        }
-      };
-
-      const finish = () => {
-        window.removeEventListener("keydown", onKeyDown, true);
-        window.removeEventListener("keypress", onModalPassthrough, true);
-        window.removeEventListener("keyup", onModalPassthrough, true);
-        window.removeEventListener("beforeinput", onModalPassthrough, true);
-        window.removeEventListener("input", onModalPassthrough, true);
-        window.removeEventListener("paste", onModalPassthrough, true);
-        closeModal(backdrop);
-        resolve();
-      };
-
-      const onKeyDown = (event) => {
-        if (event.key === "Escape" || event.key === "Enter") {
-          consumeModalEvent(event);
-          finish();
-          return;
-        }
-
-        consumeModalEvent(event);
-      };
-
-      const onModalPassthrough = (event) => {
-        consumeModalEvent(event);
-      };
-
-      closeBtn.addEventListener("click", (event) => {
-        consumeModalEvent(event);
-        finish();
-      });
-      backdrop.addEventListener("click", (event) => {
-        if (event.target === backdrop) {
-          consumeModalEvent(event);
-          finish();
-        }
-      });
-
-      actions.append(closeBtn);
-      modal.append(title, desc, actions);
-      backdrop.appendChild(modal);
-      document.documentElement.appendChild(backdrop);
-
-      window.addEventListener("keydown", onKeyDown, true);
-      window.addEventListener("keypress", onModalPassthrough, true);
-      window.addEventListener("keyup", onModalPassthrough, true);
-      window.addEventListener("beforeinput", onModalPassthrough, true);
-      window.addEventListener("input", onModalPassthrough, true);
-      window.addEventListener("paste", onModalPassthrough, true);
-      closeBtn.focus();
-    });
+    return getContentModalUi().showMessageModal(titleText, bodyText);
   }
 
   function showGeminiLargeTextConfirmationModal(redactedLength) {
-    if (modalOpen) {
-      return Promise.resolve({ action: "cancel" });
-    }
-
-    modalOpen = true;
-
-    return new Promise((resolve) => {
-      const backdrop = document.createElement("div");
-      backdrop.className = "pwm-modal-backdrop";
-
-      const modal = document.createElement("div");
-      modal.className = "pwm-modal";
-      modal.setAttribute("role", "dialog");
-      modal.setAttribute("aria-modal", "true");
-      modal.tabIndex = -1;
-
-      const title = document.createElement("h2");
-      title.textContent = "Large sanitized text fallback";
-
-      const desc = document.createElement("p");
-      const sizeKb = Math.max(1, Math.round(Number(redactedLength || 0) / 1024));
-      desc.textContent =
-        `Gemini rejected the sanitized file upload. This sanitized text is about ${sizeKb} KiB, and inserting it into Gemini may freeze the page temporarily.`;
-
-      const actions = document.createElement("div");
-      actions.className = "pwm-actions";
-
-      const cancelBtn = document.createElement("button");
-      cancelBtn.className = "pwm-btn";
-      cancelBtn.type = "button";
-      cancelBtn.textContent = "Cancel";
-
-      const insertBtn = document.createElement("button");
-      insertBtn.className = "pwm-btn pwm-btn-primary";
-      insertBtn.type = "button";
-      insertBtn.textContent = "Insert anyway";
-
-      const consumeModalEvent = (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        if (typeof event.stopImmediatePropagation === "function") {
-          event.stopImmediatePropagation();
-        }
-      };
-
-      const finish = (action) => {
-        window.removeEventListener("keydown", onKeyDown, true);
-        window.removeEventListener("keypress", onModalPassthrough, true);
-        window.removeEventListener("keyup", onModalPassthrough, true);
-        window.removeEventListener("beforeinput", onModalPassthrough, true);
-        window.removeEventListener("input", onModalPassthrough, true);
-        window.removeEventListener("paste", onModalPassthrough, true);
-        closeModal(backdrop);
-        resolve({ action });
-      };
-
-      const onKeyDown = (event) => {
-        if (event.key === "Escape") {
-          consumeModalEvent(event);
-          finish("cancel");
-          return;
-        }
-
-        if (event.key === "Enter" || event.key === " ") {
-          consumeModalEvent(event);
-          finish(document.activeElement === cancelBtn ? "cancel" : "insert");
-          return;
-        }
-
-        consumeModalEvent(event);
-      };
-
-      const onModalPassthrough = (event) => {
-        consumeModalEvent(event);
-      };
-
-      cancelBtn.addEventListener("click", (event) => {
-        consumeModalEvent(event);
-        finish("cancel");
-      });
-      insertBtn.addEventListener("click", (event) => {
-        consumeModalEvent(event);
-        finish("insert");
-      });
-      backdrop.addEventListener("click", (event) => {
-        if (event.target === backdrop) {
-          consumeModalEvent(event);
-          finish("cancel");
-        }
-      });
-
-      actions.append(cancelBtn, insertBtn);
-      modal.append(title, desc, actions);
-      backdrop.appendChild(modal);
-      document.documentElement.appendChild(backdrop);
-
-      window.addEventListener("keydown", onKeyDown, true);
-      window.addEventListener("keypress", onModalPassthrough, true);
-      window.addEventListener("keyup", onModalPassthrough, true);
-      window.addEventListener("beforeinput", onModalPassthrough, true);
-      window.addEventListener("input", onModalPassthrough, true);
-      window.addEventListener("paste", onModalPassthrough, true);
-      insertBtn.focus();
-    });
+    return getContentModalUi().showGeminiLargeTextConfirmationModal(redactedLength);
   }
 
   function waitForAnimationFrameOrTimeout(timeoutMs = 50) {
