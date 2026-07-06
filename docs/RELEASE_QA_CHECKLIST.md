@@ -116,7 +116,7 @@ git diff --check
 - Run scanner image OCR on an English PNG/JPG/JPEG/WEBP with a synthetic secret and confirm redacted text export plus eligible flattened `.redacted.png` visual export.
 - Open the redacted image in a local viewer, visually inspect that the secret region is covered, and search the JSON report/redacted text export for the raw fake secret.
 - Confirm scanner OCR copy says English-only, local-only, no remote OCR/backend, no scanned-PDF OCR, no non-English OCR, no image format preservation, no layout-preserving PDF/DOCX/XLSX redaction, and no original Office document reconstruction.
-- Select unsupported files such as `.zip`, `.exe`, legacy `.doc`, legacy `.xls`, `.xlsm`, `.gif`, `.svg`, and arbitrary binary files and confirm the text-only release message appears.
+- Select unsupported files such as `.zip`, `.exe`, legacy `.doc`, legacy `.xls`, `.xlsm`, `.gif`, `.svg`, and arbitrary binary files and confirm an honest unsupported/fail-closed message appears without marking the file scanned, sanitized, or protected.
 
 ## Local Text-File Paste/Drop Composer Flow
 
@@ -142,6 +142,20 @@ git diff --check
 - Confirm small supported text files fall back to sanitized composer text when the browser or site does not accept synthetic `DataTransfer`/file handoff, and confirm raw upload is blocked if that safe fallback cannot complete.
 - Confirm the composer remains usable after unsupported-file or sanitized-handoff failure handling.
 - Confirm no raw synthetic secret appears in the DOM or browser console.
+
+## WhatsApp Web Current Support Flow
+
+- Review [WHATSAPP_SUPPORT_MATRIX.md](WHATSAPP_SUPPORT_MATRIX.md) before release QA.
+- In a controlled WhatsApp test chat, confirm typing, multiline text, text paste, and send replay redact before send and do not require a second click.
+- Paste a PNG/JPG/JPEG/WEBP clipboard image and confirm WhatsApp receives only the sanitized image, or the paste blocks fail-closed with no raw preview.
+- Use the attach button with exactly one supported file from each supported family: canonical text-like file from `FileTypeRegistry`, `Dockerfile` or `Makefile`, PNG/JPG/JPEG/WEBP image, text PDF, DOCX, and XLSX.
+- Use the attach button with 2-5 supported files and confirm all files are sanitized locally, handed off in input order, and blocked all-or-nothing if any file fails.
+- Drag/drop exactly one supported file and then 2-5 supported files; confirm behavior matches attach-button support.
+- Select or drop 6+ files and confirm LeakGuard blocks before reading any file.
+- Try unsupported families such as GIF, BMP, ICO, SVG, archives, executables, arbitrary binaries, legacy Office, and macro Office files. Confirm WhatsApp receives no raw file and no unsafe preview.
+- Confirm WhatsApp file paste remains out of scope except clipboard image paste, and no document/file paste is treated as supported.
+- Confirm WhatsApp never receives extracted file text inserted into the message composer as fallback.
+- Confirm unsafe filenames, raw content, OCR text, stack traces, and debug details do not appear in WhatsApp UI, logs, reports, or metadata.
 
 ## Firefox Protected-Site File/Drop Checks
 

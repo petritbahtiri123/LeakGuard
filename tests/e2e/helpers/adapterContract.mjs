@@ -29,7 +29,7 @@ export const localAdapterProfiles = [
   },
   {
     id: "whatsapp-web",
-    label: "WhatsApp Web text-only fixture",
+    label: "WhatsApp Web text fixture",
     fixtureMode: "whatsapp",
     unsupportedBlockPattern: /WhatsApp file upload blocked|Raw file upload blocked/i
   }

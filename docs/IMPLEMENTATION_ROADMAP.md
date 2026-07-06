@@ -379,6 +379,31 @@ Open questions:
 - Should future consumer builds add a popup entry point, or keep feedback limited to the options page?
 - Should safe diagnostics be opt-in for each report?
 
+## Phase 8 - Content Script Modularization For Next Release
+
+Status: Planned. Detailed plan lives in [roadmap/content-script-modularization-plan.md](roadmap/content-script-modularization-plan.md).
+
+Purpose: reduce `src/content/content.js` safely after the completed WhatsApp support work, without behavior changes.
+
+Scope:
+
+- Baseline current `content.js` function clusters and event flows.
+- Extract pure file classification and capability helpers.
+- Extract sanitized file batch processing orchestration.
+- Extract handoff verification for exact object identity, count, order, and fail-closed outcomes.
+- Extract file input and drag/drop interception.
+- Extract WhatsApp text, clipboard image paste, attach, drag/drop, multi-file, selector, capability, and verification helpers.
+- Extract composer read/write, contenteditable rewrite, multiline sync, replay, and verification helpers.
+- Make adapter capability contracts explicit and test-gated.
+- Leave `content.js` as initialization, adapter resolution, event routing, module calls, and fail-closed UI only.
+
+Acceptance criteria:
+
+- No behavior change in any extraction task unless separately planned.
+- No new permissions, telemetry, backend calls, remote processing, manifest changes, or CSP changes.
+- Fail-closed behavior, no raw fallback, no partial WhatsApp handoff, no extracted-text fallback into WhatsApp, and rewrite verification behavior remain identical.
+- Focused tests pass after each extraction; full release gates pass before claiming completion.
+
 ## Validation Matrix
 
 | Change type | Minimum validation |

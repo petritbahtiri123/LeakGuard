@@ -12,6 +12,12 @@ Use this file as a short handoff log for AI-made changes. Add newest entries fir
 ```
 
 ## Entries
+### 2026-07-06 - WhatsApp docs and content modularization plan
+- Goal: Align current docs, QA docs, release docs, browser matrix wording, and store-facing copy with completed WhatsApp text, paste, clipboard image, attach-button, drag/drop, and 2-5 file support, and add the next-release `content.js` modularization plan.
+- Files: `README.md`, `docs/WHATSAPP_SUPPORT_MATRIX.md`, `docs/qa/whatsapp-web-multi-file-qa.md`, `docs/roadmap/content-script-modularization-plan.md`, `docs/README.md`, `docs/DOCUMENTATION_ROADMAP.md`, `docs/IMPLEMENTATION_ROADMAP.md`, WhatsApp QA docs, release/browser/file docs, and QA matrix metadata.
+- Tests: `npm run docs:check-links` -> pass; `node tests/browser_qa_matrix.test.js` -> pass; `node tests/browser/extension_qa_harness.test.mjs` -> pass; `git diff --check` -> pass; `npm test` -> pass.
+- Notes: Documentation/planning plus QA metadata wording only. No runtime code, manifests, permissions, CSP, telemetry, detector behavior, generated artifacts, or package lock changes.
+
 ### 2026-06-19 - v2.1.0 release packaging
 - Goal: Bump release metadata to `2.1.0`, prepare Chrome Web Store release checklist/notes, and regenerate release artifacts using the existing release workflow.
 - Files: `package.json`, `package-lock.json`, `manifests/base.json`, `README.md`, `docs/RELEASE_2_1_0_CHROME_WEB_STORE_CHECKLIST.md`, `docs/CODEX_CHANGELOG.md`

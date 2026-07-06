@@ -22,6 +22,7 @@ For current agent routing and architecture ownership, prefer [CODEX_FAST_CONTEXT
 - [PLACEHOLDERS_AND_REVEAL.md](PLACEHOLDERS_AND_REVEAL.md) - placeholder stability, session scope, trusted placeholder pass-through, and popup-only secure reveal.
 - [FILE_UPLOAD_SCANNING_GUIDE.md](FILE_UPLOAD_SCANNING_GUIDE.md) - File Scanner and protected composer file upload behavior, supported text files, limits, and unsupported formats.
 - [FILE_CAPABILITY_MATRIX.md](FILE_CAPABILITY_MATRIX.md) - authoritative current file capability, output, fail-closed, and raw-data safety matrix.
+- [WHATSAPP_SUPPORT_MATRIX.md](WHATSAPP_SUPPORT_MATRIX.md) - current WhatsApp Web text, paste, clipboard image, attach-button, drag/drop, multi-file, unsupported-path, and safety matrix.
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - common popup, protected-site, reveal, upload, Firefox, and enterprise-policy issues.
 
 ## Privacy And Security Model
@@ -68,6 +69,7 @@ For current agent routing and architecture ownership, prefer [CODEX_FAST_CONTEXT
 ## Architecture And Internal Design
 
 - [IMPLEMENTATION_ROADMAP.md](IMPLEMENTATION_ROADMAP.md) - ordered implementation plan for the open deep-research and code-quality findings.
+- [roadmap/content-script-modularization-plan.md](roadmap/content-script-modularization-plan.md) - next-release plan to shrink `src/content/content.js` without behavior changes.
 - [THREAT_MODEL.md](THREAT_MODEL.md) - current security architecture reference and Mermaid diagrams.
 - [file-handoff-architecture.md](file-handoff-architecture.md) - sanitized text-file upload handoff architecture and adapter rules.
 - [FILE_SCANNER_PLAN.md](FILE_SCANNER_PLAN.md) - file scanner architecture and implementation plan; useful for historical context and future scanner phases.

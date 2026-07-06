@@ -209,8 +209,8 @@ function testUploadAndUnsafeClickPredicatesStayPresent() {
   });
 
   const whatsapp = adapters.whatsapp;
-  assert.deepStrictEqual(whatsapp.uploadButtonSelectors, [], "WhatsApp text-only adapter should not expose upload triggers");
-  assert.deepStrictEqual(whatsapp.fileInputSelectors, [], "WhatsApp text-only adapter should not expose file inputs");
+  assert.deepStrictEqual(whatsapp.uploadButtonSelectors, [], "WhatsApp narrow adapter should not expose generic upload triggers");
+  assert.deepStrictEqual(whatsapp.fileInputSelectors, [], "WhatsApp narrow adapter should not expose generic file inputs");
   assert.strictEqual(whatsapp.resolveUploadTrigger(), null, "WhatsApp upload trigger resolution should stay disabled");
   assert.strictEqual(whatsapp.resolveFileInput(), null, "WhatsApp file input resolution should stay disabled");
   assert.strictEqual(whatsapp.isUploadClickTarget(), false, "WhatsApp upload click detection should stay disabled");
