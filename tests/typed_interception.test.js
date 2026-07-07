@@ -60,6 +60,10 @@ const fileAttachPipelineSource = fs.readFileSync(
   path.join(repoRoot, "src/content/files/fileAttachPipeline.js"),
   "utf8"
 );
+const sanitizedFileInsertOrchestrationSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/files/sanitizedFileInsertOrchestration.js"),
+  "utf8"
+);
 const fileDropInterceptionSource = fs.readFileSync(
   path.join(repoRoot, "src/content/files/fileDropInterception.js"),
   "utf8"
@@ -524,7 +528,9 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
         fileInsertSource.indexOf("readLocalTextFileFromDataTransfer(dataTransfer)") &&
       fileInsertSource.includes("requestRedaction(analysis.normalizedText, analysis.secretFindings)") &&
       fileInsertSource.includes("createSanitizedTextFile(localFile.file, result.redactedText)") &&
-      fileInsertSource.includes("handOffSanitizedLocalFile(event, input, sanitizedFile, context)") &&
+      sanitizedFileInsertOrchestrationSource.includes(
+        "handOffSanitizedLocalFile(event, input, sanitizedFile, context)"
+      ) &&
       !fileInsertSource.includes("scanTextContent"),
     "local file handoff should consume first, use background redaction, and avoid independent scanner managers"
   );
@@ -537,7 +543,7 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
       contentSource.includes("isGrokHost()") &&
       contentSource.includes("function handOffGeminiSanitizedFileUpload") &&
       contentSource.includes("function handOffGrokSanitizedFileUpload") &&
-      contentSource.includes("file-handoff:fail-closed") &&
+      sanitizedFileInsertOrchestrationSource.includes("file-handoff:fail-closed") &&
       sanitizedFileHandoffSource.includes('dispatchSanitizedFileEvent(target, "drop", transfer)') &&
       sanitizedFileHandoffSource.includes('dispatchSanitizedFileEvent(target, "paste", transfer)'),
     "local file handling should hand off sanitized files through native site upload adapters and fail closed when required handoff fails"
@@ -556,11 +562,13 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   assert.ok(
     (fileInsertSource.includes("sanitized_file_handoff_failed") ||
       fileAttachPipelineSource.includes("sanitized_file_handoff_failed")) &&
-      fileInsertSource.includes("LeakGuard blocked raw file upload. Sanitized file handoff failed"),
+      sanitizedFileInsertOrchestrationSource.includes(
+        "LeakGuard blocked raw file upload. Sanitized file handoff failed"
+      ),
     "local file handoff failure should block raw upload with a clear local message"
   );
   assert.ok(
-    fileInsertSource.includes("LeakGuard attached a sanitized local file."),
+    sanitizedFileInsertOrchestrationSource.includes("LeakGuard attached a sanitized local file."),
     "local file handling should show the sanitized attachment status"
   );
   assert.ok(

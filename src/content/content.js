@@ -66,6 +66,7 @@
   const FileInputInterception = globalThis.PWM?.FileInputInterception || {};
   const MultiFileInsertOrchestration = globalThis.PWM?.MultiFileInsertOrchestration || {};
   const StreamingFileInsertOrchestration = globalThis.PWM?.StreamingFileInsertOrchestration || {};
+  const SanitizedFileInsertOrchestration = globalThis.PWM?.SanitizedFileInsertOrchestration || {};
   const FileInputPreparation = globalThis.PWM?.FileInputPreparation || {};
   const FileProcessingUi = globalThis.PWM?.FileProcessingUi || {};
   const WhatsAppCapabilities = globalThis.PWM?.WhatsAppCapabilities || {};
@@ -366,6 +367,7 @@
   let fileInputInterception = null;
   let multiFileInsertOrchestration = null;
   let streamingFileInsertOrchestration = null;
+  let sanitizedFileInsertOrchestration = null;
   let fileInputPreparation = null;
   let fileProcessingUi = null;
   let whatsAppCapabilities = null;
@@ -7128,6 +7130,42 @@
     return streamingFileInsertOrchestration;
   }
 
+  function getSanitizedFileInsertOrchestration() {
+    if (sanitizedFileInsertOrchestration) return sanitizedFileInsertOrchestration;
+    if (typeof SanitizedFileInsertOrchestration.createSanitizedFileInsertOrchestration !== "function") {
+      sanitizedFileInsertOrchestration = Object.freeze({
+        handleSanitizedLocalFileAttach: async () => ({ handled: true, ok: false, reason: "unavailable" })
+      });
+      return sanitizedFileInsertOrchestration;
+    }
+
+    sanitizedFileInsertOrchestration =
+      SanitizedFileInsertOrchestration.createSanitizedFileInsertOrchestration({
+        fileAttachPipeline: globalThis.PWM.FileAttachPipeline,
+        clearLocalPayloadOptimizationStatus,
+        createSanitizedFileHandoffDetails,
+        debugReveal,
+        describeFileForDebug,
+        findComposer,
+        getCurrentHandoffDriver,
+        getFileHandoffAdapterForLocation,
+        handOffSanitizedLocalFile,
+        hideBadgeSoon,
+        hideDmzOverlay,
+        isFileHandoffAdapterPendingAttachEnabled,
+        isWhatsAppHost,
+        markWhatsAppSanitizedImageHandoff,
+        queuePendingSanitizedFileHandoff,
+        refreshBadgeFromCurrentInput,
+        scheduleDmzOverlayCleanup,
+        setBadge,
+        setDmzOverlayState,
+        showMessageModal,
+        updateFileProcessingOverlay
+      });
+    return sanitizedFileInsertOrchestration;
+  }
+
   async function maybeHandleLocalFileInsert(event, input, dataTransfer, context) {
     const alreadyConsumedSupportedWhatsAppClipboardImagePaste =
       event?.defaultPrevented === true &&
@@ -7428,176 +7466,28 @@
       };
     }
 
-    debugReveal("file-handoff:sanitized-file-created", {
-      context,
-      originalFile: describeFileForDebug(localFile.file),
-      sanitizedFile: describeFileForDebug(sanitizedFile),
-      findingsCount: analysis.secretFindings.length,
-      redactedLength: result.redactedText.length
-    });
-    const driver = getCurrentHandoffDriver();
-    if (preflightPlan.handoffStatus.shouldSetDmzReady) {
-      setDmzOverlayState(preflightPlan.handoffStatus.dmzStatus, preflightPlan.handoffStatus.dmzMode);
-    }
-    updateFileProcessingOverlay({
-      site: processingSite,
-      status: preflightPlan.handoffStatus.processingStatus,
-      progress: preflightPlan.handoffStatus.processingProgress,
-      blocking: preflightPlan.handoffStatus.processingBlocking
-    });
-
-    const payload = driver.preparePayload(sanitizedFile, result.redactedText, {
+    return getSanitizedFileInsertOrchestration().handleSanitizedLocalFileAttach({
+      event,
+      input,
       localFile,
       analysis,
-      result
-    });
-    if (imageRedactionMode) {
-      payload.allowFileOnlyHandoff = true;
-      payload.imageRedactionMode = true;
-    }
-    if (supportedWhatsAppTextDocumentAttach) {
-      payload.allowFileOnlyHandoff = true;
-      payload.textDocumentAttachMode = true;
-    }
-    if (supportedWhatsAppPdfAttach) {
-      payload.allowFileOnlyHandoff = true;
-      payload.pdfAttachMode = true;
-    }
-    if (supportedWhatsAppDocxAttach) {
-      payload.allowFileOnlyHandoff = true;
-      payload.docxAttachMode = true;
-    }
-    if (supportedWhatsAppXlsxAttach) {
-      payload.allowFileOnlyHandoff = true;
-      payload.xlsxAttachMode = true;
-    }
-    const attachFlow = await globalThis.PWM.FileAttachPipeline.runSanitizedFileAttachFlow({
+      result,
+      sanitizedFile,
       context,
-      tryDropHandoff: () =>
-        driver.handoff(payload, { event, input, context, driver, composerResolved: true }),
-      trySanitizedHandoff: () => handOffSanitizedLocalFile(event, input, sanitizedFile, context),
-      shouldSkipFallback: () => shouldSkipTextFallback,
-      skipFallbackReason: preflightPlan.attachFlowOptions.skipFallbackReason,
-      insertFallbackText: () => driver.insertSanitizedText(payload, { event, input, context, driver }),
-      allowPendingFallback: preflightPlan.attachFlowOptions.allowPendingFallback && Boolean(sanitizedFile),
-      defaultSuccessStrategy: preflightPlan.attachFlowOptions.defaultSuccessStrategy,
-      failureReason: preflightPlan.attachFlowOptions.failureReason,
-      successStatus: preflightPlan.attachFlowOptions.successStatus,
-      fileStrategy: preflightPlan.attachFlowOptions.fileStrategy,
-      textStrategy: preflightPlan.attachFlowOptions.textStrategy,
-      usesDmzOverlay: driver.usesDmzOverlay === true,
-      getPendingAttachFallbackOptions: (handoffClassification) => {
-        const pendingAdapter = getFileHandoffAdapterForLocation();
-        return {
-          pendingAdapter,
-          pendingAttachEnabled:
-            handoffClassification.shouldContinueFallback &&
-            isFileHandoffAdapterPendingAttachEnabled(pendingAdapter),
-          adapterId: pendingAdapter?.id
-        };
-      }
+      processingSite,
+      sizeInfo,
+      preflightPlan,
+      optimizedStatus,
+      imageRedactionMode,
+      shouldSkipTextFallback,
+      attachModes: {
+        textDocument: supportedWhatsAppTextDocumentAttach,
+        pdf: supportedWhatsAppPdfAttach,
+        docx: supportedWhatsAppDocxAttach,
+        xlsx: supportedWhatsAppXlsxAttach
+      },
+      controls: { failProcessing, hideProcessing, showProcessingSuccess }
     });
-    const handoffResult = attachFlow.handoffResult;
-    const handoffClassification = attachFlow.handoffClassification;
-
-    if (attachFlow.action !== "success") {
-      if (attachFlow.action === "cancelled") {
-        if (optimizedStatus) {
-          clearLocalPayloadOptimizationStatus(
-            sizeInfo,
-            preflightPlan.optimizedStatus.cleanupOnAttachCancellation
-          );
-        }
-        hideProcessing(handoffClassification.hideProcessingReason);
-        return {
-          handled: attachFlow.handled,
-          ok: false,
-          reason: attachFlow.reason
-        };
-      }
-
-      if (optimizedStatus) {
-        clearLocalPayloadOptimizationStatus(sizeInfo, preflightPlan.optimizedStatus.cleanupOnAttachFailure);
-      }
-      const pendingAdapter = attachFlow.pendingAttachOptions?.pendingAdapter;
-      if (
-        attachFlow.action === "pending" &&
-        queuePendingSanitizedFileHandoff(
-          pendingAdapter,
-          event,
-          input,
-          sanitizedFile,
-          createSanitizedFileHandoffDetails(
-            event,
-            sanitizedFile,
-            `${pendingAdapter.id}:pending-after-handoff-failure`
-          )
-        )
-      ) {
-        hideProcessing("pending");
-        hideDmzOverlay();
-        return {
-          handled: attachFlow.handled,
-          ok: true,
-          strategy: attachFlow.strategy
-        };
-      }
-      debugReveal("file-handoff:fail-closed", {
-        context,
-        reason: attachFlow.reason,
-        sanitizedFile: describeFileForDebug(sanitizedFile)
-      });
-      if (handoffClassification.shouldFailProcessing) {
-        failProcessing(
-          handoffClassification.reason,
-          imageRedactionMode ? "Raw image upload blocked" : "Raw file upload blocked"
-        );
-      }
-      const handoffFailureTitle = imageRedactionMode ? "Raw image upload blocked" : "Raw file upload blocked";
-      setBadge(handoffFailureTitle);
-      hideBadgeSoon(4200);
-      await showMessageModal(
-        handoffFailureTitle,
-        handoffResult.message ||
-          "LeakGuard blocked raw file upload. Sanitized file handoff failed; use File Scanner or paste redacted text manually."
-      );
-      refreshBadgeFromCurrentInput();
-      return {
-        handled: attachFlow.handled,
-        ok: false,
-        reason: attachFlow.reason
-      };
-    }
-
-    if (optimizedStatus) {
-      clearLocalPayloadOptimizationStatus(sizeInfo, preflightPlan.optimizedStatus.cleanupOnAttachSuccess);
-    }
-    const disposition = attachFlow.disposition;
-    if (disposition.shouldSetDmzAttached) {
-      setDmzOverlayState(disposition.dmzStatus, disposition.dmzMode);
-    }
-    if (disposition.shouldScheduleDmzCleanup) {
-      scheduleDmzOverlayCleanup(disposition.dmzCleanupDelay);
-    }
-    if (disposition.shouldShowAttachedBadge) {
-      setBadge("LeakGuard attached a sanitized local file.");
-      hideBadgeSoon(3200);
-    }
-    if (disposition.shouldHideProcessing) {
-      hideProcessing(disposition.hideProcessingReason);
-    } else if (disposition.shouldShowSuccess) {
-      showProcessingSuccess(disposition.successStatus, disposition.successReason);
-    }
-    if (imageRedactionMode && isWhatsAppHost()) {
-      markWhatsAppSanitizedImageHandoff(input || findComposer(event.target));
-    }
-    refreshBadgeFromCurrentInput();
-    return {
-      handled: handoffClassification.handled,
-      ok: true,
-      stage: handoffClassification.stage,
-      strategy: handoffClassification.strategy
-    };
     } catch (error) {
       showFileProcessingError("File processing failed", {
         site: processingSite,

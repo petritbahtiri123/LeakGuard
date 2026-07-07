@@ -80,6 +80,10 @@ const streamingFileInsertOrchestrationSource = fs.readFileSync(
   path.join(repoRoot, "src/content/files/streamingFileInsertOrchestration.js"),
   "utf8"
 );
+const sanitizedFileInsertOrchestrationSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/files/sanitizedFileInsertOrchestration.js"),
+  "utf8"
+);
 const contentFileExtractionPipelineSource = fs.readFileSync(
   path.join(repoRoot, "src/content/files/contentFileExtractionPipeline.js"),
   "utf8"
@@ -489,12 +493,12 @@ function testLocalFilePasteDoesNotExposeRawFileContent() {
   );
   assert.ok(
       localFileSource.includes("createSanitizedTextFile(localFile.file, result.redactedText)") &&
-      localFileSource.includes("handOffSanitizedLocalFile(event, input, sanitizedFile, context)") &&
+      sanitizedFileInsertOrchestrationSource.includes("handOffSanitizedLocalFile(event, input, sanitizedFile, context)") &&
       fileHandoffFlowSource.includes("function handOffSanitizedLocalFile") &&
       sanitizedFileHandoffSource.includes("fileInput.files = transfer.files") &&
       contentSource.includes("function handOffGeminiSanitizedFileUpload") &&
       contentSource.includes("function handOffGrokSanitizedFileUpload") &&
-      contentSource.includes("file-handoff:fail-closed"),
+      sanitizedFileInsertOrchestrationSource.includes("file-handoff:fail-closed"),
     "local file paste/drop should create sanitized in-memory files and use native upload adapters for site file drops"
   );
   assert.ok(
@@ -503,7 +507,9 @@ function testLocalFilePasteDoesNotExposeRawFileContent() {
       fileHandoffFlowSource.includes("handoffSanitizedPayload") &&
       fileHandoffFlowSource.includes("downloadSanitizedFileFallback") &&
       fileHandoffFlowSource.includes("formatSanitizedFileFallbackText(payload)") &&
-      localFileSource.includes("LeakGuard blocked raw file upload. Sanitized file handoff failed"),
+      sanitizedFileInsertOrchestrationSource.includes(
+        "LeakGuard blocked raw file upload. Sanitized file handoff failed"
+      ),
     "local file paste/drop should fail closed only after sanitized attachment, sanitized text fallback, and sanitized download fallback cannot be completed"
   );
   assert.ok(
@@ -550,7 +556,6 @@ function testFileAttachPipelineStaysPureAndContentOwnsFileAttachSideEffects() {
   const contentOwnedSideEffects = [
     "consumeInterceptionEvent(event);",
     "readLocalTextFileFromDataTransfer(dataTransfer)",
-    "handOffSanitizedLocalFile(event, input, sanitizedFile, context)",
     "showFileProcessingOverlay({",
     "showFileProcessingError(",
     "setBadge(",
@@ -574,6 +579,19 @@ function testFileAttachPipelineStaysPureAndContentOwnsFileAttachSideEffects() {
     assert.ok(
       streamingFileInsertOrchestrationSource.includes(sideEffect),
       `streaming file insert orchestration should own streaming side effect: ${sideEffect}`
+    );
+  }
+  const sanitizedAttachOwnedSideEffects = [
+    "handOffSanitizedLocalFile(event, input, sanitizedFile, context)",
+    "queuePendingSanitizedFileHandoff(",
+    "updateFileProcessingOverlay({",
+    "showMessageModal(",
+    "setBadge("
+  ];
+  for (const sideEffect of sanitizedAttachOwnedSideEffects) {
+    assert.ok(
+      sanitizedFileInsertOrchestrationSource.includes(sideEffect),
+      `sanitized file insert orchestration should own sanitized attach side effect: ${sideEffect}`
     );
   }
 
@@ -1695,8 +1713,8 @@ function testProtectedSiteOcrOptInStaysLocalAndGateBound() {
     "successful protected-site image redaction should produce a file-only redacted image and disabled OCR should block"
   );
   assert.ok(
-    contentSource.includes("payload.allowFileOnlyHandoff = true;") &&
-      contentSource.includes("payload.imageRedactionMode = true;") &&
+    sanitizedFileInsertOrchestrationSource.includes("payload.allowFileOnlyHandoff = true;") &&
+      sanitizedFileInsertOrchestrationSource.includes("payload.imageRedactionMode = true;") &&
       fileAttachPipelineSource.includes("Sanitized image attached."),
     "content handoff should disable image OCR text fallback and report image file attachment success"
   );
