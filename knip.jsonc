@@ -141,6 +141,7 @@
     "src/content/files/sanitizedFileInsertOrchestration.js",
     "src/content/files/localFileInsertOrchestration.js",
     "src/content/files/fileDropOrchestration.js",
+    "src/content/files/fileInputChangeOrchestration.js",
     "src/content/files/pendingSanitizedFileHandoff.js",
     "src/content/rehydration/placeholderRehydrator.js",
     "src/content/rehydration/responseObserver.js",

@@ -114,6 +114,10 @@ const fileDropOrchestrationSource = fs.readFileSync(
   path.join(repoRoot, "src/content/files/fileDropOrchestration.js"),
   "utf8"
 );
+const fileInputChangeOrchestrationSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/files/fileInputChangeOrchestration.js"),
+  "utf8"
+);
 const fileDropInterceptionSource = fs.readFileSync(
   path.join(repoRoot, "src/content/files/fileDropInterception.js"),
   "utf8"
@@ -563,8 +567,8 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   );
   assert.ok(
     contentSource.includes("async function maybeHandleFileInputChange") &&
-      contentSource.includes("clearLocalFileInputSelection(event.target)") &&
-      contentSource.includes('"file-input"'),
+      fileInputChangeOrchestrationSource.includes("clearLocalFileInputSelection(event.target)") &&
+      fileInputChangeOrchestrationSource.includes('"file-input"'),
     "file input changes should be captured, cleared, and routed through local redaction"
   );
   assert.ok(

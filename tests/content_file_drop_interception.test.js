@@ -127,6 +127,7 @@ require(path.join(repoRoot, "src/content/files/localFileSanitizationOrchestratio
 require(path.join(repoRoot, "src/content/files/sanitizedFileInsertOrchestration.js"));
 require(path.join(repoRoot, "src/content/files/localFileInsertOrchestration.js"));
 require(path.join(repoRoot, "src/content/files/fileDropOrchestration.js"));
+require(path.join(repoRoot, "src/content/files/fileInputChangeOrchestration.js"));
 require(path.join(repoRoot, "src/content/whatsapp/whatsappCapabilities.js"));
 require(path.join(repoRoot, "src/content/whatsapp/whatsappTextFlow.js"));
 require(path.join(repoRoot, "src/content/whatsapp/whatsappSelectors.js"));
@@ -1338,6 +1339,7 @@ function createHarness(overrides = {}) {
       "const SanitizedFileInsertOrchestration = globalThis.PWM?.SanitizedFileInsertOrchestration || {};",
       "const LocalFileInsertOrchestration = globalThis.PWM?.LocalFileInsertOrchestration || {};",
       "const FileDropOrchestration = globalThis.PWM?.FileDropOrchestration || {};",
+      "const FileInputChangeOrchestration = globalThis.PWM?.FileInputChangeOrchestration || {};",
       'const LOCAL_TEXT_HARD_BLOCK_TITLE = "Large payload blocked for browser stability";',
       'const LOCAL_TEXT_HARD_BLOCK_MESSAGE = "This content is over 4 MB. LeakGuard did not process or send it automatically to avoid browser instability. Split the file into smaller parts, or sanitize it separately before upload.";',
       "const LARGE_TEXT_STREAMING_MAX_BYTES = 50 * 1024 * 1024;",
@@ -1379,6 +1381,7 @@ function createHarness(overrides = {}) {
       "let sanitizedFileInsertOrchestration = null;",
       "let localFileInsertOrchestration = null;",
       "let fileDropOrchestration = null;",
+      "let fileInputChangeOrchestration = null;",
       "let fileProcessingUi = null;",
       "let geminiUploadDiscovery = null;",
       "let geminiFileHandoff = null;",
@@ -1740,6 +1743,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "maybeHandleDrop"),
       extractFunctionSource(contentSource, "maybeHandleFileDrag"),
       'let lastGeminiDropSessionHash = "";',
+      extractFunctionSource(contentSource, "getFileInputChangeOrchestration"),
       extractFunctionSource(contentSource, "maybeHandleFileInputChange"),
       "return { maybeHandleChatGptLargeTextPaste, maybeHandlePaste, maybeHandleDrop, maybeHandleFileDrag, maybeHandleFileInputChange, handOffSanitizedFileInput, resolveFileDragGuardPolicy, hasPendingGrokSanitizedFileHandoff, getPendingGrokSanitizedFileHandoffDebug, markWhatsAppSanitizedImageHandoff, shouldBypassWhatsAppSanitizedImageSend, getSuppressInputScanUntil: () => suppressInputScanUntil, isProgrammaticInputScanSuppressed };"
     ].join("\n\n")

@@ -287,6 +287,12 @@ function testContentRuntimeScriptOrder() {
     "content/files/fileTransferPolicy.js",
     "content/files/localFileInsertOrchestration.js"
   ], "content scripts");
+  assertAfterAll(contentScripts, "content/files/fileInputChangeOrchestration.js", [
+    "content/files/fileInputInterception.js",
+    "content/files/fileTransferPolicy.js",
+    "content/files/localFileInsertOrchestration.js",
+    "content/files/fileDropOrchestration.js"
+  ], "content scripts");
   assertBefore(
     contentScripts,
     "content/files/localFileReadOrchestration.js",

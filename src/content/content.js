@@ -73,6 +73,7 @@
   const FileDropInterception = globalThis.PWM?.FileDropInterception || {};
   const FileInputInterception = globalThis.PWM?.FileInputInterception || {};
   const FileDropOrchestration = globalThis.PWM?.FileDropOrchestration || {};
+  const FileInputChangeOrchestration = globalThis.PWM?.FileInputChangeOrchestration || {};
   const MultiFileInsertOrchestration = globalThis.PWM?.MultiFileInsertOrchestration || {};
   const StreamingFileInsertOrchestration = globalThis.PWM?.StreamingFileInsertOrchestration || {};
   const LocalFileReadOrchestration = globalThis.PWM?.LocalFileReadOrchestration || {};
@@ -379,6 +380,7 @@
   let fileDropInterception = null;
   let fileInputInterception = null;
   let fileDropOrchestration = null;
+  let fileInputChangeOrchestration = null;
   let multiFileInsertOrchestration = null;
   let streamingFileInsertOrchestration = null;
   let localFileReadOrchestration = null;
@@ -6938,177 +6940,60 @@
     return fileInputInterception;
   }
 
+  function getFileInputChangeOrchestration() {
+    if (fileInputChangeOrchestration) return fileInputChangeOrchestration;
+    if (typeof FileInputChangeOrchestration.createFileInputChangeOrchestration !== "function") {
+      fileInputChangeOrchestration = Object.freeze({
+        maybeHandleFileInputChange: async () => undefined
+      });
+      return fileInputChangeOrchestration;
+    }
+
+    fileInputChangeOrchestration =
+      FileInputChangeOrchestration.createFileInputChangeOrchestration({
+        clearLocalFileInputSelection,
+        consumeInterceptionEvent,
+        contentDebugEvents: CONTENT_DEBUG_EVENTS,
+        debugReveal,
+        describeFileInputForDebug,
+        fileInputProcessingSignatures,
+        findComposer,
+        getCurrentHandoffDriverId,
+        getFileInputInterception,
+        getFileListMetadataSignature,
+        getFirefoxFileInputTransaction,
+        getSanitizedFileInputHandoffSuppression,
+        hideBadgeSoon,
+        isExtensionRuntimeAvailable: () => extensionRuntimeAvailable,
+        isFirefoxProtectedFileInputEvent,
+        isFirefoxRuntime,
+        isGeminiHost,
+        isModalOpen: () => modalOpen,
+        isPotentialWhatsAppMultiFileAttach,
+        isProtectedFileDropDriver,
+        isSupportedWhatsAppDocxAttach,
+        isSupportedWhatsAppImageAttach,
+        isSupportedWhatsAppPdfAttach,
+        isSupportedWhatsAppTextDocumentAttach,
+        isSupportedWhatsAppXlsxAttach,
+        isWhatsAppHost,
+        markFirefoxFileInputTransactionReplaced,
+        maybeHandleLocalFileInsert,
+        programmaticInputSuppressMs: PROGRAMMATIC_INPUT_SUPPRESS_MS,
+        resolveLocalFileTransferPolicy,
+        sanitizedFileInputHandoffs,
+        setBadge,
+        setFirefoxFileInputTransaction,
+        shouldFailClosedProtectedUnsupportedFileTransfer,
+        shouldSuppressFirefoxFileInputEvent,
+        shouldUseContentFileExtractionPipeline,
+        suppressSanitizedFileInputHandoffEvent
+      });
+    return fileInputChangeOrchestration;
+  }
+
   async function maybeHandleFileInputChange(event) {
-    const inputInterception = getFileInputInterception();
-    if (!inputInterception.shouldHandleFileInputChange(event, { extensionRuntimeAvailable, modalOpen })) {
-      return;
-    }
-
-    const selectedFiles = Array.from(event.target.files || []);
-    const processingSignature = fileInputProcessingSignatures.get(event.target) || "";
-    if (isWhatsAppHost() && processingSignature && selectedFiles.length === 0) {
-      consumeInterceptionEvent(event);
-      debugReveal("file-input:whatsapp-empty-processing-event-suppressed", {
-        eventType: event.type || "",
-        input: describeFileInputForDebug(event.target, "whatsapp-processing"),
-        reason: "empty_event_during_image_attach_processing"
-      });
-      return {
-        handled: true,
-        ok: true,
-        strategy: "whatsapp-empty-processing-event-suppressed"
-      };
-    }
-    const sanitizedHandoffSuppression = getSanitizedFileInputHandoffSuppression(event.target, selectedFiles);
-    if (sanitizedHandoffSuppression) {
-      suppressSanitizedFileInputHandoffEvent(event, sanitizedHandoffSuppression);
-      return {
-        handled: true,
-        ok: true,
-        strategy: "sanitized-file-handoff-suppressed"
-      };
-    }
-
-    const isFirefoxProtectedInput = isFirefoxProtectedFileInputEvent(event);
-    const existingTransaction = isFirefoxProtectedInput ? getFirefoxFileInputTransaction(event.target) : null;
-
-    if (sanitizedFileInputHandoffs.has(event.target)) {
-      if (!isFirefoxProtectedInput) {
-        debugReveal(CONTENT_DEBUG_EVENTS.FILE_HANDOFF_PENDING_DUPLICATE_SUPPRESSED, {
-          eventType: event.type || "",
-          input: describeFileInputForDebug(event.target, "sanitized-file-handoff")
-        });
-        sanitizedFileInputHandoffs.delete(event.target);
-        return;
-      }
-      const currentSignature = getFileListMetadataSignature(event.target.files);
-      const isOwnSanitizedRedispatch =
-        existingTransaction?.state === "replaced" &&
-        (!existingTransaction.sanitizedSignature || currentSignature === existingTransaction.sanitizedSignature) &&
-        (!existingTransaction.suppressUntil || Date.now() <= existingTransaction.suppressUntil);
-      if (isOwnSanitizedRedispatch) {
-        debugReveal(CONTENT_DEBUG_EVENTS.FILE_HANDOFF_PENDING_DUPLICATE_SUPPRESSED, {
-          eventType: event.type || "",
-          input: describeFileInputForDebug(event.target, "firefox-sanitized-file-handoff"),
-          state: existingTransaction.state
-        });
-        markFirefoxFileInputTransactionReplaced(event.target, event.target.files);
-        return;
-      }
-      sanitizedFileInputHandoffs.delete(event.target);
-    }
-
-    if (isFirefoxProtectedInput && shouldSuppressFirefoxFileInputEvent(event, existingTransaction)) {
-      if (existingTransaction.state === "processing") {
-        consumeInterceptionEvent(event);
-      }
-      debugReveal("file-input:firefox-transaction-suppressed", {
-        eventType: event.type || "",
-        state: existingTransaction.state,
-        rawSignature: existingTransaction.rawSignature || "",
-        sanitizedSignature: existingTransaction.sanitizedSignature || ""
-      });
-      return;
-    }
-
-    if (!inputInterception.hasSelectedFiles(event.target.files)) {
-      return;
-    }
-
-    const selectedSignature = getFileListMetadataSignature(selectedFiles);
-    if (selectedSignature && processingSignature === selectedSignature) {
-      consumeInterceptionEvent(event);
-      debugReveal("file-input:duplicate-raw-event-suppressed", {
-        eventType: event.type || "",
-        input: describeFileInputForDebug(event.target, "processing"),
-        fileCount: selectedFiles.length
-      });
-      return {
-        handled: true,
-        ok: true,
-        strategy: "duplicate-file-input-event-suppressed"
-      };
-    }
-
-    let transaction = null;
-    if (isFirefoxProtectedInput) {
-      transaction = setFirefoxFileInputTransaction(event.target, {
-        state: "processing",
-        rawSignature: selectedSignature,
-        startedAt: Date.now(),
-        suppressUntil: Date.now() + PROGRAMMATIC_INPUT_SUPPRESS_MS,
-        replacementDispatched: false
-      });
-      consumeInterceptionEvent(event);
-      clearLocalFileInputSelection(event.target);
-    }
-
-    const input = findComposer(event.target);
-    const selectedTransfer = inputInterception.createSelectedTransfer(selectedFiles);
-    const hasContentExtractionFile =
-      selectedFiles.length === 1 && shouldUseContentFileExtractionPipeline(selectedFiles[0]);
-    const hasSupportedWhatsAppAttach =
-      isSupportedWhatsAppImageAttach(selectedTransfer, "file-input") ||
-      isSupportedWhatsAppTextDocumentAttach(selectedTransfer, "file-input") ||
-      isSupportedWhatsAppPdfAttach(selectedTransfer, "file-input") ||
-      isSupportedWhatsAppDocxAttach(selectedTransfer, "file-input") ||
-      isSupportedWhatsAppXlsxAttach(selectedTransfer, "file-input") ||
-      isPotentialWhatsAppMultiFileAttach(selectedFiles, "file-input");
-    const selectedTransferPolicy = resolveLocalFileTransferPolicy(selectedTransfer);
-    const hasFailClosedProtectedUnsupportedFile =
-      shouldFailClosedProtectedUnsupportedFileTransfer(selectedTransferPolicy);
-    const hasWhatsAppFileInputSelection = isWhatsAppHost() && selectedFiles.length > 0;
-    if (
-      !inputInterception.shouldContinueWithoutComposer({
-        input,
-        isGeminiHost: isGeminiHost(),
-        hasContentExtractionFile,
-        hasFailClosedProtectedUnsupportedFile,
-        hasSupportedWhatsAppAttach,
-        hasWhatsAppFileInputSelection,
-        isFirefoxRuntime: isFirefoxRuntime(),
-        isProtectedFileDropDriver: isProtectedFileDropDriver(getCurrentHandoffDriverId()),
-        currentHandoffDriverId: getCurrentHandoffDriverId()
-      })
-    ) {
-      return;
-    }
-
-    fileInputProcessingSignatures.set(event.target, selectedSignature);
-    let result;
-    try {
-      result = await maybeHandleLocalFileInsert(
-        event,
-        input,
-        selectedTransfer,
-        "file-input"
-      );
-    } finally {
-      if (fileInputProcessingSignatures.get(event.target) === selectedSignature) {
-        fileInputProcessingSignatures.delete(event.target);
-      }
-    }
-    if (isFirefoxProtectedInput && transaction) {
-      const latest = getFirefoxFileInputTransaction(event.target);
-      if (result?.ok) {
-        setFirefoxFileInputTransaction(event.target, {
-          state: "replaced",
-          rawSignature: transaction.rawSignature,
-          sanitizedSignature: latest?.sanitizedSignature || getFileListMetadataSignature(event.target.files),
-          suppressUntil: Date.now() + PROGRAMMATIC_INPUT_SUPPRESS_MS,
-          replacementDispatched: true
-        });
-        setBadge("LeakGuard replaced the selected file with a sanitized copy.");
-        hideBadgeSoon(3200);
-      } else if (latest?.state !== "replaced") {
-        setFirefoxFileInputTransaction(event.target, {
-          state: "failed",
-          rawSignature: transaction.rawSignature,
-          suppressUntil: Date.now() + PROGRAMMATIC_INPUT_SUPPRESS_MS
-        });
-      }
-    }
-    return result;
+    return getFileInputChangeOrchestration().maybeHandleFileInputChange(event);
   }
 
   function shouldOwnWhatsAppTextSend(text) {

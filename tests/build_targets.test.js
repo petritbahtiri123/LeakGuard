@@ -1468,6 +1468,8 @@ async function run() {
   const localFileInsertOrchestrationIndex =
     contentScripts.indexOf("content/files/localFileInsertOrchestration.js");
   const fileDropOrchestrationIndex = contentScripts.indexOf("content/files/fileDropOrchestration.js");
+  const fileInputChangeOrchestrationIndex =
+    contentScripts.indexOf("content/files/fileInputChangeOrchestration.js");
   const placeholderRehydratorIndex = contentScripts.indexOf("content/rehydration/placeholderRehydrator.js");
   const responseObserverIndex = contentScripts.indexOf("content/rehydration/responseObserver.js");
   const revealControllerIndex = contentScripts.indexOf("content/rehydration/revealController.js");
@@ -1545,6 +1547,10 @@ async function run() {
     "content scripts should include local file insert orchestration"
   );
   assert.ok(fileDropOrchestrationIndex > -1, "content scripts should include file drop orchestration");
+  assert.ok(
+    fileInputChangeOrchestrationIndex > -1,
+    "content scripts should include file input change orchestration"
+  );
   assert.ok(placeholderRehydratorIndex > -1, "content scripts should include placeholder rehydration helpers");
   assert.ok(responseObserverIndex > -1, "content scripts should include response observer helpers");
   assert.ok(revealControllerIndex > -1, "content scripts should include reveal controller helpers");
@@ -1600,7 +1606,8 @@ async function run() {
       fileHandoffDiscoveryIndex < sanitizedFileHandoffIndex &&
       sanitizedFileHandoffIndex < localFileInsertOrchestrationIndex &&
       localFileInsertOrchestrationIndex < fileDropOrchestrationIndex &&
-      fileDropOrchestrationIndex < placeholderRehydratorIndex &&
+      fileDropOrchestrationIndex < fileInputChangeOrchestrationIndex &&
+      fileInputChangeOrchestrationIndex < placeholderRehydratorIndex &&
       placeholderRehydratorIndex < responseObserverIndex &&
       responseObserverIndex < revealControllerIndex &&
       revealControllerIndex < debugLoggerIndex &&
