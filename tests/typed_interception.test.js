@@ -106,6 +106,10 @@ const sanitizedFileInsertOrchestrationSource = fs.readFileSync(
   path.join(repoRoot, "src/content/files/sanitizedFileInsertOrchestration.js"),
   "utf8"
 );
+const localFileInsertOrchestrationSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/files/localFileInsertOrchestration.js"),
+  "utf8"
+);
 const fileDropInterceptionSource = fs.readFileSync(
   path.join(repoRoot, "src/content/files/fileDropInterception.js"),
   "utf8"
@@ -450,7 +454,7 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   const queueVerifiedSendSource = extractFunctionSource(contentSource, "queueVerifiedComposerSend");
   const typedRewriteSource = extractFunctionSource(contentSource, "applyTypedInterceptionRewrite");
   const beforeInputSource = extractFunctionSource(beforeInputOrchestrationSource, "maybeHandleBeforeInput");
-  const fileInsertSource = extractFunctionSource(contentSource, "maybeHandleLocalFileInsert");
+  const fileInsertSource = extractFunctionSource(localFileInsertOrchestrationSource, "maybeHandleLocalFileInsert");
   const fileDragSource = extractFunctionSource(contentSource, "maybeHandleFileDrag");
   const dropSource = extractFunctionSource(contentSource, "maybeHandleDrop");
   const manifest = JSON.parse(fs.readFileSync(path.join(repoRoot, "manifests/base.json"), "utf8"));

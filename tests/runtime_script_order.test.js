@@ -274,6 +274,14 @@ function testContentRuntimeScriptOrder() {
     "content/files/fileAttachPipeline.js",
     "content/files/localFileReadOrchestration.js"
   ], "content scripts");
+  assertAfterAll(contentScripts, "content/files/localFileInsertOrchestration.js", [
+    "content/files/fileAttachPipeline.js",
+    "content/files/multiFileInsertOrchestration.js",
+    "content/files/localFileReadOrchestration.js",
+    "content/files/localFileAttachPreflightOrchestration.js",
+    "content/files/localFileSanitizationOrchestration.js",
+    "content/files/sanitizedFileInsertOrchestration.js"
+  ], "content scripts");
   assertBefore(
     contentScripts,
     "content/files/localFileReadOrchestration.js",

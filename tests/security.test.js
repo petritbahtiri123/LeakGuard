@@ -92,6 +92,10 @@ const sanitizedFileInsertOrchestrationSource = fs.readFileSync(
   path.join(repoRoot, "src/content/files/sanitizedFileInsertOrchestration.js"),
   "utf8"
 );
+const localFileInsertOrchestrationSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/files/localFileInsertOrchestration.js"),
+  "utf8"
+);
 const contentFileExtractionPipelineSource = fs.readFileSync(
   path.join(repoRoot, "src/content/files/contentFileExtractionPipeline.js"),
   "utf8"
@@ -481,7 +485,7 @@ function testPlaceholderLabelsDoNotExposeRawValues() {
 }
 
 function testLocalFilePasteDoesNotExposeRawFileContent() {
-  const fileInsertSource = extractFunctionSource(contentSource, "maybeHandleLocalFileInsert");
+  const fileInsertSource = extractFunctionSource(localFileInsertOrchestrationSource, "maybeHandleLocalFileInsert");
   const localFileSource = `${filePasteHelperSource}\n${fileInsertSource}`;
 
   assert.ok(
@@ -564,7 +568,7 @@ function testLocalFilePasteDoesNotExposeRawFileContent() {
 }
 
 function testFileAttachPipelineStaysPureAndContentOwnsFileAttachSideEffects() {
-  const fileInsertSource = extractFunctionSource(contentSource, "maybeHandleLocalFileInsert");
+  const fileInsertSource = extractFunctionSource(localFileInsertOrchestrationSource, "maybeHandleLocalFileInsert");
   const contentOwnedSideEffects = [
     "consumeInterceptionEvent(event);",
     "showFileProcessingError(",
@@ -572,7 +576,7 @@ function testFileAttachPipelineStaysPureAndContentOwnsFileAttachSideEffects() {
   for (const sideEffect of contentOwnedSideEffects) {
     assert.ok(
       fileInsertSource.includes(sideEffect),
-      `maybeHandleLocalFileInsert should continue to own file attach side effect: ${sideEffect}`
+      `local file insert orchestration should continue to own file attach side effect: ${sideEffect}`
     );
   }
   const streamingOwnedSideEffects = [

@@ -121,6 +121,7 @@ require(path.join(repoRoot, "src/content/files/localFileReadOrchestration.js"));
 require(path.join(repoRoot, "src/content/files/localFileAttachPreflightOrchestration.js"));
 require(path.join(repoRoot, "src/content/files/localFileSanitizationOrchestration.js"));
 require(path.join(repoRoot, "src/content/files/sanitizedFileInsertOrchestration.js"));
+require(path.join(repoRoot, "src/content/files/localFileInsertOrchestration.js"));
 require(path.join(repoRoot, "src/content/whatsapp/whatsappCapabilities.js"));
 require(path.join(repoRoot, "src/content/whatsapp/whatsappTextFlow.js"));
 require(path.join(repoRoot, "src/content/whatsapp/whatsappSelectors.js"));
@@ -1330,6 +1331,7 @@ function createHarness(overrides = {}) {
       "const LocalFileAttachPreflightOrchestration = globalThis.PWM?.LocalFileAttachPreflightOrchestration || {};",
       "const LocalFileSanitizationOrchestration = globalThis.PWM?.LocalFileSanitizationOrchestration || {};",
       "const SanitizedFileInsertOrchestration = globalThis.PWM?.SanitizedFileInsertOrchestration || {};",
+      "const LocalFileInsertOrchestration = globalThis.PWM?.LocalFileInsertOrchestration || {};",
       'const LOCAL_TEXT_HARD_BLOCK_TITLE = "Large payload blocked for browser stability";',
       'const LOCAL_TEXT_HARD_BLOCK_MESSAGE = "This content is over 4 MB. LeakGuard did not process or send it automatically to avoid browser instability. Split the file into smaller parts, or sanitize it separately before upload.";',
       "const LARGE_TEXT_STREAMING_MAX_BYTES = 50 * 1024 * 1024;",
@@ -1369,6 +1371,7 @@ function createHarness(overrides = {}) {
       "let localFileAttachPreflightOrchestration = null;",
       "let localFileSanitizationOrchestration = null;",
       "let sanitizedFileInsertOrchestration = null;",
+      "let localFileInsertOrchestration = null;",
       "let fileProcessingUi = null;",
       "let geminiUploadDiscovery = null;",
       "let geminiFileHandoff = null;",
@@ -1722,6 +1725,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "getLocalFileAttachPreflightOrchestration"),
       extractFunctionSource(contentSource, "getLocalFileSanitizationOrchestration"),
       extractFunctionSource(contentSource, "getSanitizedFileInsertOrchestration"),
+      extractFunctionSource(contentSource, "getLocalFileInsertOrchestration"),
       extractFunctionSource(contentSource, "maybeHandleLocalFileInsert"),
       extractFunctionSource(contentSource, "getPasteOrchestration"),
       extractFunctionSource(contentSource, "maybeHandlePaste"),

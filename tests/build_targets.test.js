@@ -1465,6 +1465,8 @@ async function run() {
   const fileInputPreparationIndex = contentScripts.indexOf("content/files/fileInputPreparation.js");
   const fileHandoffDiscoveryIndex = contentScripts.indexOf("content/files/fileHandoffDiscovery.js");
   const sanitizedFileHandoffIndex = contentScripts.indexOf("content/files/sanitizedFileHandoff.js");
+  const localFileInsertOrchestrationIndex =
+    contentScripts.indexOf("content/files/localFileInsertOrchestration.js");
   const placeholderRehydratorIndex = contentScripts.indexOf("content/rehydration/placeholderRehydrator.js");
   const responseObserverIndex = contentScripts.indexOf("content/rehydration/responseObserver.js");
   const revealControllerIndex = contentScripts.indexOf("content/rehydration/revealController.js");
@@ -1537,6 +1539,10 @@ async function run() {
   assert.ok(fileInputPreparationIndex > -1, "content scripts should include file input preparation helpers");
   assert.ok(fileHandoffDiscoveryIndex > -1, "content scripts should include file handoff discovery helpers");
   assert.ok(sanitizedFileHandoffIndex > -1, "content scripts should include sanitized file handoff helpers");
+  assert.ok(
+    localFileInsertOrchestrationIndex > -1,
+    "content scripts should include local file insert orchestration"
+  );
   assert.ok(placeholderRehydratorIndex > -1, "content scripts should include placeholder rehydration helpers");
   assert.ok(responseObserverIndex > -1, "content scripts should include response observer helpers");
   assert.ok(revealControllerIndex > -1, "content scripts should include reveal controller helpers");
@@ -1590,7 +1596,8 @@ async function run() {
       fileAttachPipelineIndex < fileInputPreparationIndex &&
       fileInputPreparationIndex < fileHandoffDiscoveryIndex &&
       fileHandoffDiscoveryIndex < sanitizedFileHandoffIndex &&
-      sanitizedFileHandoffIndex < placeholderRehydratorIndex &&
+      sanitizedFileHandoffIndex < localFileInsertOrchestrationIndex &&
+      localFileInsertOrchestrationIndex < placeholderRehydratorIndex &&
       placeholderRehydratorIndex < responseObserverIndex &&
       responseObserverIndex < revealControllerIndex &&
       revealControllerIndex < debugLoggerIndex &&

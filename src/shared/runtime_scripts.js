@@ -119,6 +119,7 @@
     "content/files/localFileAttachPreflightOrchestration.js",
     "content/files/localFileSanitizationOrchestration.js",
     "content/files/sanitizedFileInsertOrchestration.js",
+    "content/files/localFileInsertOrchestration.js",
     "content/files/pendingSanitizedFileHandoff.js",
     "content/rehydration/placeholderRehydrator.js",
     "content/rehydration/responseObserver.js",

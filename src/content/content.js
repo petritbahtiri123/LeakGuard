@@ -78,6 +78,7 @@
   const LocalFileAttachPreflightOrchestration = globalThis.PWM?.LocalFileAttachPreflightOrchestration || {};
   const LocalFileSanitizationOrchestration = globalThis.PWM?.LocalFileSanitizationOrchestration || {};
   const SanitizedFileInsertOrchestration = globalThis.PWM?.SanitizedFileInsertOrchestration || {};
+  const LocalFileInsertOrchestration = globalThis.PWM?.LocalFileInsertOrchestration || {};
   const FileInputPreparation = globalThis.PWM?.FileInputPreparation || {};
   const FileProcessingUi = globalThis.PWM?.FileProcessingUi || {};
   const WhatsAppCapabilities = globalThis.PWM?.WhatsAppCapabilities || {};
@@ -382,6 +383,7 @@
   let localFileAttachPreflightOrchestration = null;
   let localFileSanitizationOrchestration = null;
   let sanitizedFileInsertOrchestration = null;
+  let localFileInsertOrchestration = null;
   let fileInputPreparation = null;
   let fileProcessingUi = null;
   let whatsAppCapabilities = null;
@@ -6775,179 +6777,60 @@
     return sanitizedFileInsertOrchestration;
   }
 
-  async function maybeHandleLocalFileInsert(event, input, dataTransfer, context) {
-    const alreadyConsumedSupportedWhatsAppClipboardImagePaste =
-      event?.defaultPrevented === true &&
-      context === "paste" &&
-      isSupportedWhatsAppClipboardImagePaste(dataTransfer, context);
-    if (
-      !extensionRuntimeAvailable ||
-      modalOpen ||
-      (event.defaultPrevented &&
-        context !== "drop" &&
-        !(
-          context === "file-input" &&
-          (isGeminiHost() || (isFirefoxRuntime() && isProtectedFileDropDriver(getCurrentHandoffDriverId())))
-        ) &&
-        !alreadyConsumedSupportedWhatsAppClipboardImagePaste) ||
-      typeof readLocalTextFileFromDataTransfer !== "function" ||
-      typeof createSanitizedTextFile !== "function" ||
-      !dataTransferHasFiles(dataTransfer)
-    ) {
-      return false;
+  function getLocalFileInsertOrchestration() {
+    if (localFileInsertOrchestration) return localFileInsertOrchestration;
+    if (typeof LocalFileInsertOrchestration.createLocalFileInsertOrchestration !== "function") {
+      localFileInsertOrchestration = Object.freeze({
+        maybeHandleLocalFileInsert: async () => false
+      });
+      return localFileInsertOrchestration;
     }
 
-    const localTransferFiles = listLocalTransferFiles(dataTransfer);
-    const processingSite = getCurrentHandoffDriverId();
-    const { failProcessing, hideProcessing, showProcessingSuccess } =
-      globalThis.PWM.FileAttachPipeline.createProcessingStageControls({
-        site: processingSite,
-        showFileProcessingError,
+    localFileInsertOrchestration =
+      LocalFileInsertOrchestration.createLocalFileInsertOrchestration({
+        blockWhatsAppFileAttachment,
+        clearLocalFileInputSelection,
+        consumeInterceptionEvent,
+        createSanitizedTextFile,
+        dataTransferHasFiles,
+        describeFileForDebug,
+        fileAttachPipeline: globalThis.PWM.FileAttachPipeline,
+        getCurrentHandoffDriverId,
+        getLocalFileAttachPreflightOrchestration,
+        getLocalFileReadOrchestration,
+        getLocalFileSanitizationOrchestration,
+        getLocalFileTransferPolicyGate,
+        getSanitizedFileInsertOrchestration,
         hideFileProcessingOverlay,
-        showFileProcessingSuccess
+        isExtensionRuntimeAvailable: () => extensionRuntimeAvailable,
+        isFirefoxRuntime,
+        isGeminiHost,
+        isModalOpen: () => modalOpen,
+        isPotentialWhatsAppMultiFileAttach,
+        isProtectedFileDropDriver,
+        isSupportedWhatsAppClipboardImagePaste,
+        isSupportedWhatsAppDocxAttach,
+        isSupportedWhatsAppImageAttach,
+        isSupportedWhatsAppPdfAttach,
+        isSupportedWhatsAppTextDocumentAttach,
+        isSupportedWhatsAppXlsxAttach,
+        isWhatsAppHost,
+        listLocalTransferFiles,
+        logFileInterception,
+        maybeHandleMultiFileInsert,
+        readLocalTextFileFromDataTransfer,
+        resolveLocalFileTransferPolicy,
+        shouldUseContentFileExtractionPipeline,
+        showFileProcessingError,
+        showFileProcessingSuccess,
+        whatsappFileAttachBlockTitle: WHATSAPP_FILE_ATTACH_BLOCK_TITLE,
+        whatsappFileAttachUnsupportedReason: WHATSAPP_FILE_ATTACH_UNSUPPORTED_REASON
       });
-    const supportedWhatsAppImageAttach = isSupportedWhatsAppImageAttach(dataTransfer, context);
-    const supportedWhatsAppTextDocumentAttach = isSupportedWhatsAppTextDocumentAttach(dataTransfer, context);
-    const supportedWhatsAppPdfAttach = isSupportedWhatsAppPdfAttach(dataTransfer, context);
-    const supportedWhatsAppDocxAttach = isSupportedWhatsAppDocxAttach(dataTransfer, context);
-    const supportedWhatsAppXlsxAttach = isSupportedWhatsAppXlsxAttach(dataTransfer, context);
-    const potentialWhatsAppMultiFileAttach = isPotentialWhatsAppMultiFileAttach(localTransferFiles, context);
-    if (
-      isWhatsAppHost() &&
-      localTransferFiles.length &&
-      !isSupportedWhatsAppClipboardImagePaste(dataTransfer, context) &&
-      !potentialWhatsAppMultiFileAttach &&
-      !supportedWhatsAppImageAttach &&
-      !supportedWhatsAppTextDocumentAttach &&
-      !supportedWhatsAppPdfAttach &&
-      !supportedWhatsAppDocxAttach &&
-      !supportedWhatsAppXlsxAttach
-    ) {
-      failProcessing(WHATSAPP_FILE_ATTACH_UNSUPPORTED_REASON, WHATSAPP_FILE_ATTACH_BLOCK_TITLE);
-      return blockWhatsAppFileAttachment(event);
-    }
-    const multiFileResult = await maybeHandleMultiFileInsert(
-      event,
-      input,
-      localTransferFiles,
-      context,
-      processingSite,
-      { failProcessing, hideProcessing, showProcessingSuccess }
-    );
-    if (multiFileResult) return multiFileResult;
+    return localFileInsertOrchestration;
+  }
 
-    const contentExtractionFile =
-      localTransferFiles.length === 1 && shouldUseContentFileExtractionPipeline(localTransferFiles[0])
-        ? localTransferFiles[0]
-        : null;
-    const transferPolicy = resolveLocalFileTransferPolicy(dataTransfer);
-    const transferPolicyResult = await getLocalFileTransferPolicyGate().maybeHandleLocalFileTransferPolicy(
-      event,
-      transferPolicy,
-      { contentExtractionFile }
-    );
-    if (transferPolicyResult !== null) return transferPolicyResult;
-
-    if (!(event.defaultPrevented && context === "file-input" && isGeminiHost())) {
-      consumeInterceptionEvent(event);
-    }
-    if (
-      (supportedWhatsAppImageAttach ||
-        supportedWhatsAppTextDocumentAttach ||
-        supportedWhatsAppPdfAttach ||
-        supportedWhatsAppDocxAttach ||
-        supportedWhatsAppXlsxAttach) &&
-      event?.target?.tagName === "INPUT" &&
-      String(event.target.type || "").toLowerCase() === "file"
-    ) {
-      clearLocalFileInputSelection(event.target);
-    }
-
-    if (context === "file-input") {
-      logFileInterception("file input intercepted", {
-        files: listLocalTransferFiles(dataTransfer).map(describeFileForDebug),
-        browser: isFirefoxRuntime() ? "firefox" : "other"
-      });
-    }
-
-    try {
-      const localFileRead = await getLocalFileReadOrchestration().readLocalFileForInsert({
-        event,
-        input,
-        dataTransfer,
-        contentExtractionFile,
-        context,
-        processingSite,
-        controls: { failProcessing, hideProcessing, showProcessingSuccess }
-      });
-      if (localFileRead.done) return localFileRead.value;
-      const { localFile, contentExtractionResult } = localFileRead;
-
-      const attachPreflight = await getLocalFileAttachPreflightOrchestration().prepareLocalFileAttachPreflight({
-        event,
-        localFile,
-        context,
-        attachModes: {
-          textDocument: supportedWhatsAppTextDocumentAttach,
-          pdf: supportedWhatsAppPdfAttach,
-          docx: supportedWhatsAppDocxAttach,
-          xlsx: supportedWhatsAppXlsxAttach
-        },
-        controls: { failProcessing }
-      });
-      if (attachPreflight.done) return attachPreflight.value;
-      const {
-        imageRedactionMode,
-        sizeInfo,
-        shouldSkipTextFallback,
-        preflightPlan,
-        optimizedStatus
-      } = attachPreflight;
-
-      const sanitization = await getLocalFileSanitizationOrchestration().sanitizeLocalFileForAttach({
-        localFile,
-        contentExtractionResult,
-        context,
-        processingSite,
-        sizeInfo,
-        preflightPlan,
-        optimizedStatus,
-        imageRedactionMode,
-        controls: { failProcessing }
-      });
-      if (!sanitization.ok) return sanitization;
-      const { analysis, result, sanitizedFile } = sanitization;
-
-      return getSanitizedFileInsertOrchestration().handleSanitizedLocalFileAttach({
-        event,
-        input,
-        localFile,
-        analysis,
-        result,
-        sanitizedFile,
-        context,
-        processingSite,
-        sizeInfo,
-        preflightPlan,
-        optimizedStatus,
-        imageRedactionMode,
-        shouldSkipTextFallback,
-        attachModes: {
-          textDocument: supportedWhatsAppTextDocumentAttach,
-          pdf: supportedWhatsAppPdfAttach,
-          docx: supportedWhatsAppDocxAttach,
-          xlsx: supportedWhatsAppXlsxAttach
-        },
-        controls: { failProcessing, hideProcessing, showProcessingSuccess }
-      });
-    } catch (error) {
-      showFileProcessingError("File processing failed", {
-        site: processingSite,
-        reason: "exception"
-      });
-      hideFileProcessingOverlay("exception");
-      throw error;
-    }
+  async function maybeHandleLocalFileInsert(event, input, dataTransfer, context) {
+    return getLocalFileInsertOrchestration().maybeHandleLocalFileInsert(event, input, dataTransfer, context);
   }
 
   async function maybeHandleDrop(event) {
