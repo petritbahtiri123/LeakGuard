@@ -22,6 +22,7 @@ require(path.join(repoRoot, "src/content/composer/fallbackSendKeyOrchestration.j
 require(path.join(repoRoot, "src/content/composer/typedSecretScanOrchestration.js"));
 require(path.join(repoRoot, "src/content/composer/beforeInputOrchestration.js"));
 require(path.join(repoRoot, "src/content/composer/submitOrchestration.js"));
+require(path.join(repoRoot, "src/content/composer/sendButtonClickOrchestration.js"));
 require(path.join(repoRoot, "src/content/diagnostics/debugLogger.js"));
 const ContentDebugFacade = require(path.join(repoRoot, "src/content/diagnostics/contentDebugFacade.js"));
 
@@ -61,6 +62,10 @@ const beforeInputOrchestrationSource = fs.readFileSync(
 );
 const submitOrchestrationSource = fs.readFileSync(
   path.join(repoRoot, "src/content/composer/submitOrchestration.js"),
+  "utf8"
+);
+const sendButtonClickOrchestrationSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/composer/sendButtonClickOrchestration.js"),
   "utf8"
 );
 const contentModalUiSource = fs.readFileSync(path.join(repoRoot, "src/content/ui/contentModalUi.js"), "utf8");
@@ -652,10 +657,10 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
       contentSource.includes("maybeHandleSendButtonClick(event).catch(handleContentError);"),
     "risky send-button clicks should be captured before host click handlers can submit raw composer text"
   );
-  const sendButtonClickSource = extractFunctionSource(contentSource, "maybeHandleSendButtonClick");
+  const sendButtonClickSource = extractFunctionSource(sendButtonClickOrchestrationSource, "maybeHandleSendButtonClick");
   const modalClickGuardIndex = sendButtonClickSource.indexOf(".pwm-modal-backdrop");
   assert.ok(
-    modalClickGuardIndex >= 0 && modalClickGuardIndex < sendButtonClickSource.indexOf("if (modalOpen)"),
+    modalClickGuardIndex >= 0 && modalClickGuardIndex < sendButtonClickSource.indexOf("if (isModalOpen())"),
     "captured send-button click guard must not consume LeakGuard modal button clicks before target handlers run"
   );
   assert.ok(
@@ -721,7 +726,7 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
       submitSource.includes("event.submitter || (nativeSubmitEvent ? findSendButton(input) : null)") &&
       contentSource.includes("function replayVerifiedSend") &&
       submitSource.includes("replayVerifiedSend(input, form, submitter, replayOptions)") &&
-      contentSource.includes("replayViaClick: true"),
+      sendButtonClickSource.includes("replayViaClick: true"),
     "guarded send-button redaction should retry the exact intercepted button after verified rewrite"
   );
   assert.ok(
@@ -1590,9 +1595,12 @@ async function testTransactionalRewriteFallbackRemovesRawDuplicate() {
 async function testWhatsAppSendButtonClickOwnsSafeTextForVerifiedReplay() {
   const factory = new Function(
     [
+      "const SendButtonClickOrchestration = globalThis.PWM?.SendButtonClickOrchestration || {};",
       "let extensionRuntimeAvailable = true;",
       "let modalOpen = false;",
       "let bypassNextSendButtonClick = false;",
+      "let sendButtonClickOrchestration = null;",
+      "let whatsAppBypassSanitizedImageSubmitUntil = 0;",
       "const calls = { consumed: 0, submitEvents: 0 };",
       "const button = { closest: () => null };",
       "const input = { text: 'LGQA_WHATSAPP_SAFE_TEXT hello team' };",
@@ -1605,11 +1613,15 @@ async function testWhatsAppSendButtonClickOwnsSafeTextForVerifiedReplay() {
       "function analyzeText() { return { findings: [], placeholderNormalized: false }; }",
       "function analysisNeedsEventOwnership() { return false; }",
       "function shouldBypassWhatsAppSanitizedImageSend() { return false; }",
+      "function consumeRecentWhatsAppSanitizedImageHandoff() {}",
+      "function debugReveal() {}",
+      "function summarizeDebugText(value) { return { length: String(value || '').length }; }",
       "function consumeInterceptionEvent() { calls.consumed += 1; }",
       "function createSyntheticSubmitInterceptionEvent(target, options) { return { target, leakGuardSendButton: options.sendButton, leakGuardReplayViaClick: options.replayViaClick }; }",
       "async function maybeHandleSubmit(event) { calls.submitEvents += 1; calls.submitEvent = event; }",
       "async function blockWhatsAppTextSend() { calls.blocked = true; }",
       extractFunctionSource(contentSource, "shouldOwnWhatsAppTextSend"),
+      extractFunctionSource(contentSource, "getSendButtonClickOrchestration"),
       extractFunctionSource(contentSource, "maybeHandleSendButtonClick"),
       "return { maybeHandleSendButtonClick, calls, button, input };"
     ].join("\n\n")
@@ -1628,17 +1640,32 @@ async function testWhatsAppSendButtonClickOwnsSafeTextForVerifiedReplay() {
 async function testWhatsAppSendButtonClickFailsClosedWithoutComposer() {
   const factory = new Function(
     [
+      "const SendButtonClickOrchestration = globalThis.PWM?.SendButtonClickOrchestration || {};",
       "let extensionRuntimeAvailable = true;",
       "let modalOpen = false;",
       "let bypassNextSendButtonClick = false;",
+      "let sendButtonClickOrchestration = null;",
+      "let whatsAppBypassSanitizedImageSubmitUntil = 0;",
       "const calls = { consumed: 0, blocks: 0 };",
       "const button = { closest: () => null };",
       "function normalizeTarget(target) { return target; }",
       "function isWhatsAppHost() { return true; }",
       "function findSendButtonClickTarget() { return button; }",
       "function findComposer() { return null; }",
+      "function noteActiveRiskEditor() {}",
+      "function getInputText() { return ''; }",
+      "function analyzeText() { return { findings: [], placeholderNormalized: false }; }",
+      "function analysisNeedsEventOwnership() { return false; }",
+      "function shouldBypassWhatsAppSanitizedImageSend() { return false; }",
+      "function shouldOwnWhatsAppTextSend() { return false; }",
+      "function consumeRecentWhatsAppSanitizedImageHandoff() {}",
+      "function debugReveal() {}",
+      "function summarizeDebugText(value) { return { length: String(value || '').length }; }",
       "function consumeInterceptionEvent() { calls.consumed += 1; }",
+      "function createSyntheticSubmitInterceptionEvent(target, options) { return { target, leakGuardSendButton: options.sendButton, leakGuardReplayViaClick: options.replayViaClick }; }",
+      "async function maybeHandleSubmit() { calls.submitEvents = (calls.submitEvents || 0) + 1; }",
       "async function blockWhatsAppTextSend(reason) { calls.blocks += 1; calls.reason = reason; }",
+      extractFunctionSource(contentSource, "getSendButtonClickOrchestration"),
       extractFunctionSource(contentSource, "maybeHandleSendButtonClick"),
       "return { maybeHandleSendButtonClick, calls, button };"
     ].join("\n\n")
@@ -1797,9 +1824,12 @@ async function testWhatsAppShiftEnterDoesNotOwnFallbackSend() {
 async function testWhatsAppEmptyComposerClickEnterAndSubmitAreIgnoredSafely() {
   const clickFactory = new Function(
     [
+      "const SendButtonClickOrchestration = globalThis.PWM?.SendButtonClickOrchestration || {};",
       "let extensionRuntimeAvailable = true;",
       "let modalOpen = false;",
       "let bypassNextSendButtonClick = false;",
+      "let sendButtonClickOrchestration = null;",
+      "let whatsAppBypassSanitizedImageSubmitUntil = 0;",
       "const calls = { consumed: 0, blocks: 0, submitEvents: 0, analyses: 0 };",
       "const button = { closest: () => null };",
       "const input = { text: '   ' };",
@@ -1812,10 +1842,15 @@ async function testWhatsAppEmptyComposerClickEnterAndSubmitAreIgnoredSafely() {
       "function analyzeText() { calls.analyses += 1; return { findings: [], placeholderNormalized: false }; }",
       "function analysisNeedsEventOwnership() { return false; }",
       "function shouldBypassWhatsAppSanitizedImageSend() { return false; }",
+      "function consumeRecentWhatsAppSanitizedImageHandoff() {}",
+      "function debugReveal() {}",
+      "function summarizeDebugText(value) { return { length: String(value || '').length }; }",
       "function consumeInterceptionEvent() { calls.consumed += 1; }",
+      "function createSyntheticSubmitInterceptionEvent(target, options) { return { target, leakGuardSendButton: options.sendButton, leakGuardReplayViaClick: options.replayViaClick }; }",
       "async function maybeHandleSubmit() { calls.submitEvents += 1; }",
       "async function blockWhatsAppTextSend(reason) { calls.blocks += 1; calls.reason = reason; }",
       extractFunctionSource(contentSource, "shouldOwnWhatsAppTextSend"),
+      extractFunctionSource(contentSource, "getSendButtonClickOrchestration"),
       extractFunctionSource(contentSource, "maybeHandleSendButtonClick"),
       "return { maybeHandleSendButtonClick, calls, button };"
     ].join("\n\n")
@@ -1854,9 +1889,12 @@ async function testWhatsAppEmptyComposerClickEnterAndSubmitAreIgnoredSafely() {
 async function testWhatsAppUntrustedTextExtractionFailsClosed() {
   const clickFactory = new Function(
     [
+      "const SendButtonClickOrchestration = globalThis.PWM?.SendButtonClickOrchestration || {};",
       "let extensionRuntimeAvailable = true;",
       "let modalOpen = false;",
       "let bypassNextSendButtonClick = false;",
+      "let sendButtonClickOrchestration = null;",
+      "let whatsAppBypassSanitizedImageSubmitUntil = 0;",
       "const calls = { consumed: 0, blocks: 0, submitEvents: 0 };",
       "const button = { closest: () => null };",
       "const input = {};",
@@ -1866,10 +1904,18 @@ async function testWhatsAppUntrustedTextExtractionFailsClosed() {
       "function findComposer() { return input; }",
       "function noteActiveRiskEditor() {}",
       "function getInputText() { return null; }",
+      "function analyzeText() { return { findings: [], placeholderNormalized: false }; }",
+      "function analysisNeedsEventOwnership() { return false; }",
+      "function shouldBypassWhatsAppSanitizedImageSend() { return false; }",
+      "function consumeRecentWhatsAppSanitizedImageHandoff() {}",
+      "function debugReveal() {}",
+      "function summarizeDebugText(value) { return { length: String(value || '').length }; }",
       "function consumeInterceptionEvent() { calls.consumed += 1; }",
+      "function createSyntheticSubmitInterceptionEvent(target, options) { return { target, leakGuardSendButton: options.sendButton, leakGuardReplayViaClick: options.replayViaClick }; }",
       "async function maybeHandleSubmit() { calls.submitEvents += 1; }",
       "async function blockWhatsAppTextSend(reason) { calls.blocks += 1; calls.reason = reason; }",
       extractFunctionSource(contentSource, "shouldOwnWhatsAppTextSend"),
+      extractFunctionSource(contentSource, "getSendButtonClickOrchestration"),
       extractFunctionSource(contentSource, "maybeHandleSendButtonClick"),
       "return { maybeHandleSendButtonClick, calls, button };"
     ].join("\n\n")

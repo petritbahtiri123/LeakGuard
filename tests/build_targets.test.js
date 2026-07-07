@@ -1433,6 +1433,7 @@ async function run() {
   const typedSecretScanIndex = contentScripts.indexOf("content/composer/typedSecretScanOrchestration.js");
   const beforeInputOrchestrationIndex = contentScripts.indexOf("content/composer/beforeInputOrchestration.js");
   const submitOrchestrationIndex = contentScripts.indexOf("content/composer/submitOrchestration.js");
+  const sendButtonClickOrchestrationIndex = contentScripts.indexOf("content/composer/sendButtonClickOrchestration.js");
   const fileTransferPolicyIndex = contentScripts.indexOf("content/files/fileTransferPolicy.js");
   const fileExtractionSessionCacheIndex = contentScripts.indexOf("content/files/fileExtractionSessionCache.js");
   const protectedSiteOcrBrokerIndex = contentScripts.indexOf("content/files/protectedSiteOcrBroker.js");
@@ -1514,6 +1515,7 @@ async function run() {
   assert.ok(typedSecretScanIndex > -1, "content scripts should include typed secret scan orchestration");
   assert.ok(beforeInputOrchestrationIndex > -1, "content scripts should include beforeinput orchestration");
   assert.ok(submitOrchestrationIndex > -1, "content scripts should include submit orchestration");
+  assert.ok(sendButtonClickOrchestrationIndex > -1, "content scripts should include send-button click orchestration");
   assert.ok(fileTransferPolicyIndex > -1, "content scripts should include file transfer policy helpers");
   assert.ok(fileExtractionSessionCacheIndex > -1, "content scripts should include file extraction session cache helpers");
   assert.ok(protectedSiteOcrBrokerIndex > -1, "content scripts should include protected-site OCR broker helpers");
@@ -1567,7 +1569,8 @@ async function run() {
       fallbackSendKeyIndex < typedSecretScanIndex &&
       typedSecretScanIndex < beforeInputOrchestrationIndex &&
       beforeInputOrchestrationIndex < submitOrchestrationIndex &&
-      submitOrchestrationIndex < fileTransferPolicyIndex &&
+      submitOrchestrationIndex < sendButtonClickOrchestrationIndex &&
+      sendButtonClickOrchestrationIndex < fileTransferPolicyIndex &&
       fileTransferPolicyIndex < fileExtractionSessionCacheIndex &&
       fileExtractionSessionCacheIndex < protectedSiteOcrBrokerIndex &&
       protectedSiteOcrBrokerIndex < contentFileExtractionPipelineIndex &&

@@ -34,6 +34,7 @@
   const TypedSecretScanOrchestration = globalThis.PWM?.TypedSecretScanOrchestration || {};
   const BeforeInputOrchestration = globalThis.PWM?.BeforeInputOrchestration || {};
   const SubmitOrchestration = globalThis.PWM?.SubmitOrchestration || {};
+  const SendButtonClickOrchestration = globalThis.PWM?.SendButtonClickOrchestration || {};
   const {
     normalizeComposerText,
     normalizeEditorInnerText,
@@ -392,6 +393,7 @@
   let typedSecretScanOrchestration = null;
   let beforeInputOrchestration = null;
   let submitOrchestration = null;
+  let sendButtonClickOrchestration = null;
   let syntheticFileListCapabilityCache = null;
   let inputFileAssignmentCapabilityCache = null;
   const fileInputProcessingSignatures = new WeakMap();
@@ -7646,71 +7648,50 @@
     return true;
   }
 
-  async function maybeHandleSendButtonClick(event) {
-    if (!extensionRuntimeAvailable) {
-      return;
-    }
-
-    const clickTarget = normalizeTarget(event.target);
-    if (clickTarget?.closest?.(".pwm-modal-backdrop")) {
-      return;
-    }
-
-    if (modalOpen) {
-      consumeInterceptionEvent(event);
-      return;
-    }
-
-    if (bypassNextSendButtonClick) {
-      bypassNextSendButtonClick = false;
-      return;
-    }
-
-    const button = findSendButtonClickTarget(event);
-    if (!button) return;
-
-    const input = findComposer(button);
-    if (!input) {
-      if (isWhatsAppHost()) {
-        consumeInterceptionEvent(event);
-        await blockWhatsAppTextSend("composer_not_found");
-      }
-      return;
-    }
-    noteActiveRiskEditor(input);
-
-    const extractedText = getInputText(input);
-    if (extractedText == null) {
-      if (isWhatsAppHost()) {
-        consumeInterceptionEvent(event);
-        await blockWhatsAppTextSend("text_extraction_failed");
-      }
-      return;
-    }
-
-    const text = String(extractedText);
-    if (!text.trim()) {
-      return;
-    }
-    if (shouldBypassWhatsAppSanitizedImageSend(input, text)) {
-      consumeRecentWhatsAppSanitizedImageHandoff(input);
-      whatsAppBypassSanitizedImageSubmitUntil = Date.now() + 1000;
-      debugReveal("whatsapp:image-send-click-verification-bypassed", {
-        reason: "recent_sanitized_image_handoff",
-        text: summarizeDebugText(text)
+  function getSendButtonClickOrchestration() {
+    if (sendButtonClickOrchestration) return sendButtonClickOrchestration;
+    if (typeof SendButtonClickOrchestration.createSendButtonClickOrchestration !== "function") {
+      sendButtonClickOrchestration = Object.freeze({
+        maybeHandleSendButtonClick: async () => {}
       });
-      return;
+      return sendButtonClickOrchestration;
     }
 
-    const quickAnalysis = analyzeText(text);
-    if (!analysisNeedsEventOwnership(quickAnalysis) && !shouldOwnWhatsAppTextSend(text)) return;
+    sendButtonClickOrchestration =
+      SendButtonClickOrchestration.createSendButtonClickOrchestration({
+        analysisNeedsEventOwnership,
+        analyzeText,
+        blockWhatsAppTextSend,
+        consumeBypassNextSendButtonClick: () => {
+          if (!bypassNextSendButtonClick) return false;
+          bypassNextSendButtonClick = false;
+          return true;
+        },
+        consumeInterceptionEvent,
+        consumeRecentWhatsAppSanitizedImageHandoff,
+        createSyntheticSubmitInterceptionEvent,
+        debugReveal,
+        findComposer,
+        findSendButtonClickTarget,
+        getInputText,
+        isExtensionRuntimeAvailable: () => extensionRuntimeAvailable,
+        isModalOpen: () => modalOpen,
+        isWhatsAppHost,
+        maybeHandleSubmit,
+        normalizeTarget,
+        noteActiveRiskEditor,
+        setWhatsAppBypassSanitizedImageSubmitUntil: (value) => {
+          whatsAppBypassSanitizedImageSubmitUntil = value;
+        },
+        shouldBypassWhatsAppSanitizedImageSend,
+        shouldOwnWhatsAppTextSend,
+        summarizeDebugText
+      });
+    return sendButtonClickOrchestration;
+  }
 
-    consumeInterceptionEvent(event);
-    const form = button.closest?.("form") || input.closest?.("form") || null;
-    await maybeHandleSubmit(createSyntheticSubmitInterceptionEvent(form || input, {
-      sendButton: button,
-      replayViaClick: true
-    }));
+  async function maybeHandleSendButtonClick(event) {
+    return getSendButtonClickOrchestration().maybeHandleSendButtonClick(event);
   }
 
   function getFallbackSendKeyOrchestration() {

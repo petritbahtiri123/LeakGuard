@@ -78,6 +78,7 @@
     "src/content/composer/typedSecretScanOrchestration.js",
     "src/content/composer/beforeInputOrchestration.js",
     "src/content/composer/submitOrchestration.js",
+    "src/content/composer/sendButtonClickOrchestration.js",
     "src/shared/runtime_scripts.js",
 
     // Scanner-only OCR classic scripts are loaded from scanner.html, not modules.
