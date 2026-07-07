@@ -5,8 +5,8 @@ Status: current progress record for `docs/roadmap/content-script-modularization-
 ## Baseline Snapshot
 
 - Source: `src/content/content.js`
-- Current size after the M8 file-input change extraction: 7,718 lines, 482 function declarations.
-- Latest M8 `content.js` slice: 51 insertions, 166 deletions, moving file-input change routing, WhatsApp empty processing suppression, sanitized redispatch suppression, Firefox transaction state, duplicate raw-event suppression, composer fallback gating, selected transfer creation, and local insert delegation into `content/files/fileInputChangeOrchestration.js`.
+- Current size after the M8 Gemini upload-menu discovery extraction: 7,623 lines, 482 function declarations.
+- Latest M8 `content.js` slice: 17 insertions, 112 deletions, moving Gemini upload-menu button visibility, safety, intent, source-icon fallback, collection, finder, and discovery-summary logic into `content/adapters/geminiUploadDiscovery.js` while leaving compatibility delegates in `content.js`.
 - Runtime behavior goal: no behavior changes; extracted modules preserve existing file, WhatsApp, composer, and adapter gates.
 - Remaining plan focus: Phase M8 final shrink. `content.js` still owns several large orchestration functions and should keep moving toward initialization, adapter resolution, event routing, module calls, and fail-closed UI only.
 
@@ -46,7 +46,7 @@ Status: current progress record for `docs/roadmap/content-script-modularization-
 | M8 support | `src/content/ui/contentStatusUi.js` | Protected-site status panel and badge rendering helpers |
 | M8 support | `src/content/ui/contentModalUi.js` | Decision, message, and Gemini large-text confirmation modal rendering helpers |
 | Adapter cleanup | `src/content/adapters/grokFileHandoff.js` | Grok upload discovery, pending file input, and sanitized handoff helpers |
-| Adapter cleanup | `src/content/adapters/geminiUploadDiscovery.js` | Gemini upload menu, hidden selector, and safe activation discovery helpers |
+| Adapter cleanup | `src/content/adapters/geminiUploadDiscovery.js` | Gemini upload-menu button predicates/finder, upload menu, hidden selector, and safe activation discovery helpers |
 | Adapter cleanup | `src/content/adapters/geminiFileHandoff.js` | Gemini Firefox bridge, pending user attach, ghost ingress, and sanitized upload handoff helpers |
 | Handoff cleanup | `src/content/files/fileHandoffDiscovery.js` | Generic adapter upload trigger and file-input discovery helpers |
 | Handoff cleanup | `src/content/files/sanitizedFileHandoff.js` | Sanitized single-file and batch handoff assignment helpers |
@@ -61,7 +61,7 @@ Status: current progress record for `docs/roadmap/content-script-modularization-
 - Multi-file: support classification, batch processing, all-or-nothing flow ownership, pending Gemini/Grok handoff fallback, verification, and sanitized batch assignment are delegated; `content/files/localFileInsertOrchestration.js` owns the wrapper call from local file insert routing.
 - Replay/send: rewrite matching delegates through `content/composer/replayVerification.js`; Enter-send fallback orchestration delegates through `content/composer/fallbackSendKeyOrchestration.js`; submit orchestration delegates through `content/composer/submitOrchestration.js`; click send orchestration delegates through `content/composer/sendButtonClickOrchestration.js`.
 - Failure/status UI: panel, badge, modal, and file-processing UI helpers are delegated; fail-closed decision routing remains in `content.js`.
-- Gemini/Grok handoff: adapter-specific discovery and sanitized handoff helpers are delegated; `content.js` still coordinates when those paths are attempted.
+- Gemini/Grok handoff: adapter-specific upload-menu, pending-input discovery, and sanitized handoff helpers are delegated; `content.js` still coordinates when those paths are attempted.
 
 ## Focused Tests
 
@@ -110,5 +110,5 @@ Status: current progress record for `docs/roadmap/content-script-modularization-
 
 ## Remaining Large Clusters
 
-- Remaining Gemini/Grok orchestration wrappers.
+- Remaining Gemini file-input handoff discovery, overlay exposure summaries, and attachment-indicator helpers.
 - Policy, audit, reveal, and status wiring that should stay thin but still lives in `content.js`.

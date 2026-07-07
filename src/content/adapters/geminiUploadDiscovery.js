@@ -16,10 +16,26 @@
     const describeElementForDebug = dependencies.describeElementForDebug || (() => ({}));
     const createGeminiUploadMenuEvent =
       dependencies.createGeminiUploadMenuEvent || ((type) => new Event(type, { bubbles: true, cancelable: true }));
-    const isSafeGeminiUploadMenuButton = dependencies.isSafeGeminiUploadMenuButton || (() => false);
-    const isGeminiUploadMenuButtonVisible = dependencies.isGeminiUploadMenuButtonVisible || (() => true);
-    const hasGeminiUploadMenuIntent = dependencies.hasGeminiUploadMenuIntent || (() => false);
-    const isUnsafeGeminiUploadMenuButton = dependencies.isUnsafeGeminiUploadMenuButton || (() => false);
+    const injectedIsSafeGeminiUploadMenuButton =
+      typeof dependencies.isSafeGeminiUploadMenuButton === "function"
+        ? dependencies.isSafeGeminiUploadMenuButton
+        : null;
+    const injectedIsGeminiUploadMenuButtonVisible =
+      typeof dependencies.isGeminiUploadMenuButtonVisible === "function"
+        ? dependencies.isGeminiUploadMenuButtonVisible
+        : null;
+    const injectedHasGeminiUploadMenuIntent =
+      typeof dependencies.hasGeminiUploadMenuIntent === "function"
+        ? dependencies.hasGeminiUploadMenuIntent
+        : null;
+    const injectedIsUnsafeGeminiUploadMenuButton =
+      typeof dependencies.isUnsafeGeminiUploadMenuButton === "function"
+        ? dependencies.isUnsafeGeminiUploadMenuButton
+        : null;
+    const injectedIsGeminiSourceUploadIcon =
+      typeof dependencies.isGeminiSourceUploadIcon === "function"
+        ? dependencies.isGeminiSourceUploadIcon
+        : null;
 
     function collectRootsWithOpenShadow(rootNode, roots, visitedRoots, stats) {
       if (!rootNode || visitedRoots.has(rootNode)) return;
@@ -51,6 +67,153 @@
       } catch {
         return false;
       }
+    }
+
+    function isGeminiUploadMenuButtonVisible(candidate) {
+      if (injectedIsGeminiUploadMenuButtonVisible) {
+        return Boolean(injectedIsGeminiUploadMenuButtonVisible(candidate));
+      }
+      if (!candidate || candidate.disabled || candidate.hidden) return false;
+      try {
+        if (candidate.getAttribute?.("aria-hidden") === "true") return false;
+      } catch {
+        // Attribute reads are best-effort on host-controlled nodes.
+      }
+      try {
+        const style = candidate.ownerDocument?.defaultView?.getComputedStyle?.(candidate);
+        if (style && (style.display === "none" || style.visibility === "hidden")) return false;
+      } catch {
+        // Synthetic DOMs may not expose computed styles.
+      }
+      return true;
+    }
+
+    function isUnsafeGeminiUploadMenuButton(candidate) {
+      if (injectedIsUnsafeGeminiUploadMenuButton) {
+        return Boolean(injectedIsUnsafeGeminiUploadMenuButton(candidate));
+      }
+      const meta = describeElementForDebug(candidate);
+      const haystack = `${meta?.ariaLabel || ""} ${meta?.title || ""} ${meta?.textSnippet || ""} ${meta?.className || ""}`.toLowerCase();
+      return /\b(?:send|submit|mic|microphone|voice|record|settings|model|close|remove)\b/.test(haystack);
+    }
+
+    function hasGeminiUploadMenuIntent(meta) {
+      if (injectedHasGeminiUploadMenuIntent) {
+        return Boolean(injectedHasGeminiUploadMenuIntent(meta));
+      }
+      const label = String(meta?.ariaLabel || "").trim();
+      if (label === "Open upload file menu") return true;
+      if (/^upload\s*(?:&|and)\s*tools$/i.test(label)) return true;
+      const haystack = `${label} ${meta?.title || ""} ${meta?.textSnippet || ""}`.toLowerCase();
+      return /\b(?:upload|attach)\b/.test(haystack) && /\b(?:file|files|menu)\b/.test(haystack);
+    }
+
+    function isGeminiSourceUploadIcon(candidate, meta = null) {
+      if (injectedIsGeminiSourceUploadIcon) {
+        return Boolean(injectedIsGeminiSourceUploadIcon(candidate, meta));
+      }
+      if (!candidate || String(candidate.tagName || "").toUpperCase() !== "MAT-ICON") return false;
+      const details = meta || describeElementForDebug(candidate);
+      const className =
+        details?.className ||
+        (typeof candidate.className === "string" ? candidate.className : candidate.getAttribute?.("class") || "");
+      const text = (
+        details?.textSnippet ||
+        candidate.innerText ||
+        candidate.textContent ||
+        ""
+      ).trim().toLowerCase();
+      return /\bupload-icon\b/.test(className) && (text === "add_2" || text === "add");
+    }
+
+    function isSafeGeminiUploadMenuButton(candidate) {
+      if (injectedIsSafeGeminiUploadMenuButton) {
+        return Boolean(injectedIsSafeGeminiUploadMenuButton(candidate));
+      }
+      if (!candidate) return false;
+      if (isFileInputElement(candidate)) return false;
+      if (!isGeminiUploadMenuButtonVisible(candidate) || isUnsafeGeminiUploadMenuButton(candidate)) return false;
+      const meta = describeElementForDebug(candidate);
+      const label = meta?.ariaLabel || "";
+      const className =
+        meta?.className ||
+        (typeof candidate.className === "string" ? candidate.className : candidate.getAttribute?.("class") || "");
+      if (/\bhidden-local-(?:file-)?upload-button\b/.test(className)) return false;
+      if (label === "Open upload file menu" || /^upload\s*(?:&|and)\s*tools$/i.test(label)) return true;
+      if (/\bupload-card-button\b/.test(className) && hasGeminiUploadMenuIntent(meta)) return true;
+      return isGeminiSourceUploadIcon(candidate, meta);
+    }
+
+    function collectGeminiUploadMenuButtonsFromRoot(rootNode, candidates, seen, visitedRoots) {
+      if (!rootNode || visitedRoots.has(rootNode)) return;
+      visitedRoots.add(rootNode);
+
+      const selectors = [
+        'button[aria-label="Open upload file menu"]',
+        "button.upload-card-button",
+        "mat-icon.upload-icon",
+        "button"
+      ];
+      for (const selector of selectors) {
+        try {
+          rootNode.querySelectorAll?.(selector).forEach((candidate) => {
+            if (!candidate || seen.has(candidate)) return;
+            seen.add(candidate);
+            candidates.push(candidate);
+          });
+        } catch {
+          // Selector support varies across synthetic and host-controlled roots.
+        }
+      }
+
+      let elements = [];
+      try {
+        elements = Array.from(rootNode.querySelectorAll?.("*") || []);
+      } catch {
+        elements = [];
+      }
+      elements.forEach((element) => {
+        if (element?.shadowRoot) {
+          collectGeminiUploadMenuButtonsFromRoot(element.shadowRoot, candidates, seen, visitedRoots);
+        }
+      });
+    }
+
+    function findGeminiUploadMenuButton() {
+      if (!isGeminiHost()) return null;
+      const candidates = [];
+      collectGeminiUploadMenuButtonsFromRoot(documentRef, candidates, new WeakSet(), new WeakSet());
+      return (
+        candidates.find((candidate) => {
+          const label = candidate.getAttribute?.("aria-label") || candidate.ariaLabel || "";
+          return label === "Open upload file menu" && isSafeGeminiUploadMenuButton(candidate);
+        }) ||
+        candidates.find((candidate) => {
+          const label = candidate.getAttribute?.("aria-label") || candidate.ariaLabel || "";
+          return /^upload\s*(?:&|and)\s*tools$/i.test(label) && isSafeGeminiUploadMenuButton(candidate);
+        }) ||
+        candidates.find((candidate) => {
+          const className = String(candidate.className || candidate.getAttribute?.("class") || "");
+          return /\bupload-card-button\b/.test(className) && isSafeGeminiUploadMenuButton(candidate);
+        }) ||
+        candidates.find((candidate) => isGeminiSourceUploadIcon(candidate) && isSafeGeminiUploadMenuButton(candidate)) ||
+        null
+      );
+    }
+
+    function describeGeminiUploadMenuDiscovery() {
+      const candidates = [];
+      collectGeminiUploadMenuButtonsFromRoot(documentRef, candidates, new WeakSet(), new WeakSet());
+      const selected = findGeminiUploadMenuButton();
+      return {
+        candidateCount: candidates.length,
+        selected: describeElementForDebug(selected, "selected-gemini-upload-menu-button"),
+        candidates: candidates.slice(0, 20).map((candidate) => ({
+          ...describeElementForDebug(candidate, "gemini-upload-menu-candidate"),
+          safeUploadMenuButton: isSafeGeminiUploadMenuButton(candidate),
+          sourceUploadIcon: isGeminiSourceUploadIcon(candidate)
+        }))
+      };
     }
 
     function isSafeGeminiUploadFilesMenuItem(candidate) {
@@ -428,6 +591,14 @@
 
     return Object.freeze({
       openGeminiUploadMenuSafely,
+      isGeminiUploadMenuButtonVisible,
+      isUnsafeGeminiUploadMenuButton,
+      hasGeminiUploadMenuIntent,
+      isGeminiSourceUploadIcon,
+      isSafeGeminiUploadMenuButton,
+      collectGeminiUploadMenuButtonsFromRoot,
+      findGeminiUploadMenuButton,
+      describeGeminiUploadMenuDiscovery,
       isSafeGeminiUploadFilesMenuItem,
       collectGeminiUploadFilesMenuItemsFromRoot,
       findGeminiUploadFilesMenuItem,

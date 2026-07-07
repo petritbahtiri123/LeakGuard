@@ -14,6 +14,7 @@ function createElement({
   className = "",
   role = "menuitem",
   disabled = false,
+  hidden = false,
   attrs = {}
 } = {}) {
   return {
@@ -24,6 +25,7 @@ function createElement({
     textContent: text,
     className,
     disabled,
+    hidden,
     attributes: {
       "aria-label": ariaLabel,
       role,
@@ -38,6 +40,15 @@ function createElement({
     matches(selector) {
       if (selector === ".cdk-overlay-container, .cdk-overlay-pane, mat-action-list") return false;
       if (selector === "button") return this.tagName === "BUTTON";
+      if (selector === 'button[aria-label="Open upload file menu"]') {
+        return this.tagName === "BUTTON" && this.getAttribute("aria-label") === "Open upload file menu";
+      }
+      if (selector === "button.upload-card-button") {
+        return this.tagName === "BUTTON" && /\bupload-card-button\b/.test(this.className);
+      }
+      if (selector === "mat-icon.upload-icon") {
+        return this.tagName === "MAT-ICON" && /\bupload-icon\b/.test(this.className);
+      }
       if (selector === "[role='menuitem']") return this.getAttribute("role") === "menuitem";
       if (selector === "input[type='file']") return this.type === "file";
       return false;
@@ -73,14 +84,10 @@ function createDiscovery(elements = [], overrides = {}) {
       ariaLabel: element?.ariaLabel || element?.getAttribute?.("aria-label") || "",
       title: element?.title || "",
       textSnippet: element?.textContent || "",
-      role: element?.getAttribute?.("role") || ""
+      role: element?.getAttribute?.("role") || "",
+      className: element?.className || ""
     }),
     createGeminiUploadMenuEvent: (type) => ({ type }),
-    isSafeGeminiUploadMenuButton: (element) => !element?.disabled,
-    isGeminiUploadMenuButtonVisible: (element) => !element?.hidden,
-    hasGeminiUploadMenuIntent: (element) => /upload|attach|files/i.test(element?.ariaLabel || element?.textContent || ""),
-    isUnsafeGeminiUploadMenuButton: () => false,
-    isGeminiSourceUploadIcon: () => false,
     ...overrides
   });
   return { discovery, details };
@@ -111,9 +118,48 @@ function testHiddenSelectorActivationDispatchesTrustedSequence() {
   assert.strictEqual(trigger.clicked, 1);
 }
 
+function testFindGeminiUploadMenuButtonPrefersExplicitSafeButton() {
+  const send = createElement({ ariaLabel: "Send message", className: "mat-mdc-icon-button" });
+  const uploadTools = createElement({ ariaLabel: "Upload & tools", className: "mat-mdc-icon-button" });
+  const explicit = createElement({ ariaLabel: "Open upload file menu", className: "upload-card-button open" });
+  const { discovery } = createDiscovery([send, uploadTools, explicit]);
+
+  assert.strictEqual(discovery.isSafeGeminiUploadMenuButton(send), false);
+  assert.strictEqual(discovery.isSafeGeminiUploadMenuButton(uploadTools), true);
+  assert.strictEqual(discovery.findGeminiUploadMenuButton(), explicit);
+  assert.strictEqual(discovery.describeGeminiUploadMenuDiscovery().selected.ariaLabel, explicit.ariaLabel);
+}
+
+function testFindGeminiUploadMenuButtonUsesSourceIconFallback() {
+  const icon = createElement({
+    tagName: "mat-icon",
+    text: "add_2",
+    className: "mat-icon upload-icon"
+  });
+  const { discovery } = createDiscovery([icon]);
+
+  assert.strictEqual(discovery.isGeminiSourceUploadIcon(icon), true);
+  assert.strictEqual(discovery.findGeminiUploadMenuButton(), icon);
+}
+
+function testFindGeminiUploadMenuButtonRejectsHiddenButton() {
+  const hidden = createElement({
+    ariaLabel: "Open upload file menu",
+    className: "upload-card-button",
+    hidden: true
+  });
+  const { discovery } = createDiscovery([hidden]);
+
+  assert.strictEqual(discovery.isGeminiUploadMenuButtonVisible(hidden), false);
+  assert.strictEqual(discovery.findGeminiUploadMenuButton(), null);
+}
+
 function run() {
   testOverlayDiscoveryPrefersUploadFilesAndRejectsDrive();
   testHiddenSelectorActivationDispatchesTrustedSequence();
+  testFindGeminiUploadMenuButtonPrefersExplicitSafeButton();
+  testFindGeminiUploadMenuButtonUsesSourceIconFallback();
+  testFindGeminiUploadMenuButtonRejectsHiddenButton();
   console.log("PASS Gemini upload discovery");
 }
 
