@@ -65,6 +65,7 @@ const testFiles = [
   "tests/scanner_ocr.test.js",
   "tests/content_file_extraction_pipeline.test.js",
   "tests/content_file_type_support.test.js",
+  "tests/file_transfer_policy_gate.test.js",
   "tests/sanitized_file_batch_processor.test.js",
   "tests/file_handoff_verification.test.js",
   "tests/file_input_preparation.test.js",

@@ -5,8 +5,8 @@ Status: current progress record for `docs/roadmap/content-script-modularization-
 ## Baseline Snapshot
 
 - Source: `src/content/content.js`
-- Current size after the M8 multi-file orchestration extraction: 9,318 lines, 470 function declarations.
-- Latest M8 `content.js` slice: 38 insertions, 264 deletions, moving 2-20 file batch ownership into `content/files/multiFileInsertOrchestration.js`.
+- Current size after the M8 local transfer-policy gate extraction: 9,300 lines, 471 function declarations.
+- Latest M8 `content.js` slice: 35 insertions, 53 deletions, moving single-file unsupported transfer fail-closed/pass-through policy handling into `content/files/fileTransferPolicy.js`.
 - Runtime behavior goal: no behavior changes; extracted modules preserve existing file, WhatsApp, composer, and adapter gates.
 - Remaining plan focus: Phase M8 final shrink. `content.js` still owns several large orchestration functions and should keep moving toward initialization, adapter resolution, event routing, module calls, and fail-closed UI only.
 
@@ -15,6 +15,7 @@ Status: current progress record for `docs/roadmap/content-script-modularization-
 | Plan phase | New module | Content-script functions now delegated |
 | --- | --- | --- |
 | M1 | `src/content/files/fileTypeSupport.js` | WhatsApp image/text/PDF/DOCX/XLSX support checks and multi-file support predicates |
+| M1/M8 | `src/content/files/fileTransferPolicy.js` | Local text size classification, unsupported transfer policy decisions, and single-file local transfer fail-closed/pass-through UI gate |
 | M2 | `src/content/files/sanitizedFileBatchProcessor.js` | Multi-file item summaries, blocked-before-processing summaries, per-file sanitized batch processing |
 | M2/M8 | `src/content/files/multiFileInsertOrchestration.js` | Multi-file protected upload event ownership, pre-read blocks, local batch processing coordination, pending Gemini/Grok queue fallback, and sanitized batch handoff orchestration |
 | M3 | `src/content/files/fileHandoffVerification.js` | WhatsApp sanitized batch type, count, order, identity, and raw-original verification |
@@ -39,7 +40,7 @@ Status: current progress record for `docs/roadmap/content-script-modularization-
 - Text typing: WhatsApp typed-secret state helpers delegate through `content/whatsapp/whatsappTextFlow.js`; submit/send orchestration still routes through `content.js`.
 - Text paste: WhatsApp paste state helpers delegate through `content/whatsapp/whatsappTextFlow.js`; transactional paste orchestration still routes through `content.js`.
 - Clipboard image paste: WhatsApp capability gates live in `content/whatsapp/whatsappCapabilities.js`; processing and final image handoff still route through `content.js`.
-- File input attach: preflight, input preparation, support checks, batch processing, multi-file orchestration, verification, and sanitized assignment are delegated; high-level single-file local insert orchestration still routes through `content.js`.
+- File input attach: preflight, input preparation, support checks, unsupported transfer policy gate, batch processing, multi-file orchestration, verification, and sanitized assignment are delegated; high-level single-file scan/redact/handoff orchestration still routes through `content.js`.
 - Drag/drop: drag ownership is delegated to `content/files/fileDropInterception.js`; drop orchestration still routes through `content.js`.
 - Multi-file: support classification, batch processing, all-or-nothing flow ownership, pending Gemini/Grok handoff fallback, verification, and sanitized batch assignment are delegated; `content.js` keeps the wrapper call from local file insert routing.
 - Replay/send: rewrite matching delegates through `content/composer/replayVerification.js`; beforeinput, submit, fallback key, and click send orchestration remain in `content.js`.
@@ -49,6 +50,7 @@ Status: current progress record for `docs/roadmap/content-script-modularization-
 ## Focused Tests
 
 - `node tests/content_file_type_support.test.js`
+- `node tests/file_transfer_policy_gate.test.js`
 - `node tests/sanitized_file_batch_processor.test.js`
 - `node tests/file_handoff_verification.test.js`
 - `node tests/file_interception_modules.test.js`
@@ -76,7 +78,7 @@ Status: current progress record for `docs/roadmap/content-script-modularization-
 
 ## Remaining Large Clusters
 
-- `maybeHandleLocalFileInsert` and the surrounding single-file fail-closed local-file orchestration.
+- `maybeHandleLocalFileInsert` single-file scan/redact/streaming/handoff orchestration after transfer-policy preflight.
 - `maybeHandleBeforeInput`, `maybeHandlePaste`, `maybeHandleSubmit`, `maybeHandleFallbackSendKey`, and `maybeHandleTypedSecrets`.
 - WhatsApp image-send bypass, send replay, and exact composer-state acceptance.
 - `maybeHandleGeminiEditorPaste` and the remaining Gemini/Grok orchestration wrappers.

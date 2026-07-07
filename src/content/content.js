@@ -357,6 +357,7 @@
   let dmzOverlayTimer = 0;
   let dmzFallbackStyleEl = null;
   let contentFileTypeSupport = null;
+  let localFileTransferPolicyGate = null;
   let sanitizedFileBatchProcessor = null;
   let fileHandoffVerification = null;
   let fileHandoffDiscovery = null;
@@ -1207,6 +1208,34 @@
     return isUnsupportedProtectedImageTransfer(policy)
       ? UNSUPPORTED_PROTECTED_IMAGE_BLOCKED_TITLE
       : "Raw file upload blocked";
+  }
+
+  function getLocalFileTransferPolicyGate() {
+    if (localFileTransferPolicyGate) return localFileTransferPolicyGate;
+    if (typeof globalThis.PWM.FileTransferPolicy.createLocalFileTransferPolicyGate !== "function") {
+      localFileTransferPolicyGate = Object.freeze({
+        maybeHandleLocalFileTransferPolicy: async () => null
+      });
+      return localFileTransferPolicyGate;
+    }
+
+    localFileTransferPolicyGate = globalThis.PWM.FileTransferPolicy.createLocalFileTransferPolicyGate({
+      clearLocalFileInputSelection,
+      consumeInterceptionEvent,
+      getCurrentHandoffDriverId,
+      getUnsupportedFileBlockedMessage,
+      getUnsupportedFileBlockedTitle,
+      hideBadgeSoon,
+      hideFileProcessingOverlay,
+      refreshBadgeFromCurrentInput,
+      setBadge,
+      shouldBlockUnsupportedFileTransfer,
+      shouldFailClosedProtectedUnsupportedFileTransfer,
+      showFileProcessingError,
+      showMessageModal,
+      showUnsupportedFilePassThroughNotice
+    });
+    return localFileTransferPolicyGate;
   }
 
   function getContentFileTypeSupport() {
@@ -7126,59 +7155,12 @@
         ? localTransferFiles[0]
         : null;
     const transferPolicy = resolveLocalFileTransferPolicy(dataTransfer);
-    if (transferPolicy.action === "allow" && !contentExtractionFile) {
-      const unsupportedFileMustBlock =
-        shouldBlockUnsupportedFileTransfer(transferPolicy) ||
-        shouldFailClosedProtectedUnsupportedFileTransfer(transferPolicy);
-      if (unsupportedFileMustBlock) {
-        const unsupportedBlockReason = shouldBlockUnsupportedFileTransfer(transferPolicy)
-          ? "firefox_unsupported_file_blocked"
-          : "unsupported_protected_file_blocked";
-        const unsupportedBlockTitle = getUnsupportedFileBlockedTitle(transferPolicy);
-        if (!event.defaultPrevented) {
-          consumeInterceptionEvent(event);
-        }
-        if (event?.target?.tagName === "INPUT" && String(event.target.type || "").toLowerCase() === "file") {
-          clearLocalFileInputSelection(event.target);
-        }
-        showFileProcessingError(unsupportedBlockTitle, {
-          site: getCurrentHandoffDriverId(),
-          reason: unsupportedBlockReason
-        });
-        hideFileProcessingOverlay(unsupportedBlockReason);
-        setBadge(unsupportedBlockTitle);
-        hideBadgeSoon(4200);
-        await showMessageModal(unsupportedBlockTitle, getUnsupportedFileBlockedMessage(transferPolicy));
-        refreshBadgeFromCurrentInput();
-        return {
-          handled: true,
-          ok: false,
-          reason: unsupportedBlockReason
-        };
-      }
-      showUnsupportedFilePassThroughNotice(transferPolicy);
-      return false;
-    }
-
-    if (transferPolicy.action === "block") {
-      if (!event.defaultPrevented) {
-        consumeInterceptionEvent(event);
-      }
-      showFileProcessingError("Raw file upload blocked", {
-        site: getCurrentHandoffDriverId(),
-        reason: transferPolicy.reason
-      });
-      hideFileProcessingOverlay(transferPolicy.reason || "transfer_policy_blocked");
-      setBadge("Raw file upload blocked");
-      hideBadgeSoon(4200);
-      await showMessageModal("Raw file upload blocked", transferPolicy.message);
-      refreshBadgeFromCurrentInput();
-      return {
-        handled: true,
-        ok: false,
-        reason: transferPolicy.reason
-      };
-    }
+    const transferPolicyResult = await getLocalFileTransferPolicyGate().maybeHandleLocalFileTransferPolicy(
+      event,
+      transferPolicy,
+      { contentExtractionFile }
+    );
+    if (transferPolicyResult !== null) return transferPolicyResult;
 
     if (!(event.defaultPrevented && context === "file-input" && isGeminiHost())) {
       consumeInterceptionEvent(event);

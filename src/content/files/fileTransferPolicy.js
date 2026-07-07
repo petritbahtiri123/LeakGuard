@@ -117,13 +117,130 @@
     );
   }
 
+  function isFileInputTarget(event) {
+    return event?.target?.tagName === "INPUT" && String(event.target.type || "").toLowerCase() === "file";
+  }
+
+  function createLocalFileTransferPolicyGate(options = {}) {
+    const clearLocalFileInputSelection =
+      typeof options.clearLocalFileInputSelection === "function"
+        ? options.clearLocalFileInputSelection
+        : () => {};
+    const consumeInterceptionEvent =
+      typeof options.consumeInterceptionEvent === "function"
+        ? options.consumeInterceptionEvent
+        : (event) => {
+            try {
+              event?.preventDefault?.();
+              event?.stopPropagation?.();
+            } catch {
+              // Best-effort event ownership for unsupported hosts and tests.
+            }
+          };
+    const getCurrentHandoffDriverId =
+      typeof options.getCurrentHandoffDriverId === "function" ? options.getCurrentHandoffDriverId : () => "";
+    const getUnsupportedFileBlockedMessageFn =
+      typeof options.getUnsupportedFileBlockedMessage === "function"
+        ? options.getUnsupportedFileBlockedMessage
+        : getUnsupportedFileBlockedMessage;
+    const getUnsupportedFileBlockedTitle =
+      typeof options.getUnsupportedFileBlockedTitle === "function"
+        ? options.getUnsupportedFileBlockedTitle
+        : () => "Raw file upload blocked";
+    const hideBadgeSoon = typeof options.hideBadgeSoon === "function" ? options.hideBadgeSoon : () => {};
+    const hideFileProcessingOverlay =
+      typeof options.hideFileProcessingOverlay === "function" ? options.hideFileProcessingOverlay : () => {};
+    const refreshBadgeFromCurrentInput =
+      typeof options.refreshBadgeFromCurrentInput === "function" ? options.refreshBadgeFromCurrentInput : () => {};
+    const setBadge = typeof options.setBadge === "function" ? options.setBadge : () => {};
+    const shouldBlockUnsupportedFileTransferFn =
+      typeof options.shouldBlockUnsupportedFileTransfer === "function"
+        ? options.shouldBlockUnsupportedFileTransfer
+        : (policy) => shouldBlockUnsupportedFileTransfer(policy, options);
+    const shouldFailClosedProtectedUnsupportedFileTransfer =
+      typeof options.shouldFailClosedProtectedUnsupportedFileTransfer === "function"
+        ? options.shouldFailClosedProtectedUnsupportedFileTransfer
+        : () => false;
+    const showFileProcessingError =
+      typeof options.showFileProcessingError === "function" ? options.showFileProcessingError : () => {};
+    const showMessageModal =
+      typeof options.showMessageModal === "function" ? options.showMessageModal : async () => {};
+    const showUnsupportedFilePassThroughNotice =
+      typeof options.showUnsupportedFilePassThroughNotice === "function"
+        ? options.showUnsupportedFilePassThroughNotice
+        : () => {};
+
+    async function maybeHandleLocalFileTransferPolicy(event, transferPolicy, gateOptions = {}) {
+      if (transferPolicy?.action === "allow" && !gateOptions.contentExtractionFile) {
+        const shouldBlockUnsupported = shouldBlockUnsupportedFileTransferFn(transferPolicy);
+        const unsupportedFileMustBlock =
+          shouldBlockUnsupported || shouldFailClosedProtectedUnsupportedFileTransfer(transferPolicy);
+        if (unsupportedFileMustBlock) {
+          const unsupportedBlockReason = shouldBlockUnsupported
+            ? "firefox_unsupported_file_blocked"
+            : "unsupported_protected_file_blocked";
+          const unsupportedBlockTitle = getUnsupportedFileBlockedTitle(transferPolicy);
+          if (!event?.defaultPrevented) {
+            consumeInterceptionEvent(event);
+          }
+          if (isFileInputTarget(event)) {
+            clearLocalFileInputSelection(event.target);
+          }
+          showFileProcessingError(unsupportedBlockTitle, {
+            site: getCurrentHandoffDriverId(),
+            reason: unsupportedBlockReason
+          });
+          hideFileProcessingOverlay(unsupportedBlockReason);
+          setBadge(unsupportedBlockTitle);
+          hideBadgeSoon(4200);
+          await showMessageModal(unsupportedBlockTitle, getUnsupportedFileBlockedMessageFn(transferPolicy));
+          refreshBadgeFromCurrentInput();
+          return {
+            handled: true,
+            ok: false,
+            reason: unsupportedBlockReason
+          };
+        }
+        showUnsupportedFilePassThroughNotice(transferPolicy);
+        return false;
+      }
+
+      if (transferPolicy?.action === "block") {
+        if (!event?.defaultPrevented) {
+          consumeInterceptionEvent(event);
+        }
+        showFileProcessingError("Raw file upload blocked", {
+          site: getCurrentHandoffDriverId(),
+          reason: transferPolicy.reason
+        });
+        hideFileProcessingOverlay(transferPolicy.reason || "transfer_policy_blocked");
+        setBadge("Raw file upload blocked");
+        hideBadgeSoon(4200);
+        await showMessageModal("Raw file upload blocked", transferPolicy.message);
+        refreshBadgeFromCurrentInput();
+        return {
+          handled: true,
+          ok: false,
+          reason: transferPolicy.reason
+        };
+      }
+
+      return null;
+    }
+
+    return Object.freeze({
+      maybeHandleLocalFileTransferPolicy
+    });
+  }
+
   root.PWM.FileTransferPolicy = {
     getLocalTextPayloadByteLength,
     classifyLocalTextPayloadSize,
     classifyLocalFile,
     resolveLocalFileTransferPolicy,
     shouldBlockUnsupportedFileTransfer,
-    getUnsupportedFileBlockedMessage
+    getUnsupportedFileBlockedMessage,
+    createLocalFileTransferPolicyGate
   };
 
   if (typeof module !== "undefined" && module.exports) {
