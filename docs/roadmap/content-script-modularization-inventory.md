@@ -5,7 +5,7 @@ Status: current progress record for `docs/roadmap/content-script-modularization-
 ## Baseline Snapshot
 
 - Source: `src/content/content.js`
-- Current size after the M8 local-file read/error extraction: 8,980 lines, 475 function declarations.
+- Current size after the M8 local-file read/error extraction: 8,979 lines, 475 function declarations.
 - Latest M8 `content.js` slice: 111 insertions, 158 deletions, moving single-file local file read, content-extraction read handoff, sanitized-handoff suppression, streaming-required delegation, and read/scan fail-closed UI into `content/files/localFileReadOrchestration.js`.
 - Runtime behavior goal: no behavior changes; extracted modules preserve existing file, WhatsApp, composer, and adapter gates.
 - Remaining plan focus: Phase M8 final shrink. `content.js` still owns several large orchestration functions and should keep moving toward initialization, adapter resolution, event routing, module calls, and fail-closed UI only.
