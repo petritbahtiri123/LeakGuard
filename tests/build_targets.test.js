@@ -132,6 +132,13 @@ function assertReleaseArtifactsAreSanitized(results) {
           `${result.target} release ${relativeContentScript} should not contain ${banned}`
         );
       }
+      if (relativeContentScript === "content/content.js") {
+        assert.strictEqual(
+          /\blogFileInterception\b/.test(contentSource),
+          false,
+          `${result.target} release content/content.js should not retain stripped debug logger references`
+        );
+      }
     }
 
     const debugLoggerSource = fs.readFileSync(

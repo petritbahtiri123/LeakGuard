@@ -192,6 +192,8 @@ function stripContentDebugDiagnostics(targetRoot) {
     .replace(/^\s*debug:\s*debugReveal,\r?\n/gm, "")
     .replace(/^\s*debug:\s*debugResponseRehydration,\r?\n/gm, "")
     .replace(/^\s*debug:\s*debugRewriteVerification,?\r?\n/gm, "")
+    .replace(/^\s*logFileInterception,?\r?\n/gm, "")
+    .replace(/^\s*logFileInterception:\s*logFileInterception,?\r?\n/gm, "")
     .replace(/\bdebugLogSnapshot\s*\(/g, "false && leakGuardBuildNoop(")
     .replace(/\bdebugReveal\s*\(/g, "false && leakGuardBuildNoop(")
     .replace(/\bdebugFileAttachMetadata\s*\(/g, "false && leakGuardBuildNoop(")

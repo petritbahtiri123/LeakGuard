@@ -880,10 +880,13 @@
   }
 
   function consumeInterceptionEvent(event) {
+    const propagationAlreadyStopped = Boolean(event?.__PWM_FILE_INPUT_PROPAGATION_STOPPED__);
     event.preventDefault();
-    event.stopPropagation();
-    if (typeof event.stopImmediatePropagation === "function") {
-      event.stopImmediatePropagation();
+    if (!propagationAlreadyStopped) {
+      event.stopPropagation();
+      if (typeof event.stopImmediatePropagation === "function") {
+        event.stopImmediatePropagation();
+      }
     }
   }
 

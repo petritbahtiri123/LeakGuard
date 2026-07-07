@@ -14,10 +14,26 @@ function createFileInput(files = []) {
 }
 
 function createEvent(target, type = "change") {
+  const calls = {
+    preventDefault: 0,
+    stopPropagation: 0,
+    stopImmediatePropagation: 0
+  };
   return {
     type,
     target,
-    defaultPrevented: false
+    defaultPrevented: false,
+    calls,
+    preventDefault() {
+      calls.preventDefault += 1;
+      this.defaultPrevented = true;
+    },
+    stopPropagation() {
+      calls.stopPropagation += 1;
+    },
+    stopImmediatePropagation() {
+      calls.stopImmediatePropagation += 1;
+    }
   };
 }
 
@@ -175,6 +191,51 @@ async function testNormalFileInputDelegatesAndClearsProcessingSignature() {
   assert.strictEqual(fileInputProcessingSignatures.has(fileInput), false);
 }
 
+async function testOwnedFileInputStopsPropagationBeforeAsyncInsert() {
+  let releaseInsert;
+  const insertGate = new Promise((resolve) => {
+    releaseInsert = resolve;
+  });
+  const { calls, fileInput, orchestration } = createHarness({
+    maybeHandleLocalFileInsert: async (...args) => {
+      calls.inserts.push(args);
+      await insertGate;
+      return { handled: true, ok: true };
+    }
+  });
+  const event = createEvent(fileInput);
+
+  const resultPromise = orchestration.maybeHandleFileInputChange(event);
+
+  assert.strictEqual(event.defaultPrevented, false);
+  assert.strictEqual(event.calls.stopPropagation, 1);
+  assert.strictEqual(event.calls.stopImmediatePropagation, 1);
+  assert.strictEqual(event.__PWM_FILE_INPUT_PROPAGATION_STOPPED__, true);
+  assert.strictEqual(calls.inserts.length, 1);
+  releaseInsert();
+  const result = await resultPromise;
+
+  assert.deepStrictEqual(result, { handled: true, ok: true });
+}
+
+async function testRawInputEventStopsWithoutStartingInsert() {
+  const { calls, fileInput, orchestration } = createHarness();
+  const event = createEvent(fileInput, "input");
+
+  const result = await orchestration.maybeHandleFileInputChange(event);
+
+  assert.deepStrictEqual(result, {
+    handled: true,
+    ok: true,
+    strategy: "raw-file-input-event-suppressed"
+  });
+  assert.strictEqual(event.defaultPrevented, false);
+  assert.strictEqual(event.calls.stopPropagation, 1);
+  assert.strictEqual(event.calls.stopImmediatePropagation, 1);
+  assert.strictEqual(calls.inserts.length, 0);
+  assert.strictEqual(calls.debug[0].label, "file-input:raw-input-event-suppressed");
+}
+
 async function testFirefoxProtectedInputTracksReplacementState() {
   const {
     calls,
@@ -201,6 +262,8 @@ async function testFirefoxProtectedInputTracksReplacementState() {
   await testSanitizedHandoffSuppressionShortCircuits();
   await testDuplicateRawFileInputEventIsSuppressed();
   await testNormalFileInputDelegatesAndClearsProcessingSignature();
+  await testOwnedFileInputStopsPropagationBeforeAsyncInsert();
+  await testRawInputEventStopsWithoutStartingInsert();
   await testFirefoxProtectedInputTracksReplacementState();
   console.log("PASS file input change orchestration");
 })();

@@ -17842,22 +17842,34 @@ async function testChromeFileInputDuplicateEventsShareOneProcessingRun() {
   const first = createEvent({ type: "input", target: fileInput });
   const second = createEvent({ type: "change", target: fileInput });
 
-  const firstPromise = maybeHandleFileInputChange(first.event);
+  const firstResult = await maybeHandleFileInputChange(first.event);
+  assert.strictEqual(firstResult?.strategy, "raw-file-input-event-suppressed");
+  assert.strictEqual(
+    first.calls.stopImmediatePropagation,
+    1,
+    "raw file input event should stop propagation before async file reading"
+  );
+  assert.strictEqual(
+    first.event.defaultPrevented,
+    false,
+    "early propagation guard should not trip the downstream defaultPrevented guard"
+  );
+  assert.strictEqual(readStarted.length, 0);
+  const secondPromise = maybeHandleFileInputChange(second.event);
   await Promise.resolve();
   assert.strictEqual(readStarted.length, 1);
-  const secondResult = await maybeHandleFileInputChange(second.event);
   releaseRead();
-  await firstPromise;
+  const secondResult = await secondPromise;
 
-  assert.strictEqual(first.event.defaultPrevented, true);
+  assert.strictEqual(first.event.defaultPrevented, false);
   assert.strictEqual(second.event.defaultPrevented, true);
-  assert.strictEqual(secondResult?.strategy, "duplicate-file-input-event-suppressed");
+  assert.strictEqual(secondResult?.ok, true);
   assert.strictEqual(calls.reads.length, 1);
   assert.strictEqual(calls.redactions.length, 1);
   assert.strictEqual(calls.handoffs.length, 1);
   assert.strictEqual(calls.handoffs[0].sanitizedFile.text.includes(rawSecret), false);
   assert.deepStrictEqual(fileInput.events, ["input", "change"]);
-  assert.ok(calls.debugEvents.some((entry) => entry.label === "file-input:duplicate-raw-event-suppressed"));
+  assert.ok(calls.debugEvents.some((entry) => entry.label === "file-input:raw-input-event-suppressed"));
 }
 
 async function testFirefoxFileInputDuplicateEventsShareOneTransaction() {

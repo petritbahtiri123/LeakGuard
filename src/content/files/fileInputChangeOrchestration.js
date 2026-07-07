@@ -1,6 +1,7 @@
 (function () {
   const root = typeof globalThis !== "undefined" ? globalThis : window;
   root.PWM = root.PWM || {};
+  const FILE_INPUT_PROPAGATION_STOPPED_FLAG = "__PWM_FILE_INPUT_PROPAGATION_STOPPED__";
 
   function createFileInputChangeOrchestration(options = {}) {
     const clearLocalFileInputSelection =
@@ -105,6 +106,17 @@
       typeof options.suppressSanitizedFileInputHandoffEvent === "function"
         ? options.suppressSanitizedFileInputHandoffEvent
         : () => {};
+    const stopFileInputEventPropagation =
+      typeof options.stopFileInputEventPropagation === "function"
+        ? options.stopFileInputEventPropagation
+        : (event) => {
+            try {
+              event?.stopPropagation?.();
+              event?.stopImmediatePropagation?.();
+            } catch {
+              // Event propagation ownership is best-effort across browser and test event shims.
+            }
+          };
 
     function createSelectedFiles(target) {
       return Array.from(target?.files || []);
@@ -125,6 +137,47 @@
         isSupportedWhatsAppDocxAttach(selectedTransfer, "file-input") ||
         isSupportedWhatsAppXlsxAttach(selectedTransfer, "file-input") ||
         isPotentialWhatsAppMultiFileAttach(selectedFiles, "file-input")
+      );
+    }
+
+    function markFileInputPropagationStopped(event) {
+      if (!event || event[FILE_INPUT_PROPAGATION_STOPPED_FLAG]) return;
+      try {
+        Object.defineProperty(event, FILE_INPUT_PROPAGATION_STOPPED_FLAG, {
+          value: true,
+          configurable: true
+        });
+      } catch {
+        try {
+          event[FILE_INPUT_PROPAGATION_STOPPED_FLAG] = true;
+        } catch {
+          // Some browser event objects may reject expando properties.
+        }
+      }
+    }
+
+    function stopOwnedRawFileInputEventPropagation(event) {
+      if (!event || event[FILE_INPUT_PROPAGATION_STOPPED_FLAG]) return;
+      stopFileInputEventPropagation(event);
+      markFileInputPropagationStopped(event);
+    }
+
+    function shouldStopRawFileInputPropagation({
+      hasContentExtractionFile,
+      hasFailClosedProtectedUnsupportedFile,
+      hasSupportedWhatsAppAttach,
+      hasWhatsAppFileInputSelection,
+      selectedTransferPolicy
+    }) {
+      const policyAction = String(selectedTransferPolicy?.action || "");
+      return Boolean(
+        hasContentExtractionFile ||
+          hasFailClosedProtectedUnsupportedFile ||
+          hasSupportedWhatsAppAttach ||
+          hasWhatsAppFileInputSelection ||
+          policyAction === "scan" ||
+          policyAction === "block" ||
+          policyAction === "redact"
       );
     }
 
@@ -264,6 +317,31 @@
         })
       ) {
         return;
+      }
+
+      const shouldOwnRawFileInputEvent =
+        !isFirefoxProtectedInput &&
+        shouldStopRawFileInputPropagation({
+          hasContentExtractionFile,
+          hasFailClosedProtectedUnsupportedFile,
+          hasSupportedWhatsAppAttach,
+          hasWhatsAppFileInputSelection,
+          selectedTransferPolicy
+        });
+      if (shouldOwnRawFileInputEvent) {
+        stopOwnedRawFileInputEventPropagation(event);
+      }
+      if (shouldOwnRawFileInputEvent && event?.type === "input") {
+        debugReveal("file-input:raw-input-event-suppressed", {
+          eventType: event.type || "",
+          input: describeFileInputForDebug(event.target, "raw-input"),
+          fileCount: selectedFiles.length
+        });
+        return {
+          handled: true,
+          ok: true,
+          strategy: "raw-file-input-event-suppressed"
+        };
       }
 
       fileInputProcessingSignatures.set(event.target, selectedSignature);
