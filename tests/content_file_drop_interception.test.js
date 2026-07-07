@@ -114,6 +114,7 @@ require(path.join(repoRoot, "src/content/files/fileDropInterception.js"));
 require(path.join(repoRoot, "src/content/files/fileInputInterception.js"));
 require(path.join(repoRoot, "src/content/files/multiFileInsertOrchestration.js"));
 require(path.join(repoRoot, "src/content/files/streamingFileInsertOrchestration.js"));
+require(path.join(repoRoot, "src/content/files/localFileReadOrchestration.js"));
 require(path.join(repoRoot, "src/content/files/localFileSanitizationOrchestration.js"));
 require(path.join(repoRoot, "src/content/files/sanitizedFileInsertOrchestration.js"));
 require(path.join(repoRoot, "src/content/whatsapp/whatsappCapabilities.js"));
@@ -1318,11 +1319,14 @@ function createHarness(overrides = {}) {
       "const MULTI_FILE_SUPPORTED_MAX_BYTES = 50 * 1024 * 1024;",
       "const MultiFileInsertOrchestration = globalThis.PWM?.MultiFileInsertOrchestration || {};",
       "const StreamingFileInsertOrchestration = globalThis.PWM?.StreamingFileInsertOrchestration || {};",
+      "const LocalFileReadOrchestration = globalThis.PWM?.LocalFileReadOrchestration || {};",
       "const LocalFileSanitizationOrchestration = globalThis.PWM?.LocalFileSanitizationOrchestration || {};",
       "const SanitizedFileInsertOrchestration = globalThis.PWM?.SanitizedFileInsertOrchestration || {};",
       'const LOCAL_TEXT_HARD_BLOCK_TITLE = "Large payload blocked for browser stability";',
       'const LOCAL_TEXT_HARD_BLOCK_MESSAGE = "This content is over 4 MB. LeakGuard did not process or send it automatically to avoid browser instability. Split the file into smaller parts, or sanitize it separately before upload.";',
       "const LARGE_TEXT_STREAMING_MAX_BYTES = 50 * 1024 * 1024;",
+      'const STREAMING_BLOCK_TITLE = "File too large for local redaction";',
+      'const STREAMING_BLOCK_MESSAGE = "LeakGuard blocked raw file upload because the file is too large for local redaction.";',
       'const LOCAL_FILE_STREAMING_REQUIRED_MESSAGE = "LeakGuard will stream-redact this large text file locally before upload.";',
       'const LOCAL_FILE_UNSUPPORTED_WARNING = "LeakGuard did not scan or redact this unsupported file. Supported text, text PDF, DOCX, XLSX, and PNG/JPG/JPEG/WEBP image paths are protected where available. Unsupported archives, executables, legacy Office files, unsupported images, and binary files are blocked on protected sites when LeakGuard cannot safely replace them.";',
       'const WHATSAPP_FILE_ATTACH_UNSUPPORTED_REASON = "whatsapp_file_attachments_unsupported";',
@@ -1350,6 +1354,7 @@ function createHarness(overrides = {}) {
       "let fileInputInterception = null;",
       "let multiFileInsertOrchestration = null;",
       "let streamingFileInsertOrchestration = null;",
+      "let localFileReadOrchestration = null;",
       "let localFileSanitizationOrchestration = null;",
       "let sanitizedFileInsertOrchestration = null;",
       "let fileProcessingUi = null;",
@@ -1702,6 +1707,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "getMultiFileInsertOrchestration"),
       extractFunctionSource(contentSource, "maybeHandleMultiFileInsert"),
       extractFunctionSource(contentSource, "getStreamingFileInsertOrchestration"),
+      extractFunctionSource(contentSource, "getLocalFileReadOrchestration"),
       extractFunctionSource(contentSource, "getLocalFileSanitizationOrchestration"),
       extractFunctionSource(contentSource, "getSanitizedFileInsertOrchestration"),
       extractFunctionSource(contentSource, "maybeHandleLocalFileInsert"),

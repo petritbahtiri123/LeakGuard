@@ -107,6 +107,7 @@
     "content/files/fileInputInterception.js",
     "content/files/multiFileInsertOrchestration.js",
     "content/files/streamingFileInsertOrchestration.js",
+    "content/files/localFileReadOrchestration.js",
     "content/files/localFileSanitizationOrchestration.js",
     "content/files/sanitizedFileInsertOrchestration.js",
     "content/files/pendingSanitizedFileHandoff.js",

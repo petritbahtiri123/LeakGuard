@@ -66,6 +66,7 @@
   const FileInputInterception = globalThis.PWM?.FileInputInterception || {};
   const MultiFileInsertOrchestration = globalThis.PWM?.MultiFileInsertOrchestration || {};
   const StreamingFileInsertOrchestration = globalThis.PWM?.StreamingFileInsertOrchestration || {};
+  const LocalFileReadOrchestration = globalThis.PWM?.LocalFileReadOrchestration || {};
   const LocalFileSanitizationOrchestration = globalThis.PWM?.LocalFileSanitizationOrchestration || {};
   const SanitizedFileInsertOrchestration = globalThis.PWM?.SanitizedFileInsertOrchestration || {};
   const FileInputPreparation = globalThis.PWM?.FileInputPreparation || {};
@@ -368,6 +369,7 @@
   let fileInputInterception = null;
   let multiFileInsertOrchestration = null;
   let streamingFileInsertOrchestration = null;
+  let localFileReadOrchestration = null;
   let localFileSanitizationOrchestration = null;
   let sanitizedFileInsertOrchestration = null;
   let fileInputPreparation = null;
@@ -7132,6 +7134,40 @@
     return streamingFileInsertOrchestration;
   }
 
+  function getLocalFileReadOrchestration() {
+    if (localFileReadOrchestration) return localFileReadOrchestration;
+    if (typeof LocalFileReadOrchestration.createLocalFileReadOrchestration !== "function") {
+      localFileReadOrchestration = Object.freeze({
+        readLocalFileForInsert: async () => ({ done: true, value: false })
+      });
+      return localFileReadOrchestration;
+    }
+
+    localFileReadOrchestration =
+      LocalFileReadOrchestration.createLocalFileReadOrchestration({
+        clearLocalFileInputSelection,
+        debugReveal,
+        describeFileForDebug,
+        getFileUnavailableAfterHandoffSuppression,
+        getFirefoxRawFileUploadBlockedMessage,
+        hideBadgeSoon,
+        localFileFromContentExtractionResult,
+        logFileInterception,
+        maybeHandleStreamingRequiredLocalFile: (...args) =>
+          getStreamingFileInsertOrchestration().maybeHandleStreamingRequiredLocalFile(...args),
+        processFileForAdapterHandoff,
+        readLocalTextFileFromDataTransfer,
+        refreshBadgeFromCurrentInput,
+        setBadge,
+        showFileProcessingOverlay,
+        showMessageModal,
+        streamingBlockTitle: STREAMING_BLOCK_TITLE,
+        streamingBlockMessage: STREAMING_BLOCK_MESSAGE,
+        suppressFileUnavailableAfterHandoff
+      });
+    return localFileReadOrchestration;
+  }
+
   function getLocalFileSanitizationOrchestration() {
     if (localFileSanitizationOrchestration) return localFileSanitizationOrchestration;
     if (typeof LocalFileSanitizationOrchestration.createLocalFileSanitizationOrchestration !== "function") {
@@ -7292,175 +7328,91 @@
       });
     }
 
-    showFileProcessingOverlay({
-      site: processingSite,
-      title: "LeakGuard is scanning this file...",
-      status: "Scanning file locally...",
-      progress: "In progress",
-      blocking: true
-    });
-
     try {
-    const contentExtractionResult = contentExtractionFile
-      ? await processFileForAdapterHandoff({
-          file: contentExtractionFile,
-          context
-        })
-      : null;
-    const localFile = contentExtractionResult
-      ? localFileFromContentExtractionResult(contentExtractionResult)
-      : await readLocalTextFileFromDataTransfer(dataTransfer);
-    if (context === "file-input") {
-      logFileInterception("file scan result", {
-        handled: Boolean(localFile.handled),
-        ok: Boolean(localFile.ok),
-        code: localFile.code || "",
-        file: describeFileForDebug(localFile.file || localFile.sourceFile),
-        textLength: typeof localFile.text === "string" ? localFile.text.length : 0
-      });
-    }
-    const unavailableAfterHandoffSuppression =
-      context === "file-input"
-        ? getFileUnavailableAfterHandoffSuppression(event, dataTransfer, localFile)
-        : null;
-    if (unavailableAfterHandoffSuppression) {
-      hideProcessing("suppressed-after-sanitized-handoff");
-      return suppressFileUnavailableAfterHandoff(event, unavailableAfterHandoffSuppression, localFile);
-    }
-    if (!localFile.handled) {
-      failProcessing(localFile.code || "file_scan_failed", "Raw file blocked");
-      setBadge("Raw file blocked");
-      hideBadgeSoon(4200);
-      await showMessageModal(
-        "Raw file blocked",
-        localFile.message || "LeakGuard blocked raw file upload because local scanning failed."
-      );
-      refreshBadgeFromCurrentInput();
-      return {
-        handled: true,
-        ok: false,
-        reason: localFile.code || "file_scan_failed"
-      };
-    }
-
-    if (event?.target?.tagName === "INPUT" && String(event.target.type || "").toLowerCase() === "file") {
-      clearLocalFileInputSelection(event.target);
-    }
-
-    if (!localFile.ok) {
-      if (localFile.code === "firefox_data_transfer_file_unavailable") {
-        debugReveal("file-drop:firefox-data-transfer-file-unavailable", {
-          reason: "firefox_data_transfer_file_unavailable"
-        });
-      }
-      const streamingResult = await getStreamingFileInsertOrchestration().maybeHandleStreamingRequiredLocalFile({
+      const localFileRead = await getLocalFileReadOrchestration().readLocalFileForInsert({
         event,
         input,
-        localFile,
+        dataTransfer,
+        contentExtractionFile,
         context,
         processingSite,
         controls: { failProcessing, hideProcessing, showProcessingSuccess }
       });
-      if (streamingResult) return streamingResult;
+      if (localFileRead.done) return localFileRead.value;
+      const { localFile, contentExtractionResult } = localFileRead;
 
-      if (localFile.code === "file_too_large") {
-        failProcessing(localFile.code || "file_too_large", STREAMING_BLOCK_TITLE);
-        setBadge(STREAMING_BLOCK_TITLE);
-        hideBadgeSoon(4200);
-        await showMessageModal(STREAMING_BLOCK_TITLE, localFile.message || STREAMING_BLOCK_MESSAGE);
-      } else {
-        const firefoxBlockedMessage = localFile.title === "Raw image upload blocked"
-          ? ""
-          : getFirefoxRawFileUploadBlockedMessage(context);
-        const blockedTitle = localFile.title || "Raw file blocked";
-        failProcessing(localFile.code || "file_scan_failed", blockedTitle);
-        setBadge(blockedTitle);
-        hideBadgeSoon(4200);
-        await showMessageModal(
-          blockedTitle,
-          firefoxBlockedMessage || localFile.message || "LeakGuard blocked raw file upload because local scanning failed."
-        );
+      const imageRedactionMode = localFile.imageRedactionMode === true || localFile.fileOnlyUpload === true;
+      const sizeInfo = imageRedactionMode
+        ? {
+            zone: "fast",
+            bytes: Math.max(0, Number(localFile.file?.sizeBytes || 0))
+          }
+        : classifyLocalTextPayloadSize({
+            text: localFile.text,
+            sizeBytes: localFile.file?.sizeBytes
+          });
+      if (sizeInfo.zone === "blocked") {
+        failProcessing("local_text_payload_too_large", LOCAL_TEXT_HARD_BLOCK_TITLE);
+        await blockLargeLocalTextPayload(event, sizeInfo);
+        return true;
       }
-      refreshBadgeFromCurrentInput();
-      return {
-        handled: true,
-        ok: false,
-        reason: localFile.code || "file_scan_failed"
-      };
-    }
 
-    const imageRedactionMode = localFile.imageRedactionMode === true || localFile.fileOnlyUpload === true;
-    const sizeInfo = imageRedactionMode
-      ? {
-          zone: "fast",
-          bytes: Math.max(0, Number(localFile.file?.sizeBytes || 0))
-        }
-      : classifyLocalTextPayloadSize({
-          text: localFile.text,
-          sizeBytes: localFile.file?.sizeBytes
-        });
-    if (sizeInfo.zone === "blocked") {
-      failProcessing("local_text_payload_too_large", LOCAL_TEXT_HARD_BLOCK_TITLE);
-      await blockLargeLocalTextPayload(event, sizeInfo);
-      return true;
-    }
+      const shouldSkipTextFallback =
+        localFile.skipTextFallback === true ||
+        supportedWhatsAppTextDocumentAttach ||
+        supportedWhatsAppPdfAttach ||
+        supportedWhatsAppDocxAttach ||
+        supportedWhatsAppXlsxAttach ||
+        (context === "file-input" && isFirefoxRuntime() && isGeminiHost());
+      const preflightPlan = globalThis.PWM.FileAttachPipeline.classifyFileAttachPreflightPlan({
+        context,
+        sizeZone: sizeInfo.zone,
+        usesDmzOverlay: getCurrentHandoffDriver()?.usesDmzOverlay === true,
+        skipTextFallback: shouldSkipTextFallback,
+        imageRedactionMode,
+        allowPendingFallback: context === "drop"
+      });
+      const optimizedStatus = preflightPlan.optimizedStatus.shouldShow;
+      if (optimizedStatus) {
+        showLocalPayloadOptimizationStatus(sizeInfo);
+      }
 
-    const shouldSkipTextFallback =
-      localFile.skipTextFallback === true ||
-      supportedWhatsAppTextDocumentAttach ||
-      supportedWhatsAppPdfAttach ||
-      supportedWhatsAppDocxAttach ||
-      supportedWhatsAppXlsxAttach ||
-      (context === "file-input" && isFirefoxRuntime() && isGeminiHost());
-    const preflightPlan = globalThis.PWM.FileAttachPipeline.classifyFileAttachPreflightPlan({
-      context,
-      sizeZone: sizeInfo.zone,
-      usesDmzOverlay: getCurrentHandoffDriver()?.usesDmzOverlay === true,
-      skipTextFallback: shouldSkipTextFallback,
-      imageRedactionMode,
-      allowPendingFallback: context === "drop"
-    });
-    const optimizedStatus = preflightPlan.optimizedStatus.shouldShow;
-    if (optimizedStatus) {
-      showLocalPayloadOptimizationStatus(sizeInfo);
-    }
+      const sanitization = await getLocalFileSanitizationOrchestration().sanitizeLocalFileForAttach({
+        localFile,
+        contentExtractionResult,
+        context,
+        processingSite,
+        sizeInfo,
+        preflightPlan,
+        optimizedStatus,
+        imageRedactionMode,
+        controls: { failProcessing }
+      });
+      if (!sanitization.ok) return sanitization;
+      const { analysis, result, sanitizedFile } = sanitization;
 
-    const sanitization = await getLocalFileSanitizationOrchestration().sanitizeLocalFileForAttach({
-      localFile,
-      contentExtractionResult,
-      context,
-      processingSite,
-      sizeInfo,
-      preflightPlan,
-      optimizedStatus,
-      imageRedactionMode,
-      controls: { failProcessing }
-    });
-    if (!sanitization.ok) return sanitization;
-    const { analysis, result, sanitizedFile } = sanitization;
-
-    return getSanitizedFileInsertOrchestration().handleSanitizedLocalFileAttach({
-      event,
-      input,
-      localFile,
-      analysis,
-      result,
-      sanitizedFile,
-      context,
-      processingSite,
-      sizeInfo,
-      preflightPlan,
-      optimizedStatus,
-      imageRedactionMode,
-      shouldSkipTextFallback,
-      attachModes: {
-        textDocument: supportedWhatsAppTextDocumentAttach,
-        pdf: supportedWhatsAppPdfAttach,
-        docx: supportedWhatsAppDocxAttach,
-        xlsx: supportedWhatsAppXlsxAttach
-      },
-      controls: { failProcessing, hideProcessing, showProcessingSuccess }
-    });
+      return getSanitizedFileInsertOrchestration().handleSanitizedLocalFileAttach({
+        event,
+        input,
+        localFile,
+        analysis,
+        result,
+        sanitizedFile,
+        context,
+        processingSite,
+        sizeInfo,
+        preflightPlan,
+        optimizedStatus,
+        imageRedactionMode,
+        shouldSkipTextFallback,
+        attachModes: {
+          textDocument: supportedWhatsAppTextDocumentAttach,
+          pdf: supportedWhatsAppPdfAttach,
+          docx: supportedWhatsAppDocxAttach,
+          xlsx: supportedWhatsAppXlsxAttach
+        },
+        controls: { failProcessing, hideProcessing, showProcessingSuccess }
+      });
     } catch (error) {
       showFileProcessingError("File processing failed", {
         site: processingSite,

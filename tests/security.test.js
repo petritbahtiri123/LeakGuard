@@ -80,6 +80,10 @@ const streamingFileInsertOrchestrationSource = fs.readFileSync(
   path.join(repoRoot, "src/content/files/streamingFileInsertOrchestration.js"),
   "utf8"
 );
+const localFileReadOrchestrationSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/files/localFileReadOrchestration.js"),
+  "utf8"
+);
 const localFileSanitizationOrchestrationSource = fs.readFileSync(
   path.join(repoRoot, "src/content/files/localFileSanitizationOrchestration.js"),
   "utf8"
@@ -488,7 +492,7 @@ function testLocalFilePasteDoesNotExposeRawFileContent() {
   assert.ok(
     fileInsertSource.includes("consumeInterceptionEvent(event);") &&
       fileInsertSource.indexOf("consumeInterceptionEvent(event);") <
-        fileInsertSource.indexOf("readLocalTextFileFromDataTransfer(dataTransfer)"),
+        fileInsertSource.indexOf("getLocalFileReadOrchestration().readLocalFileForInsert"),
     "local file paste/drop should prevent host delivery before reading local file bytes"
   );
   assert.ok(
@@ -563,11 +567,7 @@ function testFileAttachPipelineStaysPureAndContentOwnsFileAttachSideEffects() {
   const fileInsertSource = extractFunctionSource(contentSource, "maybeHandleLocalFileInsert");
   const contentOwnedSideEffects = [
     "consumeInterceptionEvent(event);",
-    "readLocalTextFileFromDataTransfer(dataTransfer)",
-    "showFileProcessingOverlay({",
     "showFileProcessingError(",
-    "setBadge(",
-    "showMessageModal("
   ];
   for (const sideEffect of contentOwnedSideEffects) {
     assert.ok(
@@ -587,6 +587,20 @@ function testFileAttachPipelineStaysPureAndContentOwnsFileAttachSideEffects() {
     assert.ok(
       streamingFileInsertOrchestrationSource.includes(sideEffect),
       `streaming file insert orchestration should own streaming side effect: ${sideEffect}`
+    );
+  }
+  const localReadOwnedSideEffects = [
+    "readLocalTextFileFromDataTransfer(dataTransfer)",
+    "processFileForAdapterHandoff({",
+    "showFileProcessingOverlay({",
+    "maybeHandleStreamingRequiredLocalFile({",
+    "showMessageModal(",
+    "setBadge("
+  ];
+  for (const sideEffect of localReadOwnedSideEffects) {
+    assert.ok(
+      localFileReadOrchestrationSource.includes(sideEffect),
+      `local file read orchestration should own read/error side effect: ${sideEffect}`
     );
   }
   const localSanitizationOwnedSideEffects = [
