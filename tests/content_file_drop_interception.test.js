@@ -66,6 +66,7 @@ require(path.join(repoRoot, "src/content/composer_helpers.js"));
 require(path.join(repoRoot, "src/content/input/rewriteVerificationText.js"));
 require(path.join(repoRoot, "src/content/composer/chatgptComposerSync.js"));
 require(path.join(repoRoot, "src/content/composer/chatgptLargePasteOrchestration.js"));
+require(path.join(repoRoot, "src/content/composer/geminiEditorPasteOrchestration.js"));
 require(path.join(repoRoot, "src/content/files/fileTransferPolicy.js"));
 require(path.join(repoRoot, "src/shared/entropy.js"));
 require(path.join(repoRoot, "src/shared/patterns.js"));
@@ -1320,6 +1321,7 @@ function createHarness(overrides = {}) {
       "const MULTI_FILE_SMALL_MAX_BYTES = 4 * 1024 * 1024;",
       "const MULTI_FILE_SUPPORTED_MAX_BYTES = 50 * 1024 * 1024;",
       "const ChatGptLargePasteOrchestration = globalThis.PWM?.ChatGptLargePasteOrchestration || {};",
+      "const GeminiEditorPasteOrchestration = globalThis.PWM?.GeminiEditorPasteOrchestration || {};",
       "const MultiFileInsertOrchestration = globalThis.PWM?.MultiFileInsertOrchestration || {};",
       "const StreamingFileInsertOrchestration = globalThis.PWM?.StreamingFileInsertOrchestration || {};",
       "const LocalFileReadOrchestration = globalThis.PWM?.LocalFileReadOrchestration || {};",
@@ -1357,6 +1359,7 @@ function createHarness(overrides = {}) {
       "let fileDropInterception = null;",
       "let fileInputInterception = null;",
       "let chatGptLargePasteOrchestration = null;",
+      "let geminiEditorPasteOrchestration = null;",
       "let multiFileInsertOrchestration = null;",
       "let streamingFileInsertOrchestration = null;",
       "let localFileReadOrchestration = null;",
@@ -1525,6 +1528,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "isKnownSanitizedPlaceholderToken"),
       extractFunctionSource(contentSource, "maybeHandleChatGptLargeTextPaste"),
       extractFunctionSource(contentSource, "resolveGeminiEditorTarget"),
+      extractFunctionSource(contentSource, "getGeminiEditorPasteOrchestration"),
       extractFunctionSource(contentSource, "findGeminiEditorCandidateInRoot"),
       extractFunctionSource(contentSource, "resolveGeminiFallbackEditor"),
       extractFunctionSource(contentSource, "settleComposer"),

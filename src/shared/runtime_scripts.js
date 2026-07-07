@@ -73,6 +73,7 @@
     "content/composer/replayVerification.js",
     "content/composer/chatgptComposerSync.js",
     "content/composer/chatgptLargePasteOrchestration.js",
+    "content/composer/geminiEditorPasteOrchestration.js",
     "content/files/fileTransferPolicy.js",
     "content/files/fileExtractionSessionCache.js",
     "content/files/protectedSiteOcrBroker.js",

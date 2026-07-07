@@ -39,6 +39,10 @@ const {
 } = ComposerHelpers;
 
 const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
+const geminiEditorPasteSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/composer/geminiEditorPasteOrchestration.js"),
+  "utf8"
+);
 const contentModalUiSource = fs.readFileSync(path.join(repoRoot, "src/content/ui/contentModalUi.js"), "utf8");
 const rewriteVerificationTextSource = fs.readFileSync(
   path.join(repoRoot, "src/content/input/rewriteVerificationText.js"),
@@ -378,7 +382,7 @@ function testPauseBypassGatesPasteAndSendAfterPolicy() {
   const pasteSource = extractFunctionSource(contentSource, "maybeHandlePaste");
   const submitSource = extractFunctionSource(contentSource, "maybeHandleSubmit");
   const fallbackSendSource = extractFunctionSource(contentSource, "maybeHandleFallbackSendKey");
-  const geminiPasteSource = extractFunctionSource(contentSource, "maybeHandleGeminiEditorPaste");
+  const geminiPasteSource = extractFunctionSource(geminiEditorPasteSource, "maybeHandleGeminiEditorPaste");
 
   assert.ok(
     pasteSource.indexOf("const destinationPolicy = await handleDestinationPolicy") <

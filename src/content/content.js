@@ -29,6 +29,7 @@
   } = globalThis.PWM;
   const ReplayVerification = globalThis.PWM?.ReplayVerification || {};
   const ChatGptLargePasteOrchestration = globalThis.PWM?.ChatGptLargePasteOrchestration || {};
+  const GeminiEditorPasteOrchestration = globalThis.PWM?.GeminiEditorPasteOrchestration || {};
   const {
     normalizeComposerText,
     normalizeEditorInnerText,
@@ -382,6 +383,7 @@
   let whatsAppSelectors = null;
   let replayVerification = null;
   let chatGptLargePasteOrchestration = null;
+  let geminiEditorPasteOrchestration = null;
   let syntheticFileListCapabilityCache = null;
   let inputFileAssignmentCapabilityCache = null;
   const fileInputProcessingSignatures = new WeakMap();
@@ -4975,110 +4977,44 @@
     return true;
   }
 
-  async function maybeHandleGeminiEditorPaste(event) {
-    const editor = resolveGeminiEditorTarget(event?.target);
-    if (!editor) return false;
-    noteActiveRiskEditor(editor);
-
-    const pasted = event.clipboardData?.getData("text/plain") || "";
-    if (!pasted) return false;
-
-    consumeInterceptionEvent(event);
-    const sizeInfo = classifyLocalTextPayloadSize({ text: pasted });
-    if (sizeInfo.zone === "blocked") {
-      await blockLargeLocalTextPayload(event, sizeInfo);
-      return true;
-    }
-
-    const optimizedStatus = sizeInfo.zone === "optimized";
-    if (optimizedStatus) {
-      showLocalPayloadOptimizationStatus(sizeInfo);
-    }
-
-    try {
-      const analysis = await analyzeTextWithAiAssist(pasted);
-      let textToInsert = analysis.normalizedText;
-
-      if (analysis.findings.length) {
-        const policy = await getPolicyForAction();
-        const destinationPolicy = await handleDestinationPolicy(analysis.findings, policy);
-        if (destinationPolicy.blocked) {
-          if (optimizedStatus) {
-            clearLocalPayloadOptimizationStatus(sizeInfo, "cancelled");
-          }
-          return true;
-        }
-
-        const destinationForceRedact = shouldForceDestinationRedaction(
-          destinationPolicy,
-          analysis.findings
-        );
-        const httpPolicyHandled = await handleHttpSecretPolicy(
-          policy,
-          analysis.secretFindings,
-          async () => {
-            const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
-            textToInsert = result.redactedText;
-          }
-        );
-
-        if (!httpPolicyHandled && destinationForceRedact) {
-          const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings, {
-            auditReason: destinationPolicy.reason
-          });
-          textToInsert = result.redactedText;
-        } else if (!httpPolicyHandled && !isProtectionPauseActiveAfterPolicy(policy, destinationPolicy)) {
-          const decisionAction = await promptForSensitiveContentDecision(
-            analysis.findings,
-            "paste",
-            policy,
-            editor,
-            analysis.normalizedText
-          );
-
-          if (decisionAction === "cancel") {
-            if (optimizedStatus) {
-              clearLocalPayloadOptimizationStatus(sizeInfo, "cancelled");
-            }
-            refreshBadgeFromCurrentInput();
-            return true;
-          }
-
-          const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
-          textToInsert = result.redactedText;
-        } else if (!httpPolicyHandled) {
-          setBadge("Protection paused");
-          hideBadgeSoon();
-          }
-      }
-
-      const applied = await applyGeminiEditorText(editor, textToInsert, "gemini-paste", {
-        rawInsertedText: pasted
+  function getGeminiEditorPasteOrchestration() {
+    if (geminiEditorPasteOrchestration) return geminiEditorPasteOrchestration;
+    if (typeof GeminiEditorPasteOrchestration.createGeminiEditorPasteOrchestration !== "function") {
+      geminiEditorPasteOrchestration = Object.freeze({
+        maybeHandleGeminiEditorPaste: async () => false
       });
-      if (applied === true || applied === "cancelled") {
-        if (optimizedStatus) {
-          clearLocalPayloadOptimizationStatus(sizeInfo, applied === true ? "complete" : "cancelled");
-        }
-        return true;
-      }
-    } catch (error) {
-      if (optimizedStatus) {
-        clearLocalPayloadOptimizationStatus(sizeInfo, "failed");
-      }
-      handleContentError(error);
+      return geminiEditorPasteOrchestration;
     }
 
-    if (optimizedStatus) {
-      clearLocalPayloadOptimizationStatus(sizeInfo, "failed");
-    }
-    setBadge("Raw paste blocked");
-    hideBadgeSoon(4200);
-    await showMessageModal(
-      "Raw paste blocked",
-      "LeakGuard blocked raw pasted content because sanitized insertion failed."
-    );
-    refreshBadgeFromCurrentInput();
-    return true;
+    geminiEditorPasteOrchestration =
+      GeminiEditorPasteOrchestration.createGeminiEditorPasteOrchestration({
+        analyzeTextWithAiAssist,
+        applyGeminiEditorText,
+        blockLargeLocalTextPayload,
+        classifyLocalTextPayloadSize,
+        clearLocalPayloadOptimizationStatus,
+        consumeInterceptionEvent,
+        getPolicyForAction,
+        handleContentError,
+        handleDestinationPolicy,
+        handleHttpSecretPolicy,
+        hideBadgeSoon,
+        isProtectionPauseActiveAfterPolicy,
+        noteActiveRiskEditor,
+        promptForSensitiveContentDecision,
+        refreshBadgeFromCurrentInput,
+        requestRedaction,
+        resolveGeminiEditorTarget,
+        setBadge,
+        shouldForceDestinationRedaction,
+        showLocalPayloadOptimizationStatus,
+        showMessageModal
+      });
+    return geminiEditorPasteOrchestration;
+  }
+
+  async function maybeHandleGeminiEditorPaste(event) {
+    return getGeminiEditorPasteOrchestration().maybeHandleGeminiEditorPaste(event);
   }
 
   function isFileInputElement(el) {

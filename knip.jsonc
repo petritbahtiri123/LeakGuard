@@ -73,6 +73,7 @@
     "src/shared/policy.js",
     "src/content/composer/chatgptComposerSync.js",
     "src/content/composer/chatgptLargePasteOrchestration.js",
+    "src/content/composer/geminiEditorPasteOrchestration.js",
     "src/shared/runtime_scripts.js",
 
     // Scanner-only OCR classic scripts are loaded from scanner.html, not modules.

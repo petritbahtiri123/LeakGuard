@@ -5,8 +5,8 @@ Status: current progress record for `docs/roadmap/content-script-modularization-
 ## Baseline Snapshot
 
 - Source: `src/content/content.js`
-- Current size after the M8 ChatGPT large-paste extraction: 8,884 lines, 472 function declarations.
-- Latest M8 `content.js` slice: 49 insertions, 155 deletions, moving ChatGPT large-paste threshold routing, hard block, sanitized file creation, sanitized file handoff, verified text fallback, and fail-closed modal handling into `content/composer/chatgptLargePasteOrchestration.js`.
+- Current size after the M8 Gemini editor paste extraction: 8,820 lines, 473 function declarations.
+- Latest M8 `content.js` slice: 36 insertions, 100 deletions, moving Gemini editor paste size gating, pause-aware decision flow, destination-forced redaction, safe editor insertion, optimization cleanup, and fail-closed raw-paste blocking into `content/composer/geminiEditorPasteOrchestration.js`.
 - Runtime behavior goal: no behavior changes; extracted modules preserve existing file, WhatsApp, composer, and adapter gates.
 - Remaining plan focus: Phase M8 final shrink. `content.js` still owns several large orchestration functions and should keep moving toward initialization, adapter resolution, event routing, module calls, and fail-closed UI only.
 
@@ -33,6 +33,7 @@ Status: current progress record for `docs/roadmap/content-script-modularization-
 | M5 | `src/content/whatsapp/whatsappTextFlow.js` | WhatsApp typed-secret and paste state helpers |
 | M6 | `src/content/composer/replayVerification.js` | Composer verification candidate collection, rewrite matching, and replay verification glue over `RewriteVerificationText` |
 | M6/M8 | `src/content/composer/chatgptLargePasteOrchestration.js` | ChatGPT large pasted-text hard block, sanitized text-file handoff, verified composer text fallback, and fail-closed paste handling |
+| M6/M8 | `src/content/composer/geminiEditorPasteOrchestration.js` | Gemini editor pasted-text size gating, pause-aware decision flow, safe editor insertion, optimization cleanup, and fail-closed paste handling |
 | M8 support | `src/content/ui/contentStatusUi.js` | Protected-site status panel and badge rendering helpers |
 | M8 support | `src/content/ui/contentModalUi.js` | Decision, message, and Gemini large-text confirmation modal rendering helpers |
 | Adapter cleanup | `src/content/adapters/grokFileHandoff.js` | Grok upload discovery, pending file input, and sanitized handoff helpers |
@@ -44,7 +45,7 @@ Status: current progress record for `docs/roadmap/content-script-modularization-
 ## Current Event-Flow Map
 
 - Text typing: WhatsApp typed-secret state helpers delegate through `content/whatsapp/whatsappTextFlow.js`; submit/send orchestration still routes through `content.js`.
-- Text paste: WhatsApp paste state helpers delegate through `content/whatsapp/whatsappTextFlow.js`; ChatGPT large-paste sanitized file handoff and verified text fallback delegate through `content/composer/chatgptLargePasteOrchestration.js`; general transactional paste orchestration still routes through `content.js`.
+- Text paste: WhatsApp paste state helpers delegate through `content/whatsapp/whatsappTextFlow.js`; ChatGPT large-paste sanitized file handoff and verified text fallback delegate through `content/composer/chatgptLargePasteOrchestration.js`; Gemini editor paste decision/insertion delegates through `content/composer/geminiEditorPasteOrchestration.js`; general transactional paste orchestration still routes through `content.js`.
 - Clipboard image paste: WhatsApp capability gates live in `content/whatsapp/whatsappCapabilities.js`; processing and final image handoff still route through `content.js`.
 - File input attach: preflight, input preparation, support checks, unsupported transfer policy gate, single-file read/error routing, local size/preflight planning, streaming handoff orchestration, single-file sanitization/result creation, non-streaming sanitized file attach orchestration, batch processing, multi-file orchestration, verification, and sanitized assignment are delegated; high-level file-event routing and delegated-flow sequencing still run through `content.js`.
 - Drag/drop: drag ownership is delegated to `content/files/fileDropInterception.js`; drop orchestration still routes through `content.js`.
@@ -80,6 +81,7 @@ Status: current progress record for `docs/roadmap/content-script-modularization-
 - `node tests/local_file_sanitization_orchestration.test.js`
 - `node tests/sanitized_file_insert_orchestration.test.js`
 - `node tests/chatgpt_large_paste_orchestration.test.js`
+- `node tests/gemini_editor_paste_orchestration.test.js`
 - `node tests/content_file_drop_interception.test.js`
 - `node tests/typed_interception.test.js`
 - `node tests/adapter_contracts.test.js`
@@ -93,6 +95,6 @@ Status: current progress record for `docs/roadmap/content-script-modularization-
 - `maybeHandleLocalFileInsert` remaining file-event routing, WhatsApp attach gates, local transfer policy handoff, and calls into delegated read/preflight/sanitization/attach flows.
 - `maybeHandleBeforeInput`, `maybeHandlePaste` general routing, `maybeHandleSubmit`, `maybeHandleFallbackSendKey`, and `maybeHandleTypedSecrets`.
 - WhatsApp image-send bypass, send replay, and exact composer-state acceptance.
-- `maybeHandleGeminiEditorPaste` and the remaining Gemini/Grok orchestration wrappers.
+- Remaining Gemini/Grok orchestration wrappers.
 - File input/drop orchestration after interception and before sanitized handoff.
 - Policy, audit, reveal, and status wiring that should stay thin but still lives in `content.js`.
