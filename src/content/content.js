@@ -65,6 +65,7 @@
   const FileDropInterception = globalThis.PWM?.FileDropInterception || {};
   const FileInputInterception = globalThis.PWM?.FileInputInterception || {};
   const MultiFileInsertOrchestration = globalThis.PWM?.MultiFileInsertOrchestration || {};
+  const StreamingFileInsertOrchestration = globalThis.PWM?.StreamingFileInsertOrchestration || {};
   const FileInputPreparation = globalThis.PWM?.FileInputPreparation || {};
   const FileProcessingUi = globalThis.PWM?.FileProcessingUi || {};
   const WhatsAppCapabilities = globalThis.PWM?.WhatsAppCapabilities || {};
@@ -364,6 +365,7 @@
   let fileDropInterception = null;
   let fileInputInterception = null;
   let multiFileInsertOrchestration = null;
+  let streamingFileInsertOrchestration = null;
   let fileInputPreparation = null;
   let fileProcessingUi = null;
   let whatsAppCapabilities = null;
@@ -7089,6 +7091,43 @@
     );
   }
 
+  function getStreamingFileInsertOrchestration() {
+    if (streamingFileInsertOrchestration) return streamingFileInsertOrchestration;
+    if (typeof StreamingFileInsertOrchestration.createStreamingFileInsertOrchestration !== "function") {
+      streamingFileInsertOrchestration = Object.freeze({
+        maybeHandleStreamingRequiredLocalFile: async () => null
+      });
+      return streamingFileInsertOrchestration;
+    }
+
+    streamingFileInsertOrchestration =
+      StreamingFileInsertOrchestration.createStreamingFileInsertOrchestration({
+        fileAttachPipeline: globalThis.PWM.FileAttachPipeline,
+        streamingBlockTitle: STREAMING_BLOCK_TITLE,
+        streamingBlockMessage: STREAMING_BLOCK_MESSAGE,
+        blockStreamingLocalFile,
+        createSanitizedFileHandoffDetails,
+        getCurrentHandoffDriver,
+        getFileHandoffAdapterById,
+        getFileHandoffAdapterForLocation,
+        getPendingSanitizedAttachPromptMessage,
+        handOffSanitizedLocalFile,
+        hideBadgeSoon,
+        isFileHandoffAdapterPendingAttachEnabled,
+        isFirefoxRuntime,
+        isGeminiHost,
+        isGrokHost,
+        queuePendingSanitizedFileHandoff,
+        refreshBadgeFromCurrentInput,
+        setBadge,
+        setDmzOverlayState,
+        showFileProcessingError,
+        streamRedactLocalTextFile,
+        updateFileProcessingOverlay
+      });
+    return streamingFileInsertOrchestration;
+  }
+
   async function maybeHandleLocalFileInsert(event, input, dataTransfer, context) {
     const alreadyConsumedSupportedWhatsAppClipboardImagePaste =
       event?.defaultPrevented === true &&
@@ -7245,190 +7284,15 @@
           reason: "firefox_data_transfer_file_unavailable"
         });
       }
-      if (localFile.code === "streaming_required" && localFile.sourceFile) {
-        updateFileProcessingOverlay({
-          site: processingSite,
-          status: "Stream-redacting large file locally...",
-          progress: "",
-          blocking: true
-        });
-        const streamResult = await streamRedactLocalTextFile(localFile.sourceFile, localFile.file);
-        const streamingPendingAdapter = context === "drop" ? getFileHandoffAdapterForLocation() : null;
-        const streamingPendingAdapterId =
-          streamingPendingAdapter && isFileHandoffAdapterPendingAttachEnabled(streamingPendingAdapter)
-            ? streamingPendingAdapter.id
-            : "";
-        const isGeminiDrop = !streamingPendingAdapterId && context === "drop" && isGeminiHost();
-        const isGrokDrop = !streamingPendingAdapterId && context === "drop" && isGrokHost();
-        const streamingPlan = globalThis.PWM.FileAttachPipeline.classifyStreamingAttachPlan({
-          context,
-          isGeminiDrop,
-          isGrokDrop,
-          pendingAdapterId: streamingPendingAdapterId,
-          streamResultAction: streamResult.action,
-          hasSanitizedFile: Boolean(streamResult.sanitizedFile)
-        });
-        if (streamingPlan.blockedResult.shouldBlock) {
-          failProcessing(streamingPlan.blockedResult.reason, streamResult.title || STREAMING_BLOCK_TITLE);
-          return blockStreamingLocalFile(
-            event,
-            streamResult.title || STREAMING_BLOCK_TITLE,
-            streamResult.error || STREAMING_BLOCK_MESSAGE
-          );
-        }
-
-        if (streamingPlan.failedResult.shouldBlock) {
-          failProcessing(streamingPlan.failedResult.reason, streamingPlan.failedResult.title);
-          return blockStreamingLocalFile(
-            event,
-            streamingPlan.failedResult.title,
-            streamResult.error || streamingPlan.failedResult.message
-          );
-        }
-
-        updateFileProcessingOverlay({
-          site: processingSite,
-          status: streamingPlan.preparingStatus.processingStatus,
-          progress: streamingPlan.preparingStatus.processingProgress,
-          blocking: streamingPlan.preparingStatus.processingBlocking
-        });
-        if (streamingPlan.pendingAttach.provider === "gemini") {
-          const details = createSanitizedFileHandoffDetails(
-            event,
-            streamResult.sanitizedFile,
-            streamingPlan.pendingAttach.detailsStage
-          );
-
-          hideProcessing("sanitized");
-          if (
-            queuePendingSanitizedFileHandoff(
-              getFileHandoffAdapterById("gemini"),
-              event,
-              input,
-              streamResult.sanitizedFile,
-              details
-            )
-          ) {
-            setBadge(getPendingSanitizedAttachPromptMessage("gemini"));
-            hideBadgeSoon(6500);
-            refreshBadgeFromCurrentInput();
-            return {
-              handled: true,
-              ok: true,
-              strategy: streamingPlan.pendingAttach.strategy
-            };
-          }
-          showFileProcessingError(streamingPlan.pendingAttach.queueFailureTitle, {
-            site: processingSite,
-            reason: streamingPlan.pendingAttach.queueFailureReason
-          });
-          return blockStreamingLocalFile(
-            event,
-            streamingPlan.pendingAttach.queueFailureTitle,
-            streamingPlan.pendingAttach.queueFailureMessage
-          );
-        }
-
-        if (streamingPlan.pendingAttach.provider === "grok") {
-          const details = createSanitizedFileHandoffDetails(
-            event,
-            streamResult.sanitizedFile,
-            streamingPlan.pendingAttach.detailsStage
-          );
-
-          hideProcessing("sanitized");
-          if (
-            queuePendingSanitizedFileHandoff(
-              getFileHandoffAdapterById("grok"),
-              event,
-              input,
-              streamResult.sanitizedFile,
-              details
-            )
-          ) {
-            setBadge(getPendingSanitizedAttachPromptMessage("grok"));
-            hideBadgeSoon(6500);
-            refreshBadgeFromCurrentInput();
-            return {
-              handled: true,
-              ok: true,
-              strategy: streamingPlan.pendingAttach.strategy
-            };
-          }
-          showFileProcessingError(streamingPlan.pendingAttach.queueFailureTitle, {
-            site: processingSite,
-            reason: streamingPlan.pendingAttach.queueFailureReason
-          });
-          return blockStreamingLocalFile(
-            event,
-            streamingPlan.pendingAttach.queueFailureTitle,
-            streamingPlan.pendingAttach.queueFailureMessage
-          );
-        }
-
-        const driver = getCurrentHandoffDriver();
-        const payload = driver.preparePayload(streamResult.sanitizedFile, "", {
-          localFile: localFile.sourceFile || localFile.file,
-          analysis: null,
-          result: null
-        });
-        payload.allowFileOnlyHandoff = true;
-        payload.streamed = true;
-        const handoffResult = await globalThis.PWM.FileAttachPipeline.runSanitizedPayloadHandoffOrder({
-          context,
-          tryDropHandoff: () =>
-            driver.handoff(payload, { event, input, context, driver, composerResolved: true }),
-          trySanitizedHandoff: () =>
-            handOffSanitizedLocalFile(event, input, streamResult.sanitizedFile, context),
-          shouldSkipFallback: () => context === "file-input" && isFirefoxRuntime() && isGeminiHost(),
-          skipFallbackReason: streamingPlan.genericAttach.skipFallbackReason,
-          insertFallbackText: () => driver.insertSanitizedText(payload, { event, input, context, driver }),
-          fileStrategy: streamingPlan.genericAttach.fileStrategy,
-          textStrategy: streamingPlan.genericAttach.textStrategy
-        });
-        const handoffClassification = globalThis.PWM.FileAttachPipeline.classifyPostHandoffResult({
-          handoffResult,
-          context,
-          defaultSuccessStrategy: streamingPlan.genericAttach.defaultSuccessStrategy,
-          failureReason: streamingPlan.genericAttach.failureReason,
-          treatCancellation: false
-        });
-        if (handoffClassification.ok) {
-          const disposition = globalThis.PWM.FileAttachPipeline.classifyFileAttachDisposition({
-            handoffClassification,
-            context,
-            forceDmzAttached: streamingPlan.dispositionOptions.forceDmzAttached,
-            forceAttachedBadge: streamingPlan.dispositionOptions.forceAttachedBadge
-          });
-          if (disposition.shouldSetDmzAttached) {
-            setDmzOverlayState(disposition.dmzStatus, disposition.dmzMode);
-          }
-          if (disposition.shouldHideProcessing) {
-            hideProcessing(disposition.hideProcessingReason);
-          } else if (disposition.shouldShowSuccess) {
-            showProcessingSuccess(disposition.successStatus, disposition.successReason);
-          }
-          if (disposition.shouldShowAttachedBadge) {
-            setBadge("LeakGuard attached a sanitized local file.");
-            hideBadgeSoon(3200);
-          }
-          refreshBadgeFromCurrentInput();
-          return {
-            handled: true,
-            ok: true,
-            strategy: handoffClassification.strategy
-          };
-        }
-
-        if (handoffClassification.shouldFailProcessing) {
-          failProcessing(handoffClassification.reason, "Raw file upload blocked");
-        }
-        return blockStreamingLocalFile(
-          event,
-          streamingPlan.genericAttach.failureTitle,
-          handoffResult.message || streamingPlan.genericAttach.failureMessage
-        );
-      }
+      const streamingResult = await getStreamingFileInsertOrchestration().maybeHandleStreamingRequiredLocalFile({
+        event,
+        input,
+        localFile,
+        context,
+        processingSite,
+        controls: { failProcessing, hideProcessing, showProcessingSuccess }
+      });
+      if (streamingResult) return streamingResult;
 
       if (localFile.code === "file_too_large") {
         failProcessing(localFile.code || "file_too_large", STREAMING_BLOCK_TITLE);

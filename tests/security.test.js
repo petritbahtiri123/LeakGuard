@@ -76,6 +76,10 @@ const fileAttachPipelineSource = fs.readFileSync(
   path.join(repoRoot, "src/content/files/fileAttachPipeline.js"),
   "utf8"
 );
+const streamingFileInsertOrchestrationSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/files/streamingFileInsertOrchestration.js"),
+  "utf8"
+);
 const contentFileExtractionPipelineSource = fs.readFileSync(
   path.join(repoRoot, "src/content/files/contentFileExtractionPipeline.js"),
   "utf8"
@@ -546,9 +550,7 @@ function testFileAttachPipelineStaysPureAndContentOwnsFileAttachSideEffects() {
   const contentOwnedSideEffects = [
     "consumeInterceptionEvent(event);",
     "readLocalTextFileFromDataTransfer(dataTransfer)",
-    "streamRedactLocalTextFile(localFile.sourceFile, localFile.file)",
     "handOffSanitizedLocalFile(event, input, sanitizedFile, context)",
-    "queuePendingSanitizedFileHandoff(",
     "showFileProcessingOverlay({",
     "showFileProcessingError(",
     "setBadge(",
@@ -558,6 +560,20 @@ function testFileAttachPipelineStaysPureAndContentOwnsFileAttachSideEffects() {
     assert.ok(
       fileInsertSource.includes(sideEffect),
       `maybeHandleLocalFileInsert should continue to own file attach side effect: ${sideEffect}`
+    );
+  }
+  const streamingOwnedSideEffects = [
+    "streamRedactLocalTextFile(localFile.sourceFile, localFile.file)",
+    "handOffSanitizedLocalFile(event, input, streamResult.sanitizedFile, context)",
+    "queuePendingSanitizedFileHandoff(",
+    "updateFileProcessingOverlay({",
+    "showFileProcessingError(",
+    "setBadge("
+  ];
+  for (const sideEffect of streamingOwnedSideEffects) {
+    assert.ok(
+      streamingFileInsertOrchestrationSource.includes(sideEffect),
+      `streaming file insert orchestration should own streaming side effect: ${sideEffect}`
     );
   }
 

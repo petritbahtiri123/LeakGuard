@@ -126,6 +126,7 @@
     "src/content/files/fileDropInterception.js",
     "src/content/files/fileInputInterception.js",
     "src/content/files/multiFileInsertOrchestration.js",
+    "src/content/files/streamingFileInsertOrchestration.js",
     "src/content/files/pendingSanitizedFileHandoff.js",
     "src/content/rehydration/placeholderRehydrator.js",
     "src/content/rehydration/responseObserver.js",

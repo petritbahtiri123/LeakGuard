@@ -113,6 +113,7 @@ require(path.join(repoRoot, "src/content/files/sanitizedFileHandoff.js"));
 require(path.join(repoRoot, "src/content/files/fileDropInterception.js"));
 require(path.join(repoRoot, "src/content/files/fileInputInterception.js"));
 require(path.join(repoRoot, "src/content/files/multiFileInsertOrchestration.js"));
+require(path.join(repoRoot, "src/content/files/streamingFileInsertOrchestration.js"));
 require(path.join(repoRoot, "src/content/whatsapp/whatsappCapabilities.js"));
 require(path.join(repoRoot, "src/content/whatsapp/whatsappTextFlow.js"));
 require(path.join(repoRoot, "src/content/whatsapp/whatsappSelectors.js"));
@@ -1343,6 +1344,7 @@ function createHarness(overrides = {}) {
       "let fileDropInterception = null;",
       "let fileInputInterception = null;",
       "let multiFileInsertOrchestration = null;",
+      "let streamingFileInsertOrchestration = null;",
       "let fileProcessingUi = null;",
       "let geminiUploadDiscovery = null;",
       "let geminiFileHandoff = null;",
@@ -1692,6 +1694,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "handOffSanitizedFileBatch"),
       extractFunctionSource(contentSource, "getMultiFileInsertOrchestration"),
       extractFunctionSource(contentSource, "maybeHandleMultiFileInsert"),
+      extractFunctionSource(contentSource, "getStreamingFileInsertOrchestration"),
       extractFunctionSource(contentSource, "maybeHandleLocalFileInsert"),
       extractFunctionSource(contentSource, "maybeHandlePaste"),
       extractFunctionSource(contentSource, "maybeHandleDrop"),
