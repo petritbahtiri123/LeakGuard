@@ -7,6 +7,7 @@ const repoRoot = path.join(__dirname, "..");
 require(path.join(repoRoot, "src/content/composer_helpers.js"));
 require(path.join(repoRoot, "src/content/composer/fallbackSendKeyOrchestration.js"));
 require(path.join(repoRoot, "src/content/composer/typedSecretScanOrchestration.js"));
+require(path.join(repoRoot, "src/content/composer/submitOrchestration.js"));
 require(path.join(repoRoot, "src/content/ui/contentModalUi.js"));
 
 const {
@@ -465,6 +466,9 @@ function createHarness(options = {}) {
     isWhatsAppHost: () => false,
     shouldOwnWhatsAppTextSend: () => false,
     shouldBypassWhatsAppSanitizedImageSend: () => false,
+    consumeRecentWhatsAppSanitizedImageHandoff: () => {},
+    debugReveal: () => {},
+    summarizeDebugText: (text) => ({ length: String(text || "").length }),
     markWhatsAppTextSendPending: () => true,
     createWhatsAppVerifiedSendOptions: () => ({}),
     clearWhatsAppTextSendPending: () => {},
@@ -505,6 +509,7 @@ function createHarness(options = {}) {
       input.selectionEnd = redactedText.length;
       return true;
     },
+    ensureExactComposerState: async (input, expected) => input.value === expected,
     collectFailureDetails: (_input, expected, actual, context) => ({ expected, actual, context }),
     showRewriteFailure: async () => {},
     queueVerifiedComposerSend: (_input, expectedText, context, send) => {
@@ -528,9 +533,11 @@ function createHarness(options = {}) {
     [
       "const FallbackSendKeyOrchestration = globalThis.PWM?.FallbackSendKeyOrchestration || {};",
       "const TypedSecretScanOrchestration = globalThis.PWM?.TypedSecretScanOrchestration || {};",
+      "const SubmitOrchestration = globalThis.PWM?.SubmitOrchestration || {};",
       "let contentModalUi = null;",
       "let fallbackSendKeyOrchestration = null;",
       "let typedSecretScanOrchestration = null;",
+      "let submitOrchestration = null;",
       "let whatsAppBypassSanitizedImageSubmitUntil = 0;",
       extractFunctionSource(contentSource, "getEditorRiskState"),
       extractFunctionSource(contentSource, "clearEditorRiskState"),
@@ -554,6 +561,7 @@ function createHarness(options = {}) {
       extractFunctionSource(contentSource, "submitComposer"),
       extractFunctionSource(contentSource, "replayVerifiedSend"),
       extractFunctionSource(contentSource, "maybeHandlePaste"),
+      extractFunctionSource(contentSource, "getSubmitOrchestration"),
       extractFunctionSource(contentSource, "maybeHandleSubmit"),
       extractFunctionSource(contentSource, "findSendButtonClickTarget"),
       extractFunctionSource(contentSource, "createSyntheticSubmitInterceptionEvent"),

@@ -77,6 +77,7 @@
     "content/composer/fallbackSendKeyOrchestration.js",
     "content/composer/typedSecretScanOrchestration.js",
     "content/composer/beforeInputOrchestration.js",
+    "content/composer/submitOrchestration.js",
     "content/files/fileTransferPolicy.js",
     "content/files/fileExtractionSessionCache.js",
     "content/files/protectedSiteOcrBroker.js",

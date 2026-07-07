@@ -19,6 +19,10 @@ const beforeInputOrchestrationSource = fs.readFileSync(
   path.join(repoRoot, "src/content/composer/beforeInputOrchestration.js"),
   "utf8"
 );
+const submitOrchestrationSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/composer/submitOrchestration.js"),
+  "utf8"
+);
 const popupSource = fs.readFileSync(path.join(repoRoot, "src/popup/popup.js"), "utf8");
 const optionsSource = fs.readFileSync(path.join(repoRoot, "src/options/options.js"), "utf8");
 const managedPolicySchema = JSON.parse(
@@ -855,7 +859,8 @@ function testPolicySchemaAndUiSurfaceNewFields() {
   );
   assert.ok(
     beforeInputOrchestrationSource.includes("handleDestinationPolicy(relevantFindings, policy)") &&
-      contentSource.includes("handleDestinationPolicy(analysis.findings, policy)"),
+      contentSource.includes("handleDestinationPolicy(analysis.findings, policy)") &&
+      submitOrchestrationSource.includes("handleDestinationPolicy(analysis.findings, policy)"),
     "content enforcement should run in the typed, paste, and submit decision paths"
   );
   assert.ok(

@@ -66,6 +66,7 @@ regex/provider deterministic rules
 - `src/content/composer/fallbackSendKeyOrchestration.js`: Enter-send fallback ownership, policy/redaction branches, WhatsApp text-send guards, and verified send queueing.
 - `src/content/composer/typedSecretScanOrchestration.js`: delayed typed-secret scan generation, stale composer guards, placeholder normalization, policy/redaction branches, and live rewrite failure handling.
 - `src/content/composer/beforeInputOrchestration.js`: beforeinput paste delegation, programmatic rewrite suppression, synchronous typed-event ownership, live typed policy/redaction branches, and placeholder normalization.
+- `src/content/composer/submitOrchestration.js`: submit modal/bypass gates, WhatsApp sanitized-image send bypass, composer/submitter replay selection, policy/redaction branches, and verified send queueing.
 - `src/content/file_drag_guard.js`: early file drag/drop guard.
 - `src/content/file_paste_helpers.js`: paste/file helper messages and file extraction glue.
 - `src/content/file_handoff_state.js`, `src/content/file_handoff_pending.js`, `src/content/file_handoff_flow.js`: shared sanitized handoff state, pending flow, and handoff sequencing.

@@ -5,8 +5,8 @@ Status: current progress record for `docs/roadmap/content-script-modularization-
 ## Baseline Snapshot
 
 - Source: `src/content/content.js`
-- Current size after the M8 beforeinput extraction: 8,301 lines, 476 function declarations.
-- Latest M8 `content.js` slice: 50 insertions, 225 deletions, moving beforeinput paste delegation, programmatic rewrite suppression, Firefox/non-Firefox synchronous ownership checks, live typed policy, destination/HTTP policy branches, placeholder normalization, and auto/prompt redaction into `content/composer/beforeInputOrchestration.js`.
+- Current size after the M8 submit extraction: 8,153 lines, 477 function declarations.
+- Latest M8 `content.js` slice: 64 insertions, 212 deletions, moving submit modal/bypass gates, WhatsApp sanitized-image send bypass, composer/submitter replay selection, text-send ownership, destination/HTTP policy branches, exact-state normalized replay, and verified send queueing into `content/composer/submitOrchestration.js`.
 - Runtime behavior goal: no behavior changes; extracted modules preserve existing file, WhatsApp, composer, and adapter gates.
 - Remaining plan focus: Phase M8 final shrink. `content.js` still owns several large orchestration functions and should keep moving toward initialization, adapter resolution, event routing, module calls, and fail-closed UI only.
 
@@ -37,6 +37,7 @@ Status: current progress record for `docs/roadmap/content-script-modularization-
 | M6/M8 | `src/content/composer/fallbackSendKeyOrchestration.js` | Enter-send fallback ownership, WhatsApp text-send guards, policy/redaction branches, normalized replay, and verified send queueing |
 | M6/M8 | `src/content/composer/typedSecretScanOrchestration.js` | Delayed typed-secret scan generation, stale composer guards, placeholder normalization, policy/redaction branches, and live rewrite failure handling |
 | M6/M8 | `src/content/composer/beforeInputOrchestration.js` | Beforeinput paste delegation, programmatic rewrite suppression, synchronous typed-event ownership, live typed policy/redaction branches, and placeholder normalization |
+| M6/M8 | `src/content/composer/submitOrchestration.js` | Submit modal/bypass gates, WhatsApp sanitized-image send bypass, composer/submitter replay selection, text-send ownership, policy/redaction branches, and verified send queueing |
 | M8 support | `src/content/ui/contentStatusUi.js` | Protected-site status panel and badge rendering helpers |
 | M8 support | `src/content/ui/contentModalUi.js` | Decision, message, and Gemini large-text confirmation modal rendering helpers |
 | Adapter cleanup | `src/content/adapters/grokFileHandoff.js` | Grok upload discovery, pending file input, and sanitized handoff helpers |
@@ -53,7 +54,7 @@ Status: current progress record for `docs/roadmap/content-script-modularization-
 - File input attach: preflight, input preparation, support checks, unsupported transfer policy gate, single-file read/error routing, local size/preflight planning, streaming handoff orchestration, single-file sanitization/result creation, non-streaming sanitized file attach orchestration, batch processing, multi-file orchestration, verification, and sanitized assignment are delegated; high-level file-event routing and delegated-flow sequencing still run through `content.js`.
 - Drag/drop: drag ownership is delegated to `content/files/fileDropInterception.js`; drop orchestration still routes through `content.js`.
 - Multi-file: support classification, batch processing, all-or-nothing flow ownership, pending Gemini/Grok handoff fallback, verification, and sanitized batch assignment are delegated; `content.js` keeps the wrapper call from local file insert routing.
-- Replay/send: rewrite matching delegates through `content/composer/replayVerification.js`; Enter-send fallback orchestration delegates through `content/composer/fallbackSendKeyOrchestration.js`; beforeinput, submit, and click send orchestration remain in `content.js`.
+- Replay/send: rewrite matching delegates through `content/composer/replayVerification.js`; Enter-send fallback orchestration delegates through `content/composer/fallbackSendKeyOrchestration.js`; submit orchestration delegates through `content/composer/submitOrchestration.js`; click send orchestration remains in `content.js`.
 - Failure/status UI: panel, badge, modal, and file-processing UI helpers are delegated; fail-closed decision routing remains in `content.js`.
 - Gemini/Grok handoff: adapter-specific discovery and sanitized handoff helpers are delegated; `content.js` still coordinates when those paths are attempted.
 
@@ -88,6 +89,7 @@ Status: current progress record for `docs/roadmap/content-script-modularization-
 - `node tests/fallback_send_key_orchestration.test.js`
 - `node tests/typed_secret_scan_orchestration.test.js`
 - `node tests/before_input_orchestration.test.js`
+- `node tests/submit_orchestration.test.js`
 - `node tests/content_file_drop_interception.test.js`
 - `node tests/typed_interception.test.js`
 - `node tests/adapter_contracts.test.js`
@@ -99,8 +101,8 @@ Status: current progress record for `docs/roadmap/content-script-modularization-
 ## Remaining Large Clusters
 
 - `maybeHandleLocalFileInsert` remaining file-event routing, WhatsApp attach gates, local transfer policy handoff, and calls into delegated read/preflight/sanitization/attach flows.
-- `maybeHandlePaste` general routing and `maybeHandleSubmit`.
-- WhatsApp image-send bypass, send replay, and exact composer-state acceptance.
+- `maybeHandlePaste` general routing.
+- WhatsApp send-button image bypass and click-to-submit wrapper.
 - Remaining Gemini/Grok orchestration wrappers.
 - File input/drop orchestration after interception and before sanitized handoff.
 - Policy, audit, reveal, and status wiring that should stay thin but still lives in `content.js`.

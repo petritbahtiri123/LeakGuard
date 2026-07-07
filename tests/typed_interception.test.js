@@ -21,6 +21,7 @@ require(path.join(repoRoot, "src/content/composer/replayVerification.js"));
 require(path.join(repoRoot, "src/content/composer/fallbackSendKeyOrchestration.js"));
 require(path.join(repoRoot, "src/content/composer/typedSecretScanOrchestration.js"));
 require(path.join(repoRoot, "src/content/composer/beforeInputOrchestration.js"));
+require(path.join(repoRoot, "src/content/composer/submitOrchestration.js"));
 require(path.join(repoRoot, "src/content/diagnostics/debugLogger.js"));
 const ContentDebugFacade = require(path.join(repoRoot, "src/content/diagnostics/contentDebugFacade.js"));
 
@@ -56,6 +57,10 @@ const typedSecretScanSource = fs.readFileSync(
 );
 const beforeInputOrchestrationSource = fs.readFileSync(
   path.join(repoRoot, "src/content/composer/beforeInputOrchestration.js"),
+  "utf8"
+);
+const submitOrchestrationSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/composer/submitOrchestration.js"),
   "utf8"
 );
 const contentModalUiSource = fs.readFileSync(path.join(repoRoot, "src/content/ui/contentModalUi.js"), "utf8");
@@ -395,7 +400,7 @@ function testPauseBypassRunsAfterPolicyInTypedRedactionPipeline() {
 
 function testPauseBypassGatesPasteAndSendAfterPolicy() {
   const pasteSource = extractFunctionSource(contentSource, "maybeHandlePaste");
-  const submitSource = extractFunctionSource(contentSource, "maybeHandleSubmit");
+  const submitSource = extractFunctionSource(submitOrchestrationSource, "maybeHandleSubmit");
   const fallbackSendSource = extractFunctionSource(fallbackSendKeySource, "maybeHandleFallbackSendKey");
   const geminiPasteSource = extractFunctionSource(geminiEditorPasteSource, "maybeHandleGeminiEditorPaste");
 
@@ -441,7 +446,7 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   const manifest = JSON.parse(fs.readFileSync(path.join(repoRoot, "manifests/base.json"), "utf8"));
   const manifestScripts = manifest.content_scripts[0].js;
   const pasteSource = extractFunctionSource(contentSource, "maybeHandlePaste");
-  const submitSource = extractFunctionSource(contentSource, "maybeHandleSubmit");
+  const submitSource = extractFunctionSource(submitOrchestrationSource, "maybeHandleSubmit");
   const fallbackSendSource = extractFunctionSource(fallbackSendKeySource, "maybeHandleFallbackSendKey");
   const modalSource = `${contentSource}\n${contentModalUiSource}`;
 
@@ -712,10 +717,10 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   assert.ok(
     contentSource.includes("leakGuardSendButton") &&
       contentSource.includes("leakGuardReplayViaClick") &&
-      contentSource.includes('const nativeSubmitEvent = event.type === "submit" && !event.leakGuardSendButton;') &&
-      contentSource.includes("event.submitter || (nativeSubmitEvent ? findSendButton(input) : null)") &&
+      submitSource.includes('const nativeSubmitEvent = event.type === "submit" && !event.leakGuardSendButton;') &&
+      submitSource.includes("event.submitter || (nativeSubmitEvent ? findSendButton(input) : null)") &&
       contentSource.includes("function replayVerifiedSend") &&
-      contentSource.includes("replayVerifiedSend(input, form, submitter, replayOptions)") &&
+      submitSource.includes("replayVerifiedSend(input, form, submitter, replayOptions)") &&
       contentSource.includes("replayViaClick: true"),
     "guarded send-button redaction should retry the exact intercepted button after verified rewrite"
   );
@@ -1656,9 +1661,11 @@ function createWhatsAppSubmitHarness(options = {}) {
     "queueSettles",
     [
       "const FallbackSendKeyOrchestration = globalThis.PWM?.FallbackSendKeyOrchestration || {};",
+      "const SubmitOrchestration = globalThis.PWM?.SubmitOrchestration || {};",
       "let extensionRuntimeAvailable = true;",
       "let modalOpen = false;",
       "let fallbackSendKeyOrchestration = null;",
+      "let submitOrchestration = null;",
       "let bypassNextSubmit = false;",
       "let whatsAppBypassSanitizedImageSubmitUntil = 0;",
       "const WHATSAPP_TEXT_SEND_GUARD_MS = 5000;",
@@ -1696,6 +1703,9 @@ function createWhatsAppSubmitHarness(options = {}) {
       "function analyzeText() { calls.quickAnalyses += 1; return { findings: [], placeholderNormalized: false }; }",
       "function analysisNeedsEventOwnership() { return false; }",
       "function shouldBypassWhatsAppSanitizedImageSend() { return false; }",
+      "function consumeRecentWhatsAppSanitizedImageHandoff() {}",
+      "function debugReveal() {}",
+      "function summarizeDebugText(value) { return { length: String(value || '').length }; }",
       "async function analyzeTextWithAiAssist(value) {",
       "  calls.aiAnalyses += 1;",
       "  return { findings: [], secretFindings: [], placeholderNormalized: false, normalizedText: value };",
@@ -1752,6 +1762,7 @@ function createWhatsAppSubmitHarness(options = {}) {
       extractFunctionSource(contentSource, "clearWhatsAppTextSendPending"),
       extractFunctionSource(contentSource, "markWhatsAppTextSendPending"),
       extractFunctionSource(contentSource, "createWhatsAppVerifiedSendOptions"),
+      extractFunctionSource(contentSource, "getSubmitOrchestration"),
       extractFunctionSource(contentSource, "maybeHandleSubmit"),
       extractFunctionSource(contentSource, "getFallbackSendKeyOrchestration"),
       extractFunctionSource(contentSource, "maybeHandleFallbackSendKey"),

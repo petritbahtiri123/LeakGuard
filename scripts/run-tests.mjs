@@ -82,6 +82,7 @@ const testFiles = [
   "tests/fallback_send_key_orchestration.test.js",
   "tests/typed_secret_scan_orchestration.test.js",
   "tests/before_input_orchestration.test.js",
+  "tests/submit_orchestration.test.js",
   "tests/file_interception_modules.test.js",
   "tests/file_processing_ui.test.js",
   "tests/whatsapp_capabilities.test.js",
