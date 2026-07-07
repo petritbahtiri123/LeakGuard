@@ -89,6 +89,7 @@ AI/Onix:
 - Diagnostics/debugging change: `docs/codex-playbooks/debug-safety.md`
 - Onix dataset, training, or eval change: `docs/codex-playbooks/onix-training-eval.md`
 - Browser QA failure: `docs/codex-playbooks/browser-qa.md`
+- Release build protected file-input handoff failure: `docs/codex-playbooks/release-build-file-input-handoff.md`
 - Allow Once popup loop: `docs/codex-playbooks/allow-once-popup-loop.md`
 - Gemini drag/drop issue: `docs/codex-playbooks/gemini-drag-drop-file-ingestion.md`
 - Firefox Add-ons submission: `docs/codex-playbooks/firefox-addon-submission.md`
@@ -99,6 +100,9 @@ Core:
 - `npm run docs:check-links`
 - `npm run smoke:chrome`
 - `npm run smoke:firefox`
+- `npm run test:browser-gates`
+- `npm run qa:browser:full`
+- `npm run test:nightly`
 - `git diff --check`
 
 Focused:

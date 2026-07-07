@@ -38,6 +38,12 @@ Use this as a compact router. Read a full playbook only when the current task ma
 - Do not use when: the issue is a pure detector false positive/negative with no file ingress.
 - Keywords: file handoff, fail closed, upload, pending attach, sanitized file, unsupported file, image redaction, raw upload
 
+## Release build file input handoff
+- Path: `docs/codex-playbooks/release-build-file-input-handoff.md`
+- Use when: Browser Nightly or `npm run test:browser-gates` fails on Chrome protected-site file input sanitized handoff, especially when unit tests pass but the built release extension aborts before handoff.
+- Do not use when: the failure is unrelated to file input, release-build stripping, or protected-site sanitized handoff.
+- Keywords: FILE_INPUT_REDACTION_FAILED, Browser Nightly, file input, sanitized handoff, release build, stripped debug logger, raw input event
+
 ## Debug safety
 - Path: `docs/codex-playbooks/debug-safety.md`
 - Use when: adding or changing diagnostics, debug logs, snapshots, QA reports, audit summaries, or failure metadata.
