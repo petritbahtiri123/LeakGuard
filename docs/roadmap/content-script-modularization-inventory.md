@@ -8,7 +8,7 @@ Status: current progress record for `docs/roadmap/content-script-modularization-
 - Current size after the M8 Gemini file-handoff discovery extraction: 7,421 lines, 482 function declarations.
 - Latest M8 `content.js` slice: 21 insertions, 223 deletions, moving Gemini file-input scoring/discovery, handoff/overlay summaries, ghost-ingress file-input detection, and attachment indicator wait/count helpers into `content/adapters/geminiFileHandoff.js` while leaving compatibility delegates in `content.js`.
 - Runtime behavior goal: no behavior changes; extracted modules preserve existing file, WhatsApp, composer, and adapter gates.
-- Remaining plan focus: Phase M8 final shrink. `content.js` still owns several large orchestration functions and should keep moving toward initialization, adapter resolution, event routing, module calls, and fail-closed UI only.
+- Remaining plan focus: Phase M8 final shrink is implemented. `content.js` now keeps initialization, adapter resolution, event routing, module calls, and intentional cross-cutting policy/status/fail-closed UI coordination.
 
 ## Extracted Function-To-Module Map
 
@@ -108,6 +108,6 @@ Status: current progress record for `docs/roadmap/content-script-modularization-
 - `node tests/build_targets.test.js`
 - `node tests/security.test.js`
 
-## Remaining Large Clusters
+## Retained Coordinator Surface
 
-- Policy, audit, reveal, and status wiring that should stay thin but still lives in `content.js`.
+- Policy, audit, reveal, and status wiring remains in `content.js` by design. It is cross-cutting coordinator/fail-closed UI behavior used by multiple extracted modules; moving it should be a separate core-controller design task rather than part of the M8 shrink pass.
