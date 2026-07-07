@@ -61,6 +61,7 @@ regex/provider deterministic rules
 - `src/content/composer_helpers.js`: textarea/contenteditable text IO, selection, rewrite, and beforeinput helpers.
 - `src/content/input/rewriteVerificationText.js`: rewrite verification text helpers.
 - `src/content/composer/chatgptComposerSync.js`: ChatGPT composer sync helper.
+- `src/content/composer/chatgptLargePasteOrchestration.js`: ChatGPT large-paste sanitized text-file handoff, verified text fallback, and fail-closed handling.
 - `src/content/file_drag_guard.js`: early file drag/drop guard.
 - `src/content/file_paste_helpers.js`: paste/file helper messages and file extraction glue.
 - `src/content/file_handoff_state.js`, `src/content/file_handoff_pending.js`, `src/content/file_handoff_flow.js`: shared sanitized handoff state, pending flow, and handoff sequencing.

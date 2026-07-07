@@ -65,6 +65,7 @@ require(path.join(repoRoot, "src/content/file_paste_helpers.js"));
 require(path.join(repoRoot, "src/content/composer_helpers.js"));
 require(path.join(repoRoot, "src/content/input/rewriteVerificationText.js"));
 require(path.join(repoRoot, "src/content/composer/chatgptComposerSync.js"));
+require(path.join(repoRoot, "src/content/composer/chatgptLargePasteOrchestration.js"));
 require(path.join(repoRoot, "src/content/files/fileTransferPolicy.js"));
 require(path.join(repoRoot, "src/shared/entropy.js"));
 require(path.join(repoRoot, "src/shared/patterns.js"));
@@ -1318,6 +1319,7 @@ function createHarness(overrides = {}) {
       "const MAX_MULTI_FILE_LARGE_ATTACHMENTS = 5;",
       "const MULTI_FILE_SMALL_MAX_BYTES = 4 * 1024 * 1024;",
       "const MULTI_FILE_SUPPORTED_MAX_BYTES = 50 * 1024 * 1024;",
+      "const ChatGptLargePasteOrchestration = globalThis.PWM?.ChatGptLargePasteOrchestration || {};",
       "const MultiFileInsertOrchestration = globalThis.PWM?.MultiFileInsertOrchestration || {};",
       "const StreamingFileInsertOrchestration = globalThis.PWM?.StreamingFileInsertOrchestration || {};",
       "const LocalFileReadOrchestration = globalThis.PWM?.LocalFileReadOrchestration || {};",
@@ -1354,6 +1356,7 @@ function createHarness(overrides = {}) {
       "let fileHandoffDiscovery = null;",
       "let fileDropInterception = null;",
       "let fileInputInterception = null;",
+      "let chatGptLargePasteOrchestration = null;",
       "let multiFileInsertOrchestration = null;",
       "let streamingFileInsertOrchestration = null;",
       "let localFileReadOrchestration = null;",
@@ -1499,8 +1502,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "getCurrentHandoffDriverId"),
       extractFunctionSource(contentSource, "getActiveProtection"),
       extractFunctionSource(contentSource, "isProtectedFileDropDriver"),
-      extractFunctionSource(contentSource, "shouldHandleChatGptLargeTextPaste"),
-      extractFunctionSource(contentSource, "createSanitizedChatGptPasteFile"),
+      extractFunctionSource(contentSource, "getChatGptLargePasteOrchestration"),
       extractFunctionSource(contentSource, "getSafeElementAttribute"),
       extractFunctionSource(contentSource, "countDebugPlaceholders"),
       extractFunctionSource(contentSource, "getDebugTextLength"),
@@ -1519,7 +1521,6 @@ function createHarness(overrides = {}) {
       extractFunctionSource(chatGptComposerSyncSource, "tryChatGptComposerHelperWrite"),
       extractFunctionSource(chatGptComposerSyncSource, "runChatGptSyncedWriteAttempt"),
       extractFunctionSource(chatGptComposerSyncSource, "applyChatGptSyncedComposerText"),
-      extractFunctionSource(contentSource, "applyChatGptLargePasteTextFallback"),
       extractFunctionSource(contentSource, "isHighConfidenceRewriteFinding"),
       extractFunctionSource(contentSource, "isKnownSanitizedPlaceholderToken"),
       extractFunctionSource(contentSource, "maybeHandleChatGptLargeTextPaste"),

@@ -28,6 +28,7 @@
     PlaceholderFamilies = {}
   } = globalThis.PWM;
   const ReplayVerification = globalThis.PWM?.ReplayVerification || {};
+  const ChatGptLargePasteOrchestration = globalThis.PWM?.ChatGptLargePasteOrchestration || {};
   const {
     normalizeComposerText,
     normalizeEditorInnerText,
@@ -380,6 +381,7 @@
   let whatsAppTextFlow = null;
   let whatsAppSelectors = null;
   let replayVerification = null;
+  let chatGptLargePasteOrchestration = null;
   let syntheticFileListCapabilityCache = null;
   let inputFileAssignmentCapabilityCache = null;
   const fileInputProcessingSignatures = new WeakMap();
@@ -4444,168 +4446,60 @@
     return true;
   }
 
-  function shouldHandleChatGptLargeTextPaste(pasted, quickAnalysis) {
-    return Boolean(
-      isChatGptHost() &&
-        getLocalTextPayloadByteLength(String(pasted || "")) >= CHATGPT_LARGE_PASTE_FILE_THRESHOLD &&
-        ((quickAnalysis?.findings || []).length || quickAnalysis?.placeholderNormalized)
-    );
-  }
-
-  function createSanitizedChatGptPasteFile(redactedText) {
-    if (typeof createSanitizedTextFile !== "function") return null;
-    return createSanitizedTextFile(
-      {
-        name: CHATGPT_SANITIZED_PASTE_FILE_NAME,
-        type: "text/plain"
-      },
-      redactedText
-    );
-  }
-
-  async function applyChatGptLargePasteTextFallback(input, originalText, selection, redactedText) {
-    if (!input || typeof setInputTextDirect !== "function") {
-      debugReveal("chatgpt-large-paste:text-fallback-failed", {
-        host: location?.hostname || "",
-        reason: "missing_input_or_writer"
+  function getChatGptLargePasteOrchestration() {
+    if (chatGptLargePasteOrchestration) return chatGptLargePasteOrchestration;
+    if (typeof ChatGptLargePasteOrchestration.createChatGptLargePasteOrchestration !== "function") {
+      chatGptLargePasteOrchestration = Object.freeze({
+        maybeHandleChatGptLargeTextPaste: async () => false
       });
-      return false;
+      return chatGptLargePasteOrchestration;
     }
 
-    const next = spliceSelectionText(originalText, selection, String(redactedText || ""));
-    debugReveal("chatgpt-large-paste:text-fallback-start", {
-      host: location?.hostname || "",
-      expectedLength: normalizeComposerText(next.text).length,
-      placeholderCount: countDebugPlaceholders(next.text),
-      selection: {
-        start: Number(selection?.start ?? 0),
-        end: Number(selection?.end ?? 0)
-      }
-    });
-    const applied = await ChatGptComposerSync.applyChatGptSyncedComposerText(input, next.text, {
-      context: "large-paste-text-fallback",
-      caretOffset: next.caretOffset,
-      restoreText: originalText,
-      restoreCaretOffset: selection?.end,
-      suppressMs: GEMINI_LARGE_TEXT_SUPPRESS_MS,
-      dependencies: getChatGptComposerSyncDependencies()
-    });
-
-    if (applied.ok) {
-      debugReveal("chatgpt-large-paste:text-fallback-success", {
-        host: location?.hostname || "",
-        expectedLength: normalizeComposerText(next.text).length,
-        actualLength: normalizeComposerText(applied.actual).length,
-        placeholderCount: countDebugPlaceholders(applied.actual),
-        strategy: applied.strategy
+    chatGptLargePasteOrchestration =
+      ChatGptLargePasteOrchestration.createChatGptLargePasteOrchestration({
+        analyzeText,
+        blockLargeLocalTextPayload,
+        chatGptComposerSync: ChatGptComposerSync,
+        chatGptLargePasteFileName: CHATGPT_SANITIZED_PASTE_FILE_NAME,
+        chatGptLargePasteFileThreshold: CHATGPT_LARGE_PASTE_FILE_THRESHOLD,
+        classifyLocalTextPayloadSize,
+        clearLocalPayloadOptimizationStatus,
+        collectFailureDetails,
+        consumeInterceptionEvent,
+        countDebugPlaceholders,
+        createSanitizedTextFile,
+        debugReveal,
+        describeFileForDebug,
+        getChatGptComposerSyncDependencies,
+        getInputText,
+        getLocalTextPayloadByteLength,
+        getSelectionOffsets,
+        handOffSanitizedLocalFile,
+        hideBadgeSoon,
+        isChatGptHost,
+        localTextHardBlockBytes: LOCAL_TEXT_HARD_BLOCK_BYTES,
+        locationRef: location,
+        normalizeComposerText,
+        refreshBadgeFromCurrentInput,
+        requestRedaction,
+        setBadge,
+        setInputTextDirect,
+        showLocalPayloadOptimizationStatus,
+        showMessageModal,
+        showRewriteFailure,
+        spliceSelectionText,
+        syncSuppressMs: GEMINI_LARGE_TEXT_SUPPRESS_MS
       });
-      return true;
-    }
-
-    debugReveal("chatgpt-large-paste:text-fallback-failed", {
-      host: location?.hostname || "",
-      expectedLength: normalizeComposerText(next.text).length,
-      actualLength: normalizeComposerText(applied.actual).length,
-      placeholderCount: countDebugPlaceholders(applied.actual),
-      strategy: applied.strategy
-    });
-    await showRewriteFailure("paste", collectFailureDetails(input, next.text, applied.actual, "paste"));
-    refreshBadgeFromCurrentInput();
-    return false;
+    return chatGptLargePasteOrchestration;
   }
 
   async function maybeHandleChatGptLargeTextPaste(event, input, pasted, quickAnalysis) {
-    if (isChatGptHost() && getLocalTextPayloadByteLength(String(pasted || "")) > LOCAL_TEXT_HARD_BLOCK_BYTES) {
-      await blockLargeLocalTextPayload(event, classifyLocalTextPayloadSize({ text: pasted }));
-      return true;
-    }
-
-    if (!shouldHandleChatGptLargeTextPaste(pasted, quickAnalysis)) {
-      return false;
-    }
-
-    const originalText = getInputText(input);
-    const selection = getSelectionOffsets(input);
-    consumeInterceptionEvent(event);
-    const sizeInfo = classifyLocalTextPayloadSize({ text: pasted });
-    const optimizedStatus = sizeInfo.zone === "optimized";
-    if (optimizedStatus) {
-      showLocalPayloadOptimizationStatus(sizeInfo);
-    }
-
-    try {
-      const analysis = analyzeText(pasted);
-      const result = analysis.findings.length
-        ? await requestRedaction(analysis.normalizedText, analysis.secretFindings)
-        : { redactedText: analysis.normalizedText };
-      const redactedText = String(result.redactedText || "");
-      const sanitizedFile = createSanitizedChatGptPasteFile(redactedText);
-
-      debugReveal("chatgpt-large-paste:sanitized-file-created", {
-        redactedLength: redactedText.length,
-        findingsCount: analysis.secretFindings.length,
-        file: describeFileForDebug(sanitizedFile)
-      });
-
-      debugReveal("chatgpt-large-paste:file-handoff-attempt", {
-        host: location?.hostname || "",
-        redactedLength: redactedText.length,
-        placeholderCount: countDebugPlaceholders(redactedText),
-        file: describeFileForDebug(sanitizedFile)
-      });
-      if (sanitizedFile && (await handOffSanitizedLocalFile(event, input, sanitizedFile, "paste"))) {
-        debugReveal("chatgpt-large-paste:file-handoff-success", {
-          host: location?.hostname || "",
-          redactedLength: redactedText.length,
-          placeholderCount: countDebugPlaceholders(redactedText),
-          file: describeFileForDebug(sanitizedFile)
-        });
-        if (optimizedStatus) {
-          clearLocalPayloadOptimizationStatus(sizeInfo, "complete");
-        }
-        setBadge("LeakGuard redacted pasted text before attachment.");
-        hideBadgeSoon(4200);
-        refreshBadgeFromCurrentInput();
-        return true;
-      }
-      debugReveal("chatgpt-large-paste:file-handoff-failed", {
-        host: location?.hostname || "",
-        redactedLength: redactedText.length,
-        placeholderCount: countDebugPlaceholders(redactedText),
-        file: describeFileForDebug(sanitizedFile)
-      });
-
-      if (await applyChatGptLargePasteTextFallback(input, originalText, selection, redactedText)) {
-        if (optimizedStatus) {
-          clearLocalPayloadOptimizationStatus(sizeInfo, "complete");
-        }
-        setBadge("LeakGuard redacted pasted text before attachment.");
-        hideBadgeSoon(4200);
-        refreshBadgeFromCurrentInput();
-        return true;
-      }
-
-      debugReveal("chatgpt-large-paste:fail-closed", {
-        redactedLength: redactedText.length,
-        file: describeFileForDebug(sanitizedFile)
-      });
-      if (optimizedStatus) {
-        clearLocalPayloadOptimizationStatus(sizeInfo, "failed");
-      }
-      setBadge("Raw paste blocked");
-      hideBadgeSoon(4200);
-      await showMessageModal(
-        "Raw paste blocked",
-        "LeakGuard blocked raw pasted text because sanitized ChatGPT handoff failed."
-      );
-      refreshBadgeFromCurrentInput();
-      return true;
-    } catch (error) {
-      if (optimizedStatus) {
-        clearLocalPayloadOptimizationStatus(sizeInfo, "failed");
-      }
-      throw error;
-    }
+    return getChatGptLargePasteOrchestration().maybeHandleChatGptLargeTextPaste(
+      event,
+      input,
+      pasted,
+      quickAnalysis
+    );
   }
 
   function resolveGeminiEditorTarget(target) {
