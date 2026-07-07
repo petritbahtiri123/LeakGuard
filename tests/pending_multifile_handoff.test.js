@@ -9,7 +9,10 @@ const { createPendingSanitizedFileHandoffManager } = require(path.join(
   repoRoot,
   "src/content/files/pendingSanitizedFileHandoff.js"
 ));
-const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
+const multiFileInsertOrchestrationSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/files/multiFileInsertOrchestration.js"),
+  "utf8"
+);
 
 function createSanitizedFile(name, text = "API_KEY=[PWM_1]") {
   return {
@@ -297,15 +300,23 @@ function testRawFilenamesAreReplacedWithSafePendingLabels() {
 }
 
 function testContentQueuesOnlyGeminiGrokCleanSanitizedBatchesAfterDirectFailure() {
-  assert.ok(contentSource.includes("multi-file-pending-sanitized-file-handoff"));
-  assert.ok(contentSource.includes("pendingAdapter.id === \"gemini\" || pendingAdapter.id === \"grok\""));
-  assert.ok(contentSource.includes("const shouldPreferPendingMultiFileHandoff = pendingAdapter?.id === \"gemini\""));
-  assert.ok(contentSource.includes("!blockedItems.length"));
-  assert.ok(contentSource.includes("formatMultiFileStatusMessage(statusSummary)"));
-  assert.ok(contentSource.includes("formatMultiFileStatusMessage(handoffFailedSummary)"));
-  assert.ok(contentSource.includes("const pendingPlan = globalThis.PWM.FileAttachPipeline.createMultiFileAttachPlan(sanitizedFiles"));
-  assert.ok(contentSource.includes("pendingPlan.ok"));
-  assert.ok(contentSource.includes("queuePendingSanitizedFileHandoff(pendingAdapter, event, input, sanitizedFiles, details)"));
+  assert.ok(multiFileInsertOrchestrationSource.includes("multi-file-pending-sanitized-file-handoff"));
+  assert.ok(multiFileInsertOrchestrationSource.includes("pendingAdapter.id === \"gemini\" || pendingAdapter.id === \"grok\""));
+  assert.ok(
+    multiFileInsertOrchestrationSource.includes(
+      "const shouldPreferPendingMultiFileHandoff = pendingAdapter?.id === \"gemini\""
+    )
+  );
+  assert.ok(multiFileInsertOrchestrationSource.includes("!blockedItems.length"));
+  assert.ok(multiFileInsertOrchestrationSource.includes("formatMultiFileStatusMessage(statusSummary)"));
+  assert.ok(multiFileInsertOrchestrationSource.includes("formatMultiFileStatusMessage(handoffFailedSummary)"));
+  assert.ok(multiFileInsertOrchestrationSource.includes("const pendingPlan = createMultiFileAttachPlan(sanitizedFiles);"));
+  assert.ok(multiFileInsertOrchestrationSource.includes("pendingPlan.ok"));
+  assert.ok(
+    multiFileInsertOrchestrationSource.includes(
+      "queuePendingSanitizedFileHandoff(pendingAdapter, event, input, sanitizedFiles, details)"
+    )
+  );
 }
 
 testGeminiMultiFilePendingQueuesSanitizedOnlyAndRetriesInOrder();

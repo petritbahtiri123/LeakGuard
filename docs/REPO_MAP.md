@@ -66,6 +66,7 @@ regex/provider deterministic rules
 - `src/content/file_handoff_state.js`, `src/content/file_handoff_pending.js`, `src/content/file_handoff_flow.js`: shared sanitized handoff state, pending flow, and handoff sequencing.
 - `src/content/files/contentFileExtractionPipeline.js`: protected-site file extraction pipeline.
 - `src/content/files/fileAttachPipeline.js`: protected-site file attach pipeline orchestration.
+- `src/content/files/multiFileInsertOrchestration.js`: multi-file protected upload event ownership, batch coordination, and sanitized handoff routing.
 - `src/content/files/fileTransferPolicy.js`: file transfer policy decisions.
 - `src/content/files/fileExtractionSessionCache.js`: in-memory file extraction session cache.
 - `src/content/files/pendingSanitizedFileHandoff.js`: pending sanitized file handoff helpers.

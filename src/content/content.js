@@ -64,6 +64,7 @@
   const SanitizedFileHandoff = globalThis.PWM?.SanitizedFileHandoff || {};
   const FileDropInterception = globalThis.PWM?.FileDropInterception || {};
   const FileInputInterception = globalThis.PWM?.FileInputInterception || {};
+  const MultiFileInsertOrchestration = globalThis.PWM?.MultiFileInsertOrchestration || {};
   const FileInputPreparation = globalThis.PWM?.FileInputPreparation || {};
   const FileProcessingUi = globalThis.PWM?.FileProcessingUi || {};
   const WhatsAppCapabilities = globalThis.PWM?.WhatsAppCapabilities || {};
@@ -361,6 +362,7 @@
   let fileHandoffDiscovery = null;
   let fileDropInterception = null;
   let fileInputInterception = null;
+  let multiFileInsertOrchestration = null;
   let fileInputPreparation = null;
   let fileProcessingUi = null;
   let whatsAppCapabilities = null;
@@ -6965,18 +6967,6 @@
     return getSanitizedFileBatchProcessor().summarizeMultiFileItem(index, status, file, code);
   }
 
-  function createBlockedBeforeProcessingItems(files, code = "blocked_by_policy") {
-    return getSanitizedFileBatchProcessor().createBlockedBeforeProcessingItems(files, code);
-  }
-
-  function createMultiFileStatusSummary(sanitizedItems, blockedItems) {
-    return getSanitizedFileBatchProcessor().createMultiFileStatusSummary(sanitizedItems, blockedItems);
-  }
-
-  function formatMultiFileStatusMessage(summary, options = {}) {
-    return getSanitizedFileBatchProcessor().formatMultiFileStatusMessage(summary, options);
-  }
-
   function getFileHandoffVerification() {
     if (fileHandoffVerification) return fileHandoffVerification;
     if (typeof FileHandoffVerification.createFileHandoffVerification !== "function") {
@@ -7020,270 +7010,54 @@
     return getSanitizedFileHandoff().handOffSanitizedFileBatch(event, input, sanitizedFiles, context, options);
   }
 
+  function getMultiFileInsertOrchestration() {
+    if (multiFileInsertOrchestration) return multiFileInsertOrchestration;
+    if (typeof MultiFileInsertOrchestration.createMultiFileInsertOrchestration !== "function") {
+      multiFileInsertOrchestration = Object.freeze({
+        maybeHandleMultiFileInsert: async () => null
+      });
+      return multiFileInsertOrchestration;
+    }
+
+    multiFileInsertOrchestration = MultiFileInsertOrchestration.createMultiFileInsertOrchestration({
+      fileAttachPipeline: globalThis.PWM.FileAttachPipeline,
+      batchProcessor: getSanitizedFileBatchProcessor(),
+      maxSmallFiles: MAX_MULTI_FILE_SMALL_ATTACHMENTS,
+      maxLargeFiles: MAX_MULTI_FILE_LARGE_ATTACHMENTS,
+      smallMaxBytes: MULTI_FILE_SMALL_MAX_BYTES,
+      supportedMaxBytes: MULTI_FILE_SUPPORTED_MAX_BYTES,
+      whatsAppFileAttachUnsupportedReason: WHATSAPP_FILE_ATTACH_UNSUPPORTED_REASON,
+      whatsAppFileAttachBlockTitle: WHATSAPP_FILE_ATTACH_BLOCK_TITLE,
+      clearLocalFileInputSelection,
+      consumeInterceptionEvent,
+      createSanitizedFileHandoffDetails,
+      debugFileAttachMetadata,
+      getFileHandoffAdapterForLocation,
+      getPendingSanitizedAttachPromptMessage,
+      handOffSanitizedFileBatch,
+      hideBadgeSoon,
+      isFileHandoffAdapterPendingAttachEnabled,
+      isPotentialWhatsAppMultiFileAttach,
+      isSupportedWhatsAppMultiFileAttach,
+      queuePendingSanitizedFileHandoff,
+      refreshBadgeFromCurrentInput,
+      setBadge,
+      showFileProcessingOverlay,
+      showMessageModal,
+      updateFileProcessingOverlay
+    });
+    return multiFileInsertOrchestration;
+  }
+
   async function maybeHandleMultiFileInsert(event, input, files, context, processingSite, controls) {
-    const isWhatsAppBatch = isPotentialWhatsAppMultiFileAttach(files, context);
-    const plan = globalThis.PWM.FileAttachPipeline.createMultiFileAttachPlan(files, {
-      maxSmallFiles: MAX_MULTI_FILE_SMALL_ATTACHMENTS,
-      maxLargeFiles: MAX_MULTI_FILE_LARGE_ATTACHMENTS,
-      smallMaxBytes: MULTI_FILE_SMALL_MAX_BYTES,
-      supportedMaxBytes: MULTI_FILE_SUPPORTED_MAX_BYTES
-    });
-    if (plan.mode === "single") return null;
-
-    if (!event.defaultPrevented) {
-      consumeInterceptionEvent(event);
-    }
-    if (event?.target?.tagName === "INPUT" && String(event.target.type || "").toLowerCase() === "file") {
-      clearLocalFileInputSelection(event.target);
-    }
-
-    if (!plan.ok) {
-      const blockedBeforeProcessingItems = createBlockedBeforeProcessingItems(files, plan.reason);
-      const blockedBeforeProcessingSummary = createMultiFileStatusSummary([], blockedBeforeProcessingItems);
-      controls.failProcessing(plan.reason, "Raw file upload blocked");
-      setBadge("Raw file upload blocked");
-      hideBadgeSoon(4200);
-      await showMessageModal(
-        "Raw file upload blocked",
-        formatMultiFileStatusMessage(blockedBeforeProcessingSummary, {
-          blockedBeforeProcessing: true,
-          reason: plan.reason
-        })
-      );
-      refreshBadgeFromCurrentInput();
-      debugFileAttachMetadata("file-handoff:multi-file-blocked", {
-        site: processingSite,
-        reason: plan.reason,
-        fileCount: plan.fileCount,
-        smallCount: plan.smallCount,
-        largeCount: plan.largeCount,
-        maxSmallFiles: plan.maxSmallFiles,
-        maxLargeFiles: plan.maxLargeFiles,
-        summary: blockedBeforeProcessingSummary
-      });
-      return { handled: true, ok: false, reason: plan.reason };
-    }
-
-    if (isWhatsAppBatch && !isSupportedWhatsAppMultiFileAttach({ files, types: ["Files"], items: [] }, context)) {
-      const blockedBeforeProcessingItems = createBlockedBeforeProcessingItems(files, WHATSAPP_FILE_ATTACH_UNSUPPORTED_REASON);
-      const blockedBeforeProcessingSummary = createMultiFileStatusSummary([], blockedBeforeProcessingItems);
-      controls.failProcessing(WHATSAPP_FILE_ATTACH_UNSUPPORTED_REASON, WHATSAPP_FILE_ATTACH_BLOCK_TITLE);
-      setBadge(WHATSAPP_FILE_ATTACH_BLOCK_TITLE);
-      hideBadgeSoon(4200);
-      await showMessageModal(
-        WHATSAPP_FILE_ATTACH_BLOCK_TITLE,
-        formatMultiFileStatusMessage(blockedBeforeProcessingSummary, {
-          blockedBeforeProcessing: true,
-          reason: WHATSAPP_FILE_ATTACH_UNSUPPORTED_REASON
-        })
-      );
-      refreshBadgeFromCurrentInput();
-      debugFileAttachMetadata("file-handoff:multi-file-blocked", {
-        site: processingSite,
-        reason: WHATSAPP_FILE_ATTACH_UNSUPPORTED_REASON,
-        fileCount: plan.fileCount,
-        summary: blockedBeforeProcessingSummary
-      });
-      return { handled: true, ok: false, reason: WHATSAPP_FILE_ATTACH_UNSUPPORTED_REASON };
-    }
-
-    showFileProcessingOverlay({
-      site: processingSite,
-      title: `LeakGuard is scanning ${plan.fileCount} files...`,
-      status: "Scanning files locally...",
-      progress: `0/${plan.fileCount}`,
-      blocking: true
-    });
-
-    let processed;
-    try {
-      processed = await getSanitizedFileBatchProcessor().processLocalFilesForSanitizedBatch(files, context);
-    } catch {
-      debugFileAttachMetadata("file-handoff:multi-file-redaction-failed", {
-        site: processingSite,
-        reason: "multi_file_processing_exception"
-      });
-      controls.failProcessing("multi_file_processing_exception", "Raw file upload blocked");
-      setBadge("Raw file upload blocked");
-      hideBadgeSoon(4200);
-      await showMessageModal(
-        "Raw file upload blocked",
-        "LeakGuard blocked the multi-file upload because local sanitization failed. No raw files were uploaded."
-      );
-      refreshBadgeFromCurrentInput();
-      return { handled: true, ok: false, reason: "multi_file_processing_exception" };
-    }
-
-    const sanitizedItems = processed.filter((item) => item.ok && item.sanitizedFile);
-    const blockedItems = processed.filter((item) => !item.ok);
-    const statusSummary = createMultiFileStatusSummary(sanitizedItems, blockedItems);
-    debugFileAttachMetadata("file-handoff:multi-file-processed", {
-      site: processingSite,
-      fileCount: files.length,
-      sanitizedCount: sanitizedItems.length,
-      blockedCount: blockedItems.length,
-      files: statusSummary.files,
-      summary: statusSummary
-    });
-
-    if (!sanitizedItems.length) {
-      controls.failProcessing("multi_file_all_blocked", "Raw file upload blocked");
-      setBadge("Raw file upload blocked");
-      hideBadgeSoon(4200);
-      await showMessageModal(
-        "Raw file upload blocked",
-        formatMultiFileStatusMessage(statusSummary)
-      );
-      refreshBadgeFromCurrentInput();
-      return { handled: true, ok: false, reason: "multi_file_all_blocked" };
-    }
-
-    if (isWhatsAppBatch && blockedItems.length) {
-      const allBlockedSummary = createMultiFileStatusSummary(
-        [],
-        processed.map((item) => ({
-          ...item,
-          status: item.ok ? "blocked" : item.status,
-          code: item.ok ? "whatsapp_batch_blocked_after_peer_failure" : item.code,
-          summary: {
-            ...(item.summary || {}),
-            status: item.ok ? "blocked" : item.summary?.status || item.status,
-            code: item.ok ? "whatsapp_batch_blocked_after_peer_failure" : item.summary?.code || item.code
-          }
-        }))
-      );
-      controls.failProcessing("whatsapp_multi_file_batch_failed", "Raw file upload blocked");
-      setBadge("Raw file upload blocked");
-      hideBadgeSoon(4200);
-      await showMessageModal(
-        "Raw file upload blocked",
-        formatMultiFileStatusMessage(allBlockedSummary)
-      );
-      refreshBadgeFromCurrentInput();
-      debugFileAttachMetadata("file-handoff:multi-file-blocked", {
-        site: processingSite,
-        reason: "whatsapp_multi_file_batch_failed",
-        fileCount: files.length,
-        sanitizedCount: sanitizedItems.length,
-        blockedCount: blockedItems.length,
-        summary: allBlockedSummary
-      });
-      return { handled: true, ok: false, reason: "whatsapp_multi_file_batch_failed" };
-    }
-
-    updateFileProcessingOverlay({
-      site: processingSite,
-      status: "Preparing sanitized file upload...",
-      progress: `${sanitizedItems.length}/${plan.fileCount}`,
-      blocking: true
-    });
-
-    const sanitizedFiles = sanitizedItems.map((item) => item.sanitizedFile);
-    const pendingPlan = globalThis.PWM.FileAttachPipeline.createMultiFileAttachPlan(sanitizedFiles, {
-      maxSmallFiles: MAX_MULTI_FILE_SMALL_ATTACHMENTS,
-      maxLargeFiles: MAX_MULTI_FILE_LARGE_ATTACHMENTS,
-      smallMaxBytes: MULTI_FILE_SMALL_MAX_BYTES,
-      supportedMaxBytes: MULTI_FILE_SUPPORTED_MAX_BYTES
-    });
-    const pendingAdapter = !blockedItems.length ? getFileHandoffAdapterForLocation() : null;
-    const canQueuePendingMultiFileHandoff =
-      pendingAdapter &&
-      (pendingAdapter.id === "gemini" || pendingAdapter.id === "grok") &&
-      isFileHandoffAdapterPendingAttachEnabled(pendingAdapter) &&
-      sanitizedFiles.length > 1 &&
-      pendingPlan.ok;
-    const queuePendingMultiFileHandoff = () => {
-      if (!canQueuePendingMultiFileHandoff) return false;
-      const details = createSanitizedFileHandoffDetails(
-        event,
-        sanitizedFiles[0],
-        `${pendingAdapter.id}:multi-file-pending-user-upload-input`
-      );
-      if (!queuePendingSanitizedFileHandoff(pendingAdapter, event, input, sanitizedFiles, details)) return false;
-      controls.showProcessingSuccess("Sanitized files ready for attach.", "multi-file-pending-attach");
-      setBadge(getPendingSanitizedAttachPromptMessage(pendingAdapter.id));
-      hideBadgeSoon(6500);
-      refreshBadgeFromCurrentInput();
-      return true;
-    };
-    const shouldPreferPendingMultiFileHandoff = pendingAdapter?.id === "gemini";
-    if (shouldPreferPendingMultiFileHandoff && queuePendingMultiFileHandoff()) {
-      return {
-        handled: true,
-        ok: true,
-        stage: "pending",
-        strategy: `${pendingAdapter.id}-multi-file-pending-sanitized-file-handoff`,
-        sanitizedCount: sanitizedItems.length,
-        blockedCount: blockedItems.length
-      };
-    }
-
-    const handoffOk = await handOffSanitizedFileBatch(
+    return getMultiFileInsertOrchestration().maybeHandleMultiFileInsert(
       event,
       input,
-      sanitizedFiles,
+      files,
       context,
-      {
-        verifyWhatsAppBatch: isWhatsAppBatch,
-        originalFiles: files
-      }
+      processingSite,
+      controls
     );
-    if (!handoffOk) {
-      if (queuePendingMultiFileHandoff()) {
-        return {
-          handled: true,
-          ok: true,
-          stage: "pending",
-          strategy: `${pendingAdapter.id}-multi-file-pending-sanitized-file-handoff`,
-          sanitizedCount: sanitizedItems.length,
-          blockedCount: blockedItems.length
-        };
-      }
-      controls.failProcessing("multi_file_sanitized_handoff_failed", "Raw file upload blocked");
-      setBadge("Raw file upload blocked");
-      hideBadgeSoon(4200);
-      const handoffFailedSummary = createMultiFileStatusSummary(
-        [],
-        processed.map((item) => ({
-          ...item,
-          status: item.ok ? "failed" : item.status,
-          code: item.ok ? "sanitized_handoff_failed" : item.code,
-          summary: {
-            ...(item.summary || {}),
-            status: item.ok ? "failed" : item.summary?.status || item.status,
-            code: item.ok ? "sanitized_handoff_failed" : item.summary?.code || item.code
-          }
-        }))
-      );
-      await showMessageModal(
-        "Raw file upload blocked",
-        formatMultiFileStatusMessage(handoffFailedSummary)
-      );
-      refreshBadgeFromCurrentInput();
-      return { handled: true, ok: false, reason: "multi_file_sanitized_handoff_failed" };
-    }
-
-    if (blockedItems.length) {
-      controls.showProcessingSuccess("Sanitized files attached; unsupported files blocked.", "multi-file-partial-success");
-      setBadge("LeakGuard attached sanitized files; blocked unsafe files.");
-      await showMessageModal(
-        "Some files were blocked",
-        formatMultiFileStatusMessage(statusSummary)
-      );
-    } else {
-      controls.showProcessingSuccess("Sanitized files attached.", "multi-file-attached");
-      setBadge("LeakGuard attached sanitized files.");
-    }
-    hideBadgeSoon(4200);
-    refreshBadgeFromCurrentInput();
-    return {
-      handled: true,
-      ok: true,
-      stage: "file",
-      strategy: "multi-file-sanitized-file-handoff",
-      sanitizedCount: sanitizedItems.length,
-      blockedCount: blockedItems.length
-    };
   }
 
   async function maybeHandleLocalFileInsert(event, input, dataTransfer, context) {

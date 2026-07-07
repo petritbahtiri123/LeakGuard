@@ -206,6 +206,12 @@ function testContentRuntimeScriptOrder() {
     "content/files/fileHandoffDiscovery.js",
     "content/files/sanitizedFileHandoff.js"
   ], "content scripts");
+  assertAfterAll(contentScripts, "content/files/multiFileInsertOrchestration.js", [
+    "content/files/fileAttachPipeline.js",
+    "content/files/sanitizedFileBatchProcessor.js",
+    "content/files/sanitizedFileHandoff.js",
+    "content/files/fileInputInterception.js"
+  ], "content scripts");
   assertAfterAll(contentScripts, "content/diagnostics/contentDebugFacade.js", [
     "content/diagnostics/debugLogger.js",
     "content/diagnostics/fileDebugMetadata.js"

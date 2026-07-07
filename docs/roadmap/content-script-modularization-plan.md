@@ -2,7 +2,7 @@
 
 This plan was created for the next content-script modularization release. It is a documentation and planning artifact only; it does not authorize runtime behavior changes by itself.
 
-Current extraction progress is tracked in [content-script-modularization-inventory.md](content-script-modularization-inventory.md). As of the in-progress M1-M7 extraction pass, several file, WhatsApp, composer, UI, and adapter handoff modules exist; Phase M8 final `content.js` shrink remains open.
+Current extraction progress is tracked in [content-script-modularization-inventory.md](content-script-modularization-inventory.md). As of the M8 multi-file orchestration slice, several file, WhatsApp, composer, UI, and adapter handoff modules exist; Phase M8 final `content.js` shrink remains open.
 
 ## Problem
 
@@ -218,6 +218,8 @@ Make LeakGuard content adapter capability contracts explicit and test-gated. Add
 ```
 
 ### Phase M8 - Final `content.js` Shrink
+
+Status: in progress. The multi-file protected upload orchestration now lives in `src/content/files/multiFileInsertOrchestration.js`; remaining M8 work should continue with single-file local insert routing, text/paste/send orchestration, and adapter-specific wrapper cleanup.
 
 `content.js` should only:
 
