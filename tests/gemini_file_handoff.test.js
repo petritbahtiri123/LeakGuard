@@ -111,6 +111,74 @@ function createHandoff(overrides = {}) {
   };
 }
 
+function createFileInputCandidate({
+  name = "",
+  accept = "",
+  multiple = false,
+  hidden = false,
+  disabled = false,
+  parentElement = null,
+  rootHost = null
+} = {}) {
+  return {
+    type: "file",
+    name,
+    accept,
+    multiple,
+    hidden,
+    disabled,
+    parentElement,
+    getAttribute(attribute) {
+      if (attribute === "name") return name;
+      if (attribute === "accept") return accept;
+      return "";
+    },
+    matches(selector) {
+      return selector === 'input[type="file"][name="Filedata"]' && name === "Filedata";
+    },
+    getRootNode() {
+      return rootHost ? { host: rootHost } : null;
+    }
+  };
+}
+
+function createGeminiDiscoveryHandoff(overrides = {}) {
+  const deps = {
+    documentRef: {
+      querySelectorAll() {
+        return [];
+      }
+    },
+    MutationObserverRef: null,
+    setTimeoutFn: (callback) => {
+      callback();
+      return 0;
+    },
+    clearTimeoutFn: () => {},
+    isGeminiHost: () => true,
+    isFirefoxRuntime: () => false,
+    isFileInputElement: (candidate) => candidate?.type === "file",
+    normalizeTarget: (target) => target || null,
+    canUseSyntheticDataTransferFileList: () => true,
+    shouldUseFirefoxTextFallbackForFileHandoff: () => false,
+    describeFileInputForDebug: (input, source = "") => ({ source, name: input?.name || "" }),
+    describeElementForDebug: (element, source = "") => ({
+      source,
+      ariaLabel: element?.ariaLabel || "",
+      textSnippet: element?.textContent || "",
+      title: element?.title || ""
+    }),
+    describeUploadTriggerForDebug: (element, source = "") => ({
+      source,
+      ariaLabel: element?.ariaLabel || "",
+      textSnippet: element?.textContent || "",
+      title: element?.title || ""
+    }),
+    ...overrides
+  };
+  return globalThis.PWM.GeminiFileHandoff.createGeminiFileHandoff(deps);
+}
+
 async function testFirefoxBridgeAssignsSanitizedFileOnly() {
   const rawFile = { name: "raw.env" };
   const sanitizedFile = { name: "safe.env" };
@@ -138,9 +206,68 @@ async function testPendingUserAttachClearsAfterVerifiedAssignment() {
   assert.strictEqual(calls.failures.length, 0);
 }
 
+function testGeminiDiscoveryScoresFiledataAndPrefersAddFilesTrigger() {
+  const genericInput = createFileInputCandidate({ accept: "text/plain" });
+  const fileDataInput = createFileInputCandidate({ name: "Filedata", multiple: true });
+  const addFilesTrigger = { ariaLabel: "Add files" };
+  const uploadMenuTrigger = { ariaLabel: "Open upload file menu" };
+  const handoff = createGeminiDiscoveryHandoff({
+    collectFileHandoffElementsFromRoot: (_root, addInput, addUploadTrigger, _visitedRoots, stats) => {
+      stats.openShadowRootCount = 1;
+      addInput(genericInput, "document");
+      addInput(fileDataInput, "images-files-uploader");
+      addUploadTrigger(uploadMenuTrigger, "button", "document");
+      addUploadTrigger(addFilesTrigger, "button", "document");
+    },
+    isSafeGeminiUploadMenuButton: (candidate) => candidate === uploadMenuTrigger
+  });
+
+  const discovery = handoff.discoverGeminiFileHandoffElements({ target: null }, null);
+  const summary = handoff.describeGeminiHandoffDiscovery(discovery);
+
+  assert.strictEqual(discovery.fileInput, fileDataInput);
+  assert.strictEqual(discovery.uploadTrigger, addFilesTrigger);
+  assert.strictEqual(discovery.openShadowRootCount, 1);
+  assert.ok(handoff.scoreGeminiFileInput(fileDataInput, "images-files-uploader") > handoff.scoreGeminiFileInput(genericInput, "document"));
+  assert.strictEqual(summary.selectedFileInput.name, "Filedata");
+  assert.strictEqual(summary.uploadTriggerCandidates.length, 2);
+}
+
+function testGeminiGhostIngressRecognizesFiledataAndUploaderAncestry() {
+  const uploader = { tagName: "images-files-uploader" };
+  const fileDataInput = createFileInputCandidate({ name: "Filedata" });
+  const nestedInput = createFileInputCandidate({ rootHost: uploader });
+  const handoff = createGeminiDiscoveryHandoff();
+
+  assert.strictEqual(handoff.isGeminiGhostIngressFileInput(fileDataInput), true);
+  assert.strictEqual(handoff.isWithinGeminiImagesFilesUploader(nestedInput), true);
+  assert.strictEqual(handoff.isGeminiGhostIngressFileInput(nestedInput), true);
+}
+
+async function testGeminiAttachmentIndicatorsCountAndWaitWithoutObserver() {
+  const indicator = {};
+  const handoff = createGeminiDiscoveryHandoff({
+    documentRef: {
+      documentElement: {},
+      querySelectorAll(selector) {
+        if (selector === "*") return [];
+        if (selector === "file-preview") return [indicator];
+        return [];
+      }
+    },
+    MutationObserverRef: null
+  });
+
+  assert.strictEqual(handoff.countGeminiAttachmentIndicators(), 1);
+  assert.strictEqual(await handoff.waitForGeminiAttachmentIndicators(0), 1);
+}
+
 async function run() {
   await testFirefoxBridgeAssignsSanitizedFileOnly();
   await testPendingUserAttachClearsAfterVerifiedAssignment();
+  testGeminiDiscoveryScoresFiledataAndPrefersAddFilesTrigger();
+  testGeminiGhostIngressRecognizesFiledataAndUploaderAncestry();
+  await testGeminiAttachmentIndicatorsCountAndWaitWithoutObserver();
   console.log("PASS Gemini file handoff");
 }
 

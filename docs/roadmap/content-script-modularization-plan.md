@@ -2,7 +2,7 @@
 
 This plan was created for the next content-script modularization release. It is a documentation and planning artifact only; it does not authorize runtime behavior changes by itself.
 
-Current extraction progress is tracked in [content-script-modularization-inventory.md](content-script-modularization-inventory.md). As of the M8 Gemini upload-menu discovery slice, file, WhatsApp, composer, UI, and adapter handoff modules cover the largest event flows; Phase M8 final `content.js` shrink remains open for narrower Gemini file-input discovery and policy/status wiring.
+Current extraction progress is tracked in [content-script-modularization-inventory.md](content-script-modularization-inventory.md). As of the M8 Gemini file-handoff discovery slice, file, WhatsApp, composer, UI, and adapter handoff modules cover the largest event flows; Phase M8 final `content.js` shrink remains open for policy/status wiring that should move only when a safe owner is obvious.
 
 ## Problem
 
@@ -219,7 +219,7 @@ Make LeakGuard content adapter capability contracts explicit and test-gated. Add
 
 ### Phase M8 - Final `content.js` Shrink
 
-Status: in progress. Multi-file protected upload, single-file local insert routing, file input/drop routing, text/paste/send orchestration, and Gemini upload-menu discovery now live in focused modules. Remaining M8 work should continue with narrower Gemini file-input handoff discovery and policy, audit, reveal, and status wiring that still belongs to `content.js` until a safe owner is obvious.
+Status: in progress. Multi-file protected upload, single-file local insert routing, file input/drop routing, text/paste/send orchestration, Gemini upload-menu discovery, and Gemini file-handoff discovery now live in focused modules. Remaining M8 work should continue with policy, audit, reveal, and status wiring that still belongs to `content.js` until a safe owner is obvious.
 
 `content.js` should only:
 

@@ -5072,7 +5072,15 @@
         listFirefoxGeminiBridgeSanitizedFiles: () => [],
         createFirefoxGeminiFileInputBridgeDebug: () => ({}),
         createFirefoxGeminiBridgeDataTransfer: () => null,
+        describeGeminiHandoffDiscovery: () => ({}),
+        describeGeminiOverlayExposure: () => ({}),
+        isWithinGeminiImagesFilesUploader: () => false,
+        scoreGeminiFileInput: () => -1,
+        discoverGeminiFileHandoffElements: () => ({ fileInput: null, fileInputCount: 0, openShadowRootCount: 0 }),
+        countGeminiAttachmentIndicators: () => 0,
+        waitForGeminiAttachmentIndicators: async () => 0,
         findGeminiFileInput: () => ({ discovery: {}, fileInput: null }),
+        isGeminiGhostIngressFileInput: () => false,
         createGeminiFirefoxFilePickerGuard: () => ({
           getInput: () => null,
           waitForInput: async () => null,
@@ -5111,12 +5119,16 @@
       isGeminiHost,
       isFirefoxRuntime,
       isFileInputElement,
+      normalizeTarget,
       canUseSyntheticDataTransferFileList,
       shouldUseFirefoxTextFallbackForFileHandoff,
       createSanitizedFileHandoffDetails,
       createSanitizedDataTransferForHandoff,
       handOffSanitizedFileInput,
-      discoverGeminiFileHandoffElements,
+      collectFileInputsFromAncestry,
+      collectFileHandoffElementsFromRoot,
+      collectRootsWithOpenShadow,
+      isSafeGeminiUploadMenuButton,
       findGeminiUploadFilesMenuItem,
       findGeminiUploadMenuButton,
       openGeminiUploadMenuSafely,
@@ -5127,7 +5139,6 @@
       findGeminiFileDataInputFromEvent,
       findGeminiFileDataInputInMutations,
       isGeminiHiddenFileSelectorTrigger,
-      isGeminiGhostIngressFileInput,
       isAllowedGeminiUploadMenuOpener,
       clickElementSafely,
       discoverGeminiUploadOverlayItem,
@@ -5143,7 +5154,6 @@
       describeElementForDebug,
       describeUploadTriggerForDebug,
       describeGeminiUploadMenuDiscovery,
-      describeGeminiOverlayExposure,
       describeSanitizedFileOrBatchForDebug,
       debugReveal,
       debugFileAttachMetadata,
@@ -5155,8 +5165,6 @@
       setBadge,
       hideBadgeSoon,
       refreshBadgeFromCurrentInput,
-      countGeminiAttachmentIndicators,
-      waitForGeminiAttachmentIndicators,
       getCachedGeminiFileInput: () =>
         fileDragDiscoveryCompleted && isFileInputElement(lastDiscoveredFileInput) && !lastDiscoveredFileInput.disabled
           ? lastDiscoveredFileInput
@@ -5452,45 +5460,11 @@
   }
 
   function describeGeminiHandoffDiscovery(discovery) {
-    const summary = discovery || {};
-    return {
-      fileInputCount: Number(summary.fileInputCount || 0),
-      uploadTriggerCount: Number(summary.uploadTriggerCount || 0),
-      openShadowRootCount: Number(summary.openShadowRootCount || 0),
-      selectedFileInput: describeFileInputForDebug(summary.fileInput, "selected-gemini-file-input"),
-      selectedUploadTrigger: describeUploadTriggerForDebug(
-        summary.uploadTrigger,
-        "selected-gemini-upload-trigger"
-      ),
-      fileInputCandidates: Array.from(summary.fileInputs || [])
-        .slice(0, 20)
-        .map(({ input, source }) => ({
-          ...describeFileInputForDebug(input, source),
-          score: scoreGeminiFileInput(input, source)
-        })),
-      uploadTriggerCandidates: Array.from(summary.uploadTriggers || [])
-        .slice(0, 20)
-        .map(({ trigger, selector, source }) => ({
-          ...describeUploadTriggerForDebug(trigger, source || selector),
-          selector
-        }))
-    };
+    return getGeminiFileHandoff().describeGeminiHandoffDiscovery(discovery);
   }
 
   function describeGeminiOverlayExposure() {
-    const details = {
-      openShadowRootCount: 0,
-      overlayItemCount: 0,
-      overlayCandidates: [],
-      selectedOverlayItem: null
-    };
-    discoverGeminiUploadOverlayItem(details);
-    return {
-      openShadowRootCount: details.openShadowRootCount,
-      overlayItemCount: details.overlayItemCount,
-      selectedOverlayItem: details.selectedOverlayItem,
-      overlayCandidates: details.overlayCandidates
-    };
+    return getGeminiFileHandoff().describeGeminiOverlayExposure();
   }
 
   function getGrokUploadClickCandidates(clickEventOrTarget) {
@@ -5618,118 +5592,15 @@
   }
 
   function isWithinGeminiImagesFilesUploader(candidate) {
-    let node = candidate;
-    const visited = new WeakSet();
-
-    while (node && !visited.has(node)) {
-      visited.add(node);
-      if (String(node.tagName || "").toLowerCase() === "images-files-uploader") {
-        return true;
-      }
-      try {
-        if (typeof node.closest === "function" && node.closest("images-files-uploader")) {
-          return true;
-        }
-      } catch {
-        // Synthetic DOMs and host-controlled roots can reject custom selectors.
-      }
-      const rootNode = node.getRootNode?.();
-      node = node.parentElement || rootNode?.host || null;
-    }
-
-    return false;
+    return getGeminiFileHandoff().isWithinGeminiImagesFilesUploader(candidate);
   }
 
   function scoreGeminiFileInput(candidate, source = "") {
-    if (!isFileInputElement(candidate) || candidate.disabled) return -1;
-    let score = 0;
-    const name = String(candidate.name || candidate.getAttribute?.("name") || "");
-    if (name === "Filedata") score += 80;
-    if (isWithinGeminiImagesFilesUploader(candidate)) score += 100;
-    if (candidate.multiple) score += 30;
-    if (/images-files-uploader/i.test(String(source || ""))) score += 25;
-    if (candidate.hidden) score += 5;
-    const accept = String(candidate.accept || "").toLowerCase();
-    if (accept.includes("text") || accept.includes(".txt") || accept.includes(".md") || accept.includes(".json")) {
-      score += 10;
-    }
-    return score;
+    return getGeminiFileHandoff().scoreGeminiFileInput(candidate, source);
   }
 
   function discoverGeminiFileHandoffElements(event, input) {
-    const inputs = [];
-    const uploadTriggers = [];
-    const seenInputs = new WeakSet();
-    const seenTriggers = new WeakSet();
-    const stats = { openShadowRootCount: 0 };
-    const addInput = (candidate, source = "") => {
-      if (!isFileInputElement(candidate) || seenInputs.has(candidate)) return;
-      seenInputs.add(candidate);
-      inputs.push({ input: candidate, source });
-    };
-    const addUploadTrigger = (candidate, selector = "", source = "") => {
-      if (!candidate || seenTriggers.has(candidate)) return;
-      seenTriggers.add(candidate);
-      uploadTriggers.push({ trigger: candidate, selector, source });
-    };
-
-    collectFileInputsFromAncestry(event?.target, addInput);
-
-    const target = normalizeTarget(event?.target);
-    const preferredInputSelectors = [
-      "input[type='file'][accept*='text']",
-      "input[type='file'][accept*='.txt']",
-      "input[type='file'][accept*='.md']",
-      "input[type='file'][accept*='.json']",
-      "input[type='file'][accept*='.csv']",
-      "input[type='file']"
-    ];
-    for (const selector of preferredInputSelectors) {
-      try {
-        target?.closest?.("[role='dialog'], form, main, body")?.querySelectorAll?.(selector).forEach((candidate) => {
-          addInput(candidate, "target-scope");
-        });
-      } catch {
-        // Host-controlled selectors can fail; broader discovery below remains fail-closed.
-      }
-    }
-    target?.closest?.("form")?.querySelectorAll?.("input[type='file']").forEach((candidate) => {
-      addInput(candidate, "target-form");
-    });
-    input?.closest?.("form")?.querySelectorAll?.("input[type='file']").forEach((candidate) => {
-      addInput(candidate, "composer-form");
-    });
-
-    collectFileHandoffElementsFromRoot(document, addInput, addUploadTrigger, new WeakSet(), stats);
-
-    const fileInput =
-      inputs
-        .filter(({ input: candidate }) => !candidate.disabled)
-        .sort((a, b) => scoreGeminiFileInput(b.input, b.source) - scoreGeminiFileInput(a.input, a.source))[0]
-        ?.input || null;
-    const uploadTrigger =
-      uploadTriggers.find(({ trigger }) => {
-        const meta = describeUploadTriggerForDebug(trigger);
-        const haystack = `${meta?.ariaLabel || ""} ${meta?.title || ""} ${meta?.textSnippet || ""}`.toLowerCase();
-        return !trigger.disabled && /\badd files?\b/.test(haystack);
-      })?.trigger ||
-      uploadTriggers.find(({ trigger }) => {
-        const label = trigger.getAttribute?.("aria-label") || trigger.ariaLabel || "";
-        return label === "Open upload file menu" && !trigger.disabled;
-      })?.trigger ||
-      uploadTriggers.find(({ trigger }) => isSafeGeminiUploadMenuButton(trigger))?.trigger ||
-      uploadTriggers.find(({ trigger }) => !trigger.disabled)?.trigger ||
-      null;
-
-    return {
-      fileInput,
-      uploadTrigger,
-      fileInputCount: inputs.length,
-      uploadTriggerCount: uploadTriggers.length,
-      openShadowRootCount: stats.openShadowRootCount,
-      fileInputs: inputs,
-      uploadTriggers
-    };
+    return getGeminiFileHandoff().discoverGeminiFileHandoffElements(event, input);
   }
 
   function collectRootsWithOpenShadow(root, roots, visitedRoots, stats) {
@@ -5789,76 +5660,11 @@
   }
 
   function countGeminiAttachmentIndicators() {
-    if (!isGeminiHost()) return 0;
-    const selectors = [
-      "images-files-uploader",
-      "file-preview",
-      "attachment-chip",
-      "mat-chip",
-      "[data-test-id*='attachment' i]",
-      "[data-test-id*='upload' i]",
-      "[aria-label*='attachment' i]",
-      "[aria-label*='uploaded' i]",
-      "[aria-label*='uploading' i]",
-      "[aria-label*='file attached' i]",
-      "[role='progressbar']"
-    ];
-    const roots = [];
-    collectRootsWithOpenShadow(document, roots, new WeakSet(), null);
-    const seen = new WeakSet();
-    let count = 0;
-    for (const scanRoot of roots) {
-      for (const selector of selectors) {
-        try {
-          scanRoot.querySelectorAll?.(selector).forEach((candidate) => {
-            if (!candidate || seen.has(candidate)) return;
-            seen.add(candidate);
-            count += 1;
-          });
-        } catch {
-          // Case-insensitive selectors may not parse in every runtime; keep validation best-effort.
-        }
-      }
-    }
-    return count;
+    return getGeminiFileHandoff().countGeminiAttachmentIndicators();
   }
 
   async function waitForGeminiAttachmentIndicators(previousCount = 0, timeoutMs = 450) {
-    let count = countGeminiAttachmentIndicators();
-    if (count > previousCount) return count;
-    if (typeof MutationObserver !== "function") return count;
-
-    return await new Promise((resolve) => {
-      let settled = false;
-      let observer = null;
-      let timeoutId = 0;
-      const finish = (force = false) => {
-        if (settled) return;
-        count = countGeminiAttachmentIndicators();
-        if (count <= previousCount && !force) return;
-        settled = true;
-        if (observer) {
-          try {
-            observer.disconnect();
-          } catch {
-            // Best-effort cleanup only.
-          }
-        }
-        if (timeoutId) clearTimeout(timeoutId);
-        resolve(count);
-      };
-      try {
-        observer = new MutationObserver(() => finish(false));
-        observer.observe(document.documentElement || document, {
-          childList: true,
-          subtree: true
-        });
-      } catch {
-        observer = null;
-      }
-      setTimeout(() => finish(false), 0);
-      timeoutId = setTimeout(() => finish(true), timeoutMs);
-    });
+    return getGeminiFileHandoff().waitForGeminiAttachmentIndicators(previousCount, timeoutMs);
   }
 
   function getFileInputPreparation() {
@@ -6098,15 +5904,7 @@
   }
 
   function isGeminiGhostIngressFileInput(candidate) {
-    if (!isGeminiHost() || !isFileInputElement(candidate)) return false;
-    const name = candidate.getAttribute?.("name") || candidate.name || "";
-    if (name === "Filedata") return true;
-    try {
-      if (candidate.matches?.('input[type="file"][name="Filedata"]')) return true;
-    } catch {
-      // Selector support varies in synthetic and host-controlled DOMs.
-    }
-    return isWithinGeminiImagesFilesUploader(candidate);
+    return getGeminiFileHandoff().isGeminiGhostIngressFileInput(candidate);
   }
 
   function clearPendingGeminiGhostIngressClickInterceptor(reason = "") {
