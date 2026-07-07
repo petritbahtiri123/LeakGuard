@@ -35,6 +35,7 @@
   const BeforeInputOrchestration = globalThis.PWM?.BeforeInputOrchestration || {};
   const SubmitOrchestration = globalThis.PWM?.SubmitOrchestration || {};
   const SendButtonClickOrchestration = globalThis.PWM?.SendButtonClickOrchestration || {};
+  const PasteOrchestration = globalThis.PWM?.PasteOrchestration || {};
   const {
     normalizeComposerText,
     normalizeEditorInnerText,
@@ -394,6 +395,7 @@
   let beforeInputOrchestration = null;
   let submitOrchestration = null;
   let sendButtonClickOrchestration = null;
+  let pasteOrchestration = null;
   let syntheticFileListCapabilityCache = null;
   let inputFileAssignmentCapabilityCache = null;
   const fileInputProcessingSignatures = new WeakMap();
@@ -3800,206 +3802,58 @@
     return getBeforeInputOrchestration().maybeHandleBeforeInput(event);
   }
 
-  async function maybeHandlePaste(event) {
-    if (!extensionRuntimeAvailable || modalOpen || event.defaultPrevented) return;
-    if (isSanitizedFileHandoffEvent(event)) return;
-    if (isSanitizedTextRewriteEvent(event)) return;
-
-    if (isGeminiHost() && await maybeHandleGeminiEditorPaste(event)) {
-      return;
-    }
-
-    const rawPasteTransfer = getPasteTransfer(event);
-    const pasteTransfer =
-      typeof normalizeClipboardImageDataTransfer === "function"
-        ? normalizeClipboardImageDataTransfer(rawPasteTransfer)
-        : rawPasteTransfer;
-    const hasPasteFiles =
-      typeof dataTransferHasFiles === "function" && dataTransferHasFiles(pasteTransfer);
-    const supportedWhatsAppClipboardImagePaste =
-      hasPasteFiles && isSupportedWhatsAppClipboardImagePaste(pasteTransfer, "paste");
-    if (
-      hasPasteFiles &&
-      isWhatsAppHost() &&
-      !supportedWhatsAppClipboardImagePaste
-    ) {
-      await blockWhatsAppFileAttachment(event);
-      return;
-    }
-    if (supportedWhatsAppClipboardImagePaste) {
-      consumeInterceptionEvent(event);
-    }
-
-    const input = findComposer(event.target);
-    if (!input) {
-      if (hasPasteFiles && isWhatsAppHost()) {
-        await blockWhatsAppFileAttachment(event);
-      }
-      return;
-    }
-    noteActiveRiskEditor(input);
-
-    if (hasPasteFiles) {
-      await maybeHandleLocalFileInsert(event, input, pasteTransfer, "paste");
-      return;
-    }
-
-    const pasted = getPastedPlainText(event);
-
-    if (!pasted) return;
-    if (shouldSuppressDuplicateWhatsAppTextPaste(input, pasted, event)) {
-      consumeInterceptionEvent(event);
-      return;
-    }
-
-    const quickAnalysis = analyzeText(pasted);
-    if (!quickAnalysis.findings.length && !quickAnalysis.placeholderNormalized) return;
-    rememberWhatsAppTextPaste(input, pasted, event);
-    consumeInterceptionEvent(event);
-
-    if (await maybeHandleChatGptLargeTextPaste(event, input, pasted, quickAnalysis)) {
-      return;
-    }
-
-    const originalText = getInputText(input);
-    const selection = getSelectionOffsets(input);
-
-    const analysis = await analyzeTextWithAiAssist(pasted);
-
-    if (!analysis.findings.length) {
-      const ok = await applyPasteDecision(
-        input,
-        originalText,
-        selection,
-        analysis.normalizedText,
-        "paste",
-        { rawInsertedText: pasted }
-      );
-
-      if (!ok) return;
-
-      setBadge("Placeholders normalized");
-      hideBadgeSoon();
-      refreshBadgeFromCurrentInput();
-      return;
-    }
-
-    const policy = await getPolicyForAction();
-    const destinationPolicy = await handleDestinationPolicy(analysis.findings, policy);
-    if (destinationPolicy.blocked) {
-      return;
-    }
-    const destinationForceRedact = shouldForceDestinationRedaction(destinationPolicy, analysis.findings);
-
-    const httpPolicyHandled = await handleHttpSecretPolicy(policy, analysis.secretFindings, async () => {
-      const latestInput = findComposer(input);
-      if (!latestInput) return;
-
-      const latestText = getInputText(latestInput);
-      const baseText = latestText === originalText ? latestText : originalText;
-      const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
-      const ok = await applyPasteDecision(
-        latestInput,
-        baseText,
-        selection,
-        result.redactedText,
-        "paste",
-        { rawInsertedText: pasted }
-      );
-
-      if (!ok) {
-        return;
-      }
-
-      setBadge("Content redacted");
-      hideBadgeSoon();
-      refreshBadgeFromCurrentInput();
-    });
-
-    if (httpPolicyHandled) {
-      return;
-    }
-
-    if (destinationForceRedact) {
-      const latestInput = findComposer(input);
-      if (!latestInput) return;
-
-      const latestText = getInputText(latestInput);
-      const baseText = latestText === originalText ? latestText : originalText;
-      const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings, {
-        auditReason: destinationPolicy.reason
+  function getPasteOrchestration() {
+    if (pasteOrchestration) return pasteOrchestration;
+    if (typeof PasteOrchestration.createPasteOrchestration !== "function") {
+      pasteOrchestration = Object.freeze({
+        maybeHandlePaste: async () => {}
       });
-
-      const ok = await applyPasteDecision(
-        latestInput,
-        baseText,
-        selection,
-        result.redactedText,
-        "paste",
-        { rawInsertedText: pasted }
-      );
-
-      if (!ok) return;
-
-      setBadge("Destination policy required redaction");
-      hideBadgeSoon();
-      refreshBadgeFromCurrentInput();
-      return;
+      return pasteOrchestration;
     }
 
-    if (isProtectionPauseActiveAfterPolicy(policy, destinationPolicy)) {
-      const latestInput = findComposer(input);
-      if (!latestInput) return;
+    pasteOrchestration =
+      PasteOrchestration.createPasteOrchestration({
+        analyzeText,
+        analyzeTextWithAiAssist,
+        applyPasteDecision,
+        blockWhatsAppFileAttachment,
+        consumeInterceptionEvent,
+        dataTransferHasFiles,
+        findComposer,
+        getInputText,
+        getPasteTransfer,
+        getPastedPlainText,
+        getPolicyForAction,
+        getSelectionOffsets,
+        handleDestinationPolicy,
+        handleHttpSecretPolicy,
+        hideBadgeSoon,
+        isExtensionRuntimeAvailable: () => extensionRuntimeAvailable,
+        isGeminiHost,
+        isModalOpen: () => modalOpen,
+        isProtectionPauseActiveAfterPolicy,
+        isSanitizedFileHandoffEvent,
+        isSanitizedTextRewriteEvent,
+        isSupportedWhatsAppClipboardImagePaste,
+        isWhatsAppHost,
+        maybeHandleChatGptLargeTextPaste,
+        maybeHandleGeminiEditorPaste,
+        maybeHandleLocalFileInsert,
+        normalizeClipboardImageDataTransfer,
+        noteActiveRiskEditor,
+        promptForSensitiveContentDecision,
+        refreshBadgeFromCurrentInput,
+        rememberWhatsAppTextPaste,
+        requestRedaction,
+        setBadge,
+        shouldForceDestinationRedaction,
+        shouldSuppressDuplicateWhatsAppTextPaste
+      });
+    return pasteOrchestration;
+  }
 
-      const latestText = getInputText(latestInput);
-      const baseText = latestText === originalText ? latestText : originalText;
-      const ok = await applyPasteDecision(
-        latestInput,
-        baseText,
-        selection,
-        analysis.normalizedText,
-        "paste",
-        { rawInsertedText: pasted }
-      );
-      if (!ok) return;
-
-      setBadge("Protection paused");
-      hideBadgeSoon();
-      refreshBadgeFromCurrentInput();
-      return;
-    }
-
-    const decisionAction = await promptForSensitiveContentDecision(
-      analysis.findings,
-      "paste",
-      policy,
-      input,
-      analysis.normalizedText
-    );
-    if (decisionAction === "cancel") return;
-
-    const latestInput = findComposer(input);
-    if (!latestInput) return;
-
-    const latestText = getInputText(latestInput);
-    const baseText = latestText === originalText ? latestText : originalText;
-
-    const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
-
-    const ok = await applyPasteDecision(
-      latestInput,
-      baseText,
-      selection,
-      result.redactedText,
-      "paste",
-      { rawInsertedText: pasted }
-    );
-
-    if (!ok) return;
-
-    setBadge("Content redacted");
-    hideBadgeSoon();
-    refreshBadgeFromCurrentInput();
+  async function maybeHandlePaste(event) {
+    return getPasteOrchestration().maybeHandlePaste(event);
   }
 
   function isSanitizedFileHandoffEvent(event) {

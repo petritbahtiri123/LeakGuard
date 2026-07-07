@@ -79,6 +79,7 @@
     "content/composer/beforeInputOrchestration.js",
     "content/composer/submitOrchestration.js",
     "content/composer/sendButtonClickOrchestration.js",
+    "content/composer/pasteOrchestration.js",
     "content/files/fileTransferPolicy.js",
     "content/files/fileExtractionSessionCache.js",
     "content/files/protectedSiteOcrBroker.js",

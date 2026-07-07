@@ -9,6 +9,7 @@ require(path.join(repoRoot, "src/content/composer/fallbackSendKeyOrchestration.j
 require(path.join(repoRoot, "src/content/composer/typedSecretScanOrchestration.js"));
 require(path.join(repoRoot, "src/content/composer/submitOrchestration.js"));
 require(path.join(repoRoot, "src/content/composer/sendButtonClickOrchestration.js"));
+require(path.join(repoRoot, "src/content/composer/pasteOrchestration.js"));
 require(path.join(repoRoot, "src/content/ui/contentModalUi.js"));
 
 const {
@@ -425,7 +426,10 @@ function createHarness(options = {}) {
     rememberWhatsAppTextPaste: () => {},
     isGeminiHost: () => false,
     maybeHandleGeminiEditorPaste: async () => false,
+    normalizeClipboardImageDataTransfer: (transfer) => transfer,
     dataTransferHasFiles: () => false,
+    isSupportedWhatsAppClipboardImagePaste: () => false,
+    blockWhatsAppFileAttachment: async () => {},
     maybeHandleLocalFileInsert: async () => false,
     maybeHandleChatGptLargeTextPaste: async () => false,
     findComposer: () => composer,
@@ -536,11 +540,13 @@ function createHarness(options = {}) {
       "const TypedSecretScanOrchestration = globalThis.PWM?.TypedSecretScanOrchestration || {};",
       "const SubmitOrchestration = globalThis.PWM?.SubmitOrchestration || {};",
       "const SendButtonClickOrchestration = globalThis.PWM?.SendButtonClickOrchestration || {};",
+      "const PasteOrchestration = globalThis.PWM?.PasteOrchestration || {};",
       "let contentModalUi = null;",
       "let fallbackSendKeyOrchestration = null;",
       "let typedSecretScanOrchestration = null;",
       "let submitOrchestration = null;",
       "let sendButtonClickOrchestration = null;",
+      "let pasteOrchestration = null;",
       "let whatsAppBypassSanitizedImageSubmitUntil = 0;",
       extractFunctionSource(contentSource, "getEditorRiskState"),
       extractFunctionSource(contentSource, "clearEditorRiskState"),
@@ -563,6 +569,7 @@ function createHarness(options = {}) {
       extractFunctionSource(contentSource, "clickSendButtonWithBypass"),
       extractFunctionSource(contentSource, "submitComposer"),
       extractFunctionSource(contentSource, "replayVerifiedSend"),
+      extractFunctionSource(contentSource, "getPasteOrchestration"),
       extractFunctionSource(contentSource, "maybeHandlePaste"),
       extractFunctionSource(contentSource, "getSubmitOrchestration"),
       extractFunctionSource(contentSource, "maybeHandleSubmit"),

@@ -23,6 +23,10 @@ const submitOrchestrationSource = fs.readFileSync(
   path.join(repoRoot, "src/content/composer/submitOrchestration.js"),
   "utf8"
 );
+const pasteOrchestrationSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/composer/pasteOrchestration.js"),
+  "utf8"
+);
 const popupSource = fs.readFileSync(path.join(repoRoot, "src/popup/popup.js"), "utf8");
 const optionsSource = fs.readFileSync(path.join(repoRoot, "src/options/options.js"), "utf8");
 const managedPolicySchema = JSON.parse(
@@ -128,7 +132,9 @@ function testProtectionPauseDefaultsAndUiHooksExist() {
   assert.ok(!contentSource.includes("Allow once"), "content UI should not render Allow once");
   assert.ok(!contentSource.includes("allowedOnceFingerprint"), "content state should not keep allow-once fingerprints");
   assert.ok(
-    contentSource.includes("isProtectionPauseActiveAfterPolicy(policy, destinationPolicy)"),
+    beforeInputOrchestrationSource.includes("isProtectionPauseActiveAfterPolicy(policy, destinationPolicy)") &&
+      pasteOrchestrationSource.includes("isProtectionPauseActiveAfterPolicy(policy, destinationPolicy)") &&
+      submitOrchestrationSource.includes("isProtectionPauseActiveAfterPolicy(policy, destinationPolicy)"),
     "content flow should check pause only after policy decisions"
   );
   assert.ok(
@@ -859,13 +865,21 @@ function testPolicySchemaAndUiSurfaceNewFields() {
   );
   assert.ok(
     beforeInputOrchestrationSource.includes("handleDestinationPolicy(relevantFindings, policy)") &&
-      contentSource.includes("handleDestinationPolicy(analysis.findings, policy)") &&
+      pasteOrchestrationSource.includes("handleDestinationPolicy(analysis.findings, policy)") &&
       submitOrchestrationSource.includes("handleDestinationPolicy(analysis.findings, policy)"),
     "content enforcement should run in the typed, paste, and submit decision paths"
   );
   assert.ok(
-    contentSource.includes("shouldForceDestinationRedaction") &&
-      contentSource.includes("Destination policy required redaction"),
+    [
+      beforeInputOrchestrationSource,
+      pasteOrchestrationSource,
+      submitOrchestrationSource
+    ].join("\n").includes("shouldForceDestinationRedaction") &&
+      [
+        beforeInputOrchestrationSource,
+        pasteOrchestrationSource,
+        submitOrchestrationSource
+      ].join("\n").includes("Destination policy required redaction"),
     "content flow should support destination-scoped forced redaction"
   );
   assert.ok(

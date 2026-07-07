@@ -23,6 +23,7 @@ require(path.join(repoRoot, "src/content/composer/typedSecretScanOrchestration.j
 require(path.join(repoRoot, "src/content/composer/beforeInputOrchestration.js"));
 require(path.join(repoRoot, "src/content/composer/submitOrchestration.js"));
 require(path.join(repoRoot, "src/content/composer/sendButtonClickOrchestration.js"));
+require(path.join(repoRoot, "src/content/composer/pasteOrchestration.js"));
 require(path.join(repoRoot, "src/content/diagnostics/debugLogger.js"));
 const ContentDebugFacade = require(path.join(repoRoot, "src/content/diagnostics/contentDebugFacade.js"));
 
@@ -66,6 +67,10 @@ const submitOrchestrationSource = fs.readFileSync(
 );
 const sendButtonClickOrchestrationSource = fs.readFileSync(
   path.join(repoRoot, "src/content/composer/sendButtonClickOrchestration.js"),
+  "utf8"
+);
+const pasteOrchestrationSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/composer/pasteOrchestration.js"),
   "utf8"
 );
 const contentModalUiSource = fs.readFileSync(path.join(repoRoot, "src/content/ui/contentModalUi.js"), "utf8");
@@ -404,7 +409,7 @@ function testPauseBypassRunsAfterPolicyInTypedRedactionPipeline() {
 }
 
 function testPauseBypassGatesPasteAndSendAfterPolicy() {
-  const pasteSource = extractFunctionSource(contentSource, "maybeHandlePaste");
+  const pasteSource = extractFunctionSource(pasteOrchestrationSource, "maybeHandlePaste");
   const submitSource = extractFunctionSource(submitOrchestrationSource, "maybeHandleSubmit");
   const fallbackSendSource = extractFunctionSource(fallbackSendKeySource, "maybeHandleFallbackSendKey");
   const geminiPasteSource = extractFunctionSource(geminiEditorPasteSource, "maybeHandleGeminiEditorPaste");
@@ -450,7 +455,7 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   const dropSource = extractFunctionSource(contentSource, "maybeHandleDrop");
   const manifest = JSON.parse(fs.readFileSync(path.join(repoRoot, "manifests/base.json"), "utf8"));
   const manifestScripts = manifest.content_scripts[0].js;
-  const pasteSource = extractFunctionSource(contentSource, "maybeHandlePaste");
+  const pasteSource = extractFunctionSource(pasteOrchestrationSource, "maybeHandlePaste");
   const submitSource = extractFunctionSource(submitOrchestrationSource, "maybeHandleSubmit");
   const fallbackSendSource = extractFunctionSource(fallbackSendKeySource, "maybeHandleFallbackSendKey");
   const modalSource = `${contentSource}\n${contentModalUiSource}`;
@@ -860,8 +865,8 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
     );
   }
   assert.ok(
-    contentSource.includes("const latestInput = findComposer(input);") &&
-      contentSource.includes("const latestText = getInputText(latestInput);"),
+    pasteSource.includes("const latestInput = findComposer(input);") &&
+      pasteSource.includes("const latestText = getInputText(latestInput);"),
     "paste rewrite flow should re-resolve the composer after modal decisions before applying redaction"
   );
   assert.ok(
@@ -878,15 +883,13 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
       pasteSource.indexOf("await maybeHandleChatGptLargeTextPaste(event, input, pasted, quickAnalysis)"),
     "WhatsApp paste dedupe must be remembered before async large-paste checks can let paired beforeinput append duplicates"
   );
+  const pasteRememberIndex = pasteSource.indexOf("rememberWhatsAppTextPaste(input, pasted, event);");
+  const pasteConsumeAfterRememberIndex = pasteSource.indexOf("consumeInterceptionEvent(event);", pasteRememberIndex);
+  const pasteLargeTextIndex = pasteSource.indexOf("await maybeHandleChatGptLargeTextPaste(event, input, pasted, quickAnalysis)");
   assert.ok(
-    pasteSource.includes(
-      [
-        "rememberWhatsAppTextPaste(input, pasted, event);",
-        "    consumeInterceptionEvent(event);",
-        "",
-        "    if (await maybeHandleChatGptLargeTextPaste(event, input, pasted, quickAnalysis))"
-      ].join("\n")
-    ),
+    pasteRememberIndex >= 0 &&
+      pasteConsumeAfterRememberIndex > pasteRememberIndex &&
+      pasteConsumeAfterRememberIndex < pasteLargeTextIndex,
     "risky paste events must be consumed before awaited branches let the host insert raw or duplicate text"
   );
   assert.ok(

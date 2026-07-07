@@ -68,6 +68,7 @@ regex/provider deterministic rules
 - `src/content/composer/beforeInputOrchestration.js`: beforeinput paste delegation, programmatic rewrite suppression, synchronous typed-event ownership, live typed policy/redaction branches, and placeholder normalization.
 - `src/content/composer/submitOrchestration.js`: submit modal/bypass gates, WhatsApp sanitized-image send bypass, composer/submitter replay selection, policy/redaction branches, and verified send queueing.
 - `src/content/composer/sendButtonClickOrchestration.js`: send-button modal/backdrop gates, click bypass state, WhatsApp fail-closed checks, sanitized-image click bypass, safe text ownership, and synthetic submit routing.
+- `src/content/composer/pasteOrchestration.js`: general paste gates, Gemini editor delegation, WhatsApp file-paste fail-closed checks, local file paste routing, duplicate WhatsApp text suppression, large-paste handoff, policy/redaction branches, and transactional paste decisions.
 - `src/content/file_drag_guard.js`: early file drag/drop guard.
 - `src/content/file_paste_helpers.js`: paste/file helper messages and file extraction glue.
 - `src/content/file_handoff_state.js`, `src/content/file_handoff_pending.js`, `src/content/file_handoff_flow.js`: shared sanitized handoff state, pending flow, and handoff sequencing.
