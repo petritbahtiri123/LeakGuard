@@ -12,10 +12,10 @@ LeakGuard's WhatsApp paths are local-only. They do not use backend file processi
 | Text paste | supported | text only | redacts before send |
 | Clipboard image paste | supported | PNG, JPG, JPEG, WEBP | OCR/redacted image or fail closed |
 | Attach button single | supported | supported file registry paths | sanitized handoff only |
-| Attach button multi | supported | 2-5 files | all-or-nothing, ordered |
+| Attach button multi | supported | protected-site small/large batch caps | all-or-nothing, ordered |
 | Drag/drop single | supported | supported file registry paths | sanitized handoff only |
-| Drag/drop multi | supported | 2-5 files | all-or-nothing, ordered |
-| 6+ files | blocked | before read | fail closed |
+| Drag/drop multi | supported | protected-site small/large batch caps | all-or-nothing, ordered |
+| Over-cap files | blocked | before read | fail closed |
 | Unsupported file | blocked | all paths | no raw passthrough |
 | File paste | out of scope | except clipboard image paste | blocked/fail closed |
 
@@ -35,7 +35,7 @@ Text PDFs, DOCX files, and XLSX files are rebuilt from sanitized extracted text 
 
 ## Unsupported Or Out Of Scope
 
-- 6 or more selected/dropped files are blocked before any file is read.
+- Over-cap selected/dropped batches are blocked before any file is read.
 - Unsupported file families are blocked.
 - File paste remains out of scope except clipboard image paste for PNG, JPG, JPEG, and WEBP.
 - Scanned or image-only PDF OCR remains fail closed unless the current pipeline explicitly supports that path.
@@ -77,4 +77,3 @@ Live WhatsApp QA requires a tester-owned account and should remain manual/headed
 - [WhatsApp XLSX attach QA](qa/whatsapp-web-xlsx-attach-qa.md)
 - [WhatsApp drag/drop QA](qa/whatsapp-web-drag-drop-qa.md)
 - [WhatsApp multi-file QA](qa/whatsapp-web-multi-file-qa.md)
-

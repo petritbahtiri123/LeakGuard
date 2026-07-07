@@ -49,7 +49,7 @@ function createSupport(overrides = {}) {
     listLocalTransferFiles(dataTransfer) {
       return Array.from(dataTransfer?.files || []).filter(Boolean);
     },
-    maxWhatsAppMultiFileAttachments: 5,
+    maxWhatsAppMultiFileAttachments: 20,
     ...overrides
   });
 
@@ -136,11 +136,11 @@ function testSupportedWhatsAppDataTransfersPreserveSingleAndMultiFileLimits() {
   );
   assert.strictEqual(support.isSupportedWhatsAppMultiFileAttach(transfer(supportedFiles)), true);
   assert.strictEqual(
-    support.isSupportedWhatsAppMultiFileAttach(transfer(Array.from({ length: 5 }, (_, index) => file(`${index}.txt`, "text/plain")))),
+    support.isSupportedWhatsAppMultiFileAttach(transfer(Array.from({ length: 20 }, (_, index) => file(`${index}.txt`, "text/plain")))),
     true
   );
   assert.strictEqual(
-    support.isSupportedWhatsAppMultiFileAttach(transfer(Array.from({ length: 6 }, (_, index) => file(`${index}.txt`, "text/plain")))),
+    support.isSupportedWhatsAppMultiFileAttach(transfer(Array.from({ length: 21 }, (_, index) => file(`${index}.txt`, "text/plain")))),
     false
   );
   assert.strictEqual(

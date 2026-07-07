@@ -149,9 +149,9 @@ git diff --check
 - In a controlled WhatsApp test chat, confirm typing, multiline text, text paste, and send replay redact before send and do not require a second click.
 - Paste a PNG/JPG/JPEG/WEBP clipboard image and confirm WhatsApp receives only the sanitized image, or the paste blocks fail-closed with no raw preview.
 - Use the attach button with exactly one supported file from each supported family: canonical text-like file from `FileTypeRegistry`, `Dockerfile` or `Makefile`, PNG/JPG/JPEG/WEBP image, text PDF, DOCX, and XLSX.
-- Use the attach button with 2-5 supported files and confirm all files are sanitized locally, handed off in input order, and blocked all-or-nothing if any file fails.
-- Drag/drop exactly one supported file and then 2-5 supported files; confirm behavior matches attach-button support.
-- Select or drop 6+ files and confirm LeakGuard blocks before reading any file.
+- Use the attach button with an in-cap supported multi-file batch and confirm all files are sanitized locally, handed off in input order, and blocked all-or-nothing if any file fails.
+- Drag/drop exactly one supported file and then an in-cap supported multi-file batch; confirm behavior matches attach-button support.
+- Select or drop an over-cap batch, such as twenty-one small files or six large files, and confirm LeakGuard blocks before reading any file.
 - Try unsupported families such as GIF, BMP, ICO, SVG, archives, executables, arbitrary binaries, legacy Office, and macro Office files. Confirm WhatsApp receives no raw file and no unsafe preview.
 - Confirm WhatsApp file paste remains out of scope except clipboard image paste, and no document/file paste is treated as supported.
 - Confirm WhatsApp never receives extracted file text inserted into the message composer as fallback.

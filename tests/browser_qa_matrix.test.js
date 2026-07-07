@@ -156,7 +156,7 @@ async function assertFullCoverageMatrix() {
     "attach-button multi-file attachment",
     "drag/drop single file attachment",
     "drag/drop multi-file attachment",
-    "6+ file block",
+    "over-cap file block",
     "unsupported file attachment attempt"
   ]) {
     assert.ok(matrix.whatsAppTextOnly.inputPaths.includes(inputPath), `WhatsApp QA should include ${inputPath}`);
@@ -177,12 +177,12 @@ async function assertFullCoverageMatrix() {
     "single DOCX attachment assigns only a sanitized rebuilt DOCX",
     "single XLSX attachment assigns only a sanitized rebuilt XLSX",
     "encrypted/malformed/image-only PDF attachment remains blocked",
-    "2-5 supported multi-file attachments assign only sanitized files",
-    "6+ WhatsApp multi-file attachments block before read",
+    "in-cap supported multi-file attachments assign only sanitized files",
+    "over-cap WhatsApp multi-file attachments block before read",
     "unsupported extensionless WhatsApp attachment remains blocked",
     "unsupported or failing WhatsApp multi-file batch blocks all-or-nothing",
-    "single-file and 2-5 supported WhatsApp drag/drop files assign only sanitized files",
-    "6+ WhatsApp drag/drop files block before read",
+    "single-file and in-cap supported WhatsApp drag/drop files assign only sanitized files",
+    "over-cap WhatsApp drag/drop files block before read",
     "unsupported or failing WhatsApp drag/drop batch blocks all-or-nothing"
   ]) {
     assert.ok(

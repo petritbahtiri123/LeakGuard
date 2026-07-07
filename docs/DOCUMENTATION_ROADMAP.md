@@ -216,8 +216,8 @@ Inventory scope for this pass:
 ## WhatsApp Support Documentation Pass
 
 - Added [WHATSAPP_SUPPORT_MATRIX.md](WHATSAPP_SUPPORT_MATRIX.md) as the current support matrix for WhatsApp Web text, paste, clipboard image paste, attach-button, drag/drop, multi-file limits, unsupported paths, browser notes, and safety invariants.
-- Added [qa/whatsapp-web-multi-file-qa.md](qa/whatsapp-web-multi-file-qa.md) for 2-5 file attach/drop batches, 6+ before-read blocks, unsupported/failing batch all-or-nothing behavior, and attach/drop parity.
-- Refreshed WhatsApp QA docs so single-file, 2-5 file, 6+ blocked, file-paste-out-of-scope, and no-extracted-text-fallback language is consistent.
+- Added [qa/whatsapp-web-multi-file-qa.md](qa/whatsapp-web-multi-file-qa.md) for in-cap file attach/drop batches, over-cap before-read blocks, unsupported/failing batch all-or-nothing behavior, and attach/drop parity.
+- Refreshed WhatsApp QA docs so single-file, in-cap multi-file, over-cap blocked, file-paste-out-of-scope, and no-extracted-text-fallback language is consistent.
 - Added [roadmap/content-script-modularization-plan.md](roadmap/content-script-modularization-plan.md) as the content-script modularization plan.
 - Updated release, browser compatibility, protected-site, file capability, Chrome listing, README, and E2E docs to reflect completed WhatsApp support without changing runtime behavior.
 

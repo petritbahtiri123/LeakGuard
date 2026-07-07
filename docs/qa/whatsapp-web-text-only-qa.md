@@ -5,8 +5,8 @@ Use only a controlled test chat, such as a self-chat or a test account. Do not u
 ## Scope
 
 - Target: `https://web.whatsapp.com/*`
-- Supported in this checklist: message composer text. Supported image attach/paste, single-file document attach, 2-5 file attach/drop, and drag/drop paths have separate QA checklists.
-- Unsupported in this text checklist: videos, arbitrary files, clipboard document/multi-file paste, 6+ file batches, unsupported or failing multi-file batches, and file fallback insertion.
+- Supported in this checklist: message composer text. Supported image attach/paste, single-file document attach, in-cap multi-file attach/drop, and drag/drop paths have separate QA checklists.
+- Unsupported in this text checklist: videos, arbitrary files, clipboard document/multi-file paste, over-cap file batches, unsupported or failing multi-file batches, and file fallback insertion.
 - Expected fail-closed behavior: if LeakGuard cannot detect the composer, extract text, redact, rewrite, verify, or replay the send safely, nothing is sent.
 
 ## Manual Checklist
@@ -41,16 +41,16 @@ Automated browser QA metadata tracks these required cases:
 - Single supported DOCX attach is covered by `docs/qa/whatsapp-web-docx-attach-qa.md`.
 - Single supported XLSX attach is covered by `docs/qa/whatsapp-web-xlsx-attach-qa.md`.
 - WhatsApp supports canonical LeakGuard text-like attach files, including `Dockerfile` and `Makefile`.
-- WhatsApp supports 2-5 sanitized multi-file attach for supported types.
-- WhatsApp blocks 6+ files before read.
+- WhatsApp supports sanitized multi-file attach for supported types within the protected-site small/large batch caps.
+- WhatsApp blocks over-cap file batches before read.
 - WhatsApp blocks unsupported extensionless and MIME-only unsupported attach files.
 - WhatsApp blocks unsupported or failing multi-file batches all-or-nothing.
-- WhatsApp drag/drop supports single-file and 2-5 file sanitized handoff for canonical supported types; see `docs/qa/whatsapp-web-drag-drop-qa.md`.
+- WhatsApp drag/drop supports single-file and in-cap multi-file sanitized handoff for canonical supported types; see `docs/qa/whatsapp-web-drag-drop-qa.md`.
 - WhatsApp multi-file attach/drop coverage is centralized in `docs/qa/whatsapp-web-multi-file-qa.md`.
 
 ## Root Cause Notes
 
 - WhatsApp Web is a real messaging surface, so risk-gated interception is not enough. WhatsApp text sends now own non-empty send attempts and use the verified replay path even when quick analysis finds no issue.
 - WhatsApp previously shared the file handoff adapter shape used by AI/chat surfaces. That could allow broad sanitized file handoff or sanitized text fallback behavior that is not supported for WhatsApp.
-- The WhatsApp adapter keeps generic file support disabled: no pending attach, no trusted attach button, no upload trigger resolution, no raw drag/drop passthrough, and no generic multi-file handoff. Only narrow sanitized image, text-document, PDF, DOCX, XLSX, 2-5 file attach-button, and single-file or 2-5 file drag/drop handoff capabilities are enabled.
+- The WhatsApp adapter keeps generic file support disabled: no pending attach, no trusted attach button, no upload trigger resolution, no raw drag/drop passthrough, and no generic multi-file handoff. Only narrow sanitized image, text-document, PDF, DOCX, XLSX, in-cap multi-file attach-button, and single-file or in-cap multi-file drag/drop handoff capabilities are enabled.
 - The shared file handoff flow has a WhatsApp hard stop for generic handoff so future callers cannot accidentally insert sanitized file text into a WhatsApp message.

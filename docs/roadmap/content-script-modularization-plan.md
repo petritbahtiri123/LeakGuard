@@ -6,7 +6,7 @@ Current extraction progress is tracked in [content-script-modularization-invento
 
 ## Problem
 
-`src/content/content.js` still carries too much orchestration pressure. WhatsApp support added text typing, multiline text, text paste, clipboard image paste, attach-button single-file handoff, attach-button 2-5 file handoff, drag/drop single-file handoff, drag/drop 2-5 file handoff, and verification flows. Future adapters will be riskier if `content.js` keeps growing.
+`src/content/content.js` still carries too much orchestration pressure. WhatsApp support added text typing, multiline text, text paste, clipboard image paste, attach-button single-file handoff, attach-button multi-file handoff, drag/drop single-file handoff, drag/drop multi-file handoff, and verification flows. Future adapters will be riskier if `content.js` keeps growing.
 
 The modularization work should reduce `content.js` safely and quickly by extracting modules without changing behavior. Each extraction must be test-gated and small enough to review independently.
 
@@ -47,7 +47,7 @@ The modularization work should reduce `content.js` safely and quickly by extract
 - `whatsappClipboardImagePaste.js`: owns clipboard image paste for PNG/JPG/JPEG/WEBP.
 - `whatsappAttachHandoff.js`: owns WhatsApp attach-button single-file handoff.
 - `whatsappDropHandoff.js`: owns WhatsApp drag/drop single-file handoff.
-- `whatsappMultiFileHandoff.js`: owns WhatsApp 2-5 file batch handoff and 6+ before-read blocks.
+- `whatsappMultiFileHandoff.js`: owns WhatsApp in-cap file batch handoff and over-cap before-read blocks.
 - `whatsappVerification.js`: owns WhatsApp-specific composer and handoff verification.
 - `whatsappCapabilities.js`: declares WhatsApp capabilities and unsupported paths.
 - `whatsappSelectors.js`: owns WhatsApp selectors and DOM probes.
@@ -176,8 +176,8 @@ Acceptance:
 
 - WhatsApp E2E remains green
 - live QA checklist behavior is unchanged
-- WhatsApp 2-5 file batches succeed only as sanitized ordered handoff
-- WhatsApp 6+ file batches block before read
+- WhatsApp in-cap file batches succeed only as sanitized ordered handoff
+- WhatsApp over-cap file batches block before read
 
 Suggested Codex prompt:
 

@@ -709,19 +709,34 @@ test.describe("@whatsapp @text WhatsApp-like reproduction contract", () => {
     }
   });
 
-  test("@files text document 6-file attach blocks before preview", async ({ extensionApp }) => {
+  test("@files text document 10-file attach assigns sanitized files in input order", async ({ extensionApp }) => {
     const page = await extensionApp.openProtectedFixture("whatsapp");
-    const files = textFileFixtures.slice(0, 6);
-    expect(files.length, "6 canonical text fixtures should exist").toBe(6);
+    const files = textFileFixtures.slice(0, 10);
+    expect(files.length, "10 canonical text fixtures should exist").toBe(10);
 
     await uploadWhatsAppAttachFile(page, files);
 
-    await expectBlocked(page, /Raw file upload blocked|WhatsApp file upload blocked/i);
+    await expect.poll(async () => (await getWhatsAppPreviewState(page))?.sanitized).toBe(true);
     const preview = await getWhatsAppPreviewState(page);
-    expect(preview?.visible, "6-file WhatsApp attach must not open preview").toBe(false);
-    expect(preview?.rawPreviewSeen, "6-file WhatsApp attach raw preview must not show").toBe(false);
-    await expectNoFileEvents(page);
+    expect(preview?.visible, "10-file WhatsApp attach should open only sanitized preview").toBe(true);
+    expect(preview?.rawPreviewSeen, "10-file WhatsApp attach raw preview must not show").toBe(false);
+    expect(preview?.rawPreviewBeforeSanitized, "10-file WhatsApp attach raw preview must not appear first").toBe(false);
+    expect(preview?.files).toEqual(
+      files.map((file) =>
+        expect.objectContaining({
+          name: file.name,
+          type: file.mimeType,
+          sanitized: true
+        })
+      )
+    );
+    const events = await getFileEvents(page);
+    expect(events.map((event) => event.name), "10-file attach output order must match input order").toEqual([
+      ...files.map((file) => file.name)
+    ]);
+    expect(events.every((event) => event.source === "input"), "WhatsApp must receive sanitized input events only").toBe(true);
     for (const file of files) {
+      expectSanitizedDocumentEvent(events, file);
       await expectNoRawSecretVisible(page, file.secret);
     }
   });
@@ -809,19 +824,27 @@ test.describe("@whatsapp @text WhatsApp-like reproduction contract", () => {
     }
   });
 
-  test("@files drag/drop 6 supported text documents blocks before preview", async ({ extensionApp }) => {
+  test("@files drag/drop 10 supported text documents assigns sanitized files in order", async ({ extensionApp }) => {
     const page = await extensionApp.openProtectedFixture("whatsapp");
-    const files = textFileFixtures.slice(0, 6);
-    expect(files.length, "6 canonical text drop fixtures should exist").toBe(6);
+    const files = textFileFixtures.slice(0, 10);
+    expect(files.length, "10 canonical text drop fixtures should exist").toBe(10);
 
     await dragDropWhatsAppFile(page, files);
 
-    await expectBlocked(page, /Raw file upload blocked|WhatsApp file upload blocked/i);
+    await expect.poll(async () => (await getWhatsAppPreviewState(page))?.sanitized).toBe(true);
     const preview = await getWhatsAppPreviewState(page);
-    expect(preview?.visible, "6-file drop must not open preview").toBe(false);
-    expect(preview?.rawPreviewSeen, "6-file raw drop preview must not show").toBe(false);
-    await expectNoFileEvents(page);
+    expect(preview?.visible, "10-file drop should open only sanitized preview").toBe(true);
+    expect(preview?.sanitized, "10-file drop preview should be sanitized").toBe(true);
+    expect(preview?.rawPreviewSeen, "10-file raw drop preview must not show").toBe(false);
+    expect(preview?.rawPreviewBeforeSanitized, "10-file raw drop preview must not appear first").toBe(false);
+    expect(preview?.files?.map((entry) => entry.name)).toEqual(files.map((file) => file.name));
+    const events = await getFileEvents(page);
+    expect(events.map((event) => event.name), "10-file drop output order must match input order").toEqual([
+      ...files.map((file) => file.name)
+    ]);
+    expect(events.every((event) => event.source === "input"), "WhatsApp must receive sanitized input events for drag/drop handoff").toBe(true);
     for (const file of files) {
+      expectSanitizedDocumentEvent(events, file);
       await expectNoRawSecretVisible(page, file.secret);
     }
   });

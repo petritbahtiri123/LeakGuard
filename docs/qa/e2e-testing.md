@@ -101,7 +101,7 @@ The E2E suite covers these deterministic paths:
 - paste/copy-paste: textarea and contenteditable paste, multiline secrets, API key and DB URL blocks, placeholder pass-through
 - files: text formats, PDF, DOCX, XLSX, malformed PDF, unsupported files, unsafe filename summaries
 - images: PNG/JPG/WEBP OCR redaction when available, fail-closed raw blocking when OCR/redaction is unavailable, clipboard image paste, drag/drop image, unsafe dimensions, and file-only output
-- multi-file: 2-file, 5-file, order preservation, mixed failure behavior, WhatsApp 6+ before-read block, generic large-batch block, metadata-only status
+- multi-file: 2-file, 5-file, 20-small-file, order preservation, mixed failure behavior, WhatsApp over-cap before-read block, generic large-batch block, metadata-only status
 - adapter regression: ChatGPT-like and Gemini-like local DOM contracts plus local file/image handoff checks
 - WhatsApp regression: nested contenteditable/state-mirror text, paste, clipboard image, attach, drag/drop, multi-file, and verification cases for current supported behavior
 

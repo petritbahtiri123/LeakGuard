@@ -1,6 +1,6 @@
 # WhatsApp Web Image Attach QA
 
-Use this checklist for WhatsApp Web image attach support. The single-file image path supports one attach-button image at a time: PNG, JPG/JPEG, or WEBP only. The multi-file path supports 2-5 sanitized files for supported images, text documents, PDFs, DOCX files, and XLSX files.
+Use this checklist for WhatsApp Web image attach support. The single-file image path supports one attach-button image at a time: PNG, JPG/JPEG, or WEBP only. The multi-file path supports sanitized files for supported images, text documents, PDFs, DOCX files, and XLSX files within the protected-site small/large batch caps.
 
 ## Test setup
 
@@ -50,8 +50,8 @@ Select two or more files, including two supported images.
 
 Expected:
 
-- 2-5 supported files are sanitized locally and assigned back to WhatsApp only as sanitized `File` objects in input order.
-- 6+ files are blocked before read.
+- In-cap supported files are sanitized locally and assigned back to WhatsApp only as sanitized `File` objects in input order.
+- Over-cap batches are blocked before read.
 - Any unsupported file, OCR failure, or redaction failure blocks the whole batch all-or-nothing, with no partial handoff.
 
 ## Regression checks
@@ -63,4 +63,4 @@ Expected:
 
 ## Out of scope
 
-Videos, arbitrary files, file paste, 6+ file batches, unsupported mixed batches, and failing image batches remain blocked fail-closed. WhatsApp drag/drop supports single-file and 2-5 file sanitized handoff for canonical supported types. Single text-document, single-PDF, single-DOCX, single-XLSX, and multi-file checks are covered separately.
+Videos, arbitrary files, file paste, over-cap file batches, unsupported mixed batches, and failing image batches remain blocked fail-closed. WhatsApp drag/drop supports single-file and in-cap multi-file sanitized handoff for canonical supported types. Single text-document, single-PDF, single-DOCX, single-XLSX, and multi-file checks are covered separately.

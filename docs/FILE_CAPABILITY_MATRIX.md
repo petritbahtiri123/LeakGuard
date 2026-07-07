@@ -2,7 +2,7 @@
 
 This matrix is the authoritative user-facing scope for current file protection. All processing listed here is local-only in the browser or extension package. LeakGuard does not use remote OCR, backend file processing, telemetry, cloud verification, or remote model calls.
 
-For WhatsApp Web, the current protected paths are narrower than the generic protected-site rows below: single-file attach/drop is supported for the listed supported families, 2-5 file attach/drop batches are supported all-or-nothing in deterministic input order, 6+ files block before read, and file paste remains out of scope except clipboard image paste for PNG/JPG/JPEG/WEBP. See [WHATSAPP_SUPPORT_MATRIX.md](WHATSAPP_SUPPORT_MATRIX.md).
+For WhatsApp Web, the current protected paths are narrower by entry path than the generic protected-site rows below: single-file attach/drop is supported for the listed supported families, in-cap multi-file attach/drop batches are supported all-or-nothing in deterministic input order, over-cap batches block before read, and file paste remains out of scope except clipboard image paste for PNG/JPG/JPEG/WEBP. See [WHATSAPP_SUPPORT_MATRIX.md](WHATSAPP_SUPPORT_MATRIX.md).
 
 | File/input type | Scanner support | Protected-site support | Output type | Fail-closed behavior | Unsupported limitations | Raw-data safety notes |
 | --- | --- | --- | --- | --- | --- | --- |

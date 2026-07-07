@@ -312,7 +312,6 @@
     globalThis.PWM?.FileAttachPipeline?.MAX_MULTI_FILE_SMALL_ATTACHMENTS || 20;
   const MAX_MULTI_FILE_LARGE_ATTACHMENTS =
     globalThis.PWM?.FileAttachPipeline?.MAX_MULTI_FILE_LARGE_ATTACHMENTS || 5;
-  const MAX_WHATSAPP_MULTI_FILE_ATTACHMENTS = 5;
   const MULTI_FILE_SMALL_MAX_BYTES =
     globalThis.PWM?.FileAttachPipeline?.MULTI_FILE_SMALL_MAX_BYTES || LOCAL_TEXT_HARD_BLOCK_BYTES;
   const MULTI_FILE_SUPPORTED_MAX_BYTES =
@@ -1298,7 +1297,7 @@
       getLocalFileMimeType,
       dataTransferHasFiles,
       listLocalTransferFiles,
-      maxWhatsAppMultiFileAttachments: MAX_WHATSAPP_MULTI_FILE_ATTACHMENTS
+      maxWhatsAppMultiFileAttachments: MAX_MULTI_FILE_SMALL_ATTACHMENTS
     });
     return contentFileTypeSupport;
   }
