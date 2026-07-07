@@ -128,6 +128,7 @@
     "src/content/files/multiFileInsertOrchestration.js",
     "src/content/files/streamingFileInsertOrchestration.js",
     "src/content/files/localFileReadOrchestration.js",
+    "src/content/files/localFileAttachPreflightOrchestration.js",
     "src/content/files/localFileSanitizationOrchestration.js",
     "src/content/files/sanitizedFileInsertOrchestration.js",
     "src/content/files/pendingSanitizedFileHandoff.js",

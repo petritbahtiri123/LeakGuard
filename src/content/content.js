@@ -67,6 +67,7 @@
   const MultiFileInsertOrchestration = globalThis.PWM?.MultiFileInsertOrchestration || {};
   const StreamingFileInsertOrchestration = globalThis.PWM?.StreamingFileInsertOrchestration || {};
   const LocalFileReadOrchestration = globalThis.PWM?.LocalFileReadOrchestration || {};
+  const LocalFileAttachPreflightOrchestration = globalThis.PWM?.LocalFileAttachPreflightOrchestration || {};
   const LocalFileSanitizationOrchestration = globalThis.PWM?.LocalFileSanitizationOrchestration || {};
   const SanitizedFileInsertOrchestration = globalThis.PWM?.SanitizedFileInsertOrchestration || {};
   const FileInputPreparation = globalThis.PWM?.FileInputPreparation || {};
@@ -370,6 +371,7 @@
   let multiFileInsertOrchestration = null;
   let streamingFileInsertOrchestration = null;
   let localFileReadOrchestration = null;
+  let localFileAttachPreflightOrchestration = null;
   let localFileSanitizationOrchestration = null;
   let sanitizedFileInsertOrchestration = null;
   let fileInputPreparation = null;
@@ -7168,6 +7170,29 @@
     return localFileReadOrchestration;
   }
 
+  function getLocalFileAttachPreflightOrchestration() {
+    if (localFileAttachPreflightOrchestration) return localFileAttachPreflightOrchestration;
+    if (typeof LocalFileAttachPreflightOrchestration.createLocalFileAttachPreflightOrchestration !== "function") {
+      localFileAttachPreflightOrchestration = Object.freeze({
+        prepareLocalFileAttachPreflight: async () => ({ done: true, value: false })
+      });
+      return localFileAttachPreflightOrchestration;
+    }
+
+    localFileAttachPreflightOrchestration =
+      LocalFileAttachPreflightOrchestration.createLocalFileAttachPreflightOrchestration({
+        blockLargeLocalTextPayload,
+        classifyLocalTextPayloadSize,
+        fileAttachPipeline: globalThis.PWM.FileAttachPipeline,
+        getCurrentHandoffDriver,
+        isFirefoxRuntime,
+        isGeminiHost,
+        localTextHardBlockTitle: LOCAL_TEXT_HARD_BLOCK_TITLE,
+        showLocalPayloadOptimizationStatus
+      });
+    return localFileAttachPreflightOrchestration;
+  }
+
   function getLocalFileSanitizationOrchestration() {
     if (localFileSanitizationOrchestration) return localFileSanitizationOrchestration;
     if (typeof LocalFileSanitizationOrchestration.createLocalFileSanitizationOrchestration !== "function") {
@@ -7341,41 +7366,26 @@
       if (localFileRead.done) return localFileRead.value;
       const { localFile, contentExtractionResult } = localFileRead;
 
-      const imageRedactionMode = localFile.imageRedactionMode === true || localFile.fileOnlyUpload === true;
-      const sizeInfo = imageRedactionMode
-        ? {
-            zone: "fast",
-            bytes: Math.max(0, Number(localFile.file?.sizeBytes || 0))
-          }
-        : classifyLocalTextPayloadSize({
-            text: localFile.text,
-            sizeBytes: localFile.file?.sizeBytes
-          });
-      if (sizeInfo.zone === "blocked") {
-        failProcessing("local_text_payload_too_large", LOCAL_TEXT_HARD_BLOCK_TITLE);
-        await blockLargeLocalTextPayload(event, sizeInfo);
-        return true;
-      }
-
-      const shouldSkipTextFallback =
-        localFile.skipTextFallback === true ||
-        supportedWhatsAppTextDocumentAttach ||
-        supportedWhatsAppPdfAttach ||
-        supportedWhatsAppDocxAttach ||
-        supportedWhatsAppXlsxAttach ||
-        (context === "file-input" && isFirefoxRuntime() && isGeminiHost());
-      const preflightPlan = globalThis.PWM.FileAttachPipeline.classifyFileAttachPreflightPlan({
+      const attachPreflight = await getLocalFileAttachPreflightOrchestration().prepareLocalFileAttachPreflight({
+        event,
+        localFile,
         context,
-        sizeZone: sizeInfo.zone,
-        usesDmzOverlay: getCurrentHandoffDriver()?.usesDmzOverlay === true,
-        skipTextFallback: shouldSkipTextFallback,
-        imageRedactionMode,
-        allowPendingFallback: context === "drop"
+        attachModes: {
+          textDocument: supportedWhatsAppTextDocumentAttach,
+          pdf: supportedWhatsAppPdfAttach,
+          docx: supportedWhatsAppDocxAttach,
+          xlsx: supportedWhatsAppXlsxAttach
+        },
+        controls: { failProcessing }
       });
-      const optimizedStatus = preflightPlan.optimizedStatus.shouldShow;
-      if (optimizedStatus) {
-        showLocalPayloadOptimizationStatus(sizeInfo);
-      }
+      if (attachPreflight.done) return attachPreflight.value;
+      const {
+        imageRedactionMode,
+        sizeInfo,
+        shouldSkipTextFallback,
+        preflightPlan,
+        optimizedStatus
+      } = attachPreflight;
 
       const sanitization = await getLocalFileSanitizationOrchestration().sanitizeLocalFileForAttach({
         localFile,

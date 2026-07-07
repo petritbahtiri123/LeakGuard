@@ -230,9 +230,19 @@ function testContentRuntimeScriptOrder() {
     "content/files/fileAttachPipeline.js",
     "content/files/streamingFileInsertOrchestration.js"
   ], "content scripts");
+  assertAfterAll(contentScripts, "content/files/localFileAttachPreflightOrchestration.js", [
+    "content/files/fileAttachPipeline.js",
+    "content/files/localFileReadOrchestration.js"
+  ], "content scripts");
   assertBefore(
     contentScripts,
     "content/files/localFileReadOrchestration.js",
+    "content/files/localFileAttachPreflightOrchestration.js",
+    "content scripts"
+  );
+  assertBefore(
+    contentScripts,
+    "content/files/localFileAttachPreflightOrchestration.js",
     "content/files/localFileSanitizationOrchestration.js",
     "content scripts"
   );

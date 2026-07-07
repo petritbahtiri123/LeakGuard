@@ -115,6 +115,7 @@ require(path.join(repoRoot, "src/content/files/fileInputInterception.js"));
 require(path.join(repoRoot, "src/content/files/multiFileInsertOrchestration.js"));
 require(path.join(repoRoot, "src/content/files/streamingFileInsertOrchestration.js"));
 require(path.join(repoRoot, "src/content/files/localFileReadOrchestration.js"));
+require(path.join(repoRoot, "src/content/files/localFileAttachPreflightOrchestration.js"));
 require(path.join(repoRoot, "src/content/files/localFileSanitizationOrchestration.js"));
 require(path.join(repoRoot, "src/content/files/sanitizedFileInsertOrchestration.js"));
 require(path.join(repoRoot, "src/content/whatsapp/whatsappCapabilities.js"));
@@ -1320,6 +1321,7 @@ function createHarness(overrides = {}) {
       "const MultiFileInsertOrchestration = globalThis.PWM?.MultiFileInsertOrchestration || {};",
       "const StreamingFileInsertOrchestration = globalThis.PWM?.StreamingFileInsertOrchestration || {};",
       "const LocalFileReadOrchestration = globalThis.PWM?.LocalFileReadOrchestration || {};",
+      "const LocalFileAttachPreflightOrchestration = globalThis.PWM?.LocalFileAttachPreflightOrchestration || {};",
       "const LocalFileSanitizationOrchestration = globalThis.PWM?.LocalFileSanitizationOrchestration || {};",
       "const SanitizedFileInsertOrchestration = globalThis.PWM?.SanitizedFileInsertOrchestration || {};",
       'const LOCAL_TEXT_HARD_BLOCK_TITLE = "Large payload blocked for browser stability";',
@@ -1355,6 +1357,7 @@ function createHarness(overrides = {}) {
       "let multiFileInsertOrchestration = null;",
       "let streamingFileInsertOrchestration = null;",
       "let localFileReadOrchestration = null;",
+      "let localFileAttachPreflightOrchestration = null;",
       "let localFileSanitizationOrchestration = null;",
       "let sanitizedFileInsertOrchestration = null;",
       "let fileProcessingUi = null;",
@@ -1708,6 +1711,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "maybeHandleMultiFileInsert"),
       extractFunctionSource(contentSource, "getStreamingFileInsertOrchestration"),
       extractFunctionSource(contentSource, "getLocalFileReadOrchestration"),
+      extractFunctionSource(contentSource, "getLocalFileAttachPreflightOrchestration"),
       extractFunctionSource(contentSource, "getLocalFileSanitizationOrchestration"),
       extractFunctionSource(contentSource, "getSanitizedFileInsertOrchestration"),
       extractFunctionSource(contentSource, "maybeHandleLocalFileInsert"),
