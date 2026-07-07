@@ -74,6 +74,7 @@
     "content/composer/chatgptComposerSync.js",
     "content/composer/chatgptLargePasteOrchestration.js",
     "content/composer/geminiEditorPasteOrchestration.js",
+    "content/composer/fallbackSendKeyOrchestration.js",
     "content/files/fileTransferPolicy.js",
     "content/files/fileExtractionSessionCache.js",
     "content/files/protectedSiteOcrBroker.js",

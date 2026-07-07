@@ -1429,6 +1429,7 @@ async function run() {
   const chatGptComposerSyncIndex = contentScripts.indexOf("content/composer/chatgptComposerSync.js");
   const chatGptLargePasteIndex = contentScripts.indexOf("content/composer/chatgptLargePasteOrchestration.js");
   const geminiEditorPasteIndex = contentScripts.indexOf("content/composer/geminiEditorPasteOrchestration.js");
+  const fallbackSendKeyIndex = contentScripts.indexOf("content/composer/fallbackSendKeyOrchestration.js");
   const fileTransferPolicyIndex = contentScripts.indexOf("content/files/fileTransferPolicy.js");
   const fileExtractionSessionCacheIndex = contentScripts.indexOf("content/files/fileExtractionSessionCache.js");
   const protectedSiteOcrBrokerIndex = contentScripts.indexOf("content/files/protectedSiteOcrBroker.js");
@@ -1506,6 +1507,7 @@ async function run() {
   assert.ok(chatGptComposerSyncIndex > -1, "content scripts should include ChatGPT composer sync helpers");
   assert.ok(chatGptLargePasteIndex > -1, "content scripts should include ChatGPT large-paste orchestration");
   assert.ok(geminiEditorPasteIndex > -1, "content scripts should include Gemini editor paste orchestration");
+  assert.ok(fallbackSendKeyIndex > -1, "content scripts should include fallback send key orchestration");
   assert.ok(fileTransferPolicyIndex > -1, "content scripts should include file transfer policy helpers");
   assert.ok(fileExtractionSessionCacheIndex > -1, "content scripts should include file extraction session cache helpers");
   assert.ok(protectedSiteOcrBrokerIndex > -1, "content scripts should include protected-site OCR broker helpers");
@@ -1555,7 +1557,8 @@ async function run() {
       replayVerificationIndex < chatGptComposerSyncIndex &&
       chatGptComposerSyncIndex < chatGptLargePasteIndex &&
       chatGptLargePasteIndex < geminiEditorPasteIndex &&
-      geminiEditorPasteIndex < fileTransferPolicyIndex &&
+      geminiEditorPasteIndex < fallbackSendKeyIndex &&
+      fallbackSendKeyIndex < fileTransferPolicyIndex &&
       fileTransferPolicyIndex < fileExtractionSessionCacheIndex &&
       fileExtractionSessionCacheIndex < protectedSiteOcrBrokerIndex &&
       protectedSiteOcrBrokerIndex < contentFileExtractionPipelineIndex &&

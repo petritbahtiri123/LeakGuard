@@ -63,6 +63,7 @@ regex/provider deterministic rules
 - `src/content/composer/chatgptComposerSync.js`: ChatGPT composer sync helper.
 - `src/content/composer/chatgptLargePasteOrchestration.js`: ChatGPT large-paste sanitized text-file handoff, verified text fallback, and fail-closed handling.
 - `src/content/composer/geminiEditorPasteOrchestration.js`: Gemini editor paste decision flow, safe insertion, optimization cleanup, and fail-closed handling.
+- `src/content/composer/fallbackSendKeyOrchestration.js`: Enter-send fallback ownership, policy/redaction branches, WhatsApp text-send guards, and verified send queueing.
 - `src/content/file_drag_guard.js`: early file drag/drop guard.
 - `src/content/file_paste_helpers.js`: paste/file helper messages and file extraction glue.
 - `src/content/file_handoff_state.js`, `src/content/file_handoff_pending.js`, `src/content/file_handoff_flow.js`: shared sanitized handoff state, pending flow, and handoff sequencing.

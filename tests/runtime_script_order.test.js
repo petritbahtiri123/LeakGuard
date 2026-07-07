@@ -118,6 +118,11 @@ function testContentRuntimeScriptOrder() {
     "content/input/rewriteVerificationText.js",
     "content/composer/chatgptLargePasteOrchestration.js"
   ], "content scripts");
+  assertAfterAll(contentScripts, "content/composer/fallbackSendKeyOrchestration.js", [
+    "content/composer_helpers.js",
+    "content/input/rewriteVerificationText.js",
+    "content/composer/geminiEditorPasteOrchestration.js"
+  ], "content scripts");
   assertAfterAll(contentScripts, "content/composer/replayVerification.js", [
     "content/input/rewriteVerificationText.js",
     "content/composer_helpers.js"

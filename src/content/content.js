@@ -30,6 +30,7 @@
   const ReplayVerification = globalThis.PWM?.ReplayVerification || {};
   const ChatGptLargePasteOrchestration = globalThis.PWM?.ChatGptLargePasteOrchestration || {};
   const GeminiEditorPasteOrchestration = globalThis.PWM?.GeminiEditorPasteOrchestration || {};
+  const FallbackSendKeyOrchestration = globalThis.PWM?.FallbackSendKeyOrchestration || {};
   const {
     normalizeComposerText,
     normalizeEditorInnerText,
@@ -384,6 +385,7 @@
   let replayVerification = null;
   let chatGptLargePasteOrchestration = null;
   let geminiEditorPasteOrchestration = null;
+  let fallbackSendKeyOrchestration = null;
   let syntheticFileListCapabilityCache = null;
   let inputFileAssignmentCapabilityCache = null;
   const fileInputProcessingSignatures = new WeakMap();
@@ -8032,217 +8034,58 @@
     }));
   }
 
-  async function maybeHandleFallbackSendKey(event) {
-    if (
-      !extensionRuntimeAvailable ||
-      modalOpen ||
-      event.defaultPrevented ||
-      event.key !== "Enter" ||
-      event.shiftKey ||
-      event.altKey ||
-      event.ctrlKey ||
-      event.metaKey ||
-      event.isComposing
-    ) {
-      return;
-    }
-
-    const input = findComposer(event.target);
-    if (!input) return;
-    noteActiveRiskEditor(input);
-
-    const extractedText = getInputText(input);
-    if (extractedText == null) {
-      if (isWhatsAppHost()) {
-        consumeInterceptionEvent(event);
-        await blockWhatsAppTextSend("text_extraction_failed");
-      }
-      return;
-    }
-
-    const text = String(extractedText);
-    if (!text.trim()) return;
-
-    const quickAnalysis = analyzeText(text);
-    const whatsappOwnsTextSend = shouldOwnWhatsAppTextSend(text);
-    if (!analysisNeedsEventOwnership(quickAnalysis) && !whatsappOwnsTextSend) return;
-
-    consumeInterceptionEvent(event);
-    if (whatsappOwnsTextSend && !markWhatsAppTextSendPending(input)) return;
-    const verifiedSendOptions = createWhatsAppVerifiedSendOptions(input, whatsappOwnsTextSend);
-    markFallbackSendKeyRedactionPending(input);
-
-    const analysis = await analyzeTextWithAiAssist(text);
-    if (!analysis.findings.length && !analysis.placeholderNormalized && !whatsappOwnsTextSend) {
-      clearFallbackSendKeyRedactionPending(input);
-      return;
-    }
-
-    if (analysisHasOnlySanitizedPlaceholderFindings(analysis)) {
-      const normalized = await applyNormalizedComposerRewrite(input, text, "submit");
-      if (!normalized.ok) {
-        clearFallbackSendKeyRedactionPending(input);
-        clearWhatsAppTextSendPending(input);
-        return;
-      }
-
-      queueVerifiedComposerSend(input, normalized.text, "submit", () => {
-        const button = findSendButton(input);
-        if (button) {
-          replayVerifiedSend(input, null, button);
-        } else if (isWhatsAppHost()) {
-          void blockWhatsAppTextSend("replay_button_not_found");
-        }
-      }, verifiedSendOptions);
-      return;
-    }
-
-    const policy = analysis.findings.length ? await getPolicyForAction() : getActivePolicy();
-    const destinationPolicy = analysis.findings.length
-      ? await handleDestinationPolicy(analysis.findings, policy)
-      : getDestinationPolicyDecision(policy);
-    if (analysis.findings.length && destinationPolicy.blocked) {
-      clearFallbackSendKeyRedactionPending(input);
-      clearWhatsAppTextSendPending(input);
-      return;
-    }
-    const destinationForceRedact = shouldForceDestinationRedaction(destinationPolicy, analysis.findings);
-
-    const httpPolicyHandled = await handleHttpSecretPolicy(policy, analysis.secretFindings, async () => {
-      const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
-      const rewritten = await applySubmitRedactionTransactionally(
-        input,
-        analysis.normalizedText,
-        result.redactedText,
-        "submit",
-        analysis.secretFindings
-      );
-      if (!rewritten) {
-        clearFallbackSendKeyRedactionPending(input);
-        clearWhatsAppTextSendPending(input);
-        return;
-      }
-
-      setBadge("Content redacted");
-      hideBadgeSoon();
-      refreshBadgeFromCurrentInput();
-
-      queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
-        const button = findSendButton(input);
-        if (button) {
-          replayVerifiedSend(input, null, button);
-        } else if (isWhatsAppHost()) {
-          void blockWhatsAppTextSend("replay_button_not_found");
-        }
-      }, verifiedSendOptions);
-    });
-
-    if (httpPolicyHandled) {
-      return;
-    }
-
-    if (destinationForceRedact) {
-      const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings, {
-        auditReason: destinationPolicy.reason
+  function getFallbackSendKeyOrchestration() {
+    if (fallbackSendKeyOrchestration) return fallbackSendKeyOrchestration;
+    if (typeof FallbackSendKeyOrchestration.createFallbackSendKeyOrchestration !== "function") {
+      fallbackSendKeyOrchestration = Object.freeze({
+        maybeHandleFallbackSendKey: async () => {}
       });
-      const rewritten = await applySubmitRedactionTransactionally(
-        input,
-        analysis.normalizedText,
-        result.redactedText,
-        "submit",
-        analysis.secretFindings
-      );
-      if (!rewritten) {
-        clearFallbackSendKeyRedactionPending(input);
-        clearWhatsAppTextSendPending(input);
-        return;
-      }
-
-      setBadge("Destination policy required redaction");
-      hideBadgeSoon();
-      refreshBadgeFromCurrentInput();
-
-      queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
-        const button = findSendButton(input);
-        if (button) {
-          replayVerifiedSend(input, null, button);
-        } else if (isWhatsAppHost()) {
-          void blockWhatsAppTextSend("replay_button_not_found");
-        }
-      }, verifiedSendOptions);
-      return;
+      return fallbackSendKeyOrchestration;
     }
 
-    if (
-      analysis.findings.length &&
-      !whatsappOwnsTextSend &&
-      isProtectionPauseActiveAfterPolicy(policy, destinationPolicy)
-    ) {
-      const button = findSendButton(input);
-      clearFallbackSendKeyRedactionPending(input);
-      replayVerifiedSend(input, null, button);
-      return;
-    }
+    fallbackSendKeyOrchestration =
+      FallbackSendKeyOrchestration.createFallbackSendKeyOrchestration({
+        analysisHasOnlySanitizedPlaceholderFindings,
+        analysisNeedsEventOwnership,
+        analyzeText,
+        analyzeTextWithAiAssist,
+        applyNormalizedComposerRewrite,
+        applySubmitRedactionTransactionally,
+        blockWhatsAppTextSend,
+        clearFallbackSendKeyRedactionPending,
+        clearWhatsAppTextSendPending,
+        consumeInterceptionEvent,
+        createWhatsAppVerifiedSendOptions,
+        findComposer,
+        findSendButton,
+        getActivePolicy,
+        getDestinationPolicyDecision,
+        getInputText,
+        getPolicyForAction,
+        handleDestinationPolicy,
+        handleHttpSecretPolicy,
+        hideBadgeSoon,
+        isExtensionRuntimeAvailable: () => extensionRuntimeAvailable,
+        isModalOpen: () => modalOpen,
+        isProtectionPauseActiveAfterPolicy,
+        isWhatsAppHost,
+        markFallbackSendKeyRedactionPending,
+        markWhatsAppTextSendPending,
+        noteActiveRiskEditor,
+        promptForSensitiveContentDecision,
+        queueVerifiedComposerSend,
+        refreshBadgeFromCurrentInput,
+        replayVerifiedSend,
+        requestRedaction,
+        setBadge,
+        shouldForceDestinationRedaction,
+        shouldOwnWhatsAppTextSend
+      });
+    return fallbackSendKeyOrchestration;
+  }
 
-    if (!analysis.findings.length) {
-      const normalized = await applyNormalizedComposerRewrite(input, text, "submit");
-      if (!normalized.ok) {
-        clearFallbackSendKeyRedactionPending(input);
-        clearWhatsAppTextSendPending(input);
-        return;
-      }
-
-      queueVerifiedComposerSend(input, normalized.text, "submit", () => {
-        const button = findSendButton(input);
-        if (button) {
-          replayVerifiedSend(input, null, button);
-        } else if (isWhatsAppHost()) {
-          void blockWhatsAppTextSend("replay_button_not_found");
-        }
-      }, verifiedSendOptions);
-      return;
-    }
-
-    const decisionAction = await promptForSensitiveContentDecision(
-      analysis.findings,
-      "submit",
-      policy,
-      input,
-      analysis.normalizedText
-    );
-    if (decisionAction === "cancel") {
-      clearFallbackSendKeyRedactionPending(input);
-      clearWhatsAppTextSendPending(input);
-      return;
-    }
-
-    const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
-
-    const rewritten = await applySubmitRedactionTransactionally(
-      input,
-      analysis.normalizedText,
-      result.redactedText,
-      "submit",
-      analysis.secretFindings
-    );
-    if (!rewritten) {
-      clearFallbackSendKeyRedactionPending(input);
-      clearWhatsAppTextSendPending(input);
-      return;
-    }
-
-    setBadge("Content redacted");
-    hideBadgeSoon();
-    refreshBadgeFromCurrentInput();
-
-    queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
-      const button = findSendButton(input);
-      if (button) {
-        replayVerifiedSend(input, null, button);
-      } else if (isWhatsAppHost()) {
-        void blockWhatsAppTextSend("replay_button_not_found");
-      }
-    }, verifiedSendOptions);
+  async function maybeHandleFallbackSendKey(event) {
+    return getFallbackSendKeyOrchestration().maybeHandleFallbackSendKey(event);
   }
 
   async function maybeHandleTypedSecrets() {

@@ -79,6 +79,7 @@ const testFiles = [
   "tests/sanitized_file_insert_orchestration.test.js",
   "tests/chatgpt_large_paste_orchestration.test.js",
   "tests/gemini_editor_paste_orchestration.test.js",
+  "tests/fallback_send_key_orchestration.test.js",
   "tests/file_interception_modules.test.js",
   "tests/file_processing_ui.test.js",
   "tests/whatsapp_capabilities.test.js",

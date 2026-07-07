@@ -5,6 +5,7 @@ const path = require("path");
 const repoRoot = path.join(__dirname, "..");
 
 require(path.join(repoRoot, "src/content/composer_helpers.js"));
+require(path.join(repoRoot, "src/content/composer/fallbackSendKeyOrchestration.js"));
 require(path.join(repoRoot, "src/content/ui/contentModalUi.js"));
 
 const {
@@ -455,6 +456,7 @@ function createHarness(options = {}) {
     }),
     resolveDecisionAction: (action) => (action === "redact" ? "redact" : "cancel"),
     handleDestinationPolicy: async () => ({ blocked: false }),
+    getDestinationPolicyDecision: () => ({ blocked: false }),
     shouldForceDestinationRedaction: () => false,
     isProtectionPauseActiveAfterPolicy: () => Boolean(options.paused),
     handleHttpSecretPolicy: async () => false,
@@ -521,7 +523,9 @@ function createHarness(options = {}) {
   const factory = new Function(
     ...Object.keys(dependencies),
     [
+      "const FallbackSendKeyOrchestration = globalThis.PWM?.FallbackSendKeyOrchestration || {};",
       "let contentModalUi = null;",
+      "let fallbackSendKeyOrchestration = null;",
       "let whatsAppBypassSanitizedImageSubmitUntil = 0;",
       extractFunctionSource(contentSource, "getEditorRiskState"),
       extractFunctionSource(contentSource, "clearEditorRiskState"),
@@ -552,6 +556,7 @@ function createHarness(options = {}) {
       extractFunctionSource(contentSource, "clearFallbackSendKeyRedactionPending"),
       extractFunctionSource(contentSource, "maybeConsumeSuppressedFallbackSendKeyEvent"),
       extractFunctionSource(contentSource, "maybeHandleSendButtonClick"),
+      extractFunctionSource(contentSource, "getFallbackSendKeyOrchestration"),
       extractFunctionSource(contentSource, "maybeHandleFallbackSendKey"),
       extractFunctionSource(contentSource, "maybeHandleTypedSecrets"),
       "return { maybeHandlePaste, maybeHandleSubmit, maybeHandleSendButtonClick, maybeHandleFallbackSendKey, maybeHandleTypedSecrets, showDecisionModal, showMessageModal, submitComposer };"
