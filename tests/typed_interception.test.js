@@ -19,6 +19,7 @@ require(path.join(repoRoot, "src/content/composer_helpers.js"));
 require(path.join(repoRoot, "src/content/input/rewriteVerificationText.js"));
 require(path.join(repoRoot, "src/content/composer/replayVerification.js"));
 require(path.join(repoRoot, "src/content/composer/fallbackSendKeyOrchestration.js"));
+require(path.join(repoRoot, "src/content/composer/typedSecretScanOrchestration.js"));
 require(path.join(repoRoot, "src/content/diagnostics/debugLogger.js"));
 const ContentDebugFacade = require(path.join(repoRoot, "src/content/diagnostics/contentDebugFacade.js"));
 
@@ -46,6 +47,10 @@ const geminiEditorPasteSource = fs.readFileSync(
 );
 const fallbackSendKeySource = fs.readFileSync(
   path.join(repoRoot, "src/content/composer/fallbackSendKeyOrchestration.js"),
+  "utf8"
+);
+const typedSecretScanSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/composer/typedSecretScanOrchestration.js"),
   "utf8"
 );
 const contentModalUiSource = fs.readFileSync(path.join(repoRoot, "src/content/ui/contentModalUi.js"), "utf8");
@@ -365,7 +370,7 @@ function testPauseStateHasNoRawStorageHooks() {
 }
 
 function testPauseBypassRunsAfterPolicyInTypedRedactionPipeline() {
-  const typedScanSource = extractFunctionSource(contentSource, "maybeHandleTypedSecrets");
+  const typedScanSource = extractFunctionSource(typedSecretScanSource, "maybeHandleTypedSecrets");
   const pauseCheckIndex = typedScanSource.indexOf("isProtectionPauseActiveAfterPolicy(policy, destinationPolicy)");
   const policyIndex = typedScanSource.indexOf("const destinationPolicy = await handleDestinationPolicy");
   const firstRedactionIndex = typedScanSource.indexOf("requestRedaction(");
@@ -377,7 +382,7 @@ function testPauseBypassRunsAfterPolicyInTypedRedactionPipeline() {
     "pause must be checked only after destination policy enforcement"
   );
   assert.ok(
-    typedScanSource.includes("scanGeneration !== typedScanGeneration") &&
+    typedScanSource.includes("!isCurrentTypedScan(scanGeneration)") &&
       !typedScanSource.includes("isCurrentRiskSetAllowedOnce"),
     "stale typed scans should still be superseded without allow-once bypasses"
   );

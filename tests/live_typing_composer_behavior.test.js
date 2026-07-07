@@ -18,6 +18,10 @@ require(path.join(repoRoot, "src/shared/transformOutboundPrompt.js"));
 require(path.join(repoRoot, "src/content/composer_helpers.js"));
 
 const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
+const typedSecretScanSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/composer/typedSecretScanOrchestration.js"),
+  "utf8"
+);
 const typingRunbook = fs.readFileSync(path.join(repoRoot, "docs/qa/live-typing-composer-qa.md"), "utf8");
 
 const { Detector, ComposerHelpers } = globalThis.PWM;
@@ -149,9 +153,9 @@ function testHarmlessBeforeInputReturnsBeforeConsumingOrRewriting() {
 }
 
 function testDelayedTypedScanGuardsAgainstStaleComposerOverwrite() {
-  const typedScanSource = extractFunctionSource(contentSource, "maybeHandleTypedSecrets");
+  const typedScanSource = extractFunctionSource(typedSecretScanSource, "maybeHandleTypedSecrets");
   assert.ok(
-    typedScanSource.includes("if (scanGeneration !== typedScanGeneration) return;"),
+    typedScanSource.includes("if (!isCurrentTypedScan(scanGeneration)) return;"),
     "delayed typed scan should abandon stale scan generations before decisions"
   );
   assert.ok(
@@ -181,7 +185,7 @@ function testDelayedTypedScanGuardsAgainstStaleComposerOverwrite() {
 
 function testNormalTypingDoesNotCreateFilePendingPayloads() {
   const beforeInputSource = extractFunctionSource(contentSource, "maybeHandleBeforeInput");
-  const typedScanSource = extractFunctionSource(contentSource, "maybeHandleTypedSecrets");
+  const typedScanSource = extractFunctionSource(typedSecretScanSource, "maybeHandleTypedSecrets");
   assert.strictEqual(beforeInputSource.includes("queuePendingSanitizedFileHandoff"), false);
   assert.strictEqual(typedScanSource.includes("queuePendingSanitizedFileHandoff"), false);
   assert.strictEqual(typedScanSource.includes("pendingSanitizedFileHandoff"), false);

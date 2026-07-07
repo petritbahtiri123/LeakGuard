@@ -75,6 +75,7 @@
     "src/content/composer/chatgptLargePasteOrchestration.js",
     "src/content/composer/geminiEditorPasteOrchestration.js",
     "src/content/composer/fallbackSendKeyOrchestration.js",
+    "src/content/composer/typedSecretScanOrchestration.js",
     "src/shared/runtime_scripts.js",
 
     // Scanner-only OCR classic scripts are loaded from scanner.html, not modules.

@@ -31,6 +31,7 @@
   const ChatGptLargePasteOrchestration = globalThis.PWM?.ChatGptLargePasteOrchestration || {};
   const GeminiEditorPasteOrchestration = globalThis.PWM?.GeminiEditorPasteOrchestration || {};
   const FallbackSendKeyOrchestration = globalThis.PWM?.FallbackSendKeyOrchestration || {};
+  const TypedSecretScanOrchestration = globalThis.PWM?.TypedSecretScanOrchestration || {};
   const {
     normalizeComposerText,
     normalizeEditorInnerText,
@@ -386,6 +387,7 @@
   let chatGptLargePasteOrchestration = null;
   let geminiEditorPasteOrchestration = null;
   let fallbackSendKeyOrchestration = null;
+  let typedSecretScanOrchestration = null;
   let syntheticFileListCapabilityCache = null;
   let inputFileAssignmentCapabilityCache = null;
   const fileInputProcessingSignatures = new WeakMap();
@@ -8088,245 +8090,57 @@
     return getFallbackSendKeyOrchestration().maybeHandleFallbackSendKey(event);
   }
 
+  function getTypedSecretScanOrchestration() {
+    if (typedSecretScanOrchestration) return typedSecretScanOrchestration;
+    if (typeof TypedSecretScanOrchestration.createTypedSecretScanOrchestration !== "function") {
+      typedSecretScanOrchestration = Object.freeze({
+        maybeHandleTypedSecrets: async () => {}
+      });
+      return typedSecretScanOrchestration;
+    }
+
+    typedSecretScanOrchestration =
+      TypedSecretScanOrchestration.createTypedSecretScanOrchestration({
+        analyzeTextWithAiAssist,
+        applyComposerText,
+        applyNormalizedComposerRewrite,
+        beginTypedScan: () => {
+          typedScanGeneration += 1;
+          return typedScanGeneration;
+        },
+        clearEditorRiskState,
+        collectFailureDetails,
+        findComposer,
+        getActivePolicy,
+        getInputText,
+        getLastTypedPromptText: () => lastTypedPromptText,
+        getPolicyForAction,
+        handleDestinationPolicy,
+        handleHttpSecretPolicy,
+        hideBadgeSoon,
+        isCurrentTypedScan: (scanGeneration) => scanGeneration === typedScanGeneration,
+        isExtensionRuntimeAvailable: () => extensionRuntimeAvailable,
+        isLiveTypedRedactionEnabled,
+        isModalOpen: () => modalOpen,
+        isProtectionPauseActiveAfterPolicy,
+        noteActiveRiskEditor,
+        placeholderTokenRegex: PLACEHOLDER_TOKEN_REGEX,
+        promptForSensitiveContentDecision,
+        refreshBadgeFromCurrentInput,
+        requestRedaction,
+        setBadge,
+        setLastTypedPromptText: (text) => {
+          lastTypedPromptText = text;
+        },
+        shouldAutoRedactTypedSecrets,
+        shouldForceDestinationRedaction,
+        showRewriteFailure
+      });
+    return typedSecretScanOrchestration;
+  }
+
   async function maybeHandleTypedSecrets() {
-    if (!extensionRuntimeAvailable || modalOpen) return;
-
-    const scanGeneration = typedScanGeneration + 1;
-    typedScanGeneration = scanGeneration;
-    const input = findComposer();
-    if (!input) return;
-    noteActiveRiskEditor(input);
-
-    const text = getInputText(input);
-    if (!text || !text.trim()) {
-      lastTypedPromptText = "";
-      clearEditorRiskState(input);
-      return;
-    }
-
-    const analysis = await analyzeTextWithAiAssist(text);
-    if (scanGeneration !== typedScanGeneration) return;
-
-    if (!isLiveTypedRedactionEnabled(getActivePolicy())) {
-      lastTypedPromptText = analysis.normalizedText;
-      return;
-    }
-
-    if (!analysis.findings.length) {
-      if (analysis.placeholderNormalized) {
-        if (text !== lastTypedPromptText) {
-          const normalized = await applyNormalizedComposerRewrite(input, text, "input");
-          if (normalized.ok) {
-            lastTypedPromptText = normalized.text;
-          }
-        }
-        return;
-      }
-
-      lastTypedPromptText = "";
-      clearEditorRiskState(input);
-      return;
-    }
-
-    if (PLACEHOLDER_TOKEN_REGEX.test(analysis.normalizedText)) {
-      PLACEHOLDER_TOKEN_REGEX.lastIndex = 0;
-      return;
-    }
-    PLACEHOLDER_TOKEN_REGEX.lastIndex = 0;
-
-    if (analysis.normalizedText === lastTypedPromptText) {
-      return;
-    }
-
-    lastTypedPromptText = analysis.normalizedText;
-    const typedShouldAutoRedact = shouldAutoRedactTypedSecrets(
-      analysis.secretFindings,
-      analysis.findings
-    );
-    const policy = await getPolicyForAction();
-
-    const destinationPolicy = await handleDestinationPolicy(analysis.findings, policy);
-    if (destinationPolicy.blocked) {
-      return;
-    }
-    const destinationForceRedact = shouldForceDestinationRedaction(destinationPolicy, analysis.findings);
-
-    const httpPolicyHandled = await handleHttpSecretPolicy(policy, analysis.secretFindings, async () => {
-      const latestInput = findComposer(input);
-      if (!latestInput) return;
-
-      const latestText = getInputText(latestInput);
-      if (latestText !== text) {
-        refreshBadgeFromCurrentInput();
-        return;
-      }
-
-      const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
-      if (scanGeneration !== typedScanGeneration) {
-        lastTypedPromptText = analysis.normalizedText;
-        refreshBadgeFromCurrentInput();
-        return;
-      }
-      const applied = await applyComposerText(latestInput, result.redactedText, {
-        caretOffset: result.redactedText.length,
-        restoreText: analysis.normalizedText,
-        restoreCaretOffset: analysis.normalizedText.length
-      });
-
-      if (!applied.ok) {
-        await showRewriteFailure(
-          "input",
-          collectFailureDetails(latestInput, result.redactedText, applied.actual, "input")
-        );
-        refreshBadgeFromCurrentInput();
-        return;
-      }
-
-      lastTypedPromptText = result.redactedText;
-      setBadge("Content redacted");
-      hideBadgeSoon();
-      refreshBadgeFromCurrentInput();
-    });
-
-    if (httpPolicyHandled) {
-      return;
-    }
-
-    if (destinationForceRedact) {
-      const latestInput = findComposer(input);
-      if (!latestInput) return;
-
-      const latestText = getInputText(latestInput);
-      if (latestText !== text) {
-        refreshBadgeFromCurrentInput();
-        return;
-      }
-
-      const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings, {
-        auditReason: destinationPolicy.reason
-      });
-      if (scanGeneration !== typedScanGeneration) {
-        lastTypedPromptText = analysis.normalizedText;
-        refreshBadgeFromCurrentInput();
-        return;
-      }
-      const applied = await applyComposerText(latestInput, result.redactedText, {
-        caretOffset: result.redactedText.length,
-        restoreText: analysis.normalizedText,
-        restoreCaretOffset: analysis.normalizedText.length
-      });
-
-      if (!applied.ok) {
-        await showRewriteFailure(
-          "input",
-          collectFailureDetails(latestInput, result.redactedText, applied.actual, "input")
-        );
-        refreshBadgeFromCurrentInput();
-        return;
-      }
-
-      lastTypedPromptText = result.redactedText;
-      setBadge("Destination policy required redaction");
-      hideBadgeSoon();
-      refreshBadgeFromCurrentInput();
-      return;
-    }
-
-    if (isProtectionPauseActiveAfterPolicy(policy, destinationPolicy)) {
-      lastTypedPromptText = analysis.normalizedText;
-      setBadge("Protection paused");
-      hideBadgeSoon();
-      refreshBadgeFromCurrentInput();
-      return;
-    }
-
-    if (typedShouldAutoRedact) {
-      const latestInput = findComposer(input);
-      if (!latestInput) return;
-
-      const latestText = getInputText(latestInput);
-      if (latestText !== text) {
-        refreshBadgeFromCurrentInput();
-        return;
-      }
-
-      const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
-      if (scanGeneration !== typedScanGeneration) {
-        lastTypedPromptText = analysis.normalizedText;
-        refreshBadgeFromCurrentInput();
-        return;
-      }
-
-      const applied = await applyComposerText(latestInput, result.redactedText, {
-        caretOffset: result.redactedText.length,
-        restoreText: analysis.normalizedText,
-        restoreCaretOffset: analysis.normalizedText.length
-      });
-
-      if (!applied.ok) {
-        await showRewriteFailure(
-          "input",
-          collectFailureDetails(latestInput, result.redactedText, applied.actual, "input")
-        );
-        refreshBadgeFromCurrentInput();
-        return;
-      }
-
-      lastTypedPromptText = result.redactedText;
-      setBadge("High-confidence secret redacted");
-      hideBadgeSoon();
-      refreshBadgeFromCurrentInput();
-      return;
-    }
-
-    const decisionAction = await promptForSensitiveContentDecision(
-      analysis.findings,
-      "input",
-      policy,
-      input,
-      analysis.normalizedText
-    );
-    if (decisionAction !== "redact") {
-      lastTypedPromptText = analysis.normalizedText;
-      refreshBadgeFromCurrentInput();
-      return;
-    }
-
-    const latestInput = findComposer(input);
-    if (!latestInput) return;
-
-    const latestText = getInputText(latestInput);
-    if (latestText !== text) {
-      refreshBadgeFromCurrentInput();
-      return;
-    }
-
-    const result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
-    if (scanGeneration !== typedScanGeneration) {
-      lastTypedPromptText = analysis.normalizedText;
-      refreshBadgeFromCurrentInput();
-      return;
-    }
-
-    const applied = await applyComposerText(latestInput, result.redactedText, {
-      caretOffset: result.redactedText.length,
-      restoreText: analysis.normalizedText,
-      restoreCaretOffset: analysis.normalizedText.length
-    });
-
-    if (!applied.ok) {
-      await showRewriteFailure(
-        "input",
-        collectFailureDetails(latestInput, result.redactedText, applied.actual, "input")
-      );
-      refreshBadgeFromCurrentInput();
-      return;
-    }
-
-    lastTypedPromptText = result.redactedText;
-    setBadge("Content redacted");
-    hideBadgeSoon();
-    refreshBadgeFromCurrentInput();
+    return getTypedSecretScanOrchestration().maybeHandleTypedSecrets();
   }
 
   async function refreshBadgeFromCurrentInput() {

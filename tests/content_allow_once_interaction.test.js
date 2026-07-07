@@ -6,6 +6,7 @@ const repoRoot = path.join(__dirname, "..");
 
 require(path.join(repoRoot, "src/content/composer_helpers.js"));
 require(path.join(repoRoot, "src/content/composer/fallbackSendKeyOrchestration.js"));
+require(path.join(repoRoot, "src/content/composer/typedSecretScanOrchestration.js"));
 require(path.join(repoRoot, "src/content/ui/contentModalUi.js"));
 
 const {
@@ -504,6 +505,8 @@ function createHarness(options = {}) {
       input.selectionEnd = redactedText.length;
       return true;
     },
+    collectFailureDetails: (_input, expected, actual, context) => ({ expected, actual, context }),
+    showRewriteFailure: async () => {},
     queueVerifiedComposerSend: (_input, expectedText, context, send) => {
       calls.rewrites.push({ insertedText: expectedText, context });
       send();
@@ -524,8 +527,10 @@ function createHarness(options = {}) {
     ...Object.keys(dependencies),
     [
       "const FallbackSendKeyOrchestration = globalThis.PWM?.FallbackSendKeyOrchestration || {};",
+      "const TypedSecretScanOrchestration = globalThis.PWM?.TypedSecretScanOrchestration || {};",
       "let contentModalUi = null;",
       "let fallbackSendKeyOrchestration = null;",
+      "let typedSecretScanOrchestration = null;",
       "let whatsAppBypassSanitizedImageSubmitUntil = 0;",
       extractFunctionSource(contentSource, "getEditorRiskState"),
       extractFunctionSource(contentSource, "clearEditorRiskState"),
@@ -558,6 +563,7 @@ function createHarness(options = {}) {
       extractFunctionSource(contentSource, "maybeHandleSendButtonClick"),
       extractFunctionSource(contentSource, "getFallbackSendKeyOrchestration"),
       extractFunctionSource(contentSource, "maybeHandleFallbackSendKey"),
+      extractFunctionSource(contentSource, "getTypedSecretScanOrchestration"),
       extractFunctionSource(contentSource, "maybeHandleTypedSecrets"),
       "return { maybeHandlePaste, maybeHandleSubmit, maybeHandleSendButtonClick, maybeHandleFallbackSendKey, maybeHandleTypedSecrets, showDecisionModal, showMessageModal, submitComposer };"
     ].join("\n")
