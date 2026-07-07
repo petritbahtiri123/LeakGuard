@@ -66,6 +66,7 @@
   const FileInputInterception = globalThis.PWM?.FileInputInterception || {};
   const MultiFileInsertOrchestration = globalThis.PWM?.MultiFileInsertOrchestration || {};
   const StreamingFileInsertOrchestration = globalThis.PWM?.StreamingFileInsertOrchestration || {};
+  const LocalFileSanitizationOrchestration = globalThis.PWM?.LocalFileSanitizationOrchestration || {};
   const SanitizedFileInsertOrchestration = globalThis.PWM?.SanitizedFileInsertOrchestration || {};
   const FileInputPreparation = globalThis.PWM?.FileInputPreparation || {};
   const FileProcessingUi = globalThis.PWM?.FileProcessingUi || {};
@@ -367,6 +368,7 @@
   let fileInputInterception = null;
   let multiFileInsertOrchestration = null;
   let streamingFileInsertOrchestration = null;
+  let localFileSanitizationOrchestration = null;
   let sanitizedFileInsertOrchestration = null;
   let fileInputPreparation = null;
   let fileProcessingUi = null;
@@ -7130,6 +7132,35 @@
     return streamingFileInsertOrchestration;
   }
 
+  function getLocalFileSanitizationOrchestration() {
+    if (localFileSanitizationOrchestration) return localFileSanitizationOrchestration;
+    if (typeof LocalFileSanitizationOrchestration.createLocalFileSanitizationOrchestration !== "function") {
+      localFileSanitizationOrchestration = Object.freeze({
+        sanitizeLocalFileForAttach: async () => ({ ok: false, handled: true, reason: "unavailable" })
+      });
+      return localFileSanitizationOrchestration;
+    }
+
+    localFileSanitizationOrchestration =
+      LocalFileSanitizationOrchestration.createLocalFileSanitizationOrchestration({
+        analyzeText,
+        clearLocalPayloadOptimizationStatus,
+        createSanitizedTextFile,
+        debugFileAttachMetadata,
+        getCurrentHandoffDriver,
+        getFirefoxRawFileUploadBlockedMessage,
+        hideBadgeSoon,
+        refreshBadgeFromCurrentInput,
+        requestRedaction,
+        scheduleDmzOverlayCleanup,
+        setBadge,
+        setDmzOverlayState,
+        showMessageModal,
+        updateFileProcessingOverlay
+      });
+    return localFileSanitizationOrchestration;
+  }
+
   function getSanitizedFileInsertOrchestration() {
     if (sanitizedFileInsertOrchestration) return sanitizedFileInsertOrchestration;
     if (typeof SanitizedFileInsertOrchestration.createSanitizedFileInsertOrchestration !== "function") {
@@ -7394,77 +7425,19 @@
       showLocalPayloadOptimizationStatus(sizeInfo);
     }
 
-    let analysis;
-    let result;
-    let sanitizedFile;
-    try {
-      if (preflightPlan.sanitizationStatus.shouldSetDmzRedacting) {
-        setDmzOverlayState(
-          preflightPlan.sanitizationStatus.dmzStatus,
-          preflightPlan.sanitizationStatus.dmzMode
-        );
-      }
-      analysis = analyzeText(localFile.text);
-      updateFileProcessingOverlay({
-        site: processingSite,
-        status: preflightPlan.sanitizationStatus.processingStatus,
-        progress: preflightPlan.sanitizationStatus.processingProgress,
-        blocking: preflightPlan.sanitizationStatus.processingBlocking
-      });
-      if (contentExtractionResult?.status === "ready") {
-        const contentExtractionFileOnly =
-          localFile.fileOnlyUpload === true || contentExtractionResult.fileOnlyUpload === true;
-        result = {
-          redactedText: contentExtractionFileOnly ? "" : contentExtractionResult.sanitizedText,
-          replacements: []
-        };
-        sanitizedFile = contentExtractionResult.sanitizedFile;
-        analysis = {
-          normalizedText: contentExtractionResult.sanitizedText,
-          secretFindings: Array.from(
-            { length: Number(contentExtractionResult.metadata?.scan?.findingsCount || 0) },
-            () => ({})
-          ),
-          findings: []
-        };
-      } else {
-        result = await requestRedaction(analysis.normalizedText, analysis.secretFindings);
-        sanitizedFile = createSanitizedTextFile(localFile.file, result.redactedText);
-      }
-      if (!sanitizedFile) {
-        throw new Error("sanitized_file_create_failed");
-      }
-    } catch (error) {
-      if (optimizedStatus) {
-        clearLocalPayloadOptimizationStatus(
-          sizeInfo,
-          preflightPlan.optimizedStatus.cleanupOnSanitizationFailure
-        );
-      }
-      debugFileAttachMetadata("file-handoff:redaction-failed", {
-        context,
-        error
-      });
-      if (context === "drop" && getCurrentHandoffDriver()?.usesDmzOverlay) {
-        setDmzOverlayState("Raw file blocked", "failed");
-        scheduleDmzOverlayCleanup(3600);
-      }
-      const sanitizationFailureTitle = imageRedactionMode ? "Raw image upload blocked" : "Raw file upload blocked";
-      failProcessing("local_file_sanitization_failed", sanitizationFailureTitle);
-      setBadge(sanitizationFailureTitle);
-      hideBadgeSoon(4200);
-      await showMessageModal(
-        sanitizationFailureTitle,
-        getFirefoxRawFileUploadBlockedMessage(context) ||
-          "LeakGuard blocked raw file upload because local sanitization failed."
-      );
-      refreshBadgeFromCurrentInput();
-      return {
-        handled: true,
-        ok: false,
-        reason: "local_file_sanitization_failed"
-      };
-    }
+    const sanitization = await getLocalFileSanitizationOrchestration().sanitizeLocalFileForAttach({
+      localFile,
+      contentExtractionResult,
+      context,
+      processingSite,
+      sizeInfo,
+      preflightPlan,
+      optimizedStatus,
+      imageRedactionMode,
+      controls: { failProcessing }
+    });
+    if (!sanitization.ok) return sanitization;
+    const { analysis, result, sanitizedFile } = sanitization;
 
     return getSanitizedFileInsertOrchestration().handleSanitizedLocalFileAttach({
       event,

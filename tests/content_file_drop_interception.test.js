@@ -114,6 +114,7 @@ require(path.join(repoRoot, "src/content/files/fileDropInterception.js"));
 require(path.join(repoRoot, "src/content/files/fileInputInterception.js"));
 require(path.join(repoRoot, "src/content/files/multiFileInsertOrchestration.js"));
 require(path.join(repoRoot, "src/content/files/streamingFileInsertOrchestration.js"));
+require(path.join(repoRoot, "src/content/files/localFileSanitizationOrchestration.js"));
 require(path.join(repoRoot, "src/content/files/sanitizedFileInsertOrchestration.js"));
 require(path.join(repoRoot, "src/content/whatsapp/whatsappCapabilities.js"));
 require(path.join(repoRoot, "src/content/whatsapp/whatsappTextFlow.js"));
@@ -1317,6 +1318,7 @@ function createHarness(overrides = {}) {
       "const MULTI_FILE_SUPPORTED_MAX_BYTES = 50 * 1024 * 1024;",
       "const MultiFileInsertOrchestration = globalThis.PWM?.MultiFileInsertOrchestration || {};",
       "const StreamingFileInsertOrchestration = globalThis.PWM?.StreamingFileInsertOrchestration || {};",
+      "const LocalFileSanitizationOrchestration = globalThis.PWM?.LocalFileSanitizationOrchestration || {};",
       "const SanitizedFileInsertOrchestration = globalThis.PWM?.SanitizedFileInsertOrchestration || {};",
       'const LOCAL_TEXT_HARD_BLOCK_TITLE = "Large payload blocked for browser stability";',
       'const LOCAL_TEXT_HARD_BLOCK_MESSAGE = "This content is over 4 MB. LeakGuard did not process or send it automatically to avoid browser instability. Split the file into smaller parts, or sanitize it separately before upload.";',
@@ -1348,6 +1350,7 @@ function createHarness(overrides = {}) {
       "let fileInputInterception = null;",
       "let multiFileInsertOrchestration = null;",
       "let streamingFileInsertOrchestration = null;",
+      "let localFileSanitizationOrchestration = null;",
       "let sanitizedFileInsertOrchestration = null;",
       "let fileProcessingUi = null;",
       "let geminiUploadDiscovery = null;",
@@ -1699,6 +1702,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "getMultiFileInsertOrchestration"),
       extractFunctionSource(contentSource, "maybeHandleMultiFileInsert"),
       extractFunctionSource(contentSource, "getStreamingFileInsertOrchestration"),
+      extractFunctionSource(contentSource, "getLocalFileSanitizationOrchestration"),
       extractFunctionSource(contentSource, "getSanitizedFileInsertOrchestration"),
       extractFunctionSource(contentSource, "maybeHandleLocalFileInsert"),
       extractFunctionSource(contentSource, "maybeHandlePaste"),

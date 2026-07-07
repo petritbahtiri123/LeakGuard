@@ -60,6 +60,10 @@ const fileAttachPipelineSource = fs.readFileSync(
   path.join(repoRoot, "src/content/files/fileAttachPipeline.js"),
   "utf8"
 );
+const localFileSanitizationOrchestrationSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/files/localFileSanitizationOrchestration.js"),
+  "utf8"
+);
 const sanitizedFileInsertOrchestrationSource = fs.readFileSync(
   path.join(repoRoot, "src/content/files/sanitizedFileInsertOrchestration.js"),
   "utf8"
@@ -526,8 +530,12 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
     fileInsertSource.includes("consumeInterceptionEvent(event);") &&
       fileInsertSource.indexOf("consumeInterceptionEvent(event);") <
         fileInsertSource.indexOf("readLocalTextFileFromDataTransfer(dataTransfer)") &&
-      fileInsertSource.includes("requestRedaction(analysis.normalizedText, analysis.secretFindings)") &&
-      fileInsertSource.includes("createSanitizedTextFile(localFile.file, result.redactedText)") &&
+      localFileSanitizationOrchestrationSource.includes(
+        "requestRedaction(analysis.normalizedText, analysis.secretFindings)"
+      ) &&
+      localFileSanitizationOrchestrationSource.includes(
+        "createSanitizedTextFile(localFile.file, result.redactedText)"
+      ) &&
       sanitizedFileInsertOrchestrationSource.includes(
         "handOffSanitizedLocalFile(event, input, sanitizedFile, context)"
       ) &&

@@ -80,6 +80,10 @@ const streamingFileInsertOrchestrationSource = fs.readFileSync(
   path.join(repoRoot, "src/content/files/streamingFileInsertOrchestration.js"),
   "utf8"
 );
+const localFileSanitizationOrchestrationSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/files/localFileSanitizationOrchestration.js"),
+  "utf8"
+);
 const sanitizedFileInsertOrchestrationSource = fs.readFileSync(
   path.join(repoRoot, "src/content/files/sanitizedFileInsertOrchestration.js"),
   "utf8"
@@ -488,11 +492,15 @@ function testLocalFilePasteDoesNotExposeRawFileContent() {
     "local file paste/drop should prevent host delivery before reading local file bytes"
   );
   assert.ok(
-    localFileSource.includes("requestRedaction(analysis.normalizedText, analysis.secretFindings)"),
+    localFileSanitizationOrchestrationSource.includes(
+      "requestRedaction(analysis.normalizedText, analysis.secretFindings)"
+    ),
     "local file paste/drop should use background-owned placeholder redaction"
   );
   assert.ok(
-      localFileSource.includes("createSanitizedTextFile(localFile.file, result.redactedText)") &&
+      localFileSanitizationOrchestrationSource.includes(
+        "createSanitizedTextFile(localFile.file, result.redactedText)"
+      ) &&
       sanitizedFileInsertOrchestrationSource.includes("handOffSanitizedLocalFile(event, input, sanitizedFile, context)") &&
       fileHandoffFlowSource.includes("function handOffSanitizedLocalFile") &&
       sanitizedFileHandoffSource.includes("fileInput.files = transfer.files") &&
@@ -579,6 +587,20 @@ function testFileAttachPipelineStaysPureAndContentOwnsFileAttachSideEffects() {
     assert.ok(
       streamingFileInsertOrchestrationSource.includes(sideEffect),
       `streaming file insert orchestration should own streaming side effect: ${sideEffect}`
+    );
+  }
+  const localSanitizationOwnedSideEffects = [
+    "requestRedaction(analysis.normalizedText, analysis.secretFindings)",
+    "createSanitizedTextFile(localFile.file, result.redactedText)",
+    "updateFileProcessingOverlay({",
+    "debugFileAttachMetadata(",
+    "showMessageModal(",
+    "setBadge("
+  ];
+  for (const sideEffect of localSanitizationOwnedSideEffects) {
+    assert.ok(
+      localFileSanitizationOrchestrationSource.includes(sideEffect),
+      `local file sanitization orchestration should own sanitization side effect: ${sideEffect}`
     );
   }
   const sanitizedAttachOwnedSideEffects = [
