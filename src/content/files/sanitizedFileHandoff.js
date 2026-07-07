@@ -22,7 +22,6 @@
     const describeFileInputForDebug = dependencies.describeFileInputForDebug || (() => ({}));
     const debugFileAttachMetadata = dependencies.debugFileAttachMetadata || (() => {});
     const debugReveal = dependencies.debugReveal || (() => {});
-    const logFileInterception = dependencies.logFileInterception || (() => {});
     const createSanitizedDataTransfer = dependencies.createSanitizedDataTransfer || (() => null);
     const dispatchSanitizedFileEvent = dependencies.dispatchSanitizedFileEvent || (() => false);
     const prepareFileInputForSanitizedHandoff = dependencies.prepareFileInputForSanitizedHandoff || (() => () => {});
@@ -81,11 +80,6 @@
         events.push("change");
         if (details) details.changeEventDispatched = true;
         debugFileAttachMetadata("file-handoff:assignment-success", {
-          input: describeFileInputForDebug(fileInput, "resolved"),
-          files: Array.from(fileInput.files || []).map(describeFileForDebug),
-          events
-        });
-        logFileInterception("file replacement success", {
           input: describeFileInputForDebug(fileInput, "resolved"),
           files: Array.from(fileInput.files || []).map(describeFileForDebug),
           events

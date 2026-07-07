@@ -59,7 +59,8 @@ Inventory scope for this pass:
 | [ai/README.md](../ai/README.md) | Local AI training, evaluation, and ONNX export workflow. | Good / keep. Current Onix lifecycle, 50,000-record default, held-out eval, and safety rules are documented. |
 | [code-quality-audit.md](code-quality-audit.md) | Historical internal code quality findings and suggested PR sequence. | Historical / keep for context. Current ownership lives in `REPO_MAP.md`. |
 | [IMPLEMENTATION_ROADMAP.md](IMPLEMENTATION_ROADMAP.md) | Ordered implementation roadmap for deep-research, documentation, release, and code-quality hardening work. | Good / keep. Added after refreshing `deep-research-report.md`. |
-| [roadmap/content-script-modularization-plan.md](roadmap/content-script-modularization-plan.md) | Next-release plan to reduce `src/content/content.js` through test-gated module extraction without behavior changes. | Good / keep. Added in the WhatsApp docs completion pass. |
+| [roadmap/content-script-modularization-plan.md](roadmap/content-script-modularization-plan.md) | Plan to reduce `src/content/content.js` through test-gated module extraction without behavior changes. | Good / keep. Added in the WhatsApp docs completion pass. |
+| [roadmap/content-script-modularization-inventory.md](roadmap/content-script-modularization-inventory.md) | Current progress inventory for extracted content-script modules, focused tests, and remaining large `content.js` clusters. | Good / keep. Refresh after each modularization pass. |
 
 ### Testing and QA docs
 
@@ -217,7 +218,7 @@ Inventory scope for this pass:
 - Added [WHATSAPP_SUPPORT_MATRIX.md](WHATSAPP_SUPPORT_MATRIX.md) as the current support matrix for WhatsApp Web text, paste, clipboard image paste, attach-button, drag/drop, multi-file limits, unsupported paths, browser notes, and safety invariants.
 - Added [qa/whatsapp-web-multi-file-qa.md](qa/whatsapp-web-multi-file-qa.md) for 2-5 file attach/drop batches, 6+ before-read blocks, unsupported/failing batch all-or-nothing behavior, and attach/drop parity.
 - Refreshed WhatsApp QA docs so single-file, 2-5 file, 6+ blocked, file-paste-out-of-scope, and no-extracted-text-fallback language is consistent.
-- Added [roadmap/content-script-modularization-plan.md](roadmap/content-script-modularization-plan.md) as the next-release content-script modularization plan.
+- Added [roadmap/content-script-modularization-plan.md](roadmap/content-script-modularization-plan.md) as the content-script modularization plan.
 - Updated release, browser compatibility, protected-site, file capability, Chrome listing, README, and E2E docs to reflect completed WhatsApp support without changing runtime behavior.
 
 ## Implementation Roadmap Completion Pass

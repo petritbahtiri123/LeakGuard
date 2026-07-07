@@ -44,10 +44,7 @@
       if (options.hasFailClosedProtectedUnsupportedFile) return true;
       if (options.hasSupportedWhatsAppAttach) return true;
       if (options.hasWhatsAppFileInputSelection) return true;
-      return Boolean(
-        options.isFirefoxRuntime &&
-          options.isProtectedFileDropDriver
-      );
+      return Boolean(options.isProtectedFileDropDriver);
     }
 
     return Object.freeze({

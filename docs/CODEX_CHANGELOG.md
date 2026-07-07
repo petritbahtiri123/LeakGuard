@@ -12,6 +12,12 @@ Use this file as a short handoff log for AI-made changes. Add newest entries fir
 ```
 
 ## Entries
+### 2026-07-07 - Modularization status and protected-site file handoff
+- Goal: Refresh content-script modularization docs with current extracted modules, and restore generic protected-site file-input handoff for sanitized local files in the production Chrome build.
+- Files: `docs/roadmap/content-script-modularization-inventory.md`, `docs/roadmap/content-script-modularization-plan.md`, `docs/IMPLEMENTATION_ROADMAP.md`, `docs/DOCUMENTATION_ROADMAP.md`, `docs/README.md`, `src/content/adapters/index.js`, `src/content/content.js`, `src/content/files/fileInputInterception.js`, `src/content/files/sanitizedFileHandoff.js`, `tests/adapter_contracts.test.js`, `tests/browser/extension_qa_harness.test.mjs`, `tests/content_file_drop_interception.test.js`, `tests/file_interception_modules.test.js`
+- Tests: `node tests/file_interception_modules.test.js` -> pass; `node tests/content_file_drop_interception.test.js` -> pass; `node tests/file_paste_helpers.test.js` -> pass; `node tests/sanitized_file_handoff.test.js` -> pass; `node tests/adapter_contracts.test.js` -> pass; `npm run build:chrome` -> pass; `node tests/browser/extension_qa_harness.test.mjs` -> pass; `npm test` -> pass; `npm run docs:check-links` -> pass; `node tests/browser_qa_matrix.test.js` -> pass; `git diff --check` -> pass.
+- Notes: No detector thresholds, model artifacts, package lock, permissions, CSP, telemetry, backend calls, or generated build artifacts changed. Generic protected-site handoff remains local-only and fail-closed.
+
 ### 2026-07-06 - WhatsApp docs and content modularization plan
 - Goal: Align current docs, QA docs, release docs, browser matrix wording, and store-facing copy with completed WhatsApp text, paste, clipboard image, attach-button, drag/drop, and 2-5 file support, and add the next-release `content.js` modularization plan.
 - Files: `README.md`, `docs/WHATSAPP_SUPPORT_MATRIX.md`, `docs/qa/whatsapp-web-multi-file-qa.md`, `docs/roadmap/content-script-modularization-plan.md`, `docs/README.md`, `docs/DOCUMENTATION_ROADMAP.md`, `docs/IMPLEMENTATION_ROADMAP.md`, WhatsApp QA docs, release/browser/file docs, and QA matrix metadata.

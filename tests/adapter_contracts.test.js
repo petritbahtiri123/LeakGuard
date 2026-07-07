@@ -3,7 +3,8 @@ const fs = require("fs");
 const path = require("path");
 
 const repoRoot = path.join(__dirname, "..");
-const expectedProviderIds = ["chatgpt", "openai", "gemini", "claude", "grok", "x", "whatsapp"];
+const expectedProviderIds = ["chatgpt", "openai", "gemini", "claude", "grok", "x", "whatsapp", "generic"];
+const hostRoutedProviderIds = expectedProviderIds.filter((id) => id !== "generic");
 const pendingAttachEnabled = Object.freeze({
   gemini: true,
   grok: true,
@@ -67,11 +68,13 @@ function testAdapterRegistryExposesExpectedProviders() {
   const adapters = createAdapters();
 
   assert.deepStrictEqual(Object.keys(adapters).sort(), [...expectedProviderIds].sort());
-  expectedProviderIds.forEach((id) => {
+  hostRoutedProviderIds.forEach((id) => {
     assert.strictEqual(adapters[id].id, id, `expected ${id} adapter id`);
     assert.ok(Array.isArray(adapters[id].hosts), `expected ${id} adapter hosts`);
     assert.ok(adapters[id].hosts.length > 0, `expected ${id} adapter host entries`);
   });
+  assert.strictEqual(adapters.generic.id, "generic", "expected generic protected-site adapter id");
+  assert.deepStrictEqual(adapters.generic.hosts, [], "generic protected-site adapter should not host-route");
 }
 
 function testHostMatchingRoutesExpectedUrlsToAdapters() {
@@ -137,7 +140,8 @@ function testAdapterParityCapabilitiesStayStable() {
     grok: { directFileInput: true, directDropReplay: true, pendingAttach: true, multiFile: true },
     claude: { directFileInput: true, directDropReplay: false, pendingAttach: true, multiFile: true },
     x: { directFileInput: true, directDropReplay: false, pendingAttach: true, multiFile: true },
-    whatsapp: { directFileInput: false, directDropReplay: false, pendingAttach: false, multiFile: false }
+    whatsapp: { directFileInput: false, directDropReplay: false, pendingAttach: false, multiFile: false },
+    generic: { directFileInput: true, directDropReplay: false, pendingAttach: true, multiFile: true }
   };
 
   for (const [id, expected] of Object.entries(expectedCapabilities)) {
@@ -173,7 +177,7 @@ function testAdapterParityCapabilitiesStayStable() {
 function testPendingAttachIsEnabledForBuiltInProviders() {
   const adapters = createAdapters();
 
-  expectedProviderIds.filter((id) => id !== "whatsapp").forEach((id) => {
+  expectedProviderIds.filter((id) => id !== "whatsapp" && id !== "generic").forEach((id) => {
     assert.strictEqual(adapters[id].pendingAttachEnabled, true, `${id} pending attach should stay enabled`);
     assert.strictEqual(
       hostMatching.isFileHandoffAdapterPendingAttachEnabled(adapters[id]),
@@ -187,6 +191,12 @@ function testPendingAttachIsEnabledForBuiltInProviders() {
     hostMatching.isFileHandoffAdapterPendingAttachEnabled(adapters.whatsapp),
     false,
     "WhatsApp pending attach gate should stay disabled"
+  );
+  assert.strictEqual(adapters.generic.pendingAttachEnabled, undefined, "generic pending attach raw flag should stay unset");
+  assert.strictEqual(
+    hostMatching.isFileHandoffAdapterPendingAttachEnabled(adapters.generic),
+    true,
+    "generic pending attach gate should stay enabled by default"
   );
 }
 

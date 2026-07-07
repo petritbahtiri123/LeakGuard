@@ -184,6 +184,20 @@ function testFileInputInterceptionComposerGatePreservesFallbackReasons() {
     }),
     true
   );
+  assert.strictEqual(
+    input.shouldContinueWithoutComposer({
+      input: null,
+      isGeminiHost: false,
+      hasContentExtractionFile: false,
+      hasFailClosedProtectedUnsupportedFile: false,
+      hasSupportedWhatsAppAttach: false,
+      hasWhatsAppFileInputSelection: false,
+      isFirefoxRuntime: false,
+      isProtectedFileDropDriver: true,
+      currentHandoffDriverId: "generic"
+    }),
+    true
+  );
 }
 
 testFileDropInterceptionClaimsFileDrags();

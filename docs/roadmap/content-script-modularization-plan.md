@@ -1,12 +1,14 @@
 # Content Script Modularization Plan
 
-This plan is for the next release. It is a documentation and planning artifact only; it does not authorize runtime behavior changes by itself.
+This plan was created for the next content-script modularization release. It is a documentation and planning artifact only; it does not authorize runtime behavior changes by itself.
+
+Current extraction progress is tracked in [content-script-modularization-inventory.md](content-script-modularization-inventory.md). As of the in-progress M1-M7 extraction pass, several file, WhatsApp, composer, UI, and adapter handoff modules exist; Phase M8 final `content.js` shrink remains open.
 
 ## Problem
 
 `src/content/content.js` still carries too much orchestration pressure. WhatsApp support added text typing, multiline text, text paste, clipboard image paste, attach-button single-file handoff, attach-button 2-5 file handoff, drag/drop single-file handoff, drag/drop 2-5 file handoff, and verification flows. Future adapters will be riskier if `content.js` keeps growing.
 
-The next release should reduce `content.js` safely and quickly by extracting modules without changing behavior. Each extraction must be test-gated and small enough to review independently.
+The modularization work should reduce `content.js` safely and quickly by extracting modules without changing behavior. Each extraction must be test-gated and small enough to review independently.
 
 ## Target Architecture
 
@@ -269,4 +271,3 @@ Additional release gates:
 - no file preview-before-sanitization regressions
 - WhatsApp live QA still passes
 - no manifest, CSP, permission, telemetry, backend, or remote-processing changes unless separately reviewed
-

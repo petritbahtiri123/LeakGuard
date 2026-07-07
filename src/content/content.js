@@ -6581,7 +6581,6 @@
       describeFileInputForDebug,
       debugFileAttachMetadata,
       debugReveal,
-      logFileInterception,
       createSanitizedDataTransfer,
       dispatchSanitizedFileEvent,
       prepareFileInputForSanitizedHandoff,

@@ -775,16 +775,41 @@ function createHarnessPage() {
         window.__leakguardQaUploads.push({ source, items });
         return items;
       };
-      document.querySelector('#qa-file-input').addEventListener('change', async (event) => {
+      const qaFileInput = document.querySelector('#qa-file-input');
+      const recordDocumentFileEvent = (event) => {
+        if (event.target !== qaFileInput) return;
+        window.__leakguardQaEvents.push({
+          type: 'document-file-' + event.type,
+          defaultPrevented: event.defaultPrevented,
+          fileCount: Number(event.target?.files?.length || 0)
+        });
+      };
+      document.addEventListener('input', recordDocumentFileEvent, true);
+      document.addEventListener('change', recordDocumentFileEvent, true);
+      const recordFileInputEvent = (event) => {
+        window.__leakguardQaEvents.push({
+          type: 'file-' + event.type,
+          defaultPrevented: event.defaultPrevented,
+          fileCount: Number(event.target?.files?.length || 0)
+        });
+      };
+      qaFileInput.addEventListener('input', recordFileInputEvent);
+      qaFileInput.addEventListener('change', recordFileInputEvent);
+      qaFileInput.addEventListener('change', async (event) => {
         await window.__leakguardQaRecordFiles('file-input', event.target.files);
       });
-      document.querySelector('#provider-editor').addEventListener('paste', (event) => {
+      window.__leakguardQaInstallEditorPasteHandler = (editor) => {
+        if (!editor || editor.__leakguardQaPasteHandlerInstalled) return;
+        editor.__leakguardQaPasteHandlerInstalled = true;
+        editor.addEventListener('paste', (event) => {
         setTimeout(() => {
           if (event.defaultPrevented) return;
           const text = event.clipboardData?.getData('text/plain') || '';
-          if (text) document.querySelector('#provider-editor').textContent += text;
+          if (text) editor.textContent += text;
         }, 0);
-      });
+        });
+      };
+      window.__leakguardQaInstallEditorPasteHandler(document.querySelector('#provider-editor'));
       document.querySelector('#qa-drop-zone').addEventListener('dragover', (event) => {
         window.__leakguardQaEvents.push({ type: 'dragover', defaultPrevented: event.defaultPrevented });
       });
@@ -1149,6 +1174,9 @@ async function captureProviderArtifacts(connection, sessionId) {
       inputFiles: await Promise.all(Array.from(document.querySelector('#qa-file-input')?.files || [])
         .map(window.__leakguardQaDescribeFile)),
       pageText: document.body.innerText || '',
+      textareaValue: document.querySelector('#prompt-textarea')?.value || '',
+      editorText: document.querySelector('#provider-editor')?.innerText ||
+        document.querySelector('#provider-editor')?.textContent || '',
       modalText: document.querySelector('.pwm-modal')?.innerText || '',
       overlayText: document.querySelector('.pwm-file-processing-overlay')?.innerText || '',
       panelText: document.querySelector('.pwm-panel')?.innerText || ''
@@ -1204,10 +1232,25 @@ async function resetProviderCapture(connection, sessionId) {
       window.__leakguardQaEvents = [];
       const input = document.querySelector('#qa-file-input');
       if (input) input.value = '';
-      const textarea = document.querySelector('#prompt-textarea');
+      const form = document.querySelector('#provider-form');
+      let textarea = document.querySelector('#prompt-textarea');
+      if (!textarea && form) {
+        textarea = document.createElement('textarea');
+        textarea.id = 'prompt-textarea';
+        textarea.dataset.testid = 'prompt-textarea';
+        textarea.placeholder = 'Message';
+        form.insertBefore(textarea, form.firstChild);
+      }
       if (textarea) textarea.value = '';
-      const editor = document.querySelector('#provider-editor');
-      if (editor) editor.textContent = '';
+      let editor = document.querySelector('#provider-editor');
+      if (editor) {
+        const freshEditor = editor.cloneNode(false);
+        freshEditor.dataset.testid = 'provider-composer';
+        freshEditor.textContent = '';
+        editor.replaceWith(freshEditor);
+        editor = freshEditor;
+        window.__leakguardQaInstallEditorPasteHandler?.(editor);
+      }
       return true;
     })()`
   );
@@ -1272,16 +1315,50 @@ async function dispatchSyntheticFileDrop(connection, sessionId, { fileName, mime
 }
 
 async function waitForCapturedUpload(connection, sessionId, predicate, label, timeoutMs = 30000) {
-  return await waitFor(
-    async () => {
-      const capture = await captureProviderArtifacts(connection, sessionId);
-      const items = flattenCapturedUploadItems(capture);
-      const matched = items.find(predicate) || null;
-      return matched ? { capture, item: matched } : null;
-    },
-    label,
-    timeoutMs
-  );
+  let lastCapture = null;
+  try {
+    return await waitFor(
+      async () => {
+        const capture = await captureProviderArtifacts(connection, sessionId);
+        lastCapture = capture;
+        const items = flattenCapturedUploadItems(capture);
+        const matched = items.find(predicate) || null;
+        return matched ? { capture, item: matched } : null;
+      },
+      label,
+      timeoutMs
+    );
+  } catch (error) {
+    const items = flattenCapturedUploadItems(lastCapture);
+    const diagnostic = {
+      uploadCount: lastCapture?.uploads?.length || 0,
+      eventTypes: (lastCapture?.events || []).map((event) => event.type || ""),
+      inputFileCount: lastCapture?.inputFiles?.length || 0,
+      items: items.map((item) => {
+        const text = String(item.text || "");
+        return {
+          name: item.name || "",
+          type: item.type || "",
+          size: item.size || 0,
+          placeholderCount: (text.match(/\[PWM_\d+\]/g) || []).length,
+          canaryIdsVisible: browserQaSecretCanaries
+            .filter((canary) => text.includes(canary.value))
+            .map((canary) => canary.id)
+        };
+      }),
+      modalText: sanitizeBrowserQaDiagnostic(lastCapture?.modalText || ""),
+      overlayText: sanitizeBrowserQaDiagnostic(lastCapture?.overlayText || ""),
+      pageTextLength: String(lastCapture?.pageText || "").length,
+      pagePlaceholderCount: (String(lastCapture?.pageText || "").match(/\[PWM_\d+\]/g) || []).length,
+      textareaLength: String(lastCapture?.textareaValue || "").length,
+      textareaPlaceholderCount: (String(lastCapture?.textareaValue || "").match(/\[PWM_\d+\]/g) || []).length,
+      editorLength: String(lastCapture?.editorText || "").length,
+      editorPlaceholderCount: (String(lastCapture?.editorText || "").match(/\[PWM_\d+\]/g) || []).length,
+      editorSnippet: sanitizeBrowserQaDiagnostic(String(lastCapture?.editorText || "").slice(0, 160)),
+      panelText: sanitizeBrowserQaDiagnostic(lastCapture?.panelText || "")
+    };
+    throw new Error(`${error.message} Last captured upload state: ${JSON.stringify(diagnostic)}`);
+  }
 }
 
 async function captureFailureScreenshotIfSafe({ connection, sessionId, browserName, testName, stepName }) {

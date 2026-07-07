@@ -1,13 +1,14 @@
 # Content Script Modularization Inventory
 
-Status: in progress for `docs/roadmap/content-script-modularization-plan.md`.
+Status: current progress record for `docs/roadmap/content-script-modularization-plan.md`.
 
 ## Baseline Snapshot
 
 - Source: `src/content/content.js`
-- Current size after M1-M7 extractions: 12,623 lines, 403 top-level function declarations.
-- Net `content.js` change in this branch so far: 253 insertions, 404 deletions.
+- Current size after the in-progress M1-M7 extraction pass: 9,546 lines, 470 function declarations.
+- Net `content.js` change in this branch so far: 893 insertions, 4,122 deletions.
 - Runtime behavior goal: no behavior changes; extracted modules preserve existing file, WhatsApp, composer, and adapter gates.
+- Remaining plan focus: Phase M8 final shrink. `content.js` still owns several large orchestration functions and should keep moving toward initialization, adapter resolution, event routing, module calls, and fail-closed UI only.
 
 ## Extracted Function-To-Module Map
 
@@ -18,19 +19,31 @@ Status: in progress for `docs/roadmap/content-script-modularization-plan.md`.
 | M3 | `src/content/files/fileHandoffVerification.js` | WhatsApp sanitized batch type, count, order, identity, and raw-original verification |
 | M4 | `src/content/files/fileDropInterception.js` | Synchronous file drag ownership for dragenter/dragover |
 | M4 | `src/content/files/fileInputInterception.js` | File-input preflight, selected-transfer creation, selected-file checks, composer fallback gate |
+| M4 | `src/content/files/fileInputPreparation.js` | File-input accept checks, transfer assignment, and sanitized handoff preparation |
+| M4 | `src/content/files/fileProcessingUi.js` | Protected-file progress, failure, and blocked-file UI message preparation |
 | M5 | `src/content/whatsapp/whatsappCapabilities.js` | WhatsApp clipboard image paste, sanitized drop, handoff context, and multi-file capability gates |
+| M5 | `src/content/whatsapp/whatsappSelectors.js` | WhatsApp document selectors, attach targets, and DOM probes |
+| M5 | `src/content/whatsapp/whatsappTextFlow.js` | WhatsApp typed-secret and paste state helpers |
 | M6 | `src/content/composer/replayVerification.js` | Composer verification candidate collection, rewrite matching, and replay verification glue over `RewriteVerificationText` |
+| M8 support | `src/content/ui/contentStatusUi.js` | Protected-site status panel and badge rendering helpers |
+| M8 support | `src/content/ui/contentModalUi.js` | Decision, message, and Gemini large-text confirmation modal rendering helpers |
+| Adapter cleanup | `src/content/adapters/grokFileHandoff.js` | Grok upload discovery, pending file input, and sanitized handoff helpers |
+| Adapter cleanup | `src/content/adapters/geminiUploadDiscovery.js` | Gemini upload menu, hidden selector, and safe activation discovery helpers |
+| Adapter cleanup | `src/content/adapters/geminiFileHandoff.js` | Gemini Firefox bridge, pending user attach, ghost ingress, and sanitized upload handoff helpers |
+| Handoff cleanup | `src/content/files/fileHandoffDiscovery.js` | Generic adapter upload trigger and file-input discovery helpers |
+| Handoff cleanup | `src/content/files/sanitizedFileHandoff.js` | Sanitized single-file and batch handoff assignment helpers |
 
 ## Current Event-Flow Map
 
-- Text typing: still routed primarily by `content.js`; low-level composer helpers remain in `content/composer_helpers.js`.
-- Text paste: still routed by `content.js`; replay verification now delegates through `content/composer/replayVerification.js`.
-- Clipboard image paste: WhatsApp capability gate moved to `content/whatsapp/whatsappCapabilities.js`; processing and handoff still route through `content.js`.
-- File input attach: preflight moved to `content/files/fileInputInterception.js`; processing, UI, and handoff still route through `content.js`.
-- Drag/drop: drag ownership moved to `content/files/fileDropInterception.js`; drop policy, UI, and handoff still route through `content.js`.
-- Multi-file: support classification, batch processing, summaries, and verification moved to files modules; final UI/handoff orchestration still routes through `content.js`.
-- Replay/send: rewrite matching moved to `content/composer/replayVerification.js`; send replay orchestration remains in `content.js`.
-- Failure UI: still owned by `content.js`.
+- Text typing: WhatsApp typed-secret state helpers delegate through `content/whatsapp/whatsappTextFlow.js`; submit/send orchestration still routes through `content.js`.
+- Text paste: WhatsApp paste state helpers delegate through `content/whatsapp/whatsappTextFlow.js`; transactional paste orchestration still routes through `content.js`.
+- Clipboard image paste: WhatsApp capability gates live in `content/whatsapp/whatsappCapabilities.js`; processing and final image handoff still route through `content.js`.
+- File input attach: preflight, input preparation, support checks, batch processing, verification, and sanitized assignment are delegated; high-level local file insert orchestration still routes through `content.js`.
+- Drag/drop: drag ownership is delegated to `content/files/fileDropInterception.js`; drop orchestration still routes through `content.js`.
+- Multi-file: support classification, batch processing, summaries, verification, and sanitized batch assignment are delegated; all-or-nothing flow ownership still routes through `content.js`.
+- Replay/send: rewrite matching delegates through `content/composer/replayVerification.js`; beforeinput, submit, fallback key, and click send orchestration remain in `content.js`.
+- Failure/status UI: panel, badge, modal, and file-processing UI helpers are delegated; fail-closed decision routing remains in `content.js`.
+- Gemini/Grok handoff: adapter-specific discovery and sanitized handoff helpers are delegated; `content.js` still coordinates when those paths are attempted.
 
 ## Focused Tests
 
@@ -38,20 +51,32 @@ Status: in progress for `docs/roadmap/content-script-modularization-plan.md`.
 - `node tests/sanitized_file_batch_processor.test.js`
 - `node tests/file_handoff_verification.test.js`
 - `node tests/file_interception_modules.test.js`
+- `node tests/file_input_preparation.test.js`
+- `node tests/file_processing_ui.test.js`
+- `node tests/content_status_ui.test.js`
+- `node tests/content_modal_ui.test.js`
 - `node tests/whatsapp_capabilities.test.js`
+- `node tests/whatsapp_selectors.test.js`
+- `node tests/whatsapp_text_flow.test.js`
 - `node tests/replay_verification.test.js`
+- `node tests/grok_file_handoff.test.js`
+- `node tests/gemini_upload_discovery.test.js`
+- `node tests/gemini_file_handoff.test.js`
+- `node tests/file_handoff_discovery.test.js`
+- `node tests/sanitized_file_handoff.test.js`
 - `node tests/content_file_drop_interception.test.js`
 - `node tests/typed_interception.test.js`
 - `node tests/adapter_contracts.test.js`
 - `node tests/runtime_script_order.test.js`
 - `node tests/runtime_script_order_contract.test.js`
 - `node tests/build_targets.test.js`
+- `node tests/security.test.js`
 
 ## Remaining Large Clusters
 
-- File UI overlays, pending attach prompts, and failure modal orchestration.
-- WhatsApp text insertion, send replay, image-send bypass, and exact composer-state acceptance.
-- Gemini/Grok upload discovery, pending attach, and Firefox bridge behavior.
-- Generic file handoff discovery, safe activation, and sanitized fallback ordering.
-- Submit/beforeinput/paste orchestration and transactional rewrite flows.
-- Status panel, badge, policy modal, audit, and reveal wiring.
+- `maybeHandleLocalFileInsert`, `maybeHandleMultiFileInsert`, and the surrounding fail-closed local-file orchestration.
+- `maybeHandleBeforeInput`, `maybeHandlePaste`, `maybeHandleSubmit`, `maybeHandleFallbackSendKey`, and `maybeHandleTypedSecrets`.
+- WhatsApp image-send bypass, send replay, and exact composer-state acceptance.
+- `maybeHandleGeminiEditorPaste` and the remaining Gemini/Grok orchestration wrappers.
+- File input/drop orchestration after interception and before sanitized handoff.
+- Policy, audit, reveal, and status wiring that should stay thin but still lives in `content.js`.

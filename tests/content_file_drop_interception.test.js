@@ -5732,6 +5732,12 @@ function testFileHandoffAdapterRegistryCoversSupportedSites() {
     assert.strictEqual(adapters[id].id, id, `expected ${id} adapter id`);
     assert.ok(adapters[id].hosts.includes(host), `expected ${id} host ${host}`);
   }
+  assert.ok(adapters.generic, "expected generic protected-site adapter");
+  assert.strictEqual(adapters.generic.id, "generic");
+  assert.deepStrictEqual(adapters.generic.hosts, []);
+  assert.strictEqual(adapters.generic.supportsDirectFileInputAssignment, true);
+  assert.strictEqual(adapters.generic.supportsMultiFileHandoff, true);
+  assert.strictEqual(adapters.generic.pendingAttachEnabled, undefined);
   assert.strictEqual(adapters.gemini.pendingAttachEnabled, true);
   assert.strictEqual(adapters.grok.pendingAttachEnabled, true);
   assert.strictEqual(adapters.chatgpt.pendingAttachEnabled, true);
@@ -7178,6 +7184,48 @@ async function testSmallFileInputShowsProcessingUiThenDirectAttachSuccess() {
   assert.ok(labels.includes("file-ui:processing-hidden"), "expected processing UI cleanup");
   assert.ok(fileInput.files[0]?.text?.includes("[PWM_1]"), "expected sanitized file assignment");
   assert.strictEqual(fileInput.files[0]?.text?.includes(rawSecret), false);
+  assert.strictEqual(JSON.stringify(calls.debugEvents).includes(rawSecret), false);
+}
+
+async function testGenericProtectedFileInputWithoutComposerAttachesSanitizedFile() {
+  const rawSecret = "LeakGuardFileApiKey1234567890";
+  const rawFile = createTextFile({
+    name: "generic.env",
+    text: `API_KEY=${rawSecret}`
+  });
+  const fileInput = createFileInput();
+  fileInput.files = [rawFile];
+  const { event, calls: eventCalls } = createEvent({
+    type: "change",
+    target: fileInput
+  });
+  const { maybeHandleFileInputChange, calls } = createHarness({
+    location: { hostname: "protected.example" },
+    readLocalTextFileFromDataTransfer: async (transfer) => {
+      calls.reads.push(transfer);
+      return {
+        handled: true,
+        ok: true,
+        text: `API_KEY=${rawSecret}`,
+        file: {
+          name: rawFile.name,
+          type: rawFile.type,
+          sizeBytes: rawFile.size
+        }
+      };
+    }
+  });
+
+  const result = await maybeHandleFileInputChange(event);
+  await Promise.resolve();
+
+  assert.strictEqual(result?.ok, true);
+  assert.strictEqual(eventCalls.preventDefault, 1, "expected raw file input event to be consumed");
+  assert.ok(fileInput.events.includes("input"), "expected sanitized input redispatch");
+  assert.ok(fileInput.events.includes("change"), "expected sanitized change redispatch");
+  assert.ok(fileInput.files[0]?.text?.includes("[PWM_1]"), "expected sanitized file assignment");
+  assert.strictEqual(fileInput.files[0]?.text?.includes(rawSecret), false);
+  assert.strictEqual(calls.modals.length, 0, "expected no fail-closed modal for supported sanitized handoff");
   assert.strictEqual(JSON.stringify(calls.debugEvents).includes(rawSecret), false);
 }
 
@@ -18494,6 +18542,7 @@ function testMultiFileProtectedUploadStaticGuards() {
   await testSanitizedHandoffSignatureSuppressesDifferentInputRedispatch();
   await testSanitizedHandoffMixedRawFileDoesNotSuppressScan();
   await testSmallFileInputShowsProcessingUiThenDirectAttachSuccess();
+  await testGenericProtectedFileInputWithoutComposerAttachesSanitizedFile();
   await testDocumentAndImageFileInputUseContentExtractionPipelineForSanitizedHandoff();
   await testSupportedImageFileInputAttachesSanitizedImageAcrossAdapters();
   await testUnnamedClipboardImagePasteUsesContentExtractionPipeline();
