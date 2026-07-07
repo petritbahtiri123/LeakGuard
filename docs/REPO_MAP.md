@@ -81,6 +81,7 @@ regex/provider deterministic rules
 - `src/content/files/localFileSanitizationOrchestration.js`: single-file local analysis/redaction, sanitized file creation, and sanitization fail-closed outcomes.
 - `src/content/files/sanitizedFileInsertOrchestration.js`: non-streaming single-file sanitized local attach orchestration and fail-closed outcomes.
 - `src/content/files/localFileInsertOrchestration.js`: single-file local insert routing, WhatsApp unsupported attach blocking, multi-file delegation, transfer policy short-circuiting, file-input clearing/logging, and read/preflight/sanitization/attach sequencing.
+- `src/content/files/fileDropOrchestration.js`: drop event routing, unsupported transfer policy handling, Gemini raw pass-through, raw drop ownership, and local file insert delegation.
 - `src/content/files/fileTransferPolicy.js`: file transfer policy decisions and the single-file local transfer fail-closed/pass-through gate.
 - `src/content/files/fileExtractionSessionCache.js`: in-memory file extraction session cache.
 - `src/content/files/pendingSanitizedFileHandoff.js`: pending sanitized file handoff helpers.

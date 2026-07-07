@@ -10,6 +10,10 @@ const fileProcessingUiSource = fs.readFileSync(
   path.join(repoRoot, "src/content/files/fileProcessingUi.js"),
   "utf8"
 );
+const fileDropOrchestrationSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/files/fileDropOrchestration.js"),
+  "utf8"
+);
 const contentStatusUiSource = fs.readFileSync(
   path.join(repoRoot, "src/content/ui/contentStatusUi.js"),
   "utf8"
@@ -640,8 +644,12 @@ function testUnsupportedProtectedImageReleaseSafetyIsGuarded() {
     contentSource.includes("Raw image upload blocked. This image type is not supported for safe redaction."),
     "protected unsupported image UX should fail closed with clear release-safe copy"
   );
-  const blockIndex = contentSource.indexOf("shouldFailClosedProtectedUnsupportedFileTransfer(transferPolicy)");
-  const replayIndex = contentSource.indexOf('handOffOriginalLocalFile(event, snapshotDataTransfer, "drop")');
+  const blockIndex = fileDropOrchestrationSource.indexOf(
+    "shouldFailClosedProtectedUnsupportedFileTransfer(transferPolicy)"
+  );
+  const replayIndex = fileDropOrchestrationSource.indexOf(
+    'handOffOriginalLocalFile(event, snapshotDataTransfer, "drop")'
+  );
   assert.notStrictEqual(blockIndex, -1, "drop handler should check protected unsupported fail-closed policy");
   if (replayIndex !== -1) {
     assert.ok(blockIndex < replayIndex, "protected unsupported image blocking should run before Gemini raw replay");

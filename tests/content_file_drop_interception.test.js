@@ -16,6 +16,10 @@ const fileProcessingUiSource = fs.readFileSync(
   path.join(repoRoot, "src/content/files/fileProcessingUi.js"),
   "utf8"
 );
+const fileDropOrchestrationSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/files/fileDropOrchestration.js"),
+  "utf8"
+);
 const adapterSourceFiles = [
   "src/content/adapters/chatgptAdapter.js",
   "src/content/adapters/openaiAdapter.js",
@@ -122,6 +126,7 @@ require(path.join(repoRoot, "src/content/files/localFileAttachPreflightOrchestra
 require(path.join(repoRoot, "src/content/files/localFileSanitizationOrchestration.js"));
 require(path.join(repoRoot, "src/content/files/sanitizedFileInsertOrchestration.js"));
 require(path.join(repoRoot, "src/content/files/localFileInsertOrchestration.js"));
+require(path.join(repoRoot, "src/content/files/fileDropOrchestration.js"));
 require(path.join(repoRoot, "src/content/whatsapp/whatsappCapabilities.js"));
 require(path.join(repoRoot, "src/content/whatsapp/whatsappTextFlow.js"));
 require(path.join(repoRoot, "src/content/whatsapp/whatsappSelectors.js"));
@@ -1332,6 +1337,7 @@ function createHarness(overrides = {}) {
       "const LocalFileSanitizationOrchestration = globalThis.PWM?.LocalFileSanitizationOrchestration || {};",
       "const SanitizedFileInsertOrchestration = globalThis.PWM?.SanitizedFileInsertOrchestration || {};",
       "const LocalFileInsertOrchestration = globalThis.PWM?.LocalFileInsertOrchestration || {};",
+      "const FileDropOrchestration = globalThis.PWM?.FileDropOrchestration || {};",
       'const LOCAL_TEXT_HARD_BLOCK_TITLE = "Large payload blocked for browser stability";',
       'const LOCAL_TEXT_HARD_BLOCK_MESSAGE = "This content is over 4 MB. LeakGuard did not process or send it automatically to avoid browser instability. Split the file into smaller parts, or sanitize it separately before upload.";',
       "const LARGE_TEXT_STREAMING_MAX_BYTES = 50 * 1024 * 1024;",
@@ -1372,6 +1378,7 @@ function createHarness(overrides = {}) {
       "let localFileSanitizationOrchestration = null;",
       "let sanitizedFileInsertOrchestration = null;",
       "let localFileInsertOrchestration = null;",
+      "let fileDropOrchestration = null;",
       "let fileProcessingUi = null;",
       "let geminiUploadDiscovery = null;",
       "let geminiFileHandoff = null;",
@@ -1729,6 +1736,7 @@ function createHarness(overrides = {}) {
       extractFunctionSource(contentSource, "maybeHandleLocalFileInsert"),
       extractFunctionSource(contentSource, "getPasteOrchestration"),
       extractFunctionSource(contentSource, "maybeHandlePaste"),
+      extractFunctionSource(contentSource, "getFileDropOrchestration"),
       extractFunctionSource(contentSource, "maybeHandleDrop"),
       extractFunctionSource(contentSource, "maybeHandleFileDrag"),
       'let lastGeminiDropSessionHash = "";',
@@ -3706,7 +3714,7 @@ function testProtectedRebuiltFileDropBlocksAtDragGuard() {
 }
 
 function testDropRoutesContentExtractionCandidatesBeforeUnsupportedPassThrough() {
-  const source = extractFunctionSource(contentSource, "maybeHandleDrop");
+  const source = extractFunctionSource(fileDropOrchestrationSource, "maybeHandleDrop");
   const candidateIndex = source.indexOf("const contentExtractionFile");
   const allowPolicyIndex = source.indexOf('if (transferPolicy.action === "allow"');
 
@@ -13773,7 +13781,7 @@ function testProtectedUnsupportedImageDropBranchBlocksBeforeOriginalReplay() {
     "protected unsupported fail-closed helper should include unknown binary files"
   );
 
-  const dropSource = extractFunctionSource(contentSource, "maybeHandleDrop");
+  const dropSource = extractFunctionSource(fileDropOrchestrationSource, "maybeHandleDrop");
   const protectedBlockIndex = dropSource.indexOf("shouldFailClosedProtectedUnsupportedFileTransfer(transferPolicy)");
   const replayIndex = dropSource.indexOf('handOffOriginalLocalFile(event, snapshotDataTransfer, "drop")');
   assert.notStrictEqual(protectedBlockIndex, -1, "drop handler should check protected unsupported fail-closed policy");

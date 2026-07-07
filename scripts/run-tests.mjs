@@ -78,6 +78,7 @@ const testFiles = [
   "tests/local_file_sanitization_orchestration.test.js",
   "tests/sanitized_file_insert_orchestration.test.js",
   "tests/local_file_insert_orchestration.test.js",
+  "tests/file_drop_orchestration.test.js",
   "tests/chatgpt_large_paste_orchestration.test.js",
   "tests/gemini_editor_paste_orchestration.test.js",
   "tests/fallback_send_key_orchestration.test.js",

@@ -110,6 +110,10 @@ const localFileInsertOrchestrationSource = fs.readFileSync(
   path.join(repoRoot, "src/content/files/localFileInsertOrchestration.js"),
   "utf8"
 );
+const fileDropOrchestrationSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/files/fileDropOrchestration.js"),
+  "utf8"
+);
 const fileDropInterceptionSource = fs.readFileSync(
   path.join(repoRoot, "src/content/files/fileDropInterception.js"),
   "utf8"
@@ -456,7 +460,7 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   const beforeInputSource = extractFunctionSource(beforeInputOrchestrationSource, "maybeHandleBeforeInput");
   const fileInsertSource = extractFunctionSource(localFileInsertOrchestrationSource, "maybeHandleLocalFileInsert");
   const fileDragSource = extractFunctionSource(contentSource, "maybeHandleFileDrag");
-  const dropSource = extractFunctionSource(contentSource, "maybeHandleDrop");
+  const dropSource = extractFunctionSource(fileDropOrchestrationSource, "maybeHandleDrop");
   const manifest = JSON.parse(fs.readFileSync(path.join(repoRoot, "manifests/base.json"), "utf8"));
   const manifestScripts = manifest.content_scripts[0].js;
   const pasteSource = extractFunctionSource(pasteOrchestrationSource, "maybeHandlePaste");
@@ -550,7 +554,7 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   );
   assert.ok(
     dropSource.indexOf("consumeInterceptionEvent(event);") <
-      dropSource.indexOf("findComposer(event.target) || findComposer(document.activeElement)") &&
+      dropSource.indexOf("findComposer(event.target) || findComposer(documentRef.activeElement)") &&
       dropSource.includes("rawFileDropInterceptions") &&
       dropSource.includes("dataTransferLooksLikeFiles(event.dataTransfer)") &&
       dropSource.includes('maybeHandleLocalFileInsert(event, input, snapshotDataTransfer, "drop")') &&

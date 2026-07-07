@@ -96,6 +96,10 @@ const localFileInsertOrchestrationSource = fs.readFileSync(
   path.join(repoRoot, "src/content/files/localFileInsertOrchestration.js"),
   "utf8"
 );
+const fileDropOrchestrationSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/files/fileDropOrchestration.js"),
+  "utf8"
+);
 const contentFileExtractionPipelineSource = fs.readFileSync(
   path.join(repoRoot, "src/content/files/contentFileExtractionPipeline.js"),
   "utf8"
@@ -1815,8 +1819,9 @@ function testUnsupportedProtectedImagesCannotReachRawReplayBranch() {
     "protected unsupported fail-closed helper should include unsupported images"
   );
 
-  const blockIndex = contentSource.indexOf("shouldFailClosedProtectedUnsupportedFileTransfer(transferPolicy)");
-  const replayIndex = contentSource.indexOf('handOffOriginalLocalFile(event, snapshotDataTransfer, "drop")');
+  const dropSource = extractFunctionSource(fileDropOrchestrationSource, "maybeHandleDrop");
+  const blockIndex = dropSource.indexOf("shouldFailClosedProtectedUnsupportedFileTransfer(transferPolicy)");
+  const replayIndex = dropSource.indexOf('handOffOriginalLocalFile(event, snapshotDataTransfer, "drop")');
   assert.notStrictEqual(blockIndex, -1, "drop handler should check protected unsupported fail-closed policy");
   if (replayIndex !== -1) {
     assert.ok(

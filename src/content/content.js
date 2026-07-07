@@ -72,6 +72,7 @@
   const SanitizedFileHandoff = globalThis.PWM?.SanitizedFileHandoff || {};
   const FileDropInterception = globalThis.PWM?.FileDropInterception || {};
   const FileInputInterception = globalThis.PWM?.FileInputInterception || {};
+  const FileDropOrchestration = globalThis.PWM?.FileDropOrchestration || {};
   const MultiFileInsertOrchestration = globalThis.PWM?.MultiFileInsertOrchestration || {};
   const StreamingFileInsertOrchestration = globalThis.PWM?.StreamingFileInsertOrchestration || {};
   const LocalFileReadOrchestration = globalThis.PWM?.LocalFileReadOrchestration || {};
@@ -377,6 +378,7 @@
   let fileHandoffDiscovery = null;
   let fileDropInterception = null;
   let fileInputInterception = null;
+  let fileDropOrchestration = null;
   let multiFileInsertOrchestration = null;
   let streamingFileInsertOrchestration = null;
   let localFileReadOrchestration = null;
@@ -6833,108 +6835,68 @@
     return getLocalFileInsertOrchestration().maybeHandleLocalFileInsert(event, input, dataTransfer, context);
   }
 
+  function getFileDropOrchestration() {
+    if (fileDropOrchestration) return fileDropOrchestration;
+    if (typeof FileDropOrchestration.createFileDropOrchestration !== "function") {
+      fileDropOrchestration = Object.freeze({
+        maybeHandleDrop: async () => undefined
+      });
+      return fileDropOrchestration;
+    }
+
+    fileDropOrchestration =
+      FileDropOrchestration.createFileDropOrchestration({
+        blockFirefoxGeminiUnavailableDrop,
+        blockWhatsAppFileAttachment,
+        clearFileDragSession,
+        consumeInterceptionEvent,
+        dataTransferLooksLikeFiles,
+        documentRef: document,
+        findComposer,
+        getCurrentHandoffDriver,
+        getCurrentHandoffDriverId,
+        getGeminiDropSessionHash,
+        getUnsupportedFileBlockedMessage,
+        getUnsupportedFileBlockedTitle,
+        handOffOriginalLocalFile,
+        handleFileDragDetected,
+        hideBadgeSoon,
+        hideFileProcessingOverlay,
+        isExtensionRuntimeAvailable: () => extensionRuntimeAvailable,
+        isFirefoxDataTransferFileUnavailableSnapshot,
+        isFirefoxRuntime,
+        isGeminiHost,
+        isModalOpen: () => modalOpen,
+        isPotentialWhatsAppMultiFileAttach,
+        isSanitizedFileHandoffEvent,
+        isSupportedWhatsAppDocxAttach,
+        isSupportedWhatsAppImageAttach,
+        isSupportedWhatsAppPdfAttach,
+        isSupportedWhatsAppTextDocumentAttach,
+        isSupportedWhatsAppXlsxAttach,
+        isWhatsAppHost,
+        listLocalTransferFiles,
+        maybeHandleLocalFileInsert,
+        rawFileDropInterceptions,
+        refreshBadgeFromCurrentInput,
+        resolveLocalFileTransferPolicy,
+        setBadge,
+        setLastGeminiDropSessionHash: (hash) => {
+          lastGeminiDropSessionHash = hash;
+        },
+        shouldBlockUnsupportedFileTransfer,
+        shouldFailClosedProtectedUnsupportedFileTransfer,
+        shouldUseContentFileExtractionPipeline,
+        showFileProcessingError,
+        showMessageModal,
+        showUnsupportedFilePassThroughNotice,
+        snapshotLocalFileDataTransfer
+      });
+    return fileDropOrchestration;
+  }
+
   async function maybeHandleDrop(event) {
-    if (
-      isSanitizedFileHandoffEvent(event) ||
-      rawFileDropInterceptions.has(event) ||
-      !dataTransferLooksLikeFiles(event.dataTransfer)
-    ) {
-      return;
-    }
-
-    const snapshotDataTransfer = snapshotLocalFileDataTransfer(event.dataTransfer);
-    if (
-      isFirefoxRuntime() &&
-      isGeminiHost() &&
-      isFirefoxDataTransferFileUnavailableSnapshot(snapshotDataTransfer)
-    ) {
-      await blockFirefoxGeminiUnavailableDrop(event);
-      return;
-    }
-
-    const localTransferFiles = listLocalTransferFiles(snapshotDataTransfer);
-    const supportedWhatsAppDrop =
-      isSupportedWhatsAppImageAttach(snapshotDataTransfer, "drop") ||
-      isSupportedWhatsAppTextDocumentAttach(snapshotDataTransfer, "drop") ||
-      isSupportedWhatsAppPdfAttach(snapshotDataTransfer, "drop") ||
-      isSupportedWhatsAppDocxAttach(snapshotDataTransfer, "drop") ||
-      isSupportedWhatsAppXlsxAttach(snapshotDataTransfer, "drop") ||
-      isPotentialWhatsAppMultiFileAttach(localTransferFiles, "drop");
-    if (isWhatsAppHost() && localTransferFiles.length && !supportedWhatsAppDrop) {
-      rawFileDropInterceptions.add(event);
-      await blockWhatsAppFileAttachment(event);
-      clearFileDragSession();
-      return;
-    }
-    const contentExtractionFile =
-      localTransferFiles.length === 1 && shouldUseContentFileExtractionPipeline(localTransferFiles[0])
-        ? localTransferFiles[0]
-        : null;
-    const transferPolicy = resolveLocalFileTransferPolicy(snapshotDataTransfer);
-    if (transferPolicy.action === "allow" && !contentExtractionFile) {
-      const unsupportedFileMustBlock =
-        shouldBlockUnsupportedFileTransfer(transferPolicy) ||
-        shouldFailClosedProtectedUnsupportedFileTransfer(transferPolicy);
-      if (unsupportedFileMustBlock) {
-        const unsupportedBlockReason = shouldBlockUnsupportedFileTransfer(transferPolicy)
-          ? "firefox_unsupported_file_blocked"
-          : "unsupported_protected_file_blocked";
-        const unsupportedBlockTitle = getUnsupportedFileBlockedTitle(transferPolicy);
-        rawFileDropInterceptions.add(event);
-        consumeInterceptionEvent(event);
-        showFileProcessingError(unsupportedBlockTitle, {
-          site: getCurrentHandoffDriverId(),
-          reason: unsupportedBlockReason
-        });
-        hideFileProcessingOverlay(unsupportedBlockReason);
-        setBadge(unsupportedBlockTitle);
-        hideBadgeSoon(4200);
-        await showMessageModal(unsupportedBlockTitle, getUnsupportedFileBlockedMessage(transferPolicy));
-        refreshBadgeFromCurrentInput();
-        clearFileDragSession();
-        return;
-      }
-      if (isGeminiHost()) {
-        rawFileDropInterceptions.add(event);
-        consumeInterceptionEvent(event);
-        handOffOriginalLocalFile(event, snapshotDataTransfer, "drop");
-        showUnsupportedFilePassThroughNotice(transferPolicy);
-        clearFileDragSession();
-        return;
-      }
-      showUnsupportedFilePassThroughNotice(transferPolicy);
-      return;
-    }
-
-    if (transferPolicy.action === "block") {
-      rawFileDropInterceptions.add(event);
-      consumeInterceptionEvent(event);
-      setBadge("Raw file upload blocked");
-      hideBadgeSoon(4200);
-      await showMessageModal("Raw file upload blocked", transferPolicy.message);
-      refreshBadgeFromCurrentInput();
-      clearFileDragSession();
-      return;
-    }
-
-    rawFileDropInterceptions.add(event);
-    consumeInterceptionEvent(event);
-    if (isGeminiHost()) {
-      lastGeminiDropSessionHash = getGeminiDropSessionHash(snapshotDataTransfer);
-    }
-
-    if (!extensionRuntimeAvailable || modalOpen) {
-      clearFileDragSession();
-      return;
-    }
-
-    try {
-      handleFileDragDetected(event);
-      const input = findComposer(event.target) || findComposer(document.activeElement);
-      await maybeHandleLocalFileInsert(event, input, snapshotDataTransfer, "drop");
-    } finally {
-      clearFileDragSession({ keepDmzOverlay: getCurrentHandoffDriver()?.usesDmzOverlay });
-    }
+    return getFileDropOrchestration().maybeHandleDrop(event);
   }
 
   function getFileDropInterception() {
