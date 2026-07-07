@@ -103,6 +103,7 @@ Core:
 - `npm run test:browser-gates`
 - `npm run qa:browser:full`
 - `npm run test:nightly`
+- `npm run bench:hotpaths`
 - `git diff --check`
 
 Focused:

@@ -40,6 +40,7 @@
     "release:artifacts": "npm run release:clean && npm run build:all && npm run package:release && npm run release:checksums",
     "test:release-artifacts": "node tests/release_artifacts.test.js",
     "test:release-gates": "npm run build:all && npm run package:release && npm run test:release-artifacts && npm run bench:file-extraction",
+    "bench:hotpaths": "node tests/performance/hotpath-benchmark.mjs",
     "bench:file-extraction": "node tests/performance/file-extraction-pipeline-benchmark.mjs",
     "bench:redaction:profile": "node tests/performance/redaction-benchmark.mjs --profile",
     "build": "npm run build:all",
