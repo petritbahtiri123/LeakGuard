@@ -18,6 +18,10 @@ require(path.join(repoRoot, "src/shared/transformOutboundPrompt.js"));
 require(path.join(repoRoot, "src/content/composer_helpers.js"));
 
 const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
+const beforeInputOrchestrationSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/composer/beforeInputOrchestration.js"),
+  "utf8"
+);
 const typedSecretScanSource = fs.readFileSync(
   path.join(repoRoot, "src/content/composer/typedSecretScanOrchestration.js"),
   "utf8"
@@ -125,16 +129,17 @@ function testSecretLikeTypingIsGatedLiveRedactionSurface() {
   const relevant = selectFindingsOverlappingInsertion(findings, selection, insertedText);
 
   assert.ok(relevant.length > 0, "typed synthetic secret should be recognized before submit");
+  const beforeInputSource = extractFunctionSource(beforeInputOrchestrationSource, "maybeHandleBeforeInput");
   assert.ok(
-    contentSource.includes("isLiveTypedRedactionEnabled(getActivePolicy())") &&
-      contentSource.includes("applyTypedInterceptionRewrite("),
+    beforeInputSource.includes("isLiveTypedRedactionEnabled(getActivePolicy())") &&
+      beforeInputSource.includes("applyTypedInterceptionRewrite("),
     "pre-submit typed redaction should exist only behind the live typed redaction gate"
   );
 }
 
 function testHarmlessBeforeInputReturnsBeforeConsumingOrRewriting() {
-  const beforeInputSource = extractFunctionSource(contentSource, "maybeHandleBeforeInput");
-  const noRiskReturn = "if (!quickRelevantFindings.length && !quickPlaceholderNormalizationChanged) {\n      return;\n    }";
+  const beforeInputSource = extractFunctionSource(beforeInputOrchestrationSource, "maybeHandleBeforeInput");
+  const noRiskReturn = "if (!quickRelevantFindings.length && !quickPlaceholderNormalizationChanged)";
   assert.ok(beforeInputSource.includes("if (!isLiveTypedRedactionEnabled(getActivePolicy()))"), "beforeinput should check the live typed redaction gate");
   assert.ok(
     beforeInputSource.indexOf("if (!isLiveTypedRedactionEnabled(getActivePolicy()))") <
@@ -184,7 +189,7 @@ function testDelayedTypedScanGuardsAgainstStaleComposerOverwrite() {
 }
 
 function testNormalTypingDoesNotCreateFilePendingPayloads() {
-  const beforeInputSource = extractFunctionSource(contentSource, "maybeHandleBeforeInput");
+  const beforeInputSource = extractFunctionSource(beforeInputOrchestrationSource, "maybeHandleBeforeInput");
   const typedScanSource = extractFunctionSource(typedSecretScanSource, "maybeHandleTypedSecrets");
   assert.strictEqual(beforeInputSource.includes("queuePendingSanitizedFileHandoff"), false);
   assert.strictEqual(typedScanSource.includes("queuePendingSanitizedFileHandoff"), false);

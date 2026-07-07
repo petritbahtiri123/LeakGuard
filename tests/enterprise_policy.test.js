@@ -15,6 +15,10 @@ const protectedSiteRegistrySource = fs.readFileSync(
 );
 const coreSource = fs.readFileSync(path.join(repoRoot, "src/background/core.js"), "utf8");
 const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
+const beforeInputOrchestrationSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/composer/beforeInputOrchestration.js"),
+  "utf8"
+);
 const popupSource = fs.readFileSync(path.join(repoRoot, "src/popup/popup.js"), "utf8");
 const optionsSource = fs.readFileSync(path.join(repoRoot, "src/options/options.js"), "utf8");
 const managedPolicySchema = JSON.parse(
@@ -850,7 +854,7 @@ function testPolicySchemaAndUiSurfaceNewFields() {
     ["allow", "redact", "block"]
   );
   assert.ok(
-    contentSource.includes("handleDestinationPolicy(relevantFindings, policy)") &&
+    beforeInputOrchestrationSource.includes("handleDestinationPolicy(relevantFindings, policy)") &&
       contentSource.includes("handleDestinationPolicy(analysis.findings, policy)"),
     "content enforcement should run in the typed, paste, and submit decision paths"
   );

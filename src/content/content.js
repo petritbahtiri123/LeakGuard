@@ -32,6 +32,7 @@
   const GeminiEditorPasteOrchestration = globalThis.PWM?.GeminiEditorPasteOrchestration || {};
   const FallbackSendKeyOrchestration = globalThis.PWM?.FallbackSendKeyOrchestration || {};
   const TypedSecretScanOrchestration = globalThis.PWM?.TypedSecretScanOrchestration || {};
+  const BeforeInputOrchestration = globalThis.PWM?.BeforeInputOrchestration || {};
   const {
     normalizeComposerText,
     normalizeEditorInnerText,
@@ -388,6 +389,7 @@
   let geminiEditorPasteOrchestration = null;
   let fallbackSendKeyOrchestration = null;
   let typedSecretScanOrchestration = null;
+  let beforeInputOrchestration = null;
   let syntheticFileListCapabilityCache = null;
   let inputFileAssignmentCapabilityCache = null;
   const fileInputProcessingSignatures = new WeakMap();
@@ -3740,235 +3742,58 @@
     return true;
   }
 
-  async function maybeHandleBeforeInput(event) {
-    if (isPasteBeforeInput(event)) {
-      await maybeHandlePaste(event);
-      return;
-    }
-
-    if (event?.isTrusted === false && isProgrammaticInputScanSuppressed()) return;
-
-    if (!extensionRuntimeAvailable || modalOpen || !shouldInterceptBeforeInput(event)) return;
-
-    const input = findComposer(event.target);
-    if (!input) return;
-    noteActiveRiskEditor(input);
-
-    const insertedText = getBeforeInputData(event);
-    if (!insertedText) return;
-
-    const originalText = getInputText(input);
-    const selection = getSelectionOffsets(input);
-    const next = spliceSelectionText(originalText, selection, insertedText);
-
-    if (!isLiveTypedRedactionEnabled(getActivePolicy())) {
-      return;
-    }
-
-    let firefoxEarlyAnalysis = null;
-    let firefoxEarlyRelevantFindings = [];
-    let firefoxEarlyPlaceholderNormalizationChanged = false;
-    if (isFirefoxRuntime()) {
-      firefoxEarlyAnalysis = analyzeText(next.text);
-      firefoxEarlyRelevantFindings = selectFindingsOverlappingInsertion(
-        firefoxEarlyAnalysis.findings,
-        selection,
-        insertedText
-      );
-      firefoxEarlyPlaceholderNormalizationChanged =
-        firefoxEarlyAnalysis.placeholderNormalized &&
-        firefoxEarlyAnalysis.normalizedText !== next.text &&
-        normalizeVisiblePlaceholders(insertedText) !== insertedText;
-
-      if (firefoxEarlyRelevantFindings.length || firefoxEarlyPlaceholderNormalizationChanged) {
-        consumeInterceptionEvent(event);
-      }
-    }
-    const quickCurrentAnalysis = analyzeText(originalText);
-    const quickNextAnalysis = analyzeText(next.text);
-    const quickRelevantFindings = selectFindingsOverlappingInsertion(
-      quickNextAnalysis.findings,
-      selection,
-      insertedText
-    );
-    const quickPlaceholderNormalizationChanged =
-      quickNextAnalysis.placeholderNormalized &&
-      quickNextAnalysis.normalizedText !== next.text &&
-      (normalizeVisiblePlaceholders(insertedText) !== insertedText ||
-        quickNextAnalysis.normalizedText !== quickCurrentAnalysis.normalizedText);
-
-    if (!quickRelevantFindings.length && !quickPlaceholderNormalizationChanged) {
-      return;
-    }
-
-    if (!event.defaultPrevented) {
-      consumeInterceptionEvent(event);
-    }
-
-    const currentAnalysis = await analyzeTextWithAiAssist(originalText);
-    const nextAnalysis = await analyzeTextWithAiAssist(next.text);
-    const relevantFindings = selectFindingsOverlappingInsertion(
-      nextAnalysis.findings,
-      selection,
-      insertedText
-    );
-    const relevantSecretFindings = selectFindingsOverlappingInsertion(
-      nextAnalysis.secretFindings,
-      selection,
-      insertedText
-    );
-    const placeholderNormalizationChanged =
-      nextAnalysis.placeholderNormalized &&
-      nextAnalysis.normalizedText !== next.text &&
-      (normalizeVisiblePlaceholders(insertedText) !== insertedText ||
-        nextAnalysis.normalizedText !== currentAnalysis.normalizedText);
-
-    if (!relevantFindings.length && !placeholderNormalizationChanged) return;
-
-    const typedShouldAutoRedact = shouldAutoRedactTypedSecrets(
-      relevantSecretFindings,
-      relevantFindings
-    );
-
-    const policy = await getPolicyForAction();
-    const destinationPolicy = await handleDestinationPolicy(relevantFindings, policy);
-    if (destinationPolicy.blocked) {
-      return;
-    }
-    const destinationForceRedact = shouldForceDestinationRedaction(
-      destinationPolicy,
-      relevantFindings
-    );
-
-    const httpPolicyHandled = await handleHttpSecretPolicy(policy, relevantSecretFindings, async () => {
-      const result = await requestRedaction(nextAnalysis.normalizedText, relevantSecretFindings);
-      const ok = await applyTypedInterceptionRewrite(
-        input,
-        result.redactedText,
-        originalText,
-        selection,
-        "input"
-      );
-
-      if (!ok) {
-        return;
-      }
-
-      lastTypedPromptText = result.redactedText;
-      setBadge("Content redacted");
-      hideBadgeSoon();
-      refreshBadgeFromCurrentInput();
-    });
-
-    if (httpPolicyHandled) {
-      return;
-    }
-
-    if (destinationForceRedact) {
-      const result = await requestRedaction(nextAnalysis.normalizedText, relevantSecretFindings, {
-        auditReason: destinationPolicy.reason
+  function getBeforeInputOrchestration() {
+    if (beforeInputOrchestration) return beforeInputOrchestration;
+    if (typeof BeforeInputOrchestration.createBeforeInputOrchestration !== "function") {
+      beforeInputOrchestration = Object.freeze({
+        maybeHandleBeforeInput: async () => {}
       });
-      const ok = await applyTypedInterceptionRewrite(
-        input,
-        result.redactedText,
-        originalText,
-        selection,
-        "input"
-      );
-
-      if (!ok) return;
-
-      lastTypedPromptText = result.redactedText;
-      setBadge("Destination policy required redaction");
-      hideBadgeSoon();
-      refreshBadgeFromCurrentInput();
-      return;
+      return beforeInputOrchestration;
     }
 
-    if (isProtectionPauseActiveAfterPolicy(policy, destinationPolicy)) {
-      const ok = await applyTypedInterceptionRewrite(
-        input,
-        nextAnalysis.normalizedText,
-        originalText,
-        selection,
-        "input"
-      );
+    beforeInputOrchestration =
+      BeforeInputOrchestration.createBeforeInputOrchestration({
+        analyzeText,
+        analyzeTextWithAiAssist,
+        applyTypedInterceptionRewrite,
+        consumeInterceptionEvent,
+        findComposer,
+        getActivePolicy,
+        getBeforeInputData,
+        getInputText,
+        getPolicyForAction,
+        getSelectionOffsets,
+        handleDestinationPolicy,
+        handleHttpSecretPolicy,
+        hideBadgeSoon,
+        isExtensionRuntimeAvailable: () => extensionRuntimeAvailable,
+        isFirefoxRuntime,
+        isLiveTypedRedactionEnabled,
+        isModalOpen: () => modalOpen,
+        isPasteBeforeInput,
+        isProgrammaticInputScanSuppressed,
+        isProtectionPauseActiveAfterPolicy,
+        maybeHandlePaste,
+        normalizeVisiblePlaceholders,
+        noteActiveRiskEditor,
+        promptForSensitiveContentDecision,
+        refreshBadgeFromCurrentInput,
+        requestRedaction,
+        selectFindingsOverlappingInsertion,
+        setBadge,
+        setLastTypedPromptText: (text) => {
+          lastTypedPromptText = text;
+        },
+        shouldAutoRedactTypedSecrets,
+        shouldForceDestinationRedaction,
+        shouldInterceptBeforeInput,
+        spliceSelectionText
+      });
+    return beforeInputOrchestration;
+  }
 
-      if (!ok) return;
-
-      lastTypedPromptText = nextAnalysis.normalizedText;
-      setBadge("Protection paused");
-      hideBadgeSoon();
-      refreshBadgeFromCurrentInput();
-      return;
-    }
-
-    if (typedShouldAutoRedact) {
-      const result = await requestRedaction(nextAnalysis.normalizedText, relevantSecretFindings);
-      const ok = await applyTypedInterceptionRewrite(
-        input,
-        result.redactedText,
-        originalText,
-        selection,
-        "input"
-      );
-
-      if (!ok) {
-        return;
-      }
-
-      lastTypedPromptText = result.redactedText;
-      setBadge("High-confidence secret redacted");
-      hideBadgeSoon();
-      refreshBadgeFromCurrentInput();
-      return;
-    }
-
-    if (!relevantFindings.length) {
-      const ok = await applyTypedInterceptionRewrite(
-        input,
-        nextAnalysis.normalizedText,
-        originalText,
-        selection,
-        "input"
-      );
-
-      if (!ok) return;
-
-      lastTypedPromptText = nextAnalysis.normalizedText;
-      setBadge("Placeholders normalized");
-      hideBadgeSoon();
-      refreshBadgeFromCurrentInput();
-      return;
-    }
-
-    const decisionAction = await promptForSensitiveContentDecision(
-      relevantFindings,
-      "input",
-      policy,
-      input,
-      nextAnalysis.normalizedText
-    );
-    if (decisionAction === "cancel") {
-      refreshBadgeFromCurrentInput();
-      return;
-    }
-
-    const result = await requestRedaction(nextAnalysis.normalizedText, relevantSecretFindings);
-    const ok = await applyTypedInterceptionRewrite(
-      input,
-      result.redactedText,
-      originalText,
-      selection,
-      "input"
-    );
-
-    if (!ok) return;
-
-    lastTypedPromptText = result.redactedText;
-    setBadge("Content redacted");
-    hideBadgeSoon();
-    refreshBadgeFromCurrentInput();
+  async function maybeHandleBeforeInput(event) {
+    return getBeforeInputOrchestration().maybeHandleBeforeInput(event);
   }
 
   async function maybeHandlePaste(event) {

@@ -20,6 +20,7 @@ require(path.join(repoRoot, "src/content/input/rewriteVerificationText.js"));
 require(path.join(repoRoot, "src/content/composer/replayVerification.js"));
 require(path.join(repoRoot, "src/content/composer/fallbackSendKeyOrchestration.js"));
 require(path.join(repoRoot, "src/content/composer/typedSecretScanOrchestration.js"));
+require(path.join(repoRoot, "src/content/composer/beforeInputOrchestration.js"));
 require(path.join(repoRoot, "src/content/diagnostics/debugLogger.js"));
 const ContentDebugFacade = require(path.join(repoRoot, "src/content/diagnostics/contentDebugFacade.js"));
 
@@ -51,6 +52,10 @@ const fallbackSendKeySource = fs.readFileSync(
 );
 const typedSecretScanSource = fs.readFileSync(
   path.join(repoRoot, "src/content/composer/typedSecretScanOrchestration.js"),
+  "utf8"
+);
+const beforeInputOrchestrationSource = fs.readFileSync(
+  path.join(repoRoot, "src/content/composer/beforeInputOrchestration.js"),
   "utf8"
 );
 const contentModalUiSource = fs.readFileSync(path.join(repoRoot, "src/content/ui/contentModalUi.js"), "utf8");
@@ -429,7 +434,7 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   const submitTransactionalSource = extractFunctionSource(contentSource, "applySubmitRedactionTransactionally");
   const queueVerifiedSendSource = extractFunctionSource(contentSource, "queueVerifiedComposerSend");
   const typedRewriteSource = extractFunctionSource(contentSource, "applyTypedInterceptionRewrite");
-  const beforeInputSource = extractFunctionSource(contentSource, "maybeHandleBeforeInput");
+  const beforeInputSource = extractFunctionSource(beforeInputOrchestrationSource, "maybeHandleBeforeInput");
   const fileInsertSource = extractFunctionSource(contentSource, "maybeHandleLocalFileInsert");
   const fileDragSource = extractFunctionSource(contentSource, "maybeHandleFileDrag");
   const dropSource = extractFunctionSource(contentSource, "maybeHandleDrop");
@@ -740,11 +745,11 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
     "composer settling should not hang indefinitely when requestAnimationFrame is throttled"
   );
   assert.ok(
-    contentSource.includes("shouldAutoRedactTypedSecrets"),
+    beforeInputSource.includes("shouldAutoRedactTypedSecrets"),
     "content script should distinguish high-confidence typed secrets from warning-only detections"
   );
   assert.ok(
-    contentSource.includes("High-confidence secret redacted"),
+    beforeInputSource.includes("High-confidence secret redacted"),
     "content script should auto-redact high-confidence typed secrets without forcing the same modal every time"
   );
   assert.ok(

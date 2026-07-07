@@ -128,6 +128,11 @@ function testContentRuntimeScriptOrder() {
     "content/input/rewriteVerificationText.js",
     "content/composer/fallbackSendKeyOrchestration.js"
   ], "content scripts");
+  assertAfterAll(contentScripts, "content/composer/beforeInputOrchestration.js", [
+    "content/composer_helpers.js",
+    "content/input/rewriteVerificationText.js",
+    "content/composer/typedSecretScanOrchestration.js"
+  ], "content scripts");
   assertAfterAll(contentScripts, "content/composer/replayVerification.js", [
     "content/input/rewriteVerificationText.js",
     "content/composer_helpers.js"

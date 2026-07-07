@@ -1602,12 +1602,15 @@ function testCacheAvoidsPersistentStorageAndPermissions() {
 }
 
 function testExtractionIsNotOnTypingPath() {
-  const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
+  const beforeInputOrchestrationSource = fs.readFileSync(
+    path.join(repoRoot, "src/content/composer/beforeInputOrchestration.js"),
+    "utf8"
+  );
   const typedSecretScanSource = fs.readFileSync(
     path.join(repoRoot, "src/content/composer/typedSecretScanOrchestration.js"),
     "utf8"
   );
-  const beforeInputSource = /async function maybeHandleBeforeInput\(event\) \{([\s\S]*?)\n  async function/.exec(contentSource)?.[1] || "";
+  const beforeInputSource = /async function maybeHandleBeforeInput\(event\) \{([\s\S]*?)\n    return Object/.exec(beforeInputOrchestrationSource)?.[1] || "";
   const typedSecretsSource = /async function maybeHandleTypedSecrets\(\) \{([\s\S]*?)\n    return Object/.exec(typedSecretScanSource)?.[1] || "";
 
   assert.strictEqual(beforeInputSource.includes("processFileForAdapterHandoff"), false);
