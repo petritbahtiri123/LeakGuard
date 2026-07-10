@@ -1,33 +1,14 @@
-# Codex Prompt Templates
+# Codex Prompt Template
 
-Use this prompt shape for most LeakGuard coding tasks. It keeps context small by starting from the fast context file and only reading source/tests that are directly relevant to the task.
+Most tasks need only this shape:
 
 ```text
-Repository: petritbahtiri123/LeakGuard
-
-Mode: Standard
-
-Read first:
-- docs/CODEX_FAST_CONTEXT.md
-- only the directly relevant source/test files for this task
-
-Task:
-<exact task here>
-
-Rules:
-- Keep the diff narrow.
-- Preserve local-only privacy model.
-- Preserve placeholder stability/reuse/order.
-- Preserve trusted-placeholder pass-through and right-to-left redaction safety.
-- Preserve Chrome/Firefox MV3 compatibility and no inline JavaScript.
-- Do not inspect unrelated files unless the narrow path fails.
-- Run the narrow test first.
-- Do not run npm test until the focused test passes or I ask for final validation.
-- Do not edit dist/, node_modules/, ai/models/, generated artifacts, or package-lock unless required.
-
-Return:
-Summary
-Files changed
-Tests run
-Risks/follow-up
+Mode: FAST
+Read: docs/CODEX_FAST_CONTEXT.md and directly relevant source/tests only.
+Task: <exact outcome>
+Constraints: keep the diff narrow and preserve AGENTS.md security invariants.
+Validation: run the focused test, then npm run test:changed. Escalate via docs/CODEX_CONTEXT_ROUTER.md.
+Return: Summary; Files changed; Tests run; Risks/follow-up.
 ```
+
+Use STANDARD or DEEP only when `docs/CODEX_CONTEXT_ROUTER.md` requires it. Do not paste repository maps, playbooks, transcripts, or full logs into a task prompt; point to the owning file instead.

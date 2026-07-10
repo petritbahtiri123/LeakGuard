@@ -1,87 +1,36 @@
 # LeakGuard Codex Memory
 
-Do not inject full transcripts, full logs, or all playbooks into Codex context. This system saves tokens by routing to compact indexes and loading full details only when needed.
+LeakGuard uses one optional prompt-time hook to point at reusable playbooks without injecting their bodies or persisting task data.
 
-## Purpose
+## Active behavior
 
-LeakGuard keeps a repo-local Codex memory system for recurring bug and workflow patterns. The goal is reproducibility without dumping large transcripts into context.
+- `.codex/config.toml` enables `[features] hooks = true`.
+- `.codex/hooks.json` configures only `UserPromptSubmit`.
+- `.codex/hooks/user_prompt_playbook_router.cjs` requires a route-specific failure fingerprint, returns at most one playbook pointer, and caps added context at 600 characters.
+- The hook is dependency-free, fails open, and does not store prompts, tool input, output, logs, or secrets.
 
-## How Hooks Save Tokens
+There is no session-start context injection and no post-tool reproduction capture. Agents load `docs/codex-playbooks/INDEX.md` or a full playbook only when the current task requires it.
 
-- `SessionStart` reads only `docs/codex-playbooks/INDEX.md` and caps injected context at 2000 characters.
-- `UserPromptSubmit` scores known issue patterns and injects only short playbook pointers, capped at 1200 characters.
-- `PostToolUse` writes compact reproducibility metadata to `docs/codex-runs/` and does not capture raw command output, prompts, full logs, or clipboard contents.
+## Adding a route
 
-Hooks are enabled by `.codex/config.toml`:
+Prefer improving the index or using the `leakguard-playbook-promoter` skill after a verified recurring fix. Add automatic routing only for a narrow fingerprint with:
 
-```toml
-[features]
-codex_hooks = true
-```
+- a product/surface identifier;
+- an action or object;
+- explicit failure language.
 
-Hook wiring lives in `.codex/hooks.json`. Hook commands use dependency-free Node scripts so they work on Windows and Unix-like shells without relying on a `python3` executable name.
+Generic keyword pairs are too noisy. Tests must include a true match and an incidental-background non-match.
 
-## How Playbooks Work
+## Safety
 
-Playbooks live under `docs/codex-playbooks/`. `INDEX.md` is the routing surface. Full playbooks are read only when the current prompt matches a known recurring issue.
-
-Each playbook should be short, practical, and focused on:
-
-- problem fingerprint
-- expected behavior
-- likely root cause
-- safe implementation direction
-- files likely involved
-- verification and regression tests
-- rollback
-
-## Promoting a Solved Issue
-
-Use the repo-local skill:
-
-```text
-Use leakguard-playbook-promoter to save this as a reusable playbook
-```
-
-The skill converts a verified fix into one compact playbook and updates `docs/codex-playbooks/INDEX.md`. If a fix is not verified, mark the playbook as draft.
-
-## Disabling Hooks
-
-Set hooks off in a higher-precedence user or session Codex config, or change the repo config locally:
-
-```toml
-[features]
-codex_hooks = false
-```
-
-You can also temporarily move or edit `.codex/hooks.json`, but avoid committing unrelated local disablement unless that is the intended repo change.
-
-## Safety Rules
-
-- Do not add secrets, tokens, private data, raw secret samples, or transcripts to playbooks.
-- Do not print full logs from hooks.
-- Do not persist raw command output previews. Repro captures should keep only metadata such as timestamp, hook event, tool name, status, command hash, compact command summary, changed file list, and added/removed counts.
-- Do not store raw secrets, tokens, email addresses, private keys, clipboard contents, prompts, or full logs in `docs/codex-runs/`.
-- Keep hook `additionalContext` hard-capped.
-- Hooks must fail open unless an explicit security policy requires blocking.
-- Keep scripts simple and dependency-free.
-- Use git-root or script-relative paths so Codex can start from subdirectories.
-- Do not change extension runtime behavior for memory-only updates.
-
-## What Not To Do
-
-- Do not load all playbooks at startup.
-- Do not copy `docs/codex-runs/` content into prompts.
-- Do not store raw command output previews.
-- Do not route broad categories that cause noisy false matches.
-- Do not add remote services, telemetry, or cloud processing.
+- Never persist prompts, transcripts, raw command output, clipboard data, filenames, paths, or secrets.
+- Inject only a short pointer, never a full playbook.
+- Hooks fail open and must not block legitimate work.
+- Do not add services, telemetry, analytics, or remote processing.
 
 ## Validation
 
-Run:
-
-```bash
+```powershell
+node tests/codex_hooks.test.mjs
 npm run validate:codex-memory
 ```
-
-This checks required files and parses `.codex/hooks.json`.

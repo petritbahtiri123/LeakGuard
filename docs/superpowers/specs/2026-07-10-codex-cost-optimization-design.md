@@ -42,7 +42,7 @@ Keep one dependency-free Node `UserPromptSubmit` router. It will:
 - provide a pointer and matched fingerprint, never the playbook body;
 - fail open and never store prompt or tool data.
 
-Delete the unused Python hook copies, capture script, run-directory placeholder, and corresponding ignore rules. Update the validator and memory documentation to describe only the active hook and current `hooks = true` feature.
+Delete the unused Python hook copies, capture script, and run-directory placeholder. Retain an ignore rule for legacy local capture JSON so existing user files do not flood Git status. Update the validator and memory documentation to describe only the active hook and current `hooks = true` feature.
 
 ### Progressive validation
 

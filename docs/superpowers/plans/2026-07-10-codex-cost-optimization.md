@@ -75,10 +75,9 @@ A route matches only when every required group has a term match. Return the firs
 
 - [ ] **Step 4: Remove unused capture and Python paths**
 
-Delete the listed unused hook scripts and `docs/codex-runs/.gitkeep`. Remove only these two lines from `.gitignore`:
+Delete the listed unused hook scripts and `docs/codex-runs/.gitkeep`. Remove the `.gitkeep` exception, but retain the JSON ignore rule so existing legacy local captures stay out of Git status:
 
 ```gitignore
-/docs/codex-runs/*.json
 !/docs/codex-runs/.gitkeep
 ```
 

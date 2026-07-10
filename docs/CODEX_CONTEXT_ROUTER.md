@@ -1,80 +1,65 @@
-# Codex Context Router
+# Codex Context and Validation Router
 
-Start in FAST mode. Escalate only when the narrow path is unclear, fails, or the task explicitly touches public/release/architecture claims.
+Start FAST. Escalate only when scope or evidence requires it.
 
-## FAST Mode
-Use for small bugfixes, focused tests, docs-only context edits, and known-area changes.
+## Context modes
 
-Read:
-- `docs/CODEX_FAST_CONTEXT.md`
-- directly relevant source files
-- directly relevant tests or playbooks
+### FAST
 
-Do not read by default:
-- `deep-research-report.md`
-- `PRIVACY_POLICY.md`
-- full README
-- release/store docs
-- historical phase plans
+For a focused bug, test, refactor, or internal documentation change, read:
 
-## STANDARD Mode
-Use when behavior crosses modules or changes runtime loading, file handoff, policy, or AI assist boundaries.
+- `docs/CODEX_FAST_CONTEXT.md`;
+- directly relevant source and tests;
+- one matching playbook when applicable.
 
-Read:
-- `docs/CODEX_FAST_CONTEXT.md`
-- `docs/REPO_MAP.md`
-- `docs/BUG_PLAYBOOK.md`
-- relevant playbook under `docs/codex-playbooks/`
-- relevant source/tests
+### STANDARD
 
-## DEEP Mode
-Use only for:
-- release notes
-- privacy wording
-- Chrome Web Store or Firefox Add-ons text
-- enterprise claims
-- architecture docs
-- README claim alignment
-- AI assist or file scanner public-scope claims
+For cross-module behavior, runtime loading, policy, protected-site file handoff, AI assist, builds, or diagnostics, also read:
 
-Read:
-- `docs/CODEX_FAST_CONTEXT.md`
-- `docs/REPO_MAP.md`
-- `deep-research-report.md`
-- `PRIVACY_POLICY.md`
-- `README.md`
-- `docs/NON_GOALS.md`
-- `docs/AI_ASSIST.md`
-- relevant release/store/source docs
+- `docs/REPO_MAP.md`;
+- `docs/BUG_PLAYBOOK.md`;
+- the relevant architecture or playbook file.
 
-## Lifecycle Rule
-Preserve the current detection order:
+### DEEP
 
-```text
-regex/provider deterministic rules
-  -> entropy/context fallback
-  -> Onix gray-zone classifier
-  -> final redaction policy
-```
+Only for release, privacy, public architecture, store listings, enterprise claims, or product-scope alignment, also read the relevant subset of:
 
-Regex/provider rules are first authority. Entropy is fallback, not a global aggressive detector. Onix runs after deterministic findings and cannot downgrade them.
+- `deep-research-report.md`;
+- `PRIVACY_POLICY.md`;
+- `README.md`;
+- `docs/NON_GOALS.md`;
+- `docs/AI_ASSIST.md`;
+- release/store documentation.
 
-## Routing Table
-| Task | Mode | Read | Tests |
-|---|---|---|---|
-| Secret not detected | FAST | `docs/codex-playbooks/detector-bug.md`, `src/shared/patterns.js`, `src/shared/detector.js`, relevant `src/shared/detection/*`, `tests/detector.test.js` | `node tests/detector.test.js` |
-| False positive | FAST | `docs/codex-playbooks/false-positive.md`, `src/shared/patterns.js`, `src/shared/detector.js`, `src/shared/aiCandidateGate.js`, relevant safe-control tests | `node tests/detector.test.js` |
-| Header/URL/raw suffix leak | FAST | `src/shared/detector.js`, `src/shared/detection/httpHeaders.js`, `src/shared/detection/urlUserinfo.js`, `src/shared/redactor.js`, `src/shared/transformOutboundPrompt.js`, `tests/break_pack.test.js` | `node tests/break_pack.test.js` |
-| Placeholder reuse/trust | FAST | `src/shared/placeholders.js`, `src/shared/knownSecretReuse.js`, `src/shared/redactor.js`, `src/shared/transformOutboundPrompt.js` | `node tests/placeholder_trust.test.js` |
-| Natural language detection | FAST | `src/shared/detector.js`, `tests/natural_language_context.test.js` | `node tests/natural_language_context.test.js` |
-| IP/network issue | FAST | `src/shared/ipClassification.js`, `src/shared/ipDetection.js`, `src/shared/networkHierarchy.js`, `src/shared/placeholderAllocator.js` | `node tests/ip_transform.test.js` |
-| Onix candidate/training/eval | STANDARD | `docs/codex-playbooks/onix-training-eval.md`, `docs/AI_ASSIST.md`, `ai/README.md`, `src/shared/aiCandidateGate.js`, `src/shared/transformOutboundPromptWithAi.js`, `ai/scripts/*` | `node tests/ai_candidate_gate.test.js && node tests/onix_dataset.test.js` |
-| Composer rewrite | STANDARD | `src/content/content.js`, `src/content/composer_helpers.js`, `src/content/input/rewriteVerificationText.js`, `src/content/composer/chatgptComposerSync.js` | `node tests/composer_helpers.test.js && node tests/typed_interception.test.js` |
-| File upload/scanner/handoff | STANDARD | `docs/codex-playbooks/file-handoff-fail-closed.md`, `docs/file-handoff-architecture.md`, `src/content/files/*`, `src/content/file_handoff_*.js`, `src/shared/fileScanner.js`, `src/shared/streamingFileRedactor.js` | `node tests/file_scanner.test.js && node tests/file_extractors.test.js && node tests/content_file_drop_interception.test.js` |
-| Debug/diagnostics | STANDARD | `docs/codex-playbooks/debug-safety.md`, `src/content/diagnostics/*`, `tests/debug_logger.test.js`, `tests/file_debug_metadata.test.js`, `tests/security.test.js` | `node tests/debug_logger.test.js && node tests/file_debug_metadata.test.js && node tests/security.test.js` |
-| Browser QA failure | STANDARD | `docs/codex-playbooks/browser-qa.md`, failing browser report/harness file, `tests/helpers/browserQaAssertions.js` | failing smoke or harness command |
-| Browser Nightly protected file-input handoff failure | STANDARD | `docs/codex-playbooks/release-build-file-input-handoff.md`, `docs/codex-playbooks/file-handoff-fail-closed.md`, `scripts/build-extension.mjs`, `src/content/files/fileInputChangeOrchestration.js`, `tests/browser/extension_qa_harness.test.mjs` | `npm run test:browser-gates` |
-| Policy/protected sites | STANDARD | `src/shared/policy.js`, `src/shared/protected_sites.js`, `src/background/protectedSiteRegistry.js`, `src/background/core.js` | `node tests/protected_sites.test.js && node tests/enterprise_policy.test.js` |
-| Runtime script order | STANDARD | `src/shared/runtime_scripts.js`, `manifests/base.json`, `manifests/firefox.json`, `src/background/service_worker.js` | `node tests/runtime_script_order.test.js && node tests/runtime_script_order_contract.test.js && node tests/build_targets.test.js && node tests/security.test.js` |
-| Build/manifest/CSP | STANDARD | `scripts/build-extension.mjs`, `scripts/build-all.mjs`, `manifests/*.json`, `src/shared/runtime_scripts.js` | `node tests/build_targets.test.js && node tests/security.test.js` |
-| Privacy/product/release claims | DEEP | `deep-research-report.md`, `PRIVACY_POLICY.md`, `README.md`, `docs/NON_GOALS.md`, relevant release/store docs | docs-only unless behavior changed; always run `npm run docs:check-links` |
+Do not load all DEEP documents when only one claim surface is involved.
+
+## Validation ladder
+
+| Change | First validation | Escalation |
+|---|---|---|
+| Agent hooks/config | hook test, memory validator, syntax | docs links if guidance changed |
+| Documentation only | `npm run docs:check-links` | DEEP claim review only for public/release/privacy text |
+| Known single module | owned focused test, `npm run test:changed` | `npm test` if shared behavior or evidence is uncertain |
+| Detector/redaction | detector or break-pack test | adversarial tests, then `npm test` for shared behavior |
+| File/composer/policy | owned tests | `npm test` when flow crosses modules or security boundaries |
+| Runtime/manifest/CSP/build | runtime-order, build-target, security guards | `npm test`, then relevant browser build/smoke |
+| Dependency or unknown code | `npm test` | build/browser gates as affected |
+| Release candidate | documented release gates on a clean worktree | browser/nightly matrix and artifact validation |
+
+`npm run test:changed` is a local selector, not a CI replacement. Full CI, browser, nightly, and release commands remain authoritative at their boundaries.
+
+## Full-suite triggers
+
+Run `npm test` when any of these apply:
+
+- behavior spans multiple owners;
+- shared security, redaction, policy, runtime loading, build, or dependency files changed;
+- a changed code path is unknown to the selector;
+- focused tests fail outside the intended assertion;
+- the task requests final or release-grade validation.
+
+Do not run full suites merely because a Markdown file, isolated hook, or known focused test changed.
+
+## Playbook routing
+
+Use `docs/codex-playbooks/INDEX.md` as the index. Read the full playbook only when the current task—not quoted background—matches its fingerprint. Verify present source/DOM evidence before applying old fixes.

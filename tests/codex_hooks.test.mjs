@@ -55,8 +55,34 @@ function testOnlyPromptRouterIsConfigured() {
   assert.doesNotMatch(serialized, /SessionStart|PostToolUse|post_tool_repro_capture|\.py/);
 }
 
+function testRootAgentGuideIsCompactAndComplete() {
+  const guide = fs.readFileSync(path.join(root, "AGENTS.md"), "utf8");
+  const requiredPatterns = [
+    /FAST/,
+    /fail closed/i,
+    /one user action/i,
+    /raw secrets/i,
+    /git status/i,
+    /user-owned changes/i,
+    /test:changed/,
+    /npm test/,
+    /clean worktree/i,
+    /main/,
+    /Summary/,
+    /Files changed/,
+    /Tests run/,
+    /Risks\/follow-up/
+  ];
+  for (const pattern of requiredPatterns) {
+    assert.match(guide, pattern, `AGENTS.md is missing ${pattern}`);
+  }
+  assert.ok(guide.length <= 4500, `AGENTS.md is ${guide.length} characters; expected at most 4500`);
+  assert.doesNotMatch(guide, /## Current Module Map/, "root guide should link to, not copy, the module map");
+}
+
 testIncidentalBackgroundTermsDoNotRoute();
 testSpecificIssueFingerprintsRoute();
 testRouterOutputStaysCompact();
 testOnlyPromptRouterIsConfigured();
+testRootAgentGuideIsCompactAndComplete();
 console.log("PASS compact Codex hook routing");

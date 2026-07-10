@@ -51,7 +51,7 @@ Regex/provider rules are first authority. Entropy is fallback. Onix handles gray
 - If touching content scripts, test textarea and contenteditable behavior.
 - If touching file handling, verify unsupported/unsafe protected flows fail closed and sanitized handoff failure blocks raw upload.
 - If touching policy, test consumer and enterprise defaults.
-- Finish with `npm test` unless the task is docs-only or the user asks for narrower validation.
+- After focused tests pass, use `npm run test:changed`; follow `docs/CODEX_CONTEXT_ROUTER.md` for full-suite escalation.
 
 ## Narrow Test Guide
 - Pattern/provider/suppression rule: `node tests/detector.test.js`
