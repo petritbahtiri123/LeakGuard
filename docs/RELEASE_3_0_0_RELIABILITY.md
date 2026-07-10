@@ -85,7 +85,10 @@ These come from source and fixture review and are not confirmed live defects:
 - Cache isolation passed the extraction-pipeline and security tests plus syntax validation; independent review approved it.
 - Per-tab serialization passed security, audit, enterprise-policy, change-aware, full-suite, and syntax validation; independent review approved it.
 - Enter replay passed fallback-key, typed-interception, submit, click-orchestration, and syntax validation; independent review approved it.
-- For this documentation record, `npm run docs:check-links`, `git diff --check`, and the staged-diff check passed.
+- The final branch `npm test` passed. Browser preflight also passed.
+- The full local Playwright gate passed with 106 scenarios and one intentionally manual `@live` WhatsApp diagnostic skipped. This covered text, paste, files, images, multi-file ordering, adapter fixtures, and fail-closed paths.
+- Chrome and Firefox builds and smoke suites passed. The isolated hot-path and file-extraction performance benchmarks stayed within budget.
+- `npm run docs:check-links`, `git diff --check`, the staged-diff checks, and final clean-worktree verification passed.
 - No authenticated live-site QA was performed or inferred by this pass.
 
 ## Rollback

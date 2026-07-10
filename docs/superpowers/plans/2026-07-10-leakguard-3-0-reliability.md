@@ -428,6 +428,8 @@ git status --short
 
 Expected: every command exits 0, no generated `dist/` or artifact files are staged, and the worktree is clean after committed source/docs changes.
 
+Execution evidence (2026-07-11): after the changes were committed, `npm run test:changed` correctly found no uncommitted files requiring selection and the full `npm test` suite passed. An initial `npm run test:e2e:text` invocation reached 82 of 84 selected scenarios before an external 10-minute shell ceiling stopped it; the broad selection was caused by the parent WhatsApp `@text` tag also matching file and image descendants. The superseding full `npm run test:e2e` completed with 106 passed and the intentionally manual `@live` diagnostic skipped, covering all text, file, image, and multi-file cases in one run. Both browser builds and smoke suites, both isolated performance benchmarks, the documentation link check, diff checks, and final clean-worktree check passed. The redundant overlapping tag-specific E2E commands were not rerun separately.
+
 - [ ] **Step 2: Review requirements and security invariants**
 
 Confirm from the final diff that:
