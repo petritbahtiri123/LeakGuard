@@ -1024,8 +1024,8 @@ function testPhase17fCiNightlyMatrixHardeningIsDocumented() {
 function testPhase17fScriptsAndWorkflowsAreTiered() {
   assert.strictEqual(
     packageJson.scripts["test:fast"],
-    "npm test && node tests/productization.test.js && node tests/security.test.js && node tests/build_targets.test.js",
-    "test:fast should own Tier A fast PR validation"
+    "npm test",
+    "test:fast should reuse the complete Tier A suite without repeating tests"
   );
   assert.strictEqual(
     packageJson.scripts["test:release-gates"],
