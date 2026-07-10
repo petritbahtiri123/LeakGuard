@@ -414,7 +414,7 @@ npm test
 npm run test:e2e:text
 npm run test:e2e:files
 npm run test:e2e:images
-npm run test:e2e -- --grep @multi-file
+npm run test:e2e -- --grep @multi
 npm run build:chrome
 npm run build:firefox
 npm run smoke:chrome
