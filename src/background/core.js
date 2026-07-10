@@ -624,6 +624,21 @@ async function getState(tabId) {
   return result[key] || null;
 }
 
+const tabStateMutationQueues = new Map();
+
+function queueTabStateMutation(tabId, mutation) {
+  const key = typeof tabId === "number" ? tabId : "unknown-tab";
+  const previous = tabStateMutationQueues.get(key) || Promise.resolve();
+  const queued = previous.catch(() => {}).then(() => mutation());
+  tabStateMutationQueues.set(key, queued);
+  void queued
+    .finally(() => {
+      if (tabStateMutationQueues.get(key) === queued) tabStateMutationQueues.delete(key);
+    })
+    .catch(() => {});
+  return queued;
+}
+
 async function getPopupState() {
   const result = await SESSION_STORAGE_AREA.get(POPUP_STATE_KEY);
   return result[POPUP_STATE_KEY] || null;
@@ -797,7 +812,7 @@ function mergeFindings(primaryFindings, fallbackFindings) {
   return merged.sort((left, right) => left.start - right.start);
 }
 
-async function redactForTab(tabId, url, text, findings, options = {}) {
+async function performRedactionForTab(tabId, url, text, findings, options = {}) {
   const policySummary = await getPolicySummary(url);
   const destinationPolicy = evaluateDestinationPolicy(policySummary, url);
 
@@ -849,6 +864,12 @@ async function redactForTab(tabId, url, text, findings, options = {}) {
     result: serializeRedactionResult(result),
     state: toPublicState(state, policySummary)
   };
+}
+
+function redactForTab(tabId, url, text, findings, options = {}) {
+  return queueTabStateMutation(tabId, () =>
+    performRedactionForTab(tabId, url, text, findings, options)
+  );
 }
 
 async function createRevealRequest(tabId, placeholder) {

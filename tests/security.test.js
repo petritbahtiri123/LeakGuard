@@ -381,6 +381,48 @@ async function testSessionStorageFallbackIsEphemeralOnly() {
   );
 }
 
+async function testBackgroundRedactionMutationsSerializePerTab() {
+  const { sandbox } = createBackgroundSecuritySandbox();
+  const events = [];
+  let releaseFirst;
+  const firstGate = new Promise((resolve) => {
+    releaseFirst = resolve;
+  });
+
+  const first = sandbox.queueTabStateMutation(11, async () => {
+    events.push("first:start");
+    await firstGate;
+    events.push("first:end");
+  });
+  const second = sandbox.queueTabStateMutation(11, async () => {
+    events.push("second:start");
+  });
+  const otherTab = sandbox.queueTabStateMutation(12, async () => {
+    events.push("other:start");
+  });
+
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.ok(events.includes("first:start"));
+  assert.ok(events.includes("other:start"), "different tabs should remain concurrent");
+  assert.strictEqual(events.includes("second:start"), false, "same-tab mutation must wait");
+
+  releaseFirst();
+  await Promise.all([first, second, otherTab]);
+  assert.ok(events.indexOf("second:start") > events.indexOf("first:end"));
+
+  await assert.rejects(
+    sandbox.queueTabStateMutation(11, async () => {
+      throw new Error("synthetic queue failure");
+    }),
+    /synthetic queue failure/
+  );
+  assert.strictEqual(await sandbox.queueTabStateMutation(11, async () => "recovered"), "recovered");
+
+  const redactSource = extractFunctionSource(backgroundSource, "redactForTab");
+  assert.ok(redactSource.includes("queueTabStateMutation"));
+}
+
 function testAuditMetadataObjectsExcludeRawSecrets() {
   const { sandbox } = createBackgroundSecuritySandbox();
   const rawSecret = "AuditBoundarySecret123!";
@@ -1425,6 +1467,7 @@ async function run() {
   testUnsafeContentRevealPathRemoved();
   testSafeRevealUiExists();
   await testSessionStorageFallbackIsEphemeralOnly();
+  await testBackgroundRedactionMutationsSerializePerTab();
   testAuditMetadataObjectsExcludeRawSecrets();
   await testSecureRevealRemainsBoundedToRequestSessionAndExtensionUi();
   testPlaceholderLabelsDoNotExposeRawValues();
