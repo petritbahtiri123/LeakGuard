@@ -97,6 +97,16 @@
     const shouldOwnWhatsAppTextSend =
       typeof options.shouldOwnWhatsAppTextSend === "function" ? options.shouldOwnWhatsAppTextSend : () => false;
 
+    function replayFallbackSend(input) {
+      const button = findSendButton(input);
+      if (!button && isWhatsAppHost()) {
+        void blockWhatsAppTextSend("replay_button_not_found");
+        return false;
+      }
+      replayVerifiedSend(input, null, button);
+      return true;
+    }
+
     async function maybeHandleFallbackSendKey(event) {
       if (
         !isExtensionRuntimeAvailable() ||
@@ -152,12 +162,7 @@
         }
 
         queueVerifiedComposerSend(input, normalized.text, "submit", () => {
-          const button = findSendButton(input);
-          if (button) {
-            replayVerifiedSend(input, null, button);
-          } else if (isWhatsAppHost()) {
-            void blockWhatsAppTextSend("replay_button_not_found");
-          }
+          replayFallbackSend(input);
         }, verifiedSendOptions);
         return;
       }
@@ -193,12 +198,7 @@
         refreshBadgeFromCurrentInput();
 
         queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
-          const button = findSendButton(input);
-          if (button) {
-            replayVerifiedSend(input, null, button);
-          } else if (isWhatsAppHost()) {
-            void blockWhatsAppTextSend("replay_button_not_found");
-          }
+          replayFallbackSend(input);
         }, verifiedSendOptions);
       });
 
@@ -228,12 +228,7 @@
         refreshBadgeFromCurrentInput();
 
         queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
-          const button = findSendButton(input);
-          if (button) {
-            replayVerifiedSend(input, null, button);
-          } else if (isWhatsAppHost()) {
-            void blockWhatsAppTextSend("replay_button_not_found");
-          }
+          replayFallbackSend(input);
         }, verifiedSendOptions);
         return;
       }
@@ -258,12 +253,7 @@
         }
 
         queueVerifiedComposerSend(input, normalized.text, "submit", () => {
-          const button = findSendButton(input);
-          if (button) {
-            replayVerifiedSend(input, null, button);
-          } else if (isWhatsAppHost()) {
-            void blockWhatsAppTextSend("replay_button_not_found");
-          }
+          replayFallbackSend(input);
         }, verifiedSendOptions);
         return;
       }
@@ -301,12 +291,7 @@
       refreshBadgeFromCurrentInput();
 
       queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
-        const button = findSendButton(input);
-        if (button) {
-          replayVerifiedSend(input, null, button);
-        } else if (isWhatsAppHost()) {
-          void blockWhatsAppTextSend("replay_button_not_found");
-        }
+        replayFallbackSend(input);
       }, verifiedSendOptions);
     }
 

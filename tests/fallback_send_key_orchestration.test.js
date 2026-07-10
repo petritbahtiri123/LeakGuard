@@ -203,10 +203,36 @@ async function testDestinationForceRedactionSkipsPromptAndAuditsReason() {
   assert.deepStrictEqual(calls.queued.map((entry) => entry.expectedText), ["secret=[PWM_1]"]);
 }
 
+async function testVerifiedEnterUsesFormFallbackWhenButtonIsMissing() {
+  const { orchestration, calls, input } = createHarness({
+    findSendButton: () => null
+  });
+
+  await orchestration.maybeHandleFallbackSendKey(createEnterEvent(input));
+
+  assert.deepStrictEqual(calls.replays, [{ target: input, form: null, sendButton: null }]);
+  assert.deepStrictEqual(calls.blocks, []);
+}
+
+async function testWhatsAppMissingReplayButtonStillBlocks() {
+  const { orchestration, calls, input } = createHarness({
+    findSendButton: () => null,
+    isWhatsAppHost: () => true,
+    shouldOwnWhatsAppTextSend: () => true
+  });
+
+  await orchestration.maybeHandleFallbackSendKey(createEnterEvent(input));
+
+  assert.deepStrictEqual(calls.replays, []);
+  assert.deepStrictEqual(calls.blocks, ["replay_button_not_found"]);
+}
+
 (async () => {
   await testShiftEnterIsIgnoredBeforeComposerLookup();
   await testWhatsAppTextExtractionFailureBlocksRawEnter();
   await testRiskyTextIsConsumedBeforeAsyncAnalysis();
   await testDestinationForceRedactionSkipsPromptAndAuditsReason();
+  await testVerifiedEnterUsesFormFallbackWhenButtonIsMissing();
+  await testWhatsAppMissingReplayButtonStillBlocks();
   console.log("PASS fallback send key orchestration");
 })();
