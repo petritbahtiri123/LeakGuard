@@ -31,9 +31,8 @@ lerna-debug.log*
 .tmp
 /test-results
 
+# Legacy local Codex captures (no longer generated)
+/docs/codex-runs/*.json
+
 # Google Drive shortcut files
 *.gdoc
-
-# Codex local reproducibility captures
-/docs/codex-runs/*.json
-!/docs/codex-runs/.gitkeep

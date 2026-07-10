@@ -1,25 +1,22 @@
 const fs = require("node:fs");
 
-const MAX_CONTEXT_CHARS = 1200;
+const MAX_CONTEXT_CHARS = 600;
 
 const ROUTES = [
   {
     name: "Allow Once popup loop",
     path: "docs/codex-playbooks/allow-once-popup-loop.md",
-    terms: ["allow once", "popup", "reopens", "loop", "suppress"],
-    specific: [],
+    required: [["allow once"], ["popup", "modal"], ["reopen", "reopens", "loop", "same finding", "suppress"]],
   },
   {
     name: "Gemini drag/drop file ingestion",
     path: "docs/codex-playbooks/gemini-drag-drop-file-ingestion.md",
-    terms: ["gemini", "drag", "drop", "file ingestion", "quill", "contenteditable"],
-    specific: [],
+    required: [["gemini"], ["drag", "drop", "file ingestion"], ["fail", "freeze", "duplicate", "duplicates", "wrong place", "miss"]],
   },
   {
     name: "Firefox Add-ons submission",
     path: "docs/codex-playbooks/firefox-addon-submission.md",
-    terms: ["firefox", "addon", "add-ons", "manifest", "source zip"],
-    specific: ["data_collection_permissions"],
+    required: [["firefox"], ["addon", "add-ons"], ["reject", "rejects", "submission", "source zip", "data_collection_permissions"]],
   },
 ];
 
@@ -48,12 +45,9 @@ function termMatches(text, term) {
   return new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(text);
 }
 
-function routeScore(text, route) {
-  const matches = route.terms.filter((term) => termMatches(text, term));
-  const specific = route.specific.filter((term) => text.includes(term));
-  if (specific.length > 0) return [100 + matches.length, matches.concat(specific)];
-  if (matches.length >= 2) return [matches.length, matches];
-  return [0, matches];
+function routeMatch(text, route) {
+  const matches = route.required.map((group) => group.find((term) => termMatches(text, term)));
+  return matches.every(Boolean) ? matches : null;
 }
 
 function main() {
@@ -66,34 +60,25 @@ function main() {
       return;
     }
 
-    const candidates = [];
     for (const route of ROUTES) {
-      const [score, matches] = routeScore(prompt, route);
-      if (score) candidates.push({ score, route, matches });
-    }
-    if (candidates.length === 0) {
-      process.stdout.write(JSON.stringify({ continue: true }));
-      return;
-    }
-
-    candidates.sort((a, b) => b.score - a.score);
-    const lines = candidates.slice(0, 3).map(({ route, matches }) =>
-      [
+      const matches = routeMatch(prompt, route);
+      if (!matches) continue;
+      const context = [
         "Reusable playbook candidate detected.",
-        `Read ${route.path} before proposing a new fix.`,
-        "Use it as prior art, but verify current evidence.",
-        `Reason: matched ${route.name} keywords (${matches.slice(0, 5).join(", ")}).`,
-      ].join(" ")
-    );
-    process.stdout.write(
-      JSON.stringify({
+        `Read ${route.path} before proposing a fix.`,
+        "Verify current evidence first.",
+        `Matched fingerprint: ${matches.join(", ")}.`,
+      ].join(" ");
+      process.stdout.write(JSON.stringify({
         continue: true,
         hookSpecificOutput: {
           hookEventName: "UserPromptSubmit",
-          additionalContext: cap(lines.join("\n"), MAX_CONTEXT_CHARS),
+          additionalContext: cap(context, MAX_CONTEXT_CHARS),
         },
-      })
-    );
+      }));
+      return;
+    }
+    process.stdout.write(JSON.stringify({ continue: true }));
   } catch (error) {
     process.stdout.write(
       JSON.stringify({

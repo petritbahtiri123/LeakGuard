@@ -1,18 +1,5 @@
 {
   "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "startup|resume",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node -e \"const cp=require('node:child_process'),p=require('node:path');let r=process.cwd();try{const o=cp.execFileSync('git',['rev-parse','--show-toplevel'],{encoding:'utf8',stdio:['ignore','pipe','ignore']}).trim();if(o)r=o}catch{};require(p.join(r,'.codex/hooks/session_start_playbook_index.cjs'))\"",
-            "timeout": 10,
-            "statusMessage": "Loading compact LeakGuard playbook index"
-          }
-        ]
-      }
-    ],
     "UserPromptSubmit": [
       {
         "hooks": [
@@ -21,19 +8,6 @@
             "command": "node -e \"const cp=require('node:child_process'),p=require('node:path');let r=process.cwd();try{const o=cp.execFileSync('git',['rev-parse','--show-toplevel'],{encoding:'utf8',stdio:['ignore','pipe','ignore']}).trim();if(o)r=o}catch{};require(p.join(r,'.codex/hooks/user_prompt_playbook_router.cjs'))\"",
             "timeout": 10,
             "statusMessage": "Checking reusable LeakGuard playbooks"
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Bash|apply_patch",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node -e \"const cp=require('node:child_process'),p=require('node:path');let r=process.cwd();try{const o=cp.execFileSync('git',['rev-parse','--show-toplevel'],{encoding:'utf8',stdio:['ignore','pipe','ignore']}).trim();if(o)r=o}catch{};require(p.join(r,'.codex/hooks/post_tool_repro_capture.cjs'))\"",
-            "timeout": 10,
-            "statusMessage": "Capturing reproducibility metadata"
           }
         ]
       }
