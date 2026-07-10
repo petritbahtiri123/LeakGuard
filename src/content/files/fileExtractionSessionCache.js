@@ -20,6 +20,17 @@
     "arraybuffer"
   ]);
   const cache = new Map();
+  let fileIdentityTokens = new WeakMap();
+
+  function getFileIdentityToken(file, create = false) {
+    if (!file || (typeof file !== "object" && typeof file !== "function")) return null;
+    let token = fileIdentityTokens.get(file) || null;
+    if (!token && create) {
+      token = Object.freeze({});
+      fileIdentityTokens.set(file, token);
+    }
+    return token;
+  }
 
   function nowMs() {
     return Date.now();
@@ -147,7 +158,7 @@
   }
 
   function get(file) {
-    const key = getFileSignature(file);
+    const key = getFileIdentityToken(file);
     if (!key) return null;
     const time = nowMs();
     pruneExpired(time);
@@ -161,14 +172,14 @@
 
   function set(file, result, options = {}) {
     if (!canStoreResult(result)) return false;
-    const key = getFileSignature(file);
+    const key = getFileIdentityToken(file, true);
     if (!key) return false;
     pruneExpired();
     cache.set(key, {
       expiresAt: nowMs() + Math.max(1, Number(options.ttlMs || DEFAULT_TTL_MS)),
       value: cloneSafeValue(result),
       meta: {
-        key,
+        key: getFileSignature(file),
         status: result.status,
         outputKind: result.outputKind,
         extractedKind: result.extractedKind,
@@ -181,6 +192,7 @@
 
   function clear() {
     cache.clear();
+    fileIdentityTokens = new WeakMap();
   }
 
   function debugSnapshot() {

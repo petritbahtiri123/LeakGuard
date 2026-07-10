@@ -1394,6 +1394,36 @@ async function testSameFileSignatureReusesSafeCachedResult() {
   assert.strictEqual(JSON.stringify(ExtractionCache.debugSnapshot()).includes(RAW_SECRET), false);
 }
 
+async function testDistinctFilesWithIdenticalMetadataDoNotShareCachedContent() {
+  ExtractionCache.clear();
+  const secondSecret = RAW_SECRET.replace("ContentPipelineSecret", "ContentPipelineSecond");
+  const firstFile = new TestFile([makePdf(`alpha-marker ${RAW_SECRET}`)], "collision.pdf", {
+    type: "application/pdf",
+    lastModified: 777
+  });
+  const secondFile = new TestFile([makePdf(`bravo-marker ${secondSecret}`)], "collision.pdf", {
+    type: "application/pdf",
+    lastModified: 777
+  });
+
+  assert.strictEqual(firstFile.size, secondFile.size, "fixture metadata must collide exactly");
+  assert.strictEqual(
+    ExtractionCache.getFileSignature(firstFile),
+    ExtractionCache.getFileSignature(secondFile),
+    "metadata signature must reproduce the old collision"
+  );
+
+  const first = await processFileForAdapterHandoff({ file: firstFile, context: "drop" });
+  const second = await processFileForAdapterHandoff({ file: secondFile, context: "drop" });
+
+  assert.strictEqual(first.metadata.cache.status, "miss");
+  assert.strictEqual(second.metadata.cache.status, "miss");
+  assert.ok(first.sanitizedText.includes("alpha-marker"));
+  assert.ok(second.sanitizedText.includes("bravo-marker"));
+  assert.strictEqual(second.sanitizedText.includes("alpha-marker"), false);
+  assert.strictEqual(second.sanitizedText.includes(secondSecret), false);
+}
+
 async function testChangedSignatureCausesCacheMiss() {
   ExtractionCache.clear();
   const firstFile = new TestFile([makePdf(`token ${RAW_SECRET}`)], "same.pdf", {
@@ -1648,6 +1678,7 @@ async function run() {
   await testMacroAndLegacyFormatsStayUnsupported();
   await testDebugMetadataExcludesRawExtractedText();
   await testSameFileSignatureReusesSafeCachedResult();
+  await testDistinctFilesWithIdenticalMetadataDoNotShareCachedContent();
   await testChangedSignatureCausesCacheMiss();
   await testRawFilenameAndExtractedTextAreNotStoredInCache();
   await testBlockedOrUnsupportedFilesAreNotCached();
