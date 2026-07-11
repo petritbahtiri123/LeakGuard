@@ -37,7 +37,8 @@ async function expectSanitizedTextUpload(page, file) {
 
 test.describe("@files protected file upload contract", () => {
   test("TXT, ENV, JSON, LOG, and MD uploads redact before host delivery", async ({ extensionApp }) => {
-    test.setTimeout(180000);
+    // Thirteen sequential local-sanitization fixtures can exceed three minutes on loaded runners.
+    test.setTimeout(300000);
     for (const file of textFileFixtures) {
       const page = await extensionApp.openProtectedFixture("textarea");
       await expectSanitizedTextUpload(page, file);

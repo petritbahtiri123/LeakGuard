@@ -56,6 +56,43 @@ test.describe("@files @multi protected multi-file contract", () => {
     }
   });
 
+  test("same-name files keep distinct sanitized content and placeholder state", async ({ extensionApp }) => {
+    const page = await extensionApp.openProtectedFixture("textarea");
+    const fixtures = [
+      {
+        marker: "alpha-safe-marker",
+        secret: "LGQA_COLLISION_ALPHA_FakePassword123456789!"
+      },
+      {
+        marker: "bravo-safe-marker",
+        secret: "LGQA_COLLISION_BRAVO_FakePassword123456789!"
+      }
+    ].map(({ marker, secret }) => ({
+      name: "collision.env",
+      mimeType: "text/plain",
+      text: `MARKER=${marker}\nPASSWORD=${secret}\n`,
+      marker,
+      secret
+    }));
+
+    expect(fixtures[0].text.length, "collision fixtures must have identical sizes").toBe(fixtures[1].text.length);
+    await uploadFile(page, fixtures);
+
+    await waitForFileEventCount(page, 2);
+    const events = await getFileEvents(page);
+    expect(events.map((event) => event.name)).toEqual(["file-1.env", "file-2.env"]);
+    const placeholders = [];
+    for (const [index, fixture] of fixtures.entries()) {
+      expect(events[index].text).toContain(fixture.marker);
+      expect(events[index].text).not.toContain(fixture.secret);
+      const placeholder = events[index].text.match(/\[PWM_\d+\]/)?.[0] || "";
+      expect(placeholder, `file ${index + 1} should retain its own placeholder`).toMatch(/^\[PWM_\d+\]$/);
+      placeholders.push(placeholder);
+      await expectNoRawSecretVisible(page, fixture.secret);
+    }
+    expect(new Set(placeholders).size, "same-tab redactions must not overwrite placeholder state").toBe(2);
+  });
+
   test("one failed file blocks or fails closed without raw fallback", async ({ extensionApp }) => {
     const page = await extensionApp.openProtectedFixture("textarea");
     const [supported] = multiFileFixtureSet(1);

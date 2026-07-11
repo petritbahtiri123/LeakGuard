@@ -595,7 +595,7 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
   );
   assert.ok(
     fileHandoffFlowSource.includes("function handOffSanitizedLocalFile") &&
-      sanitizedFileHandoffSource.includes("fileInput.files = transfer.files") &&
+      sanitizedFileHandoffSource.includes("fileInput.files = transferFileList") &&
       sanitizedFileHandoffSource.includes("function handOffSanitizedFileInput") &&
       fileHandoffFlowSource.includes("resolveFileInputForHandoff(event, input)") &&
       contentSource.includes("isGeminiHost()") &&
@@ -2804,6 +2804,207 @@ function testTypedDebugDiagnosticsSummarizeOnly() {
   assert.strictEqual(snapshot.innerText.length, rawSecret.length);
 }
 
+function testVerifiedSendRouteCarryIntentWaitsForBackgroundConsumption() {
+  assert.ok(
+    contentSource.includes("function markVerifiedSendRouteCarryIntent") &&
+      contentSource.includes("function hasVerifiedSendRouteCarryIntent") &&
+      contentSource.includes("function clearVerifiedSendRouteCarryIntent"),
+    "content runtime should expose a bounded acknowledged route carry intent"
+  );
+
+  const markSource = extractFunctionSource(contentSource, "markVerifiedSendRouteCarryIntent");
+  const hasSource = extractFunctionSource(contentSource, "hasVerifiedSendRouteCarryIntent");
+  const clearSource = extractFunctionSource(contentSource, "clearVerifiedSendRouteCarryIntent");
+  const queueSource = extractFunctionSource(contentSource, "queueVerifiedComposerSend");
+  const initStateSource = extractFunctionSource(contentSource, "initState");
+  let now = 1000;
+  const intent = new Function(
+    "Date",
+    "VERIFIED_SEND_ROUTE_CARRY_MS",
+    [
+      "let verifiedSendRouteCarryUntil = 0;",
+      "let verifiedSendRouteCarryGeneration = 0;",
+      markSource,
+      hasSource,
+      clearSource,
+      "return { markVerifiedSendRouteCarryIntent, hasVerifiedSendRouteCarryIntent, clearVerifiedSendRouteCarryIntent };"
+    ].join("\n")
+  )({ now: () => now }, 5000);
+
+  intent.markVerifiedSendRouteCarryIntent();
+  assert.strictEqual(intent.hasVerifiedSendRouteCarryIntent(), true, "fresh verified-send intent should be offered");
+  assert.strictEqual(intent.hasVerifiedSendRouteCarryIntent(), true, "query-only initialization must not consume intent");
+  intent.clearVerifiedSendRouteCarryIntent();
+  assert.strictEqual(intent.hasVerifiedSendRouteCarryIntent(), false, "background consumption should clear intent");
+
+  intent.markVerifiedSendRouteCarryIntent();
+  now += 5001;
+  assert.strictEqual(intent.hasVerifiedSendRouteCarryIntent(), false, "expired route carry intent must fail closed");
+
+  assert.ok(
+    queueSource.indexOf("markVerifiedSendRouteCarryIntent();") < queueSource.indexOf("send();"),
+    "verified send should mark route carry only immediately before the single replay"
+  );
+  assert.ok(
+    initStateSource.includes("const allowVerifiedSendRouteCarry = hasVerifiedSendRouteCarryIntent();") &&
+      initStateSource.includes("const routeCarryGeneration = allowVerifiedSendRouteCarry") &&
+      initStateSource.includes("response?.routeCarryConsumed") &&
+      initStateSource.includes("clearVerifiedSendRouteCarryIntent(routeCarryGeneration);"),
+    "route initialization should clear intent only after background consumption"
+  );
+  assert.ok(
+    queueSource.includes("sendResult === false") &&
+      queueSource.includes("clearVerifiedSendRouteCarryIntent(routeCarryGeneration);") &&
+      queueSource.includes("throw error;"),
+    "a failed or no-op verified send should clear only its own pending route intent"
+  );
+}
+
+async function testVerifiedSendRouteCarryRejectsNoOpAndStaleAcknowledgement() {
+  const markSource = extractFunctionSource(contentSource, "markVerifiedSendRouteCarryIntent");
+  const hasSource = extractFunctionSource(contentSource, "hasVerifiedSendRouteCarryIntent");
+  const clearSource = extractFunctionSource(contentSource, "clearVerifiedSendRouteCarryIntent");
+  const initStateSource = extractFunctionSource(contentSource, "initState");
+  const queueSource = extractFunctionSource(contentSource, "queueVerifiedComposerSend");
+  const submitComposerSource = extractFunctionSource(contentSource, "submitComposer");
+  const replayVerifiedSendSource = extractFunctionSource(contentSource, "replayVerifiedSend");
+  const replayFallbackSendMatch = fallbackSendKeySource.match(
+    /    function replayFallbackSend\([^)]*\) \{[\s\S]*?\n    \}/
+  );
+  assert.ok(replayFallbackSendMatch, "expected to find nested replayFallbackSend function");
+  const replayFallbackSendSource = replayFallbackSendMatch[0];
+
+  const clearedGenerations = [];
+  const queuedSend = new Function(
+    "ensureExactComposerState",
+    "clearFallbackSendKeyRedactionPending",
+    "markVerifiedSendRouteCarryIntent",
+    "clearVerifiedSendRouteCarryIntent",
+    "showRewriteFailure",
+    "collectFailureDetails",
+    "getInputText",
+    "refreshBadgeFromCurrentInput",
+    "handleContentError",
+    `${queueSource}; return queueVerifiedComposerSend;`
+  )(
+    async () => true,
+    () => {},
+    () => 41,
+    (generation) => clearedGenerations.push(generation),
+    async () => {},
+    () => ({}),
+    () => "[PWM_1]",
+    () => {},
+    (error) => {
+      throw error;
+    }
+  );
+
+  queuedSend({}, "[PWM_1]", "submit", () => false);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepStrictEqual(
+    clearedGenerations,
+    [41],
+    "a verified replay that reports no send must revoke its route-carry authorization"
+  );
+
+  const submitComposer = new Function(
+    "clearAllRiskSessionState",
+    "isPreferredSubmitterForForm",
+    "clickSendButtonWithBypass",
+    "findSendButton",
+    "isVisible",
+    `${submitComposerSource}; return submitComposer;`
+  )(() => {}, () => false, () => false, () => null, () => false);
+  assert.strictEqual(
+    submitComposer(null, null),
+    false,
+    "submit replay must explicitly report when neither a live form nor send button exists"
+  );
+
+  const replayVerifiedSend = new Function(
+    "submitComposer",
+    `${replayVerifiedSendSource}; return replayVerifiedSend;`
+  )(() => false);
+  assert.strictEqual(
+    replayVerifiedSend({ closest: () => null }),
+    false,
+    "verified replay must propagate a submit no-op"
+  );
+
+  const replayFallbackSend = new Function(
+    "findSendButton",
+    "isWhatsAppHost",
+    "blockWhatsAppTextSend",
+    "replayVerifiedSend",
+    `${replayFallbackSendSource}; return replayFallbackSend;`
+  )(() => ({}), () => false, async () => {}, () => false);
+  assert.strictEqual(
+    replayFallbackSend({}),
+    false,
+    "fallback replay must propagate the verified-send result"
+  );
+
+  const submitQueueCalls = submitOrchestrationSource.match(/queueVerifiedComposerSend\(/g) || [];
+  const submitResultCallbacks = submitOrchestrationSource.match(/\(\) => replayVerifiedSend\(/g) || [];
+  assert.strictEqual(
+    submitResultCallbacks.length,
+    submitQueueCalls.length,
+    "every submit replay callback must return its verified-send result"
+  );
+
+  const fallbackQueueCalls = fallbackSendKeySource.match(/queueVerifiedComposerSend\(/g) || [];
+  const fallbackResultCallbacks = fallbackSendKeySource.match(/\(\) => replayFallbackSend\(/g) || [];
+  assert.strictEqual(
+    fallbackResultCallbacks.length,
+    fallbackQueueCalls.length,
+    "every fallback replay callback must return its verified-send result"
+  );
+
+  let now = 10_000;
+  let resolveFirstInit;
+  const intent = new Function(
+    "Date",
+    "VERIFIED_SEND_ROUTE_CARRY_MS",
+    "sendRuntimeMessage",
+    "location",
+    "applyPublicState",
+    [
+      "let verifiedSendRouteCarryUntil = 0;",
+      "let verifiedSendRouteCarryGeneration = 0;",
+      markSource,
+      hasSource,
+      clearSource,
+      initStateSource,
+      "return { markVerifiedSendRouteCarryIntent, hasVerifiedSendRouteCarryIntent, clearVerifiedSendRouteCarryIntent, initState };"
+    ].join("\n")
+  )(
+    { now: () => now },
+    5000,
+    () => new Promise((resolve) => {
+      resolveFirstInit = resolve;
+    }),
+    { href: "https://gemini.google.com/app" },
+    () => {}
+  );
+
+  const firstGeneration = intent.markVerifiedSendRouteCarryIntent();
+  const pendingInit = intent.initState();
+  await Promise.resolve();
+  const secondGeneration = intent.markVerifiedSendRouteCarryIntent();
+  resolveFirstInit({ ok: true, routeCarryConsumed: true, state: {} });
+  await pendingInit;
+
+  assert.ok(secondGeneration > firstGeneration, "each verified send should create a newer intent generation");
+  assert.strictEqual(
+    intent.hasVerifiedSendRouteCarryIntent(),
+    true,
+    "an older init acknowledgement must not clear a newer verified-send intent"
+  );
+  intent.clearVerifiedSendRouteCarryIntent(secondGeneration);
+  assert.strictEqual(intent.hasVerifiedSendRouteCarryIntent(), false);
+}
+
 function run() {
   testBeforeInputGuardStaysConservative();
   testTypedAssignmentSecretIsCaughtBeforeCommit();
@@ -2828,6 +3029,7 @@ function run() {
   testPerplexityStyleRewriteVerificationToleratesWhitespaceNormalization();
   testWhatsAppParagraphComposerSerializationAvoidsInnerTextBlankLineInflation();
   testTypedDebugDiagnosticsSummarizeOnly();
+  testVerifiedSendRouteCarryIntentWaitsForBackgroundConsumption();
   return Promise.resolve()
     .then(() => testGenericRewriteVerificationSafeCases())
     .then(() => testMultilineCollapseRetryAndFailures())
@@ -2853,6 +3055,7 @@ function run() {
     .then(() => testSubmitTransactionalHelperFailsClosedOnRawRestore())
     .then(() => testWhatsAppExactComposerStateAcceptsSafeMultilinePlaceholderLayout())
     .then(() => testStaleTypedRewriteFailureKeepsSanitizedEditorUsable())
+    .then(() => testVerifiedSendRouteCarryRejectsNoOpAndStaleAcknowledgement())
     .then(() => {
       console.log("PASS typed beforeinput interception regressions");
     });

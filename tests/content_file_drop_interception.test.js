@@ -3416,7 +3416,22 @@ async function testGrokMultiFilePasteKeepsDirectFirstHandoff() {
   const transfer = createDataTransfer({ files });
   const { maybeHandlePaste, calls } = createHarness({
     location: { hostname: "grok.com" },
-    findComposer: () => target
+    findComposer: () => target,
+    readLocalTextFileFromDataTransfer: async (fileTransfer) => {
+      calls.reads.push(fileTransfer);
+      const file = fileTransfer.files[0];
+      return {
+        handled: true,
+        ok: true,
+        text: `API_KEY=LeakGuardPasteApiKey1234567890\nfile=${file.name}`,
+        file: { name: file.name, type: file.type, sizeBytes: file.size }
+      };
+    },
+    createSanitizedTextFile: (file, text) => {
+      const sanitizedFile = { name: file.name, type: file.type, size: text.length, text };
+      calls.createdFiles.push({ file, text, sanitizedFile });
+      return sanitizedFile;
+    }
   });
   const { event } = createClipboardEvent({
     target,

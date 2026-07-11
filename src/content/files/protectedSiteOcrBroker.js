@@ -58,6 +58,16 @@
     return null;
   }
 
+  function discardBrokerFrame(frame, ready) {
+    if (iframe !== frame || iframeReady !== ready) return false;
+    if (frame?.parentNode) {
+      frame.parentNode.removeChild(frame);
+    }
+    iframe = null;
+    iframeReady = null;
+    return true;
+  }
+
   function settle(requestId, result, isError = false) {
     const entry = pending.get(requestId);
     if (!entry) return;
@@ -137,16 +147,24 @@
           );
         })
         .catch((error) => {
-          settle(requestId, failureResult(error?.message || "protected_site_ocr_broker_load_failed"));
+          const reason = error?.message || "protected_site_ocr_broker_load_failed";
+          if (reason === "protected_site_ocr_broker_load_timeout") {
+            discardBrokerFrame(broker.frame, broker.ready);
+          }
+          settle(requestId, failureResult(reason));
         });
     });
   }
 
-  function prepare(payload = {}) {
+  async function prepare(payload = {}) {
     const timeoutMs = Number(payload.timeoutMs || 0);
     const message = { prepare: true };
     if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
       message.timeoutMs = timeoutMs;
+    }
+    const firstResult = await sendBrokerRequest(message, payload);
+    if (firstResult?.reason !== "protected_site_ocr_broker_load_timeout") {
+      return firstResult;
     }
     return sendBrokerRequest(message, payload);
   }

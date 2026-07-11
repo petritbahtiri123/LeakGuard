@@ -90,7 +90,7 @@
     const refreshBadgeFromCurrentInput =
       typeof options.refreshBadgeFromCurrentInput === "function" ? options.refreshBadgeFromCurrentInput : () => {};
     const replayVerifiedSend =
-      typeof options.replayVerifiedSend === "function" ? options.replayVerifiedSend : () => {};
+      typeof options.replayVerifiedSend === "function" ? options.replayVerifiedSend : () => false;
     const requestRedaction =
       typeof options.requestRedaction === "function"
         ? options.requestRedaction
@@ -200,9 +200,9 @@
           return;
         }
 
-        queueVerifiedComposerSend(input, normalized.text, "submit", () => {
-          replayVerifiedSend(input, form, submitter, replayOptions);
-        }, verifiedSendOptions);
+        queueVerifiedComposerSend(input, normalized.text, "submit",
+          () => replayVerifiedSend(input, form, submitter, replayOptions),
+          verifiedSendOptions);
         return;
       }
 
@@ -234,9 +234,9 @@
         hideBadgeSoon();
         refreshBadgeFromCurrentInput();
 
-        queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
-          replayVerifiedSend(input, form, submitter, replayOptions);
-        }, verifiedSendOptions);
+        queueVerifiedComposerSend(input, result.redactedText, "submit",
+          () => replayVerifiedSend(input, form, submitter, replayOptions),
+          verifiedSendOptions);
       });
 
       if (httpPolicyHandled) {
@@ -263,9 +263,9 @@
         hideBadgeSoon();
         refreshBadgeFromCurrentInput();
 
-        queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
-          replayVerifiedSend(input, form, submitter, replayOptions);
-        }, verifiedSendOptions);
+        queueVerifiedComposerSend(input, result.redactedText, "submit",
+          () => replayVerifiedSend(input, form, submitter, replayOptions),
+          verifiedSendOptions);
         return;
       }
 
@@ -296,9 +296,9 @@
           return;
         }
 
-        queueVerifiedComposerSend(input, normalized.text, "submit", () => {
-          replayVerifiedSend(input, form, submitter, replayOptions);
-        }, verifiedSendOptions);
+        queueVerifiedComposerSend(input, normalized.text, "submit",
+          () => replayVerifiedSend(input, form, submitter, replayOptions),
+          verifiedSendOptions);
         return;
       }
 
@@ -332,9 +332,9 @@
       hideBadgeSoon();
       refreshBadgeFromCurrentInput();
 
-      queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
-        replayVerifiedSend(input, form, submitter, replayOptions);
-      }, verifiedSendOptions);
+      queueVerifiedComposerSend(input, result.redactedText, "submit",
+        () => replayVerifiedSend(input, form, submitter, replayOptions),
+        verifiedSendOptions);
     }
 
     return Object.freeze({

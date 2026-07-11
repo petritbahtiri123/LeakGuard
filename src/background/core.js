@@ -133,10 +133,57 @@ function revealKey(requestId) {
 function urlKeyFrom(url) {
   try {
     const parsed = new URL(url);
-    return `${parsed.origin}${parsed.pathname}`;
+    const pathname =
+      (parsed.origin === "https://gemini.google.com" || parsed.origin === "https://grok.com") &&
+      parsed.pathname.length > 1
+        ? parsed.pathname.replace(/\/+$/, "")
+        : parsed.pathname;
+    return `${parsed.origin}${pathname}`;
   } catch {
     return String(url || "");
   }
+}
+
+function resolveTabStateUrl(message, sender) {
+  if (Number(sender?.frameId) > 0) {
+    return String(sender?.tab?.url || message?.url || "");
+  }
+  return String(message?.url || sender?.tab?.url || "");
+}
+
+function isVerifiedSendConversationRouteTransition(currentUrlKey, nextUrlKey) {
+  try {
+    const current = new URL(currentUrlKey);
+    const next = new URL(nextUrlKey);
+    if (current.origin !== next.origin) return false;
+
+    if (current.origin === "https://gemini.google.com") {
+      return current.pathname === "/app" && /^\/app\/[a-f0-9]{16}$/i.test(next.pathname);
+    }
+
+    if (current.origin === "https://grok.com") {
+      return (
+        current.pathname === "/" &&
+        /^\/c\/[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(
+          next.pathname
+        )
+      );
+    }
+  } catch {
+    return false;
+  }
+
+  return false;
+}
+
+function shouldCarryVerifiedSendRouteState(state, nextUrlKey, options = {}) {
+  if (options.allowVerifiedSendRouteCarry !== true) return false;
+  const hasPlaceholders =
+    Object.keys(state?.placeholderToFingerprint || {}).length > 0 ||
+    Object.keys(state?.fingerprintToPlaceholder || {}).length > 0;
+  return Boolean(
+    hasPlaceholders && isVerifiedSendConversationRouteTransition(state?.urlKey || "", nextUrlKey)
+  );
 }
 
 function newState(urlKey) {
@@ -739,7 +786,7 @@ async function removeRevealRequestsForTab(tabId) {
   }
 }
 
-async function initState(tabId, url) {
+async function performInitState(tabId, url, options = {}) {
   if (typeof tabId !== "number") return null;
 
   const nextUrlKey = urlKeyFrom(url);
@@ -759,6 +806,21 @@ async function initState(tabId, url) {
   state = migrateSessionState(state, nextUrlKey);
 
   if (state.urlKey !== nextUrlKey) {
+    if (options.allowRouteMutation === false) {
+      return state;
+    }
+
+    const routeCarryAccepted = shouldCarryVerifiedSendRouteState(state, nextUrlKey, options);
+    if (options.allowVerifiedSendRouteCarry === true) {
+      options.onVerifiedSendRouteCarryConsumed?.(routeCarryAccepted);
+    }
+
+    if (routeCarryAccepted) {
+      return setState(tabId, {
+        ...state,
+        urlKey: nextUrlKey
+      });
+    }
     state = newState(nextUrlKey);
     await setState(tabId, state);
     await removeRevealRequestsForTab(tabId);
@@ -767,6 +829,10 @@ async function initState(tabId, url) {
 
   await setState(tabId, state);
   return state;
+}
+
+function initState(tabId, url, options = {}) {
+  return queueTabStateMutation(tabId, () => performInitState(tabId, url, options));
 }
 
 function serializeRedactionResult(result) {
@@ -827,7 +893,7 @@ async function performRedactionForTab(tabId, url, text, findings, options = {}) 
     throw createPolicyDecisionError(destinationPolicy);
   }
 
-  const current = await initState(tabId, url);
+  const current = await performInitState(tabId, url);
   const manager = new PlaceholderManager();
   manager.setPrivateState(current || {});
 
@@ -1017,10 +1083,26 @@ ext.storage?.onChanged?.addListener((changes, areaName) => {
 ext.runtime?.onMessage?.addListener((message, sender, sendResponse) => {
   (async () => {
     const tabId = sender?.tab?.id;
+    const tabUrl = resolveTabStateUrl(message, sender);
 
     if (message?.type === "PWM_INIT_TAB") {
-      const state = await initState(tabId, message.url);
-      sendResponse({ ok: true, state: toPublicState(state, await getPolicySummary(message.url)) });
+      let routeCarryConsumed = false;
+      let routeCarryAccepted = false;
+      const state = await initState(tabId, tabUrl, {
+        allowRouteMutation: sender?.frameId === 0,
+        allowVerifiedSendRouteCarry:
+          sender?.frameId === 0 && message.allowVerifiedSendRouteCarry === true,
+        onVerifiedSendRouteCarryConsumed(accepted) {
+          routeCarryConsumed = true;
+          routeCarryAccepted = accepted === true;
+        }
+      });
+      sendResponse({
+        ok: true,
+        routeCarryConsumed,
+        routeCarryAccepted,
+        state: toPublicState(state, await getPolicySummary(tabUrl))
+      });
       return;
     }
 
@@ -1028,32 +1110,32 @@ ext.runtime?.onMessage?.addListener((message, sender, sendResponse) => {
       const state = await getState(tabId);
       sendResponse({
         ok: true,
-        state: toPublicState(state, await getPolicySummary(message.url || sender?.tab?.url || ""))
+        state: toPublicState(state, await getPolicySummary(tabUrl))
       });
       return;
     }
 
     if (message?.type === "PWM_RESET_TAB") {
-      const state = await setState(tabId, newState(urlKeyFrom(message.url)));
+      const state = await setState(tabId, newState(urlKeyFrom(tabUrl)));
       await removeRevealRequestsForTab(tabId);
-      sendResponse({ ok: true, state: toPublicState(state, await getPolicySummary(message.url)) });
+      sendResponse({ ok: true, state: toPublicState(state, await getPolicySummary(tabUrl)) });
       return;
     }
 
     if (message?.type === "PWM_SET_TRANSFORM_MODE") {
-      const current = (await getState(tabId)) || newState(urlKeyFrom(message.url));
+      const current = (await getState(tabId)) || newState(urlKeyFrom(tabUrl));
       const nextState = await setState(tabId, {
-        ...migrateSessionState(current, urlKeyFrom(message.url)),
+        ...migrateSessionState(current, urlKeyFrom(tabUrl)),
         transformMode: normalizeTransformMode(message.transformMode)
       });
-      sendResponse({ ok: true, state: toPublicState(nextState, await getPolicySummary(message.url)) });
+      sendResponse({ ok: true, state: toPublicState(nextState, await getPolicySummary(tabUrl)) });
       return;
     }
 
     if (message?.type === "PWM_SET_PROTECTION_PAUSED") {
       const state = await setProtectionPaused(
         message.tabId ?? tabId,
-        message.url || sender?.tab?.url || "",
+        tabUrl,
         Boolean(message.paused),
         message.durationMinutes
       );
@@ -1062,7 +1144,7 @@ ext.runtime?.onMessage?.addListener((message, sender, sendResponse) => {
     }
 
     if (message?.type === "PWM_REDACT_TEXT") {
-      const payload = await redactForTab(tabId, message.url, message.text, message.findings, {
+      const payload = await redactForTab(tabId, tabUrl, message.text, message.findings, {
         auditReason: message.auditReason,
         skipBackgroundScan: Boolean(message.skipBackgroundScan)
       });

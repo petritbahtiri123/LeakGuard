@@ -185,6 +185,7 @@ function createBackgroundSecuritySandbox({ allowReveal = true, auditMode = "meta
   const storageState = {};
   const storageArea = createStorageArea(storageState);
   const noopEvent = { addListener() {} };
+  let runtimeMessageListener = null;
   const ext = {
     action: {},
     permissions: {
@@ -197,7 +198,11 @@ function createBackgroundSecuritySandbox({ allowReveal = true, auditMode = "meta
       id: "security-test-extension",
       getURL: (relativePath = "") => `chrome-extension://security-test/${relativePath}`,
       onInstalled: noopEvent,
-      onMessage: noopEvent,
+      onMessage: {
+        addListener(listener) {
+          runtimeMessageListener = listener;
+        }
+      },
       onStartup: noopEvent,
       openOptionsPage: async () => {}
     },
@@ -274,7 +279,14 @@ function createBackgroundSecuritySandbox({ allowReveal = true, auditMode = "meta
     filename: "core.js"
   });
 
-  return { sandbox, storageState };
+  function dispatchRuntimeMessage(message, sender) {
+    assert.strictEqual(typeof runtimeMessageListener, "function", "background should register a message listener");
+    return new Promise((resolve) => {
+      runtimeMessageListener(message, sender, resolve);
+    });
+  }
+
+  return { sandbox, storageState, dispatchRuntimeMessage };
 }
 
 function testUnsafeContentRevealPathRemoved() {
@@ -423,6 +435,254 @@ async function testBackgroundRedactionMutationsSerializePerTab() {
   assert.ok(redactSource.includes("queueTabStateMutation"));
 }
 
+function testTabStateInitializationUsesMutationQueue() {
+  const initSource = extractFunctionSource(backgroundSource, "initState");
+  const redactionSource = extractFunctionSource(backgroundSource, "performRedactionForTab");
+  assert.ok(initSource.includes("queueTabStateMutation"), "route initialization must serialize with tab redactions");
+  assert.ok(
+    redactionSource.includes("performInitState"),
+    "redaction already inside the tab queue should call the non-queuing initialization primitive"
+  );
+}
+
+async function seedSyntheticPlaceholderState(sandbox, tabId, url, rawValue) {
+  const initial = await sandbox.initState(tabId, url);
+  const manager = new PlaceholderManager();
+  manager.setPrivateState(initial);
+  const placeholder = manager.getPlaceholder(rawValue);
+  const state = await sandbox.setState(tabId, {
+    ...initial,
+    ...manager.exportPrivateState()
+  });
+  return { placeholder, state };
+}
+
+async function testVerifiedFirstSendRouteCarryPreservesPlaceholderSession() {
+  const routeCases = [
+    {
+      label: "Gemini",
+      landingUrl: "https://gemini.google.com/app",
+      conversationUrl: "https://gemini.google.com/app/0123456789abcdef",
+      nextConversationUrl: "https://gemini.google.com/app/fedcba9876543210"
+    },
+    {
+      label: "Grok",
+      landingUrl: "https://grok.com/",
+      conversationUrl: "https://grok.com/c/11111111-1111-4111-8111-111111111111",
+      nextConversationUrl: "https://grok.com/c/22222222-2222-4222-8222-222222222222"
+    }
+  ];
+
+  for (let index = 0; index < routeCases.length; index += 1) {
+    const testCase = routeCases[index];
+    const tabId = 70 + index;
+    const { sandbox, dispatchRuntimeMessage } = createBackgroundSecuritySandbox();
+    const seeded = await seedSyntheticPlaceholderState(
+      sandbox,
+      tabId,
+      testCase.landingUrl,
+      `Synthetic${testCase.label}RouteSecret123!`
+    );
+
+    const queryOnly = await dispatchRuntimeMessage(
+      {
+        type: "PWM_INIT_TAB",
+        url: `${testCase.landingUrl}?synthetic=intermediate`,
+        allowVerifiedSendRouteCarry: true
+      },
+      {
+        frameId: 0,
+        tab: { id: tabId, url: testCase.landingUrl }
+      }
+    );
+    assert.strictEqual(queryOnly.routeCarryConsumed, false, `${testCase.label} query changes must not consume carry`);
+    assert.strictEqual(queryOnly.state.placeholderCount, 1, `${testCase.label} query changes must keep state`);
+
+    const carried = await dispatchRuntimeMessage(
+      {
+        type: "PWM_INIT_TAB",
+        url: testCase.conversationUrl,
+        allowVerifiedSendRouteCarry: true
+      },
+      {
+        frameId: 0,
+        tab: { id: tabId, url: testCase.landingUrl }
+      }
+    );
+    const carriedPrivateState = await sandbox.getState(tabId);
+
+    assert.strictEqual(carried.ok, true, `${testCase.label} carry should return public state`);
+    assert.strictEqual(carried.routeCarryConsumed, true, `${testCase.label} conversation transition should consume carry`);
+    assert.strictEqual(carried.routeCarryAccepted, true, `${testCase.label} conversation transition should accept carry`);
+    assert.strictEqual(carried.state.placeholderCount, 1, `${testCase.label} should keep the active placeholder`);
+    assert.deepStrictEqual(
+      Array.from(carried.state.trustedPlaceholders),
+      [seeded.placeholder],
+      `${testCase.label} should keep the placeholder trusted after first send`
+    );
+    assert.strictEqual(
+      carriedPrivateState.sessionId,
+      seeded.state.sessionId,
+      `${testCase.label} first-send route should keep the same private session`
+    );
+    assert.strictEqual(
+      carriedPrivateState.urlKey,
+      sandbox.urlKeyFrom(testCase.conversationUrl),
+      `${testCase.label} top-frame route message should win over lagging tab metadata`
+    );
+
+    const reset = await dispatchRuntimeMessage(
+      {
+        type: "PWM_INIT_TAB",
+        url: testCase.nextConversationUrl,
+        allowVerifiedSendRouteCarry: false
+      },
+      {
+        frameId: 0,
+        tab: { id: tabId, url: testCase.nextConversationUrl }
+      }
+    );
+    const resetPrivateState = await sandbox.getState(tabId);
+
+    assert.strictEqual(reset.state.placeholderCount, 0, `${testCase.label} established-chat navigation should reset`);
+    assert.notStrictEqual(
+      resetPrivateState.sessionId,
+      seeded.state.sessionId,
+      `${testCase.label} established-chat navigation should create a new private session`
+    );
+  }
+}
+
+async function testChildFrameInitUsesTrustedTopLevelTabUrl() {
+  const { sandbox, dispatchRuntimeMessage } = createBackgroundSecuritySandbox();
+  const tabId = 82;
+  const landingUrl = "https://gemini.google.com/app";
+  const topLevelUrl = "https://gemini.google.com/app/abcdef0123456789";
+  const seeded = await seedSyntheticPlaceholderState(
+    sandbox,
+    tabId,
+    landingUrl,
+    "SyntheticChildFrameStateSecret123!"
+  );
+
+  const response = await dispatchRuntimeMessage(
+    {
+      type: "PWM_INIT_TAB",
+      url: "about:blank"
+    },
+    {
+      frameId: 4,
+      tab: { id: tabId, url: topLevelUrl }
+    }
+  );
+  const afterChild = await sandbox.getState(tabId);
+
+  assert.strictEqual(response.state.placeholderCount, 1, "child-frame boot must not clear pending landing state");
+  assert.deepStrictEqual(Array.from(response.state.trustedPlaceholders), [seeded.placeholder]);
+  assert.strictEqual(afterChild.sessionId, seeded.state.sessionId, "child-frame boot should keep the top-level session");
+  assert.strictEqual(afterChild.urlKey, sandbox.urlKeyFrom(landingUrl), "child frame must not own route mutation");
+
+  const carried = await dispatchRuntimeMessage(
+    {
+      type: "PWM_INIT_TAB",
+      url: topLevelUrl,
+      allowVerifiedSendRouteCarry: true
+    },
+    {
+      frameId: 0,
+      tab: { id: tabId, url: landingUrl }
+    }
+  );
+  const current = await sandbox.getState(tabId);
+  assert.strictEqual(carried.routeCarryAccepted, true, "top frame should still carry after child-frame boot");
+  assert.strictEqual(current.sessionId, seeded.state.sessionId);
+  assert.strictEqual(current.urlKey, sandbox.urlKeyFrom(topLevelUrl));
+}
+
+async function testVerifiedRouteCarryRejectsReservedRoutesAndNormalizesLandingSlash() {
+  const reserved = createBackgroundSecuritySandbox();
+  const reservedTabId = 83;
+  const reservedSeed = await seedSyntheticPlaceholderState(
+    reserved.sandbox,
+    reservedTabId,
+    "https://gemini.google.com/app",
+    "SyntheticReservedRouteSecret123!"
+  );
+  const rejected = await reserved.dispatchRuntimeMessage(
+    {
+      type: "PWM_INIT_TAB",
+      url: "https://gemini.google.com/app/download",
+      allowVerifiedSendRouteCarry: true
+    },
+    {
+      frameId: 0,
+      tab: { id: reservedTabId, url: "https://gemini.google.com/app" }
+    }
+  );
+  const rejectedState = await reserved.sandbox.getState(reservedTabId);
+  assert.strictEqual(rejected.routeCarryConsumed, true);
+  assert.strictEqual(rejected.routeCarryAccepted, false, "reserved Gemini routes must not receive carry state");
+  assert.strictEqual(rejected.state.placeholderCount, 0);
+  assert.notStrictEqual(rejectedState.sessionId, reservedSeed.state.sessionId);
+
+  const slash = createBackgroundSecuritySandbox();
+  const slashTabId = 84;
+  const slashSeed = await seedSyntheticPlaceholderState(
+    slash.sandbox,
+    slashTabId,
+    "https://gemini.google.com/app",
+    "SyntheticLandingSlashSecret123!"
+  );
+  const normalized = await slash.dispatchRuntimeMessage(
+    {
+      type: "PWM_INIT_TAB",
+      url: "https://gemini.google.com/app/"
+    },
+    {
+      frameId: 0,
+      tab: { id: slashTabId, url: "https://gemini.google.com/app/" }
+    }
+  );
+  const normalizedState = await slash.sandbox.getState(slashTabId);
+  assert.strictEqual(normalized.state.placeholderCount, 1, "Gemini landing trailing slash must not reset state");
+  assert.strictEqual(normalizedState.sessionId, slashSeed.state.sessionId);
+  assert.strictEqual(normalizedState.urlKey, slash.sandbox.urlKeyFrom("https://gemini.google.com/app"));
+}
+
+async function testConcurrentTopAndChildRouteInitializationKeepsCarriedState() {
+  const { sandbox, dispatchRuntimeMessage } = createBackgroundSecuritySandbox();
+  const tabId = 85;
+  const landingUrl = "https://grok.com/";
+  const conversationUrl = "https://grok.com/c/33333333-3333-4333-8333-333333333333";
+  const seeded = await seedSyntheticPlaceholderState(
+    sandbox,
+    tabId,
+    landingUrl,
+    "SyntheticConcurrentRouteSecret123!"
+  );
+
+  const child = dispatchRuntimeMessage(
+    { type: "PWM_INIT_TAB", url: "about:blank" },
+    { frameId: 3, tab: { id: tabId, url: conversationUrl } }
+  );
+  const top = dispatchRuntimeMessage(
+    {
+      type: "PWM_INIT_TAB",
+      url: conversationUrl,
+      allowVerifiedSendRouteCarry: true
+    },
+    { frameId: 0, tab: { id: tabId, url: landingUrl } }
+  );
+  const [childResponse, topResponse] = await Promise.all([child, top]);
+  const current = await sandbox.getState(tabId);
+
+  assert.strictEqual(childResponse.state.placeholderCount, 1);
+  assert.strictEqual(topResponse.routeCarryAccepted, true);
+  assert.strictEqual(current.sessionId, seeded.state.sessionId);
+  assert.strictEqual(current.urlKey, sandbox.urlKeyFrom(conversationUrl));
+  assert.strictEqual(sandbox.toPublicState(current).placeholderCount, 1);
+}
+
 function testAuditMetadataObjectsExcludeRawSecrets() {
   const { sandbox } = createBackgroundSecuritySandbox();
   const rawSecret = "AuditBoundarySecret123!";
@@ -557,7 +817,7 @@ function testLocalFilePasteDoesNotExposeRawFileContent() {
       ) &&
       sanitizedFileInsertOrchestrationSource.includes("handOffSanitizedLocalFile(event, input, sanitizedFile, context)") &&
       fileHandoffFlowSource.includes("function handOffSanitizedLocalFile") &&
-      sanitizedFileHandoffSource.includes("fileInput.files = transfer.files") &&
+      sanitizedFileHandoffSource.includes("fileInput.files = transferFileList") &&
       contentSource.includes("function handOffGeminiSanitizedFileUpload") &&
       contentSource.includes("function handOffGrokSanitizedFileUpload") &&
       sanitizedFileInsertOrchestrationSource.includes("file-handoff:fail-closed"),
@@ -1491,7 +1751,15 @@ async function run() {
   testProtectedSiteOcrOptInStaysLocalAndGateBound();
   testImageRedactionCopyDoesNotPromiseRawUploadPassThrough();
   testUnsupportedProtectedImagesCannotReachRawReplayBranch();
-  await testProtectedSiteOcrBrokerLoadTimeoutIsHandledAsBlockedResult();
+  await testProtectedSiteOcrBrokerRecoversFromFirstLoadTimeout();
+  await testProtectedSiteOcrBrokerRetryExhaustionStaysBlocked();
+  await testProtectedSiteOcrBrokerConcurrentPrepareSharesRecoveryFrame();
+  await testProtectedSiteOcrBrokerDoesNotRetryImageBytesAfterReadinessFailure();
+  await testVerifiedFirstSendRouteCarryPreservesPlaceholderSession();
+  await testChildFrameInitUsesTrustedTopLevelTabUrl();
+  await testVerifiedRouteCarryRejectsReservedRoutesAndNormalizesLandingSlash();
+  await testConcurrentTopAndChildRouteInitializationKeepsCarriedState();
+  testTabStateInitializationUsesMutationQueue();
   await testProtectedSiteOcrBrokerRejectsMalformedMessages();
   testProtectedSiteOcrBrokerMessageSurfaceIsNarrow();
   testPageUiNoLongerLeaksClassificationsOrMaskedFragments();
@@ -1914,13 +2182,15 @@ function testProtectedSiteOcrBrokerMessageSurfaceIsNarrow() {
   );
 }
 
-async function testProtectedSiteOcrBrokerLoadTimeoutIsHandledAsBlockedResult() {
+function createProtectedSiteOcrBrokerLoadHarness() {
   assert.ok(
     protectedSiteOcrBrokerSource.includes("iframeReady.catch"),
     "broker frame readiness timeout should be explicitly handled to avoid Chrome extension error noise"
   );
 
   const timers = [];
+  const frames = [];
+  const postedRequests = [];
   const sandbox = {
     ArrayBuffer,
     Date,
@@ -1961,25 +2231,48 @@ async function testProtectedSiteOcrBrokerLoadTimeoutIsHandledAsBlockedResult() {
       },
       createElement(tagName) {
         assert.strictEqual(tagName, "iframe");
-        return {
+        const listeners = {};
+        const frame = {
           hidden: false,
           style: {},
           contentWindow: {
-            postMessage() {
-              throw new Error("load timeout should block before posting to the iframe");
+            postMessage(message, _targetOrigin, transfers) {
+              postedRequests.push({ frame, message });
+              transfers?.[0]?.reply({
+                source: "LeakGuardProtectedSiteOcrBroker",
+                requestId: message.requestId,
+                ok: true,
+                result: {
+                  ok: true,
+                  status: "protected_site_ocr_broker_ready",
+                  language: "eng"
+                }
+              });
             }
           },
-          addEventListener() {},
+          addEventListener(type, callback) {
+            listeners[type] = callback;
+          },
+          dispatchLoad() {
+            listeners.load?.();
+          },
           setAttribute() {}
         };
+        frames.push(frame);
+        return frame;
       }
     },
     MessageChannel: function MessageChannel() {
-      this.port1 = {
+      const port1 = {
         onmessage: null,
         close() {}
       };
-      this.port2 = {};
+      this.port1 = port1;
+      this.port2 = {
+        reply(message) {
+          port1.onmessage?.({ data: message });
+        }
+      };
     },
     PWM: {}
   };
@@ -1988,16 +2281,110 @@ async function testProtectedSiteOcrBrokerLoadTimeoutIsHandledAsBlockedResult() {
     filename: "protectedSiteOcrBroker.js"
   });
 
-  const resultPromise = sandbox.PWM.ProtectedSiteOcrBroker.prepare({ timeoutMs: 10000 });
-  const loadTimeout = timers.find((entry) => entry.delay === 5000);
-  assert.ok(loadTimeout, "broker should install a frame load timeout");
-  loadTimeout.callback();
+  return {
+    frames,
+    postedRequests,
+    sandbox,
+    timers,
+    nextLoadTimeout() {
+      return timers.find((entry) => entry.delay === 5000 && !entry.cleared && !entry.fired);
+    },
+    fireTimer(timer) {
+      assert.ok(timer, "expected an active timer");
+      timer.fired = true;
+      timer.callback();
+    }
+  };
+}
 
+async function waitForBrokerFrameCount(harness, expectedCount) {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    if (harness.frames.length >= expectedCount) return;
+    await Promise.resolve();
+  }
+  assert.fail(`expected ${expectedCount} broker frames, received ${harness.frames.length}`);
+}
+
+async function testProtectedSiteOcrBrokerRecoversFromFirstLoadTimeout() {
+  const harness = createProtectedSiteOcrBrokerLoadHarness();
+  const resultPromise = harness.sandbox.PWM.ProtectedSiteOcrBroker.prepare({ timeoutMs: 20000 });
+
+  const firstFrame = harness.frames[0];
+  harness.fireTimer(harness.nextLoadTimeout());
+  firstFrame.dispatchLoad();
+  await waitForBrokerFrameCount(harness, 2);
+
+  assert.strictEqual(firstFrame.parentNode, null, "timed-out broker frame should be detached");
+  assert.strictEqual(harness.frames.length, 2, "the same prepare call should create one recovery frame");
+  assert.strictEqual(harness.postedRequests.length, 0, "the timed-out frame must never receive a request");
+
+  harness.frames[1].dispatchLoad();
   const result = await resultPromise;
+
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.status, "protected_site_ocr_broker_ready");
+  assert.strictEqual(harness.postedRequests.length, 1, "only the recovered frame should receive the prepare request");
+  assert.strictEqual(harness.postedRequests[0].frame, harness.frames[1]);
+}
+
+async function testProtectedSiteOcrBrokerRetryExhaustionStaysBlocked() {
+  const harness = createProtectedSiteOcrBrokerLoadHarness();
+  const resultPromise = harness.sandbox.PWM.ProtectedSiteOcrBroker.prepare({ timeoutMs: 20000 });
+
+  harness.fireTimer(harness.nextLoadTimeout());
+  await waitForBrokerFrameCount(harness, 2);
+  assert.strictEqual(harness.frames.length, 2, "prepare should retry broker readiness only once");
+
+  harness.fireTimer(harness.nextLoadTimeout());
+  const result = await resultPromise;
+
   assert.strictEqual(result.ok, false);
   assert.strictEqual(result.status, "ocr_recognition_blocked");
   assert.deepStrictEqual(Array.from(result.warnings), ["protected_site_ocr_broker_load_timeout"]);
   assert.strictEqual(result.reason, "protected_site_ocr_broker_load_timeout");
+  assert.strictEqual(harness.frames.length, 2, "readiness recovery must stay bounded to two frames");
+  assert.strictEqual(harness.frames.every((frame) => frame.parentNode === null), true);
+  assert.strictEqual(harness.postedRequests.length, 0, "failed readiness must not transfer any request or image bytes");
+}
+
+async function testProtectedSiteOcrBrokerConcurrentPrepareSharesRecoveryFrame() {
+  const harness = createProtectedSiteOcrBrokerLoadHarness();
+  const first = harness.sandbox.PWM.ProtectedSiteOcrBroker.prepare({ timeoutMs: 20000 });
+  const second = harness.sandbox.PWM.ProtectedSiteOcrBroker.prepare({ timeoutMs: 20000 });
+
+  assert.strictEqual(harness.frames.length, 1, "concurrent prepare calls should share the first broker generation");
+  harness.fireTimer(harness.nextLoadTimeout());
+  await waitForBrokerFrameCount(harness, 2);
+  assert.strictEqual(harness.frames.length, 2, "concurrent recovery should create only one replacement frame");
+
+  harness.frames[1].dispatchLoad();
+  const results = await Promise.all([first, second]);
+  assert.strictEqual(results.every((result) => result.status === "protected_site_ocr_broker_ready"), true);
+  assert.strictEqual(harness.postedRequests.length, 2);
+  assert.strictEqual(harness.postedRequests.every((request) => request.frame === harness.frames[1]), true);
+}
+
+async function testProtectedSiteOcrBrokerDoesNotRetryImageBytesAfterReadinessFailure() {
+  const harness = createProtectedSiteOcrBrokerLoadHarness();
+  const prepare = harness.sandbox.PWM.ProtectedSiteOcrBroker.prepare({ timeoutMs: 20000 });
+  const image = harness.sandbox.PWM.ProtectedSiteOcrBroker.recognizeImageBytes({
+    imageBytes: new Uint8Array([1, 2, 3]),
+    mimeType: "image/png",
+    timeoutMs: 20000
+  });
+
+  harness.fireTimer(harness.nextLoadTimeout());
+  await waitForBrokerFrameCount(harness, 2);
+  const imageResult = await image;
+  assert.strictEqual(imageResult.ok, false);
+  assert.strictEqual(imageResult.reason, "protected_site_ocr_broker_load_timeout");
+  assert.strictEqual(harness.postedRequests.length, 0, "failed image request must not post or retry transferred bytes");
+
+  harness.frames[1].dispatchLoad();
+  const prepareResult = await prepare;
+  assert.strictEqual(prepareResult.status, "protected_site_ocr_broker_ready");
+  assert.strictEqual(harness.postedRequests.length, 1, "only the prepare retry may use the recovery frame");
+  assert.strictEqual(harness.postedRequests[0].message.prepare, true);
 }
 
 async function testProtectedSiteOcrBrokerRejectsMalformedMessages() {

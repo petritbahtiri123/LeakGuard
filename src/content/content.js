@@ -158,6 +158,8 @@
     "button[aria-label*='send' i]"
   ];
   let currentUrl = location.href;
+  let verifiedSendRouteCarryUntil = 0;
+  let verifiedSendRouteCarryGeneration = 0;
   let currentPublicState = {
     transformMode: "hide_public",
     placeholderCount: 0,
@@ -320,6 +322,7 @@
   const GEMINI_GHOST_INGRESS_TIMEOUT_MS = 2200;
   const GEMINI_PENDING_SANITIZED_FILE_HANDOFF_MS = 60000;
   const GROK_PENDING_SANITIZED_FILE_HANDOFF_MS = 60000;
+  const VERIFIED_SEND_ROUTE_CARRY_MS = 5000;
   const GEMINI_SANITIZED_DOWNLOAD_MESSAGE =
     "Sanitized file downloaded. Upload the LeakGuard redacted copy to Gemini.";
   const GEMINI_SANITIZED_DOWNLOAD_MODAL_MESSAGE =
@@ -2312,11 +2315,37 @@
     return decisionPromise;
   }
 
+  function markVerifiedSendRouteCarryIntent() {
+    verifiedSendRouteCarryGeneration += 1;
+    verifiedSendRouteCarryUntil = Date.now() + VERIFIED_SEND_ROUTE_CARRY_MS;
+    return verifiedSendRouteCarryGeneration;
+  }
+
+  function hasVerifiedSendRouteCarryIntent() {
+    if (verifiedSendRouteCarryUntil < Date.now()) {
+      verifiedSendRouteCarryUntil = 0;
+    }
+    return verifiedSendRouteCarryUntil > 0;
+  }
+
+  function clearVerifiedSendRouteCarryIntent(generation = verifiedSendRouteCarryGeneration) {
+    if (generation !== verifiedSendRouteCarryGeneration) return false;
+    verifiedSendRouteCarryUntil = 0;
+    return true;
+  }
+
   async function initState() {
+    const allowVerifiedSendRouteCarry = hasVerifiedSendRouteCarryIntent();
+    const routeCarryGeneration = allowVerifiedSendRouteCarry ? verifiedSendRouteCarryGeneration : 0;
     const response = await sendRuntimeMessage({
       type: "PWM_INIT_TAB",
-      url: location.href
+      url: location.href,
+      allowVerifiedSendRouteCarry
     });
+
+    if (response?.routeCarryConsumed) {
+      clearVerifiedSendRouteCarryIntent(routeCarryGeneration);
+    }
 
     if (response?.ok && response.state) {
       applyPublicState(response.state);
@@ -3458,8 +3487,15 @@
           }
 
           clearFallbackSendKeyRedactionPending(input);
+          const routeCarryGeneration = markVerifiedSendRouteCarryIntent();
           try {
-            send();
+            const sendResult = send();
+            if (sendResult === false) {
+              clearVerifiedSendRouteCarryIntent(routeCarryGeneration);
+            }
+          } catch (error) {
+            clearVerifiedSendRouteCarryIntent(routeCarryGeneration);
+            throw error;
           } finally {
             settle();
           }
@@ -3558,21 +3594,21 @@
 
     if (form && typeof form.requestSubmit === "function") {
       if (preferButtonClick && isPreferredSubmitterForForm(form, preferredButton)) {
-        if (clickSendButtonWithBypass(preferredButton, { fallbackForm: form })) return;
+        if (clickSendButtonWithBypass(preferredButton, { fallbackForm: form })) return true;
       }
 
       if (isPreferredSubmitterForForm(form, preferredButton)) {
         try {
           form.requestSubmit(preferredButton);
-          return;
+          return true;
         } catch {
-          if (clickSendButtonWithBypass(preferredButton, { fallbackForm: form })) return;
+          if (clickSendButtonWithBypass(preferredButton, { fallbackForm: form })) return true;
         }
       }
 
       try {
         form.requestSubmit();
-        return;
+        return true;
       } catch {
         // Fall back to a verified button replay when requestSubmit is unavailable for this form state.
       }
@@ -3582,8 +3618,11 @@
       ? preferredButton
       : findSendButton(input);
     if (button) {
-      clickSendButtonWithBypass(button, { fallbackForm: form || button.form || button.closest?.("form") || null });
+      return clickSendButtonWithBypass(button, {
+        fallbackForm: form || button.form || button.closest?.("form") || null
+      });
     }
+    return false;
   }
 
   function replayVerifiedSend(input, form = null, preferredButton = null, options = {}) {
@@ -3591,12 +3630,13 @@
     if (targetForm) {
       bypassNextSubmit = true;
     }
-    submitComposer(targetForm, input, preferredButton, options);
+    const sendResult = submitComposer(targetForm, input, preferredButton, options);
     if (targetForm) {
       queueMicrotask(() => {
         bypassNextSubmit = false;
       });
     }
+    return sendResult;
   }
 
   async function applyPasteDecision(input, originalText, selection, insertedText, context, options) {

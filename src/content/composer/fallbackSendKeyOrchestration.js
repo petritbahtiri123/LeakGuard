@@ -84,7 +84,7 @@
     const refreshBadgeFromCurrentInput =
       typeof options.refreshBadgeFromCurrentInput === "function" ? options.refreshBadgeFromCurrentInput : () => {};
     const replayVerifiedSend =
-      typeof options.replayVerifiedSend === "function" ? options.replayVerifiedSend : () => {};
+      typeof options.replayVerifiedSend === "function" ? options.replayVerifiedSend : () => false;
     const requestRedaction =
       typeof options.requestRedaction === "function"
         ? options.requestRedaction
@@ -103,8 +103,7 @@
         void blockWhatsAppTextSend("replay_button_not_found");
         return false;
       }
-      replayVerifiedSend(input, null, button);
-      return true;
+      return replayVerifiedSend(input, null, button);
     }
 
     async function maybeHandleFallbackSendKey(event) {
@@ -161,9 +160,9 @@
           return;
         }
 
-        queueVerifiedComposerSend(input, normalized.text, "submit", () => {
-          replayFallbackSend(input);
-        }, verifiedSendOptions);
+        queueVerifiedComposerSend(input, normalized.text, "submit",
+          () => replayFallbackSend(input),
+          verifiedSendOptions);
         return;
       }
 
@@ -197,9 +196,9 @@
         hideBadgeSoon();
         refreshBadgeFromCurrentInput();
 
-        queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
-          replayFallbackSend(input);
-        }, verifiedSendOptions);
+        queueVerifiedComposerSend(input, result.redactedText, "submit",
+          () => replayFallbackSend(input),
+          verifiedSendOptions);
       });
 
       if (httpPolicyHandled) {
@@ -227,9 +226,9 @@
         hideBadgeSoon();
         refreshBadgeFromCurrentInput();
 
-        queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
-          replayFallbackSend(input);
-        }, verifiedSendOptions);
+        queueVerifiedComposerSend(input, result.redactedText, "submit",
+          () => replayFallbackSend(input),
+          verifiedSendOptions);
         return;
       }
 
@@ -252,9 +251,9 @@
           return;
         }
 
-        queueVerifiedComposerSend(input, normalized.text, "submit", () => {
-          replayFallbackSend(input);
-        }, verifiedSendOptions);
+        queueVerifiedComposerSend(input, normalized.text, "submit",
+          () => replayFallbackSend(input),
+          verifiedSendOptions);
         return;
       }
 
@@ -290,9 +289,9 @@
       hideBadgeSoon();
       refreshBadgeFromCurrentInput();
 
-      queueVerifiedComposerSend(input, result.redactedText, "submit", () => {
-        replayFallbackSend(input);
-      }, verifiedSendOptions);
+      queueVerifiedComposerSend(input, result.redactedText, "submit",
+        () => replayFallbackSend(input),
+        verifiedSendOptions);
     }
 
     return Object.freeze({
