@@ -3,6 +3,7 @@
 ## Before Packaging
 
 - Review [RELEASE_3_0_0_RELIABILITY.md](RELEASE_3_0_0_RELIABILITY.md) and complete its 3.0.0 reliability/manual-QA gates before changing release identity.
+- Complete the [LeakGuard 3.0 Full-Feature Reliability Matrix](qa/3.0-full-feature-reliability-matrix.md); `npm run test:release-matrix` must pass before any release identity changes.
 - Reload the unpacked extension after the latest branch changes.
 - Confirm the popup opens and renders correctly on desktop width.
 - Confirm the popup still renders correctly on a smaller laptop display.
