@@ -44,12 +44,10 @@ Commands:
 
 ```bash
 npm run preflight:browser
-npm run smoke:chrome
-npm run smoke:firefox
-npm run smoke:edge
-npm run qa:browser
-node tests/browser/extension_qa_harness.test.mjs
+npm run qa:browser:full
 ```
+
+`test:browser-gates` owns both commands. `qa:browser:full` builds Chrome once, runs the full-matrix harness once, reuses that build for Chrome and Edge smoke, then builds Firefox once for Firefox smoke. Standalone smoke and focused E2E commands remain available for focused reruns but are not repeated inside this aggregate.
 
 Required local/CI tools:
 
@@ -60,23 +58,25 @@ Required local/CI tools:
 - A writable temp profile directory.
 - A browser that can start headless.
 
-Run `npm run preflight:browser` first to classify local setup problems before running the browser suite.
+`npm run test:browser-gates` runs `npm run preflight:browser` first to classify local setup problems before running the browser suite.
 
 ## Workflow Mapping
 
-- PR and push to `main`: `.github/workflows/test.yml` runs Tier A through `npm run test:ci`.
-- Manual/tag/scheduled release artifact review: `.github/workflows/release-artifacts.yml` runs Tier A plus Tier B.
-- Nightly/manual browser review: `.github/workflows/browser-nightly.yml` runs Tier A plus Tier B plus Tier C.
+- PR and push to `main`: `.github/workflows/test.yml` runs Tier A through `npm run test:ci` plus a separate deterministic E2E job ordered as `npm ci`, Playwright Chromium install, Chrome build, then `npm run test:e2e`.
+- Manual/tag/scheduled release artifact review: `.github/workflows/release-artifacts.yml` installs Playwright Chromium after `npm ci`, then runs Tier A, Tier B, deterministic E2E, and `npm run test:release-matrix` before checksums.
+- Nightly/manual browser review: `.github/workflows/browser-nightly.yml` installs Playwright Chromium after `npm ci`, then runs `xvfb-run -a npm run test:nightly`, the named Tier A plus Tier B plus deterministic E2E plus Tier C aggregate.
 
-Browser jobs are not PR-required yet. They are visible in nightly/manual runs until the CI browser environment is stable enough to promote.
+Deterministic local-fixture E2E is PR-required. Tier C packaged browser jobs are not PR-required yet; they remain visible in nightly/manual runs until the CI browser environment is stable enough to promote.
 
 ## Script Map
 
 - `test:fast`: Tier A fast PR checks.
 - `test:ci`: PR-safe alias for Tier A.
 - `test:release-gates`: Tier B release artifact checks.
-- `test:browser-gates`: Tier C browser/nightly checks.
-- `test:nightly`: Tier A plus Tier B plus Tier C.
+- `test:browser-gates`: Tier C browser/nightly checks through preflight plus the single `qa:browser:full` owner.
+- `test:nightly`: Tier A plus Tier B plus deterministic E2E plus Tier C, each invoked once.
+- `test:release`: documentation links plus the complete nightly aggregate plus `test:release-matrix`.
+- `test:release-matrix`: release completion gate; it intentionally fails while required evidence rows remain `PENDING` or `FAIL`.
 
 ## Privacy Contact Release Blocker
 
@@ -152,11 +152,8 @@ Local remediation:
 Before publishing Chrome or Firefox packages:
 
 ```bash
-npm run test:fast
-npm run test:release-gates
-npm run preflight:browser
-npm run test:browser-gates
+npm run test:release
 git diff --check
 ```
 
-Tier C environment failures can block final release confidence even when Tier A and Tier B pass. They should be resolved or explicitly documented with rerun evidence before final PR stabilization.
+`npm run test:release` intentionally remains red while the full-feature reliability matrix still has required `PENDING` or `FAIL` evidence. Tier C environment failures can also block final release confidence even when Tier A and Tier B pass. They should be resolved or explicitly documented with rerun evidence before final PR stabilization.

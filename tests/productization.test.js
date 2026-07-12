@@ -180,6 +180,20 @@ function fileExists(relativePath) {
   return fs.existsSync(path.join(repoRoot, relativePath));
 }
 
+function extractTopLevelWorkflowJob(workflow, jobName) {
+  const lines = workflow.split(/\r?\n/);
+  const startIndex = lines.indexOf(`  ${jobName}:`);
+  if (startIndex === -1) {
+    return "";
+  }
+
+  const nextSiblingOffset = lines
+    .slice(startIndex + 1)
+    .findIndex((line) => /^  [A-Za-z0-9_-]+:\s*$/.test(line));
+  const endIndex = nextSiblingOffset === -1 ? lines.length : startIndex + 1 + nextSiblingOffset;
+  return lines.slice(startIndex, endIndex).join("\n");
+}
+
 function testManifestBrandingAndProductPagesExist(manifest) {
   assert.strictEqual(manifest.name, "LeakGuard");
   assert.ok(
@@ -821,8 +835,8 @@ function testBrowserQaScriptOwnsFirefoxSmokeCoverage() {
     "qa:browser should run the browser QA harness plus Chrome, Edge, and Firefox smoke coverage"
   );
   assert.ok(
-    testRelease.includes("npm run qa:browser") && !testRelease.includes("npm run smoke:firefox"),
-    "test:release should use qa:browser as the single browser QA entrypoint"
+    testRelease.includes("npm run test:nightly") && !testRelease.includes("npm run smoke:firefox"),
+    "test:release should use the complete nightly aggregate rather than repeating a standalone smoke"
   );
   assert.strictEqual(
     smokeFirefox,
@@ -830,11 +844,9 @@ function testBrowserQaScriptOwnsFirefoxSmokeCoverage() {
     "smoke:firefox should remain available as the standalone Firefox smoke command"
   );
   assert.ok(
-    !testWorkflow.includes("xvfb-run -a npm run smoke:chrome") &&
-      !testWorkflow.includes("xvfb-run -a npm run smoke:firefox") &&
-      !testWorkflow.includes("xvfb-run -a npm run smoke:edge") &&
-      browserNightlyWorkflow.includes("xvfb-run -a npm run test:browser-gates"),
-    "PR CI should avoid browser smoke while browser-nightly owns Tier C browser gates"
+    !testWorkflow.includes("npm run test:browser-gates") &&
+      browserNightlyWorkflow.includes("npm run test:nightly"),
+    "PR CI should use deterministic E2E while browser-nightly owns the complete nightly aggregate"
   );
   assert.ok(
     chromeSmokeSource.includes('remoteDebuggingMode = "port"') &&
@@ -1034,13 +1046,18 @@ function testPhase17fScriptsAndWorkflowsAreTiered() {
   );
   assert.strictEqual(
     packageJson.scripts["test:browser-gates"],
-    "node scripts/check-browser-environment.mjs && npm run smoke:chrome && npm run smoke:firefox && npm run smoke:edge && npm run qa:browser && node tests/browser/extension_qa_harness.test.mjs",
+    "npm run preflight:browser && npm run qa:browser:full",
     "test:browser-gates should own Tier C browser validation"
   );
   assert.strictEqual(
     packageJson.scripts["test:nightly"],
-    "npm run test:fast && npm run test:release-gates && npm run test:browser-gates",
+    "npm run test:fast && npm run test:release-gates && npm run test:e2e && npm run test:browser-gates",
     "test:nightly should compose all tiers"
+  );
+  assert.strictEqual(
+    packageJson.scripts["test:release"],
+    "npm run docs:check-links && npm run test:nightly && npm run test:release-matrix",
+    "test:release should compose documentation, nightly, and matrix completion gates"
   );
   assert.strictEqual(
     packageJson.scripts["test:ci"],
@@ -1063,21 +1080,66 @@ function testPhase17fScriptsAndWorkflowsAreTiered() {
       releaseArtifactsWorkflow.includes("npm run test:release-gates"),
     "release workflow should run Tier A and Tier B"
   );
+  assert.ok(browserNightlyWorkflow.includes("npm run test:nightly"));
+  const browserNightlyJob = extractTopLevelWorkflowJob(browserNightlyWorkflow, "browser-gates");
+  const nightlyNpmCiIndex = browserNightlyJob.indexOf("npm ci");
+  const nightlyChromiumInstallIndex = browserNightlyJob.indexOf("npx playwright install --with-deps chromium");
+  const nightlyCommandIndex = browserNightlyJob.indexOf("npm run test:nightly");
+  assert.ok(
+    nightlyNpmCiIndex !== -1 &&
+      nightlyChromiumInstallIndex > nightlyNpmCiIndex &&
+      nightlyCommandIndex > nightlyChromiumInstallIndex,
+    "browser-nightly should install Playwright Chromium after npm ci and before the nightly aggregate"
+  );
+  assert.ok(releaseArtifactsWorkflow.includes("npm run test:e2e"));
+  assert.ok(releaseArtifactsWorkflow.includes("npm run test:release-matrix"));
+  const releaseArtifactsJob = extractTopLevelWorkflowJob(releaseArtifactsWorkflow, "release-artifacts");
+  const releaseNpmCiIndex = releaseArtifactsJob.indexOf("npm ci");
+  const releaseChromiumInstallIndex = releaseArtifactsJob.indexOf("npx playwright install --with-deps chromium");
+  const releaseE2eIndex = releaseArtifactsJob.indexOf("npm run test:e2e");
+  assert.ok(
+    releaseNpmCiIndex !== -1 &&
+      releaseChromiumInstallIndex > releaseNpmCiIndex &&
+      releaseE2eIndex > releaseChromiumInstallIndex,
+    "release workflow should install Playwright Chromium after npm ci and before deterministic E2E"
+  );
   assert.ok(
     releaseArtifactsWorkflow.includes("workflow_dispatch") && releaseArtifactsWorkflow.includes("schedule"),
     "release workflow should support manual and scheduled runs"
   );
 }
 
+function testTopLevelWorkflowJobExtractorExcludesLaterSibling() {
+  const workflow = [
+    "jobs:",
+    "  target:",
+    "    steps:",
+    "      - run: npm ci",
+    "  later-sibling:",
+    "    steps:",
+    "      - run: npm run test:browser-gates"
+  ].join("\n");
+  const targetJob = extractTopLevelWorkflowJob(workflow, "target");
+
+  assert.ok(targetJob.includes("npm ci"), "job extractor should include the requested job body");
+  assert.ok(!targetJob.includes("later-sibling"), "job extractor should exclude a later sibling job");
+  assert.ok(!targetJob.includes("test:browser-gates"), "job extractor should exclude later sibling commands");
+}
+
 function testDeterministicPlaywrightIsRequiredPrGate() {
-  const deterministicE2eJob = testWorkflow.match(/\n  deterministic-e2e:\n[\s\S]*$/)?.[0] || "";
+  const deterministicE2eJob = extractTopLevelWorkflowJob(testWorkflow, "deterministic-e2e");
   assert.ok(deterministicE2eJob, "PR workflow should expose deterministic E2E as its own job");
+  const npmCiIndex = deterministicE2eJob.indexOf("npm ci");
+  const chromiumInstallIndex = deterministicE2eJob.indexOf("npx playwright install --with-deps chromium");
+  const buildIndex = deterministicE2eJob.indexOf("npm run build:chrome");
+  const e2eIndex = deterministicE2eJob.indexOf("npm run test:e2e");
   assert.ok(
-    deterministicE2eJob.includes("npx playwright install --with-deps chromium"),
-    "PR E2E job should install Playwright Chromium"
+    npmCiIndex !== -1 &&
+      chromiumInstallIndex > npmCiIndex &&
+      buildIndex > chromiumInstallIndex &&
+      e2eIndex > buildIndex,
+    "PR E2E job should run npm ci, install Playwright Chromium, build Chrome, then run deterministic E2E"
   );
-  assert.ok(deterministicE2eJob.includes("npm run build:chrome"), "PR E2E job should build the Chrome target");
-  assert.ok(deterministicE2eJob.includes("npm run test:e2e"), "PR E2E job should run the full deterministic suite");
   assert.ok(!testWorkflow.includes("npm run test:browser-gates"), "PR workflow should leave Tier C to nightly");
   assert.ok(
     !testWorkflow.includes("browser-smoke-timings"),
@@ -1385,6 +1447,7 @@ async function run() {
   testPhase17eReleaseArtifactStoreReadinessAutomationIsDocumented();
   testPhase17fCiNightlyMatrixHardeningIsDocumented();
   testPhase17fScriptsAndWorkflowsAreTiered();
+  testTopLevelWorkflowJobExtractorExcludesLaterSibling();
   testDeterministicPlaywrightIsRequiredPrGate();
   testPublicationContactsAreFinalized();
   testPhase18FinalPrStabilizationCloseoutIsDocumented();

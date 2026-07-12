@@ -32,6 +32,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
 
@@ -43,6 +46,12 @@ jobs:
 
       - name: Run Tier B release artifact gates
         run: npm run test:release-gates
+
+      - name: Run deterministic E2E
+        run: xvfb-run -a npm run test:e2e
+
+      - name: Require complete full-feature matrix
+        run: npm run test:release-matrix
 
       - name: Generate release checksums
         run: npm run release:checksums

@@ -44,17 +44,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run Tier A fast checks
-        run: npm run test:fast
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
 
-      - name: Run Tier B release artifact gates
-        run: npm run test:release-gates
-
-      - name: Preflight browser environment
-        run: npm run preflight:browser
-
-      - name: Run Tier C browser gates
-        run: xvfb-run -a npm run test:browser-gates
+      - name: Run complete nightly matrix
+        run: xvfb-run -a npm run test:nightly
 
       - name: Upload browser smoke timings
         if: always()

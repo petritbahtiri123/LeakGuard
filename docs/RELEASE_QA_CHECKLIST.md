@@ -3,13 +3,12 @@
 ## Before Packaging
 
 - Review [RELEASE_3_0_0_RELIABILITY.md](RELEASE_3_0_0_RELIABILITY.md) and complete its 3.0.0 reliability/manual-QA gates before changing release identity.
-- Complete the [LeakGuard 3.0 Full-Feature Reliability Matrix](qa/3.0-full-feature-reliability-matrix.md); `npm run test:release-matrix` must pass before any release identity changes.
+- Complete the [LeakGuard 3.0 Full-Feature Reliability Matrix](qa/3.0-full-feature-reliability-matrix.md); `npm run test:release-matrix` must pass before any release identity changes. The completion gate intentionally fails while required evidence remains `PENDING` or `FAIL`.
 - Reload the unpacked extension after the latest branch changes.
 - Confirm the popup opens and renders correctly on desktop width.
 - Confirm the popup still renders correctly on a smaller laptop display.
-- Confirm Tier A fast validation passes: `npm run test:fast`.
-- Confirm Tier B release validation passes before publishing packages: `npm run test:release-gates`.
-- Confirm deterministic Chromium E2E passes on local fixtures: `npm run build:chrome` followed by `npm run test:e2e`.
+- Confirm the complete release aggregate passes: `npm run test:release`. It owns documentation links, the complete nightly aggregate, and the full-feature matrix completion gate.
+- For focused reruns, Tier A is `npm run test:fast`, Tier B is `npm run test:release-gates`, and deterministic Chromium E2E is `npm run build:chrome` followed by `npm run test:e2e`.
 - Confirm the built manifest includes `content_security_policy.extension_pages` with LeakGuard's restrictive extension-page CSP.
 - Confirm the built manifest does not add new host permissions for File Scanner.
 - Confirm protected-site image OCR is settings-controlled, enabled by default for supported image uploads, and can be turned off.
@@ -18,10 +17,11 @@
 ## CI And Nightly Validation
 
 - PR-required validation is Tier A (`npm run test:ci`, which maps to `npm run test:fast`) plus the separate `deterministic-e2e` Playwright job (`npm run build:chrome` followed by `npm run test:e2e`).
-- Release/manual validation is Tier A plus Tier B: `npm run test:fast` and `npm run test:release-gates`.
+- Release/manual validation runs through `npm run test:release`: documentation links, `npm run test:nightly`, then `npm run test:release-matrix`.
 - Deterministic local-fixture E2E is account-free and required in PR CI through the separate Playwright job.
-- Nightly/browser validation is Tier A plus Tier B plus Tier C: `npm run test:nightly`.
-- Tier C packaged browser validation is heavy and environment-sensitive, remains outside PR CI, and runs through `npm run preflight:browser` followed by `npm run test:browser-gates`.
+- Nightly/browser validation is Tier A plus Tier B plus deterministic E2E plus Tier C: `npm run test:nightly`; `.github/workflows/browser-nightly.yml` installs Playwright Chromium after `npm ci` and executes that named aggregate once.
+- Tier C packaged browser validation is heavy and environment-sensitive, remains outside PR CI, and runs through `npm run test:browser-gates`, which owns `npm run preflight:browser` followed by `npm run qa:browser:full`.
+- The release-artifacts workflow installs Playwright Chromium after `npm ci`, then runs Tier A, Tier B, deterministic E2E, and `npm run test:release-matrix` before generating checksums.
 - Authenticated live-site E2E against ChatGPT, Gemini, WhatsApp, or other logged-in providers remains manual/headed only and is not required for PR CI.
 - A browser startup failure before extension load, such as Chrome/Edge GPU/CDP startup failure or Firefox geckodriver status timeout, is a local or CI environment failure until rerun evidence shows the extension loaded and failed product assertions.
 - Product failures are failures after the extension loads and a LeakGuard behavior assertion fails, such as missing popup controls, missing protected-site panel, raw marker leakage, failed redaction, or missing scanner export behavior.
