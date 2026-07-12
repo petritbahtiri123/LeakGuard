@@ -58,7 +58,7 @@ Adjust the destination list to match the browsers and sites you have tested.
 | `allowReveal` | boolean | `true`, `false` | Enables or disables secure reveal in extension-owned UI. |
 | `allowUserOverride` | boolean | `true`, `false` | Controls whether `Allow once` is shown and honored. |
 | `allowProtectionPause` | boolean | `true`, `false` | Controls whether protection pause is allowed. |
-| `protectionPauseMaxMinutes` | number | `0` to `60` | Maximum pause duration. |
+| `protectionPauseMaxMinutes` | integer | `0` to `60` | Maximum pause duration. |
 | `protectionPauseRequiresUserAction` | boolean | `true`, `false` | Requires explicit user action for pauses. |
 | `allowUserAddedSites` | boolean | `true`, `false` | Controls whether users can add or re-enable extra protected sites. |
 | `allowSiteRemoval` | boolean | `true`, `false` | Controls whether users can delete user-managed protected-site rules. |
@@ -69,7 +69,7 @@ Adjust the destination list to match the browsers and sites you have tested.
 | `defaultAction` | string | `redact`, `block` | Default action for sensitive content decisions. |
 | `defaultDestinationAction` | string | `allow`, `redact`, `block` | Action used when `destinationPolicies` are configured and no specific destination rule matches. |
 | `auditMode` | string | `off`, `metadata-only` | Controls metadata-only audit event storage. `full` is normalized to `metadata-only` in code for safety. |
-| `auditRetentionDays` | number | `1` to `365` | Retention window for bounded metadata-only audit events. |
+| `auditRetentionDays` | integer | `1` to `365` | Retention window for bounded metadata-only audit events. |
 | `strictPolicyLoad` | boolean | `true`, `false` | In enterprise mode, fail closed if managed policy cannot be read or validated. |
 | `managedProtectedSites` | string array | exact origins | Adds protected origins outside the built-in list. |
 | `destinationPolicies` | object array | match/action objects | Preferred destination policy model. |

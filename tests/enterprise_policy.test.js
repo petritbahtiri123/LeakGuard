@@ -847,13 +847,13 @@ async function testMalformedStrictEnterprisePolicyFailsClosed() {
 function testPolicySchemaAndUiSurfaceNewFields() {
   assert.strictEqual(managedPolicySchema.properties.allowUserOverride.type, "boolean");
   assert.strictEqual(managedPolicySchema.properties.allowProtectionPause.type, "boolean");
-  assert.strictEqual(managedPolicySchema.properties.protectionPauseMaxMinutes.type, "number");
+  assert.strictEqual(managedPolicySchema.properties.protectionPauseMaxMinutes.type, "integer");
   assert.strictEqual(managedPolicySchema.properties.protectionPauseRequiresUserAction.type, "boolean");
   assert.strictEqual(managedPolicySchema.properties.allowFeedback.type, "boolean");
   assert.strictEqual(managedPolicySchema.properties.liveTypedRedaction.type, "boolean");
   assert.strictEqual(managedPolicySchema.properties.allowSiteRemoval.type, "boolean");
   assert.strictEqual(managedPolicySchema.properties.managedProtectedSites.type, "array");
-  assert.strictEqual(managedPolicySchema.properties.auditRetentionDays.type, "number");
+  assert.strictEqual(managedPolicySchema.properties.auditRetentionDays.type, "integer");
   assert.deepStrictEqual(managedPolicySchema.properties.auditMode.enum, ["off", "metadata-only"]);
   assert.deepStrictEqual(
     managedPolicySchema.properties.defaultDestinationAction.enum,
@@ -902,6 +902,18 @@ function testPolicySchemaAndUiSurfaceNewFields() {
   );
 }
 
+function testManagedSchemaRangesUseIntegerTypes() {
+  for (const [name, definition] of Object.entries(managedPolicySchema.properties)) {
+    if ("minimum" in definition || "maximum" in definition) {
+      assert.strictEqual(
+        definition.type,
+        "integer",
+        `${name} must use integer type when declaring a minimum or maximum`
+      );
+    }
+  }
+}
+
 async function run() {
   testBlockedDestinationsBlockSensitiveActions();
   testApprovedDestinationsAllowApprovedHosts();
@@ -924,6 +936,7 @@ async function run() {
   await testMalformedManagedFeedbackPolicyDisablesConsumerFeedback();
   await testMalformedStrictEnterprisePolicyFailsClosed();
   testPolicySchemaAndUiSurfaceNewFields();
+  testManagedSchemaRangesUseIntegerTypes();
   console.log("PASS enterprise policy enforcement regressions");
 }
 
