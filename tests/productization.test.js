@@ -1070,10 +1070,19 @@ function testPhase17fScriptsAndWorkflowsAreTiered() {
 }
 
 function testDeterministicPlaywrightIsRequiredPrGate() {
-  assert.ok(testWorkflow.includes("deterministic-e2e:"), "PR workflow should expose deterministic E2E as its own job");
-  assert.ok(testWorkflow.includes("npm run build:chrome"), "PR E2E job should build the Chrome target");
-  assert.ok(testWorkflow.includes("npm run test:e2e"), "PR E2E job should run the full deterministic suite");
+  const deterministicE2eJob = testWorkflow.match(/\n  deterministic-e2e:\n[\s\S]*$/)?.[0] || "";
+  assert.ok(deterministicE2eJob, "PR workflow should expose deterministic E2E as its own job");
+  assert.ok(
+    deterministicE2eJob.includes("npx playwright install --with-deps chromium"),
+    "PR E2E job should install Playwright Chromium"
+  );
+  assert.ok(deterministicE2eJob.includes("npm run build:chrome"), "PR E2E job should build the Chrome target");
+  assert.ok(deterministicE2eJob.includes("npm run test:e2e"), "PR E2E job should run the full deterministic suite");
   assert.ok(!testWorkflow.includes("npm run test:browser-gates"), "PR workflow should leave Tier C to nightly");
+  assert.ok(
+    !testWorkflow.includes("browser-smoke-timings"),
+    "PR workflow should leave browser smoke timing uploads to nightly"
+  );
 }
 
 function testPublicationContactsAreFinalized() {
