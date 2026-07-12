@@ -46,6 +46,19 @@ Supported UTF-8 text-file scanning and protected composer file handling should b
 
 Firefox can have different behavior for hidden upload controls and trusted user activation. Keep Firefox release notes explicit about tested sites and any known limitations.
 
+## Automated Packaged Runtime Smoke
+
+The standalone smoke commands build and exercise each packaged runtime through the existing browser harnesses:
+
+| Package | Command |
+| --- | --- |
+| Chrome consumer | `npm run smoke:chrome` |
+| Chrome enterprise | `npm run smoke:chrome-enterprise` |
+| Firefox consumer | `npm run smoke:firefox` |
+| Firefox enterprise | `npm run smoke:firefox-enterprise` |
+
+`npm run qa:browser:full` runs the full QA harness once against the Chrome consumer build, then smokes Chrome consumer, Edge with the Chrome consumer build, Firefox consumer, Chrome enterprise, and Firefox enterprise. The enterprise smoke runs the packaged runtime under its normal defaults; it asserts feedback, secure reveal, and user-added sites remain unavailable, sensitive composer actions produce no host delivery, and shared OCR/scanner checks still pass. It does not synthesize managed policy. There is no separate Edge enterprise smoke target.
+
 ## Compatibility Review Checklist
 
 Before claiming browser support for a release:

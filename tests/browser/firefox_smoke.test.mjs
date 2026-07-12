@@ -15,7 +15,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "../..");
 const require = createRequire(import.meta.url);
 const { sanitizeBrowserQaText } = require(path.join(repoRoot, "tests/helpers/browserQaAssertions.js"));
-const extensionDir = path.join(repoRoot, "dist", "firefox");
+const targetArgument = process.argv.find((value) => value.startsWith("--extension-target="));
+const extensionTarget = targetArgument ? targetArgument.slice("--extension-target=".length) : "firefox";
+assert.ok(["firefox", "firefox-enterprise"].includes(extensionTarget), `Unsupported Firefox smoke target: ${extensionTarget}`);
+const extensionDir = path.join(repoRoot, "dist", extensionTarget);
+const extensionBuildCommand = `npm run build:${extensionTarget}`;
 const smokeTimeoutMs = Number(process.env.LEAKGUARD_FIREFOX_SMOKE_TIMEOUT_MS || 60000);
 const webdriverCommandTimeoutMs = Number(process.env.LEAKGUARD_FIREFOX_WEBDRIVER_TIMEOUT_MS || 30000);
 const smokeTimingWarningMs = Number(process.env.LEAKGUARD_SMOKE_TIMING_WARN_MS || 5000);
@@ -89,7 +93,7 @@ function assertBuiltExtensionExists() {
   const manifestPath = path.join(extensionDir, "manifest.json");
   assert.ok(
     fs.existsSync(manifestPath),
-    `Expected ${manifestPath}. Run npm run build:firefox before the smoke test.`
+    `Expected ${manifestPath}. Run ${extensionBuildCommand} before the smoke test.`
   );
 }
 
@@ -813,6 +817,61 @@ async function runFirefoxPopupAndProtectedSiteQa(webdriver, extensionOrigin, loc
   });
 }
 
+async function runFirefoxEnterpriseProtectedSiteUnavailableQa(webdriver, extensionOrigin, localOrigin) {
+  await webdriver.navigate(`${extensionOrigin}/popup/popup.html`);
+  await waitFor(
+    () => webdriver.execute(
+      "return Boolean(document.querySelector('#manage-btn') && document.querySelector('#site-input')?.disabled && document.querySelector('#add-site-form button[type=\"submit\"]')?.disabled);"
+    ),
+    "Firefox enterprise user-added site controls"
+  );
+
+  const controls = await webdriver.execute(`return {
+    inputDisabled: document.querySelector('#site-input')?.disabled,
+    addDisabled: document.querySelector('#add-site-form button[type="submit"]')?.disabled
+  };`);
+  assert.equal(controls.inputDisabled, true, "Firefox enterprise site input should be disabled by policy");
+  assert.equal(controls.addDisabled, true, "Firefox enterprise site creation should be disabled by policy");
+
+  const hasPermission = await webdriver.executeAsync(`const done = arguments[arguments.length - 1];
+    const ext = globalThis.browser || globalThis.chrome;
+    ext.permissions.contains({ origins: [arguments[0]] }).then(done);`, [localProtectedSitePermission]);
+  assert.equal(hasPermission, true, "temporary Firefox enterprise XPI should pregrant localhost permission");
+
+  const addResponse = await extensionMessage(webdriver, {
+    type: "PWM_ADD_PROTECTED_SITE",
+    input: localProtectedSiteInput,
+    url: `${localOrigin}/`
+  });
+  assert.equal(addResponse.ok, false, "Firefox enterprise should reject user-added site creation");
+  assert.match(addResponse.error, /Managed policy disables user-added sites/i);
+
+  const overview = await getLocalProtectedSiteOverview(webdriver, localOrigin);
+  assert.equal(overview.policy?.allowUserAddedSites, false, "Firefox enterprise policy should disable user-added sites");
+  assert.equal(overview.currentSite?.protected, false, "Firefox enterprise local origin should remain unprotected");
+  assert.equal(overview.currentSite?.canProtect, false, "Firefox enterprise local origin should not be user-protectable");
+  assert.equal(overview.currentSite?.source, null, "Firefox enterprise should not create a user site rule");
+  assert.equal(getUserProtectedSite(overview), null, "Firefox enterprise should not persist the rejected user site");
+
+  const registrations = await webdriver.executeAsync(`const done = arguments[arguments.length - 1];
+    const ext = globalThis.browser || globalThis.chrome;
+    ext.scripting.getRegisteredContentScripts().then(done);`);
+  assert.equal(
+    registrations.some((registration) => registration.matches?.includes(localProtectedSitePermission)),
+    false,
+    "Firefox enterprise should not register a content script for the rejected user site"
+  );
+
+  await webdriver.navigate(`${localOrigin}/`);
+  const localPage = await webdriver.executeAsync(`const done = arguments[arguments.length - 1];
+    setTimeout(() => done({
+      ready: document.readyState === 'complete',
+      protectedPanel: Boolean(document.querySelector('.pwm-panel'))
+    }), 500);`);
+  assert.equal(localPage.ready, true, "Firefox enterprise local harness should load for the registration check");
+  assert.equal(localPage.protectedPanel, false, "Firefox enterprise rejected user site should not activate protection");
+}
+
 async function runFirefoxProtectedSiteRemovalQa(webdriver, localOrigin) {
   const deleteResponse = await extensionMessage(webdriver, {
     type: "PWM_DELETE_PROTECTED_SITE",
@@ -827,6 +886,14 @@ async function runFirefoxProtectedSiteRemovalQa(webdriver, localOrigin) {
     protected: false,
     source: null
   });
+}
+
+async function runFirefoxEnterpriseProtectedSiteStillUnavailableQa(webdriver, localOrigin) {
+  const overview = await getLocalProtectedSiteOverview(webdriver, localOrigin);
+  assert.equal(overview.policy?.allowUserAddedSites, false, "Firefox enterprise user-added sites should remain disabled");
+  assert.equal(overview.currentSite?.protected, false, "Firefox enterprise rejected site should remain unprotected");
+  assert.equal(overview.currentSite?.canProtect, false, "Firefox enterprise rejected site should remain unavailable");
+  assert.equal(getUserProtectedSite(overview), null, "Firefox enterprise rejected site should remain absent");
 }
 
 async function openFirefoxLocalProtectedHarness(webdriver, localOrigin) {
@@ -947,6 +1014,100 @@ async function runFirefoxPromptRedactionQa(webdriver) {
   return result;
 }
 
+async function runFirefoxEnterprisePromptBlockQa(webdriver, extensionOrigin) {
+  const preSubmit = await webdriver.execute(`const payload = arguments[0];
+    const textarea = document.querySelector('#prompt-textarea');
+    textarea.focus();
+
+    const beforeInput = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      inputType: 'insertText',
+      data: payload
+    });
+    textarea.dispatchEvent(beforeInput);
+    if (!beforeInput.defaultPrevented) {
+      textarea.value = payload;
+      textarea.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        inputType: 'insertText',
+        data: payload
+      }));
+    }
+    return {
+      value: textarea.value || '',
+      prevented: beforeInput.defaultPrevented,
+      secretPlaceholderVisible: /^OPENAI_API_KEY=\\[PWM_\\d+\\]$/m.test(textarea.value || '') ||
+        /^ANTHROPIC_API_KEY=\\[PWM_\\d+\\]$/m.test(textarea.value || '') ||
+        /^GITHUB_TOKEN=\\[PWM_\\d+\\]$/m.test(textarea.value || '') ||
+        /^STRIPE_SECRET_KEY=\\[PWM_\\d+\\]$/m.test(textarea.value || ''),
+      existingPlaceholderPreserved: /^PLACEHOLDER_ALREADY=\\[PWM_1\\]$/m.test(textarea.value || ''),
+      hasAnyRaw: arguments[1].some((raw) => (textarea.value || '').includes(raw))
+    };`, [promptPayload, rawValues]);
+
+  assert.equal(preSubmit.prevented, false, "Firefox enterprise live typing should not consume beforeinput by default");
+  assert.equal(preSubmit.value, promptPayload, "Firefox enterprise pre-submit composer should preserve the complete payload");
+  assert.equal(preSubmit.secretPlaceholderVisible, false, "Firefox enterprise live typing should not create pre-submit secret placeholders");
+  assert.equal(preSubmit.existingPlaceholderPreserved, true, "Firefox enterprise typing should preserve trusted placeholder text");
+  assert.equal(preSubmit.hasAnyRaw, true, "Firefox enterprise should leave canceled text in the user-owned composer");
+
+  const pageUrl = await webdriver.execute("return location.href;");
+  await webdriver.clickElement("#send-button");
+  const blocked = await webdriver.executeAsync(`const rawValues = arguments[0];
+    const done = arguments[arguments.length - 1];
+    setTimeout(() => {
+      const composer = document.querySelector('#prompt-textarea');
+      const outsideComposer = document.body.cloneNode(true);
+      outsideComposer.querySelector('#prompt-textarea')?.remove();
+      done({
+        composerValue: composer?.value || '',
+        submissions: Array.from(window.__leakguardSmokeSubmissions || []),
+        echoText: document.querySelector('#echo-zone')?.textContent || '',
+        panelText: document.querySelector('.pwm-panel')?.innerText || '',
+        outsideComposerHasRaw: rawValues.some((raw) => (outsideComposer.textContent || '').includes(raw))
+      });
+    }, 750);`, [rawValues]);
+
+  assert.equal(blocked.composerValue, promptPayload, "Firefox enterprise canceled action should retain the complete user-owned composer payload");
+  assert.equal(blocked.submissions.length, 0, "Firefox enterprise default block should produce zero host submissions");
+  assert.equal(blocked.echoText, "", "Firefox enterprise default block should produce zero destination echo/delivery");
+  assert.match(blocked.panelText, /PROTECTION\s+Active/i, "Firefox enterprise protected status should remain active");
+  assert.equal(blocked.outsideComposerHasRaw, false, "Firefox enterprise raw canaries should stay out of destination content");
+  assert.equal(
+    rawValues.some((raw) => JSON.stringify(blocked.submissions).includes(raw)),
+    false,
+    "Firefox enterprise host submissions should stay raw-free"
+  );
+
+  await webdriver.navigate(`${extensionOrigin}/popup/popup.html`);
+  await waitFor(
+    () => webdriver.execute("return Boolean(document.querySelector('#manage-btn'));"),
+    "Firefox enterprise popup policy metadata"
+  );
+  const publicState = await extensionMessage(webdriver, {
+    type: "PWM_GET_PUBLIC_STATE",
+    url: pageUrl
+  });
+  assert.equal(publicState.ok, true, "Firefox enterprise public policy state should be available");
+  assert.equal(publicState.state?.policy?.enterpriseMode, true, "Firefox enterprise policy mode should be reported");
+  assert.equal(publicState.state?.policy?.defaultAction, "block", "Firefox enterprise default action should be block");
+  assert.equal(publicState.state?.policy?.auditMode, "metadata-only", "Firefox enterprise audit mode should stay metadata-only");
+
+  const storageState = await webdriver.executeAsync(`const done = arguments[arguments.length - 1];
+    const ext = globalThis.browser || globalThis.chrome;
+    Promise.all([
+      ext.storage.local.get(null),
+      ext.storage.session?.get ? ext.storage.session.get(null) : Promise.resolve({})
+    ]).then(([local, session]) => done({ local, session }), (error) => done({ error: error?.message || String(error) }));`);
+  assert.equal(storageState.error, undefined, storageState.error || "Firefox enterprise storage should be readable");
+  assert.equal(
+    rawValues.some((raw) => JSON.stringify(storageState).includes(raw)),
+    false,
+    "Firefox enterprise extension storage should not persist canceled raw canaries"
+  );
+
+}
+
 async function runFirefoxSecureRevealQa(webdriver, extensionOrigin, placeholder) {
   await webdriver.execute(`const placeholder = arguments[0];
     const echo = document.querySelector('#echo-zone');
@@ -989,6 +1150,33 @@ async function runFirefoxSecureRevealQa(webdriver, extensionOrigin, placeholder)
     return state.hidden === false && state.rawVisible ? state : null;
   }, "Firefox secure reveal raw value in popup");
   assert.match(afterShow.status, /Visible only inside this LeakGuard popup/);
+}
+
+async function runFirefoxEnterpriseSecureRevealUnavailableQa(webdriver) {
+  const publicState = await extensionMessage(webdriver, {
+    type: "PWM_GET_PUBLIC_STATE",
+    url: "https://chatgpt.com/"
+  });
+  assert.equal(publicState.ok, true, "Firefox enterprise reveal policy state should be available");
+  assert.equal(publicState.state?.policy?.allowReveal, false, "Firefox enterprise secure reveal should be disabled by policy");
+
+  const response = await extensionMessage(webdriver, {
+    type: "PWM_OPEN_POPUP_REVEAL",
+    placeholder: "[PWM_1]"
+  });
+  assert.equal(response.ok, false, "Firefox enterprise secure reveal request should be rejected");
+  assert.match(response.error, /Secure reveal is disabled by policy/i);
+
+  const popupState = await webdriver.execute(`return {
+    revealHidden: document.querySelector('#reveal-view')?.hidden,
+    secretHidden: document.querySelector('#secret-value')?.hidden,
+    secretText: document.querySelector('#secret-value')?.textContent || '',
+    popupHasRaw: arguments[0].some((raw) => (document.body?.innerText || '').includes(raw))
+  };`, [rawValues]);
+  assert.equal(popupState.revealHidden, true, "Firefox enterprise reveal view should stay unavailable");
+  assert.equal(popupState.secretHidden, true, "Firefox enterprise secret value should stay hidden");
+  assert.equal(popupState.secretText, "", "Firefox enterprise popup should not receive reveal content");
+  assert.equal(popupState.popupHasRaw, false, "Firefox enterprise popup should stay raw-free");
 }
 
 async function waitForDownloadedText(downloadPath, fileName) {
@@ -1290,6 +1478,27 @@ async function runFirefoxFeedbackDefaultVisibleSmoke(webdriver, extensionOrigin)
   assert.equal(report.githubDisabled, false, "Firefox GitHub issue button should be enabled for configured target");
 }
 
+async function runFirefoxFeedbackDefaultUnavailableSmoke(webdriver, extensionOrigin) {
+  await webdriver.navigate(`${extensionOrigin}/options/options.html`);
+  await waitFor(
+    () => webdriver.execute(
+      "return Boolean(document.querySelector('#feedback-section')?.hidden && document.querySelector('#feedback-entry')?.disabled);"
+    ),
+    "Firefox enterprise feedback policy gate"
+  );
+  const state = await webdriver.execute(`return {
+    hidden: document.querySelector('#feedback-section')?.hidden,
+    unavailable: document.querySelector('#feedback-entry')?.disabled,
+    reviewHidden: document.querySelector('#feedback-review')?.hidden,
+    reportEmpty: !(document.querySelector('#feedback-report-preview')?.value || '')
+  };`);
+
+  assert.equal(state.hidden, true, "Firefox enterprise feedback section should stay hidden");
+  assert.equal(state.unavailable, true, "Firefox enterprise feedback action should stay unavailable");
+  assert.equal(state.reviewHidden, true, "Firefox enterprise feedback review should stay hidden");
+  assert.equal(state.reportEmpty, true, "Firefox enterprise feedback report should not be generated");
+}
+
 async function runFirefoxSmoke() {
   assertBuiltExtensionExists();
   const firefoxPath = findFirefoxExecutable();
@@ -1330,9 +1539,17 @@ async function runFirefoxSmoke() {
     const extensionOrigin = await getFirefoxExtensionOrigin(profileDir, installedExtensionId);
     console.log(`Firefox smoke: temporary extension loaded (${installedExtensionId})`);
     console.log("Firefox smoke: feedback policy gate");
-    await runFirefoxFeedbackDefaultVisibleSmoke(webdriver, extensionOrigin);
+    if (extensionTarget === "firefox-enterprise") {
+      await runFirefoxFeedbackDefaultUnavailableSmoke(webdriver, extensionOrigin);
+    } else {
+      await runFirefoxFeedbackDefaultVisibleSmoke(webdriver, extensionOrigin);
+    }
     console.log("Firefox smoke: popup and protected-site management");
-    await runFirefoxPopupAndProtectedSiteQa(webdriver, extensionOrigin, httpsServer.localOrigin);
+    if (extensionTarget === "firefox-enterprise") {
+      await runFirefoxEnterpriseProtectedSiteUnavailableQa(webdriver, extensionOrigin, httpsServer.localOrigin);
+    } else {
+      await runFirefoxPopupAndProtectedSiteQa(webdriver, extensionOrigin, httpsServer.localOrigin);
+    }
 
     console.log("Firefox smoke: built-in protected site");
     const panelStartedAt = Date.now();
@@ -1351,12 +1568,25 @@ async function runFirefoxSmoke() {
     assert.match(panel.rows.join("\n"), /PROTECTION\s+Active/i);
     assert.match(panel.rows.join("\n"), /chatgpt\.com/);
 
-    console.log("Firefox smoke: user-managed local protected site");
-    await openFirefoxLocalProtectedHarness(webdriver, httpsServer.localOrigin);
+    if (extensionTarget === "firefox-enterprise") {
+      console.log("Firefox smoke: user-managed local protected site remains unavailable");
+    } else {
+      console.log("Firefox smoke: user-managed local protected site");
+      await openFirefoxLocalProtectedHarness(webdriver, httpsServer.localOrigin);
+    }
     console.log("Firefox smoke: composer redaction");
-    const redacted = await runFirefoxPromptRedactionQa(webdriver);
+    let redacted = null;
+    if (extensionTarget === "firefox-enterprise") {
+      await runFirefoxEnterprisePromptBlockQa(webdriver, extensionOrigin);
+    } else {
+      redacted = await runFirefoxPromptRedactionQa(webdriver);
+    }
     console.log("Firefox smoke: secure reveal");
-    await runFirefoxSecureRevealQa(webdriver, extensionOrigin, redacted.firstPlaceholder);
+    if (extensionTarget === "firefox-enterprise") {
+      await runFirefoxEnterpriseSecureRevealUnavailableQa(webdriver);
+    } else {
+      await runFirefoxSecureRevealQa(webdriver, extensionOrigin, redacted.firstPlaceholder);
+    }
 
     console.log("Firefox smoke: refresh safety");
     await webdriver.refresh();
@@ -1375,8 +1605,13 @@ async function runFirefoxSmoke() {
     await runFirefoxOcrWasmProbeQa(webdriver, extensionOrigin);
     console.log("Firefox smoke: file scanner");
     await runFirefoxScannerQa(webdriver, extensionOrigin, tempDir, downloadDir);
-    console.log("Firefox smoke: protected-site removal");
-    await runFirefoxProtectedSiteRemovalQa(webdriver, httpsServer.localOrigin);
+    if (extensionTarget === "firefox-enterprise") {
+      console.log("Firefox smoke: protected-site remains unavailable");
+      await runFirefoxEnterpriseProtectedSiteStillUnavailableQa(webdriver, httpsServer.localOrigin);
+    } else {
+      console.log("Firefox smoke: protected-site removal");
+      await runFirefoxProtectedSiteRemovalQa(webdriver, httpsServer.localOrigin);
+    }
 
     console.log("PASS firefox extension smoke");
   } catch (error) {

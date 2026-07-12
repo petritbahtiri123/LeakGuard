@@ -194,6 +194,10 @@ function extractTopLevelWorkflowJob(workflow, jobName) {
   return lines.slice(startIndex, endIndex).join("\n");
 }
 
+function countOccurrences(source, value) {
+  return source.split(value).length - 1;
+}
+
 function testManifestBrandingAndProductPagesExist(manifest) {
   assert.strictEqual(manifest.name, "LeakGuard");
   assert.ok(
@@ -855,6 +859,23 @@ function testBrowserQaScriptOwnsFirefoxSmokeCoverage() {
   );
 }
 
+function testEnterpriseTargetsHavePackagedRuntimeSmoke() {
+  assert.strictEqual(
+    packageJson.scripts["qa:browser:full"],
+    "npm run build:chrome && node tests/browser/extension_qa_harness.test.mjs --full-matrix && node tests/browser/chrome_smoke.test.mjs && node tests/browser/edge_smoke.test.mjs && npm run build:firefox && node tests/browser/firefox_smoke.test.mjs && npm run build:chrome-enterprise && node tests/browser/chrome_smoke.test.mjs --extension-target=chrome-enterprise && npm run build:firefox-enterprise && node tests/browser/firefox_smoke.test.mjs --extension-target=firefox-enterprise"
+  );
+  assert.strictEqual(
+    packageJson.scripts["smoke:chrome-enterprise"],
+    "npm run build:chrome-enterprise && node tests/browser/chrome_smoke.test.mjs --extension-target=chrome-enterprise"
+  );
+  assert.strictEqual(
+    packageJson.scripts["smoke:firefox-enterprise"],
+    "npm run build:firefox-enterprise && node tests/browser/firefox_smoke.test.mjs --extension-target=firefox-enterprise"
+  );
+  assert.ok(chromeSmokeSource.includes("--extension-target="));
+  assert.ok(firefoxSmokeSource.includes("--extension-target="));
+}
+
 function testPhase17aTestingGapAnalysisDocumentsAutomationGaps() {
   assert.ok(fileExists("docs/phase-17a-testing-gap-analysis.md"), "Phase 17A testing gap analysis should exist");
 
@@ -1055,6 +1076,16 @@ function testPhase17fScriptsAndWorkflowsAreTiered() {
     "test:nightly should compose all tiers"
   );
   assert.strictEqual(
+    countOccurrences(packageJson.scripts["test:nightly"], "npm run test:e2e"),
+    1,
+    "test:nightly should run deterministic E2E exactly once"
+  );
+  assert.strictEqual(
+    countOccurrences(packageJson.scripts["test:nightly"], "npm run test:browser-gates"),
+    1,
+    "test:nightly should run browser gates exactly once"
+  );
+  assert.strictEqual(
     packageJson.scripts["test:release"],
     "npm run docs:check-links && npm run test:nightly && npm run test:release-matrix",
     "test:release should compose documentation, nightly, and matrix completion gates"
@@ -1085,6 +1116,11 @@ function testPhase17fScriptsAndWorkflowsAreTiered() {
   const nightlyNpmCiIndex = browserNightlyJob.indexOf("npm ci");
   const nightlyChromiumInstallIndex = browserNightlyJob.indexOf("npx playwright install --with-deps chromium");
   const nightlyCommandIndex = browserNightlyJob.indexOf("npm run test:nightly");
+  assert.strictEqual(
+    countOccurrences(browserNightlyWorkflow, "npm run test:nightly"),
+    1,
+    "browser-nightly should run the nightly aggregate exactly once"
+  );
   assert.ok(
     nightlyNpmCiIndex !== -1 &&
       nightlyChromiumInstallIndex > nightlyNpmCiIndex &&
@@ -1097,6 +1133,29 @@ function testPhase17fScriptsAndWorkflowsAreTiered() {
   const releaseNpmCiIndex = releaseArtifactsJob.indexOf("npm ci");
   const releaseChromiumInstallIndex = releaseArtifactsJob.indexOf("npx playwright install --with-deps chromium");
   const releaseE2eIndex = releaseArtifactsJob.indexOf("npm run test:e2e");
+  const releaseMatrixIndex = releaseArtifactsJob.indexOf("npm run test:release-matrix");
+  const releaseChecksumsIndex = releaseArtifactsJob.indexOf("npm run release:checksums");
+  assert.strictEqual(
+    countOccurrences(releaseArtifactsJob, "npm run test:e2e"),
+    1,
+    "release-artifacts job should run deterministic E2E exactly once"
+  );
+  assert.strictEqual(
+    countOccurrences(releaseArtifactsJob, "npm run test:release-matrix"),
+    1,
+    "release-artifacts job should run the release matrix exactly once"
+  );
+  assert.strictEqual(
+    countOccurrences(releaseArtifactsJob, "npm run release:checksums"),
+    1,
+    "release-artifacts job should generate checksums exactly once"
+  );
+  assert.ok(
+    releaseE2eIndex !== -1 &&
+      releaseE2eIndex < releaseMatrixIndex &&
+      releaseMatrixIndex < releaseChecksumsIndex,
+    "release-artifacts job should run E2E before the release matrix and checksums"
+  );
   assert.ok(
     releaseNpmCiIndex !== -1 &&
       releaseChromiumInstallIndex > releaseNpmCiIndex &&
@@ -1440,6 +1499,7 @@ async function run() {
   testPhase14cProtectedSitePdfPlanIsPlanningOnly();
   testPublicDocsAlignWithCurrentFileCapabilities();
   testBrowserQaScriptOwnsFirefoxSmokeCoverage();
+  testEnterpriseTargetsHavePackagedRuntimeSmoke();
   testPhase17aTestingGapAnalysisDocumentsAutomationGaps();
   testPhase17bBrowserAutomationDocumentsP0Coverage();
   testPhase17cProviderBrowserParityAutomationIsDocumented();

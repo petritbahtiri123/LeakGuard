@@ -14,7 +14,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "../..");
 const require = createRequire(import.meta.url);
 const { sanitizeBrowserQaText } = require(path.join(repoRoot, "tests/helpers/browserQaAssertions.js"));
-const extensionDir = path.join(repoRoot, "dist", "chrome");
+const isDirectChromeSmoke = Boolean(process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href);
+const targetArgument = isDirectChromeSmoke
+  ? process.argv.find((value) => value.startsWith("--extension-target="))
+  : null;
+const extensionTarget = targetArgument ? targetArgument.slice("--extension-target=".length) : "chrome";
+assert.ok(["chrome", "chrome-enterprise"].includes(extensionTarget), `Unsupported Chrome smoke target: ${extensionTarget}`);
+const extensionDir = path.join(repoRoot, "dist", extensionTarget);
+const extensionBuildCommand = `npm run build:${extensionTarget}`;
 const smokeTimeoutMs = Number(process.env.LEAKGUARD_CHROME_SMOKE_TIMEOUT_MS || 60000);
 const cdpCommandTimeoutMs = Number(process.env.LEAKGUARD_CHROME_SMOKE_CDP_TIMEOUT_MS || 60000);
 const smokeTimingWarningMs = Number(process.env.LEAKGUARD_SMOKE_TIMING_WARN_MS || 5000);
@@ -1164,6 +1171,28 @@ async function runFeedbackDefaultVisibleSmoke(connection, extensionId, browserNa
   assert.equal(state.unavailable, false, `${browserName} feedback action should be available by default`);
 }
 
+async function runFeedbackDefaultUnavailableSmoke(connection, extensionId, browserName = "Chrome") {
+  const optionsPage = await createPage(connection, `chrome-extension://${extensionId}/options/options.html`);
+  await waitForEval(
+    connection,
+    optionsPage.sessionId,
+    "document.querySelector('#feedback-section')?.hidden && document.querySelector('#feedback-entry')?.disabled",
+    `${browserName} enterprise feedback policy gate`
+  );
+
+  const state = await evaluate(connection, optionsPage.sessionId, `({
+    hidden: document.querySelector('#feedback-section')?.hidden,
+    unavailable: document.querySelector('#feedback-entry')?.disabled,
+    reviewHidden: document.querySelector('#feedback-review')?.hidden,
+    reportEmpty: !(document.querySelector('#feedback-report-preview')?.value || '')
+  })`);
+
+  assert.equal(state.hidden, true, `${browserName} enterprise feedback section should stay hidden`);
+  assert.equal(state.unavailable, true, `${browserName} enterprise feedback action should stay unavailable`);
+  assert.equal(state.reviewHidden, true, `${browserName} enterprise feedback review should stay hidden`);
+  assert.equal(state.reportEmpty, true, `${browserName} enterprise feedback report should not be generated`);
+}
+
 async function runFeedbackEnabledCopySmoke(connection, extensionId, browserName = "Chrome") {
   const optionsPage = await createPage(connection, `chrome-extension://${extensionId}/options/options.html`);
   await waitForEval(
@@ -1319,6 +1348,91 @@ async function runComposerRedactionSmoke(connection, page) {
   return { rawSecret, placeholder: redacted.placeholder || "[PWM_1]" };
 }
 
+async function runEnterpriseComposerBlockSmoke(connection, page, extensionSessionId) {
+  const rawSecret = chromeSmokeRawSecret;
+  const preSubmit = await evaluate(connection, page.sessionId, `new Promise((resolve) => {
+    const textarea = document.querySelector('#prompt-textarea');
+    const text = 'API_KEY=${rawSecret}';
+    textarea.focus();
+    const event = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      inputType: 'insertText',
+      data: text
+    });
+    textarea.dispatchEvent(event);
+    if (!event.defaultPrevented) {
+      textarea.value = text;
+      textarea.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        inputType: 'insertText',
+        data: text
+      }));
+    }
+    setTimeout(() => resolve({
+      value: textarea.value,
+      prevented: event.defaultPrevented,
+      placeholderVisible: /\\[PWM_\\d+\\]/.test(textarea.value),
+      rawVisible: textarea.value.includes(${JSON.stringify(rawSecret)})
+    }), 250);
+  })`);
+
+  assert.equal(preSubmit.prevented, false, "Chrome enterprise live typing should not consume beforeinput by default");
+  assert.equal(preSubmit.placeholderVisible, false, "Chrome enterprise live typing should not create pre-submit [PWM_N]");
+  assert.equal(preSubmit.rawVisible, true, "Chrome enterprise should leave canceled text in the user-owned composer");
+
+  const pageUrl = await evaluate(connection, page.sessionId, "location.href");
+  const publicState = await extensionMessage(connection, extensionSessionId, {
+    type: "PWM_GET_PUBLIC_STATE",
+    url: pageUrl
+  });
+  assert.equal(publicState.ok, true, "Chrome enterprise public policy state should be available");
+  assert.equal(publicState.state?.policy?.enterpriseMode, true, "Chrome enterprise policy mode should be reported");
+  assert.equal(publicState.state?.policy?.defaultAction, "block", "Chrome enterprise default action should be block");
+  assert.equal(publicState.state?.policy?.auditMode, "metadata-only", "Chrome enterprise audit mode should stay metadata-only");
+
+  const blocked = await evaluate(connection, page.sessionId, `new Promise((resolve) => {
+    document.querySelector('#send-button')?.click();
+    setTimeout(() => {
+      const composer = document.querySelector('#prompt-textarea');
+      const outsideComposer = document.body.cloneNode(true);
+      outsideComposer.querySelector('#prompt-textarea')?.remove();
+      const submissions = Array.from(window.__leakguardSmokeSubmissions || []);
+      resolve({
+        composerValue: composer?.value || '',
+        submissions,
+        echoText: document.querySelector('#echo-zone')?.textContent || '',
+        outsideComposerText: outsideComposer.textContent || '',
+        panelText: document.querySelector('.pwm-panel')?.innerText || ''
+      });
+    }, 750);
+  })`);
+
+  assert.equal(blocked.composerValue.includes(rawSecret), true, "Chrome enterprise canceled action should retain user-owned composer text");
+  assert.equal(blocked.submissions.length, 0, "Chrome enterprise default block should produce zero host submissions");
+  assert.equal(blocked.echoText, "", "Chrome enterprise default block should produce zero destination echo/delivery");
+  assert.match(blocked.panelText, /PROTECTION\s+Active/i, "Chrome enterprise protected status should remain active");
+  assert.equal(blocked.outsideComposerText.includes(rawSecret), false, "Chrome enterprise raw canary should stay out of destination content");
+  assert.equal(JSON.stringify(blocked.submissions).includes(rawSecret), false, "Chrome enterprise host submissions should stay raw-free");
+
+  const storageState = await evaluate(
+    connection,
+    extensionSessionId,
+    `(async () => ({
+      local: await chrome.storage.local.get(null),
+      session: chrome.storage.session ? await chrome.storage.session.get(null) : {}
+    }))()`,
+    { awaitPromise: true }
+  );
+  assert.equal(
+    JSON.stringify(storageState).includes(rawSecret),
+    false,
+    "Chrome enterprise extension storage should not persist the canceled raw canary"
+  );
+
+  return { rawSecret };
+}
+
 async function runSecureRevealSmoke(connection, page, extensionId, rawSecret, placeholder) {
   const revealState = await evaluate(connection, page.sessionId, `new Promise((resolve, reject) => {
     const echo = document.querySelector('#echo-zone');
@@ -1368,6 +1482,34 @@ async function runSecureRevealSmoke(connection, page, extensionId, rawSecret, pl
   assert.equal(afterShow.hidden, false);
   assert.equal(afterShow.rawMatchesExpectedCanary, true, "Chrome secure reveal should show the expected canary only inside the popup");
   assert.match(afterShow.status, /Visible only inside this LeakGuard popup/);
+}
+
+async function runEnterpriseSecureRevealUnavailableSmoke(connection, page, extensionSessionId, rawSecret) {
+  const pageUrl = await evaluate(connection, page.sessionId, "location.href");
+  const publicState = await extensionMessage(connection, extensionSessionId, {
+    type: "PWM_GET_PUBLIC_STATE",
+    url: pageUrl
+  });
+  assert.equal(publicState.ok, true, "Chrome enterprise reveal policy state should be available");
+  assert.equal(publicState.state?.policy?.allowReveal, false, "Chrome enterprise secure reveal should be disabled by policy");
+
+  const response = await extensionMessage(connection, extensionSessionId, {
+    type: "PWM_OPEN_POPUP_REVEAL",
+    placeholder: "[PWM_1]"
+  });
+  assert.equal(response.ok, false, "Chrome enterprise secure reveal request should be rejected");
+  assert.match(response.error, /Secure reveal is disabled by policy/i);
+
+  const popupState = await evaluate(connection, extensionSessionId, `({
+    revealHidden: document.querySelector('#reveal-view')?.hidden,
+    secretHidden: document.querySelector('#secret-value')?.hidden,
+    secretText: document.querySelector('#secret-value')?.textContent || '',
+    popupText: document.body?.innerText || ''
+  })`);
+  assert.equal(popupState.revealHidden, true, "Chrome enterprise reveal view should stay unavailable");
+  assert.equal(popupState.secretHidden, true, "Chrome enterprise secret value should stay hidden");
+  assert.equal(popupState.secretText, "", "Chrome enterprise popup should not receive reveal content");
+  assert.equal(popupState.popupText.includes(rawSecret), false, "Chrome enterprise popup should stay raw-free");
 }
 
 const JS_CODE_ESCAPE_MAP = {
@@ -1458,6 +1600,67 @@ async function runUserManagedSiteSmoke(connection, extensionSessionId, userOrigi
   });
   assert.equal(disabledOverview.ok, true);
   assert.equal(disabledOverview.currentSite.protected, false);
+}
+
+async function runEnterpriseUserManagedSiteUnavailableSmoke(connection, extensionSessionId, userOrigin) {
+  await waitForEval(
+    connection,
+    extensionSessionId,
+    "document.querySelector('#site-input')?.disabled && document.querySelector('#add-site-form button[type=\"submit\"]')?.disabled",
+    "Chrome enterprise user-added site controls"
+  );
+
+  const controls = await evaluate(connection, extensionSessionId, `({
+    inputDisabled: document.querySelector('#site-input')?.disabled,
+    addDisabled: document.querySelector('#add-site-form button[type="submit"]')?.disabled
+  })`);
+  assert.equal(controls.inputDisabled, true, "Chrome enterprise site input should be disabled by policy");
+  assert.equal(controls.addDisabled, true, "Chrome enterprise site creation should be disabled by policy");
+
+  const addResponse = await extensionMessage(connection, extensionSessionId, {
+    type: "PWM_ADD_PROTECTED_SITE",
+    input: "http://127.0.0.1",
+    url: `${userOrigin}/`
+  });
+  assert.equal(addResponse.ok, false, "Chrome enterprise should reject user-added site creation");
+  assert.match(addResponse.error, /Managed policy disables user-added sites/i);
+
+  const overview = await extensionMessage(connection, extensionSessionId, {
+    type: "PWM_GET_PROTECTED_SITE_OVERVIEW",
+    url: `${userOrigin}/`
+  });
+  assert.equal(overview.ok, true, "Chrome enterprise protected-site overview should remain available");
+  assert.equal(overview.policy?.allowUserAddedSites, false, "Chrome enterprise policy should disable user-added sites");
+  assert.equal(overview.currentSite?.protected, false, "Chrome enterprise local origin should remain unprotected");
+  assert.equal(overview.currentSite?.canProtect, false, "Chrome enterprise local origin should not be user-protectable");
+  assert.equal(overview.currentSite?.source, null, "Chrome enterprise should not create a user site rule");
+  assert.equal(
+    overview.userSites?.some((rule) => rule.id === "http://127.0.0.1"),
+    false,
+    "Chrome enterprise should not persist the rejected user site"
+  );
+
+  const registrations = await evaluate(
+    connection,
+    extensionSessionId,
+    "chrome.scripting.getRegisteredContentScripts()",
+    { awaitPromise: true }
+  );
+  assert.equal(
+    registrations.some((registration) => registration.matches?.includes("http://127.0.0.1/*")),
+    false,
+    "Chrome enterprise should not register a content script for the rejected user site"
+  );
+
+  const userPage = await createPage(connection, `${userOrigin}/`);
+  const pageState = await evaluate(connection, userPage.sessionId, `new Promise((resolve) => {
+    setTimeout(() => resolve({
+      ready: document.readyState === 'complete',
+      protectedPanel: Boolean(document.querySelector('.pwm-panel'))
+    }), 500);
+  })`);
+  assert.equal(pageState.ready, true, "Chrome enterprise local harness should load for the registration check");
+  assert.equal(pageState.protectedPanel, false, "Chrome enterprise rejected user site should not activate protection");
 }
 
 async function runScannerSmoke(connection, extensionId, tempDir) {
@@ -1659,7 +1862,7 @@ async function runChromiumSmoke(options = {}) {
   const {
     browserName = "Chrome",
     sourceExtensionDir = extensionDir,
-    buildCommand = "npm run build:chrome",
+    buildCommand = extensionBuildCommand,
     findBrowserExecutable = findChromeExecutable,
     headlessEnvName = "LEAKGUARD_CHROME_HEADLESS",
     missingMessage = "Chrome stable or Chromium was not found. Set CHROME_BIN to run this smoke test.",
@@ -1708,21 +1911,52 @@ async function runChromiumSmoke(options = {}) {
     console.log(`${browserName} smoke: popup`);
     const popup = await runPopupSmoke(connection, extensionId);
     console.log(`${browserName} smoke: feedback policy gate`);
-    await runFeedbackDefaultVisibleSmoke(connection, extensionId, browserName);
+    if (extensionTarget === "chrome-enterprise") {
+      await runFeedbackDefaultUnavailableSmoke(connection, extensionId, browserName);
+    } else {
+      await runFeedbackDefaultVisibleSmoke(connection, extensionId, browserName);
+    }
     console.log(`${browserName} smoke: built-in protected site`);
     const builtInPage = await runBuiltInContentSmoke(connection, httpsServer.origin, browserName);
     console.log(`${browserName} smoke: composer redaction`);
-    const { rawSecret, placeholder } = await runComposerRedactionSmoke(connection, builtInPage);
+    const composerResult =
+      extensionTarget === "chrome-enterprise"
+        ? await runEnterpriseComposerBlockSmoke(connection, builtInPage, popup.sessionId)
+        : await runComposerRedactionSmoke(connection, builtInPage);
     console.log(`${browserName} smoke: secure reveal`);
-    await runSecureRevealSmoke(connection, builtInPage, extensionId, rawSecret, placeholder);
+    if (extensionTarget === "chrome-enterprise") {
+      await runEnterpriseSecureRevealUnavailableSmoke(
+        connection,
+        builtInPage,
+        popup.sessionId,
+        composerResult.rawSecret
+      );
+    } else {
+      await runSecureRevealSmoke(
+        connection,
+        builtInPage,
+        extensionId,
+        composerResult.rawSecret,
+        composerResult.placeholder
+      );
+    }
     console.log(`${browserName} smoke: user-managed protected site`);
-    await runUserManagedSiteSmoke(connection, popup.sessionId, httpServer.origin);
+    if (extensionTarget === "chrome-enterprise") {
+      await runEnterpriseUserManagedSiteUnavailableSmoke(connection, popup.sessionId, httpServer.origin);
+    } else {
+      await runUserManagedSiteSmoke(connection, popup.sessionId, httpServer.origin);
+    }
     console.log(`${browserName} smoke: OCR WASM worker proof`);
     await runOcrWasmProbeSmoke(connection, extensionId, browserName);
     console.log(`${browserName} smoke: file scanner`);
     await runScannerSmoke(connection, extensionId, tempDir);
-    console.log(`${browserName} smoke: feedback copy-safe report`);
-    await runFeedbackEnabledCopySmoke(connection, extensionId, browserName);
+    if (extensionTarget === "chrome-enterprise") {
+      console.log(`${browserName} smoke: feedback remains unavailable`);
+      await runFeedbackDefaultUnavailableSmoke(connection, extensionId, browserName);
+    } else {
+      console.log(`${browserName} smoke: feedback copy-safe report`);
+      await runFeedbackEnabledCopySmoke(connection, extensionId, browserName);
+    }
 
     console.log(`PASS ${browserName.toLowerCase()} extension smoke`);
   } catch (error) {
@@ -1754,7 +1988,7 @@ async function runChromiumSmoke(options = {}) {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isDirectChromeSmoke) {
   runChromiumSmoke().catch((error) => {
     console.error(error);
     process.exitCode = 1;
