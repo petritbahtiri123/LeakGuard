@@ -1069,6 +1069,13 @@ function testPhase17fScriptsAndWorkflowsAreTiered() {
   );
 }
 
+function testDeterministicPlaywrightIsRequiredPrGate() {
+  assert.ok(testWorkflow.includes("deterministic-e2e:"), "PR workflow should expose deterministic E2E as its own job");
+  assert.ok(testWorkflow.includes("npm run build:chrome"), "PR E2E job should build the Chrome target");
+  assert.ok(testWorkflow.includes("npm run test:e2e"), "PR E2E job should run the full deterministic suite");
+  assert.ok(!testWorkflow.includes("npm run test:browser-gates"), "PR workflow should leave Tier C to nightly");
+}
+
 function testPublicationContactsAreFinalized() {
   const finalizedContact = "petritbahtiri24@gmail.com";
   for (const [label, text] of Object.entries({
@@ -1369,6 +1376,7 @@ async function run() {
   testPhase17eReleaseArtifactStoreReadinessAutomationIsDocumented();
   testPhase17fCiNightlyMatrixHardeningIsDocumented();
   testPhase17fScriptsAndWorkflowsAreTiered();
+  testDeterministicPlaywrightIsRequiredPrGate();
   testPublicationContactsAreFinalized();
   testPhase18FinalPrStabilizationCloseoutIsDocumented();
   testPhase19ManualReleaseQaChecklistIsDocumented();

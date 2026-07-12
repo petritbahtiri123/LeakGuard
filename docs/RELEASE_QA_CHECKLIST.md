@@ -17,12 +17,12 @@
 
 ## CI And Nightly Validation
 
-- PR-required validation is Tier A: `npm run test:ci`, which maps to `npm run test:fast`.
+- PR-required validation is Tier A (`npm run test:ci`, which maps to `npm run test:fast`) plus the separate `deterministic-e2e` Playwright job (`npm run build:chrome` followed by `npm run test:e2e`).
 - Release/manual validation is Tier A plus Tier B: `npm run test:fast` and `npm run test:release-gates`.
-- Deterministic local-fixture E2E is account-free and may run in CI after `npm run build:chrome`: `npm run test:e2e`.
+- Deterministic local-fixture E2E is account-free and required in PR CI through the separate Playwright job.
 - Nightly/browser validation is Tier A plus Tier B plus Tier C: `npm run test:nightly`.
-- Tier C browser validation is heavy and environment-sensitive: `npm run preflight:browser` followed by `npm run test:browser-gates`.
-- Live-site E2E against ChatGPT, Gemini, WhatsApp, or other logged-in providers remains manual/headed only and is not required for CI.
+- Tier C packaged browser validation is heavy and environment-sensitive, remains outside PR CI, and runs through `npm run preflight:browser` followed by `npm run test:browser-gates`.
+- Authenticated live-site E2E against ChatGPT, Gemini, WhatsApp, or other logged-in providers remains manual/headed only and is not required for PR CI.
 - A browser startup failure before extension load, such as Chrome/Edge GPU/CDP startup failure or Firefox geckodriver status timeout, is a local or CI environment failure until rerun evidence shows the extension loaded and failed product assertions.
 - Product failures are failures after the extension loads and a LeakGuard behavior assertion fails, such as missing popup controls, missing protected-site panel, raw marker leakage, failed redaction, or missing scanner export behavior.
 
