@@ -1035,7 +1035,7 @@ async function runFirefoxEnterprisePromptBlockQa(webdriver, extensionOrigin) {
       }));
     }
     return {
-      value: textarea.value || '',
+      payloadPreserved: (textarea.value || '') === payload,
       prevented: beforeInput.defaultPrevented,
       secretPlaceholderVisible: /^OPENAI_API_KEY=\\[PWM_\\d+\\]$/m.test(textarea.value || '') ||
         /^ANTHROPIC_API_KEY=\\[PWM_\\d+\\]$/m.test(textarea.value || '') ||
@@ -1046,38 +1046,37 @@ async function runFirefoxEnterprisePromptBlockQa(webdriver, extensionOrigin) {
     };`, [promptPayload, rawValues]);
 
   assert.equal(preSubmit.prevented, false, "Firefox enterprise live typing should not consume beforeinput by default");
-  assert.equal(preSubmit.value, promptPayload, "Firefox enterprise pre-submit composer should preserve the complete payload");
+  assert.equal(preSubmit.payloadPreserved, true, "Firefox enterprise pre-submit composer should preserve the complete payload");
   assert.equal(preSubmit.secretPlaceholderVisible, false, "Firefox enterprise live typing should not create pre-submit secret placeholders");
   assert.equal(preSubmit.existingPlaceholderPreserved, true, "Firefox enterprise typing should preserve trusted placeholder text");
   assert.equal(preSubmit.hasAnyRaw, true, "Firefox enterprise should leave canceled text in the user-owned composer");
 
   const pageUrl = await webdriver.execute("return location.href;");
   await webdriver.clickElement("#send-button");
-  const blocked = await webdriver.executeAsync(`const rawValues = arguments[0];
+  const blocked = await webdriver.executeAsync(`const payload = arguments[0];
+    const rawValues = arguments[1];
     const done = arguments[arguments.length - 1];
     setTimeout(() => {
       const composer = document.querySelector('#prompt-textarea');
       const outsideComposer = document.body.cloneNode(true);
       outsideComposer.querySelector('#prompt-textarea')?.remove();
+      const submissions = Array.from(window.__leakguardSmokeSubmissions || []);
       done({
-        composerValue: composer?.value || '',
-        submissions: Array.from(window.__leakguardSmokeSubmissions || []),
-        echoText: document.querySelector('#echo-zone')?.textContent || '',
-        panelText: document.querySelector('.pwm-panel')?.innerText || '',
-        outsideComposerHasRaw: rawValues.some((raw) => (outsideComposer.textContent || '').includes(raw))
+        payloadPreserved: (composer?.value || '') === payload,
+        submissionCount: submissions.length,
+        submissionsRawFree: !rawValues.some((raw) => JSON.stringify(submissions).includes(raw)),
+        echoEmpty: !(document.querySelector('#echo-zone')?.textContent || ''),
+        panelActive: /PROTECTION\\s+Active/i.test(document.querySelector('.pwm-panel')?.innerText || ''),
+        outsideComposerRawFree: !rawValues.some((raw) => (outsideComposer.textContent || '').includes(raw))
       });
-    }, 750);`, [rawValues]);
+    }, 750);`, [promptPayload, rawValues]);
 
-  assert.equal(blocked.composerValue, promptPayload, "Firefox enterprise canceled action should retain the complete user-owned composer payload");
-  assert.equal(blocked.submissions.length, 0, "Firefox enterprise default block should produce zero host submissions");
-  assert.equal(blocked.echoText, "", "Firefox enterprise default block should produce zero destination echo/delivery");
-  assert.match(blocked.panelText, /PROTECTION\s+Active/i, "Firefox enterprise protected status should remain active");
-  assert.equal(blocked.outsideComposerHasRaw, false, "Firefox enterprise raw canaries should stay out of destination content");
-  assert.equal(
-    rawValues.some((raw) => JSON.stringify(blocked.submissions).includes(raw)),
-    false,
-    "Firefox enterprise host submissions should stay raw-free"
-  );
+  assert.equal(blocked.payloadPreserved, true, "Firefox enterprise canceled action should retain the complete user-owned composer payload");
+  assert.equal(blocked.submissionCount, 0, "Firefox enterprise default block should produce zero host submissions");
+  assert.equal(blocked.echoEmpty, true, "Firefox enterprise default block should produce zero destination echo/delivery");
+  assert.equal(blocked.panelActive, true, "Firefox enterprise protected status should remain active");
+  assert.equal(blocked.outsideComposerRawFree, true, "Firefox enterprise raw canaries should stay out of destination content");
+  assert.equal(blocked.submissionsRawFree, true, "Firefox enterprise host submissions should stay raw-free");
 
   await webdriver.navigate(`${extensionOrigin}/popup/popup.html`);
   await waitFor(
@@ -1093,18 +1092,21 @@ async function runFirefoxEnterprisePromptBlockQa(webdriver, extensionOrigin) {
   assert.equal(publicState.state?.policy?.defaultAction, "block", "Firefox enterprise default action should be block");
   assert.equal(publicState.state?.policy?.auditMode, "metadata-only", "Firefox enterprise audit mode should stay metadata-only");
 
-  const storageState = await webdriver.executeAsync(`const done = arguments[arguments.length - 1];
+  const storageState = await webdriver.executeAsync(`const rawValues = arguments[0];
+    const done = arguments[arguments.length - 1];
     const ext = globalThis.browser || globalThis.chrome;
     Promise.all([
       ext.storage.local.get(null),
       ext.storage.session?.get ? ext.storage.session.get(null) : Promise.resolve({})
-    ]).then(([local, session]) => done({ local, session }), (error) => done({ error: error?.message || String(error) }));`);
-  assert.equal(storageState.error, undefined, storageState.error || "Firefox enterprise storage should be readable");
-  assert.equal(
-    rawValues.some((raw) => JSON.stringify(storageState).includes(raw)),
-    false,
-    "Firefox enterprise extension storage should not persist canceled raw canaries"
-  );
+    ]).then(
+      ([local, session]) => done({
+        storageReadable: true,
+        storageRawFree: !rawValues.some((raw) => JSON.stringify({ local, session }).includes(raw))
+      }),
+      () => done({ storageReadable: false, storageRawFree: false })
+    );`, [rawValues]);
+  assert.equal(storageState.storageReadable, true, "Firefox enterprise storage should be readable");
+  assert.equal(storageState.storageRawFree, true, "Firefox enterprise extension storage should not persist canceled raw canaries");
 
 }
 
@@ -1170,13 +1172,13 @@ async function runFirefoxEnterpriseSecureRevealUnavailableQa(webdriver) {
   const popupState = await webdriver.execute(`return {
     revealHidden: document.querySelector('#reveal-view')?.hidden,
     secretHidden: document.querySelector('#secret-value')?.hidden,
-    secretText: document.querySelector('#secret-value')?.textContent || '',
-    popupHasRaw: arguments[0].some((raw) => (document.body?.innerText || '').includes(raw))
+    secretEmpty: !(document.querySelector('#secret-value')?.textContent || ''),
+    popupRawFree: !arguments[0].some((raw) => (document.body?.innerText || '').includes(raw))
   };`, [rawValues]);
   assert.equal(popupState.revealHidden, true, "Firefox enterprise reveal view should stay unavailable");
   assert.equal(popupState.secretHidden, true, "Firefox enterprise secret value should stay hidden");
-  assert.equal(popupState.secretText, "", "Firefox enterprise popup should not receive reveal content");
-  assert.equal(popupState.popupHasRaw, false, "Firefox enterprise popup should stay raw-free");
+  assert.equal(popupState.secretEmpty, true, "Firefox enterprise popup should not receive reveal content");
+  assert.equal(popupState.popupRawFree, true, "Firefox enterprise popup should stay raw-free");
 }
 
 async function waitForDownloadedText(downloadPath, fileName) {
@@ -1627,6 +1629,8 @@ async function runFirefoxSmoke() {
 }
 
 runFirefoxSmoke().catch((error) => {
-  console.error(error);
+  console.error(
+    sanitizeBrowserQaText(error?.stack || error?.message || error, firefoxSmokeSecretCanaries)
+  );
   process.exitCode = 1;
 });

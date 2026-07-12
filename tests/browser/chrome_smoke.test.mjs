@@ -1370,7 +1370,7 @@ async function runEnterpriseComposerBlockSmoke(connection, page, extensionSessio
       }));
     }
     setTimeout(() => resolve({
-      value: textarea.value,
+      payloadPreserved: textarea.value === text,
       prevented: event.defaultPrevented,
       placeholderVisible: /\\[PWM_\\d+\\]/.test(textarea.value),
       rawVisible: textarea.value.includes(${JSON.stringify(rawSecret)})
@@ -1378,6 +1378,7 @@ async function runEnterpriseComposerBlockSmoke(connection, page, extensionSessio
   })`);
 
   assert.equal(preSubmit.prevented, false, "Chrome enterprise live typing should not consume beforeinput by default");
+  assert.equal(preSubmit.payloadPreserved, true, "Chrome enterprise pre-submit composer should preserve the complete payload");
   assert.equal(preSubmit.placeholderVisible, false, "Chrome enterprise live typing should not create pre-submit [PWM_N]");
   assert.equal(preSubmit.rawVisible, true, "Chrome enterprise should leave canceled text in the user-owned composer");
 
@@ -1392,6 +1393,8 @@ async function runEnterpriseComposerBlockSmoke(connection, page, extensionSessio
   assert.equal(publicState.state?.policy?.auditMode, "metadata-only", "Chrome enterprise audit mode should stay metadata-only");
 
   const blocked = await evaluate(connection, page.sessionId, `new Promise((resolve) => {
+    const rawSecret = ${JSON.stringify(rawSecret)};
+    const expectedPayload = 'API_KEY=' + rawSecret;
     document.querySelector('#send-button')?.click();
     setTimeout(() => {
       const composer = document.querySelector('#prompt-textarea');
@@ -1399,36 +1402,35 @@ async function runEnterpriseComposerBlockSmoke(connection, page, extensionSessio
       outsideComposer.querySelector('#prompt-textarea')?.remove();
       const submissions = Array.from(window.__leakguardSmokeSubmissions || []);
       resolve({
-        composerValue: composer?.value || '',
-        submissions,
-        echoText: document.querySelector('#echo-zone')?.textContent || '',
-        outsideComposerText: outsideComposer.textContent || '',
-        panelText: document.querySelector('.pwm-panel')?.innerText || ''
+        payloadPreserved: (composer?.value || '') === expectedPayload,
+        submissionCount: submissions.length,
+        submissionsRawFree: !JSON.stringify(submissions).includes(rawSecret),
+        echoEmpty: !(document.querySelector('#echo-zone')?.textContent || ''),
+        outsideComposerRawFree: !(outsideComposer.textContent || '').includes(rawSecret),
+        panelActive: /PROTECTION\\s+Active/i.test(document.querySelector('.pwm-panel')?.innerText || '')
       });
     }, 750);
   })`);
 
-  assert.equal(blocked.composerValue.includes(rawSecret), true, "Chrome enterprise canceled action should retain user-owned composer text");
-  assert.equal(blocked.submissions.length, 0, "Chrome enterprise default block should produce zero host submissions");
-  assert.equal(blocked.echoText, "", "Chrome enterprise default block should produce zero destination echo/delivery");
-  assert.match(blocked.panelText, /PROTECTION\s+Active/i, "Chrome enterprise protected status should remain active");
-  assert.equal(blocked.outsideComposerText.includes(rawSecret), false, "Chrome enterprise raw canary should stay out of destination content");
-  assert.equal(JSON.stringify(blocked.submissions).includes(rawSecret), false, "Chrome enterprise host submissions should stay raw-free");
+  assert.equal(blocked.payloadPreserved, true, "Chrome enterprise canceled action should retain the complete user-owned composer payload");
+  assert.equal(blocked.submissionCount, 0, "Chrome enterprise default block should produce zero host submissions");
+  assert.equal(blocked.echoEmpty, true, "Chrome enterprise default block should produce zero destination echo/delivery");
+  assert.equal(blocked.panelActive, true, "Chrome enterprise protected status should remain active");
+  assert.equal(blocked.outsideComposerRawFree, true, "Chrome enterprise raw canary should stay out of destination content");
+  assert.equal(blocked.submissionsRawFree, true, "Chrome enterprise host submissions should stay raw-free");
 
   const storageState = await evaluate(
     connection,
     extensionSessionId,
-    `(async () => ({
-      local: await chrome.storage.local.get(null),
-      session: chrome.storage.session ? await chrome.storage.session.get(null) : {}
-    }))()`,
+    `(async () => {
+      const rawSecret = ${JSON.stringify(rawSecret)};
+      const local = await chrome.storage.local.get(null);
+      const session = chrome.storage.session ? await chrome.storage.session.get(null) : {};
+      return { storageRawFree: !JSON.stringify({ local, session }).includes(rawSecret) };
+    })()`,
     { awaitPromise: true }
   );
-  assert.equal(
-    JSON.stringify(storageState).includes(rawSecret),
-    false,
-    "Chrome enterprise extension storage should not persist the canceled raw canary"
-  );
+  assert.equal(storageState.storageRawFree, true, "Chrome enterprise extension storage should not persist the canceled raw canary");
 
   return { rawSecret };
 }
@@ -1500,16 +1502,19 @@ async function runEnterpriseSecureRevealUnavailableSmoke(connection, page, exten
   assert.equal(response.ok, false, "Chrome enterprise secure reveal request should be rejected");
   assert.match(response.error, /Secure reveal is disabled by policy/i);
 
-  const popupState = await evaluate(connection, extensionSessionId, `({
-    revealHidden: document.querySelector('#reveal-view')?.hidden,
-    secretHidden: document.querySelector('#secret-value')?.hidden,
-    secretText: document.querySelector('#secret-value')?.textContent || '',
-    popupText: document.body?.innerText || ''
-  })`);
+  const popupState = await evaluate(connection, extensionSessionId, `(() => {
+    const rawSecret = ${JSON.stringify(rawSecret)};
+    return {
+      revealHidden: document.querySelector('#reveal-view')?.hidden,
+      secretHidden: document.querySelector('#secret-value')?.hidden,
+      secretEmpty: !(document.querySelector('#secret-value')?.textContent || ''),
+      popupRawFree: !(document.body?.innerText || '').includes(rawSecret)
+    };
+  })()`);
   assert.equal(popupState.revealHidden, true, "Chrome enterprise reveal view should stay unavailable");
   assert.equal(popupState.secretHidden, true, "Chrome enterprise secret value should stay hidden");
-  assert.equal(popupState.secretText, "", "Chrome enterprise popup should not receive reveal content");
-  assert.equal(popupState.popupText.includes(rawSecret), false, "Chrome enterprise popup should stay raw-free");
+  assert.equal(popupState.secretEmpty, true, "Chrome enterprise popup should not receive reveal content");
+  assert.equal(popupState.popupRawFree, true, "Chrome enterprise popup should stay raw-free");
 }
 
 const JS_CODE_ESCAPE_MAP = {
@@ -1990,7 +1995,9 @@ async function runChromiumSmoke(options = {}) {
 
 if (isDirectChromeSmoke) {
   runChromiumSmoke().catch((error) => {
-    console.error(error);
+    console.error(
+      sanitizeBrowserQaText(error?.stack || error?.message || error, chromeSmokeSecretCanaries)
+    );
     process.exitCode = 1;
   });
 }

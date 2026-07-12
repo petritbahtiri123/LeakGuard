@@ -876,6 +876,131 @@ function testEnterpriseTargetsHavePackagedRuntimeSmoke() {
   assert.ok(firefoxSmokeSource.includes("--extension-target="));
 }
 
+function testEnterpriseSmokeFailuresStayRawSafe() {
+  const extractAsyncFunction = (source, name) => {
+    const marker = `async function ${name}(`;
+    const start = source.indexOf(marker);
+    assert.notStrictEqual(start, -1, `${name} should exist`);
+    const nextFunction = source.indexOf("\nasync function ", start + marker.length);
+    return source.slice(start, nextFunction === -1 ? source.length : nextFunction);
+  };
+  const extractDirectCatch = (source, runnerName) => {
+    const marker = `${runnerName}().catch((error) => {`;
+    const start = source.indexOf(marker);
+    assert.notStrictEqual(start, -1, `${runnerName} direct-run catch should exist`);
+    const closeMarkers = ["\n});", "\n  });"];
+    const matchingClose = closeMarkers
+      .map((closeMarker) => ({ closeMarker, index: source.indexOf(closeMarker, start + marker.length) }))
+      .filter(({ index }) => index !== -1)
+      .sort((left, right) => left.index - right.index)[0];
+    const end = matchingClose?.index ?? -1;
+    assert.notStrictEqual(end, -1, `${runnerName} direct-run catch should close`);
+    return source.slice(start, end + matchingClose.closeMarker.length);
+  };
+  const smokeContracts = {
+    Chrome: {
+      composer: extractAsyncFunction(chromeSmokeSource, "runEnterpriseComposerBlockSmoke"),
+      reveal: extractAsyncFunction(chromeSmokeSource, "runEnterpriseSecureRevealUnavailableSmoke"),
+      directCatch: extractDirectCatch(chromeSmokeSource, "runChromiumSmoke"),
+      requiredComposerPredicates: [
+        "payloadPreserved: textarea.value === text",
+        "payloadPreserved: (composer?.value || '') === expectedPayload",
+        "submissionCount: submissions.length",
+        "submissionsRawFree: !JSON.stringify(submissions).includes(rawSecret)",
+        "echoEmpty: !(document.querySelector('#echo-zone')?.textContent || '')",
+        "outsideComposerRawFree: !(outsideComposer.textContent || '').includes(rawSecret)",
+        "storageRawFree: !JSON.stringify({ local, session }).includes(rawSecret)"
+      ],
+      requiredRevealPredicates: [
+        "secretEmpty: !(document.querySelector('#secret-value')?.textContent || '')",
+        "popupRawFree: !(document.body?.innerText || '').includes(rawSecret)"
+      ],
+      expectedCatch: `runChromiumSmoke().catch((error) => {
+  console.error(
+    sanitizeBrowserQaText(error?.stack || error?.message || error, chromeSmokeSecretCanaries)
+  );
+  process.exitCode = 1;
+});`
+    },
+    Firefox: {
+      composer: extractAsyncFunction(firefoxSmokeSource, "runFirefoxEnterprisePromptBlockQa"),
+      reveal: extractAsyncFunction(firefoxSmokeSource, "runFirefoxEnterpriseSecureRevealUnavailableQa"),
+      directCatch: extractDirectCatch(firefoxSmokeSource, "runFirefoxSmoke"),
+      requiredComposerPredicates: [
+        "payloadPreserved: (textarea.value || '') === payload",
+        "payloadPreserved: (composer?.value || '') === payload",
+        "submissionCount: submissions.length",
+        "submissionsRawFree: !rawValues.some((raw) => JSON.stringify(submissions).includes(raw))",
+        "echoEmpty: !(document.querySelector('#echo-zone')?.textContent || '')",
+        "outsideComposerRawFree: !rawValues.some((raw) => (outsideComposer.textContent || '').includes(raw))",
+        "storageRawFree: !rawValues.some((raw) => JSON.stringify({ local, session }).includes(raw))"
+      ],
+      requiredRevealPredicates: [
+        "secretEmpty: !(document.querySelector('#secret-value')?.textContent || '')",
+        "popupRawFree: !arguments[0].some((raw) => (document.body?.innerText || '').includes(raw))"
+      ],
+      expectedCatch: `runFirefoxSmoke().catch((error) => {
+  console.error(
+    sanitizeBrowserQaText(error?.stack || error?.message || error, firefoxSmokeSecretCanaries)
+  );
+  process.exitCode = 1;
+});`
+    }
+  };
+  const forbiddenRawBearingNodeShapes = [
+    "assert.equal(preSubmit.value",
+    "assert.equal(blocked.composerValue",
+    "assert.equal(blocked.echoText",
+    "assert.match(blocked.panelText",
+    "assert.equal(popupState.secretText",
+    "JSON.stringify(blocked.submissions)",
+    "JSON.stringify(storageState)",
+    "composerValue:",
+    "echoText:",
+    "outsideComposerText:",
+    "panelText:",
+    "secretText:",
+    "popupText:"
+  ];
+  const normalizeWhitespace = (value) => value.replace(/\s+/g, " ").trim();
+
+  for (const [browser, contract] of Object.entries(smokeContracts)) {
+    const enterpriseRawBoundarySource = `${contract.composer}\n${contract.reveal}`;
+    for (const forbidden of forbiddenRawBearingNodeShapes) {
+      assert.strictEqual(
+        enterpriseRawBoundarySource.includes(forbidden),
+        false,
+        `${browser} enterprise smoke should not expose raw-capable Node assertion shape: ${forbidden}`
+      );
+    }
+    for (const required of contract.requiredComposerPredicates) {
+      assert.strictEqual(
+        contract.composer.includes(required),
+        true,
+        `${browser} enterprise composer smoke should compute a required browser-side predicate`
+      );
+    }
+    for (const required of contract.requiredRevealPredicates) {
+      assert.strictEqual(
+        contract.reveal.includes(required),
+        true,
+        `${browser} enterprise reveal smoke should compute a required browser-side predicate`
+      );
+    }
+    assert.strictEqual(
+      normalizeWhitespace(contract.directCatch) === normalizeWhitespace(contract.expectedCatch),
+      true,
+      `${browser} direct-run catch should exclusively log a sanitized stack or message and preserve failure exit behavior`
+    );
+  }
+
+  assert.strictEqual(
+    (smokeContracts.Firefox.composer.match(/\[promptPayload, rawValues\]/g) || []).length,
+    2,
+    "Firefox enterprise smoke should compute exact full-payload equality before and after the blocked action"
+  );
+}
+
 function testPhase17aTestingGapAnalysisDocumentsAutomationGaps() {
   assert.ok(fileExists("docs/phase-17a-testing-gap-analysis.md"), "Phase 17A testing gap analysis should exist");
 
@@ -1500,6 +1625,7 @@ async function run() {
   testPublicDocsAlignWithCurrentFileCapabilities();
   testBrowserQaScriptOwnsFirefoxSmokeCoverage();
   testEnterpriseTargetsHavePackagedRuntimeSmoke();
+  testEnterpriseSmokeFailuresStayRawSafe();
   testPhase17aTestingGapAnalysisDocumentsAutomationGaps();
   testPhase17bBrowserAutomationDocumentsP0Coverage();
   testPhase17cProviderBrowserParityAutomationIsDocumented();
