@@ -21,6 +21,8 @@ Fail-closed behavior remains the final safety boundary, but it is not sufficient
 - Edge remains a limited Chromium smoke boundary; strong Edge provider-parity claims are out of scope unless separately approved.
 - No release version change or public release declaration occurs during reliability implementation.
 
+In this document, `owner` means the repository/release owner directing this work. A tester, provider limitation, automated result, or implementation agent cannot create a waiver implicitly.
+
 ## Scope model
 
 The authoritative matrix covers every applicable combination of:
@@ -77,9 +79,11 @@ Authenticated provider coverage includes:
 - WhatsApp Web;
 - one user-managed exact-origin site.
 
-Chrome and Firefox require authenticated provider coverage for applicable cells. Consumer and enterprise builds require packaged runtime validation. Enterprise validation includes the packaged enterprise defaults and one strict managed-policy profile exercising destination enforcement, managed sites, restricted controls, strict-load failure, and metadata-only audit behavior.
+Chrome and Firefox require authenticated provider coverage using both consumer and enterprise packages for applicable cells. Enterprise validation includes the packaged enterprise defaults and one strict managed-policy profile exercising destination enforcement, managed sites, restricted controls, strict-load failure, and metadata-only audit behavior.
 
 Edge uses the Chrome consumer target and receives limited packaged smoke coverage. Edge authenticated-provider parity is not a release requirement under this design and must not be presented as full first-class support.
+
+Safari and Firefox Android are not current documented first-class release targets. Their cells are `NOT APPLICABLE` with this scope citation, and no compatibility claim may be inferred from desktop Chrome/Firefox evidence.
 
 ## Workstream decomposition
 
@@ -167,7 +171,7 @@ Every executed matrix cell records:
 - generated-file open/search result where applicable;
 - final status, tester, date, and evidence location.
 
-Evidence uses synthetic values only. Screenshots are optional and must be skipped when they could capture account, contact, chat, bot-check, or private provider data.
+Evidence uses synthetic values only. Controlled input fixtures necessarily contain raw fake values; generated test output, logs, reports, screenshots, and evidence records must not. Screenshots are optional and must be skipped when they could capture account, contact, chat, bot-check, or private provider data.
 
 ## Validation tiers
 
@@ -195,7 +199,7 @@ From a clean commit, build and package all four Chrome/Firefox consumer/enterpri
 
 ### Tier 5: authenticated human gate
 
-Run every applicable provider cell in Chrome and Firefox using synthetic fixtures. No authenticated cell may remain `PENDING` unless the owner explicitly records a waiver. A provider login/profile limitation is not a waiver by itself.
+Run every applicable provider cell in Chrome and Firefox consumer and enterprise packages using synthetic fixtures. No authenticated cell may remain `PENDING` unless the owner explicitly records a waiver. A provider login/profile limitation is not a waiver by itself.
 
 ## Authenticated provider assertions
 
@@ -264,7 +268,7 @@ Gate work exists to make evidence reproducible, not to redesign CI.
 - No infinite retries or speculative selector expansion.
 - No manifest, permission, host-permission, CSP, telemetry, analytics, remote verification, remote model, detector-threshold, OCR-model, policy-semantics, or public-privacy change unless a separately reviewed finding proves it unavoidable and the owner explicitly approves it.
 - No new dependencies, broad refactors, generated-artifact edits, or package-lock changes without explicit approval.
-- Raw secrets never appear in storage, DOM outside intended explicit `Allow once` delivery, logs, reports, audit records, debug data, filenames, exceptions, screenshots, or test artifacts.
+- Raw secrets never appear in storage, DOM outside intended explicit `Allow once` delivery, logs, reports, audit records, debug data, filenames, exceptions, screenshots, or generated test/evidence artifacts outside controlled synthetic input fixtures.
 - Chrome and Firefox MV3 runtime order remains aligned, with `content.js` and `core.js` final in their respective lists.
 
 ## Immediate NO-GO conditions
