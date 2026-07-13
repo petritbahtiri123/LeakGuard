@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "..");
-const buildTargets = ["chrome", "chrome-enterprise", "firefox", "firefox-enterprise"];
+const buildTargets = ["chrome", "chrome-enterprise"];
 const KiB = 1024;
 const MiB = 1024 * KiB;
 const warningBudgets = {

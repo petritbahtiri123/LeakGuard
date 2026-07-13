@@ -29,6 +29,10 @@ const scannerHtml = fs.readFileSync(path.join(repoRoot, "src/scanner/scanner.htm
 const scannerJs = fs.readFileSync(path.join(repoRoot, "src/scanner/scanner.js"), "utf8");
 const optionsHtml = fs.readFileSync(path.join(repoRoot, "src/options/options.html"), "utf8");
 const optionsJs = fs.readFileSync(path.join(repoRoot, "src/options/options.js"), "utf8");
+const runtimeSizeReportSource = fs.readFileSync(
+  path.join(repoRoot, "scripts/generate-runtime-size-report.mjs"),
+  "utf8"
+);
 const backgroundSource = [
   fs.readFileSync(path.join(repoRoot, "src/background/protectedSiteRegistry.js"), "utf8"),
   fs.readFileSync(path.join(repoRoot, "src/background/core.js"), "utf8")
@@ -835,7 +839,21 @@ function testBrowserQaScriptsGateChromeAndEdgeOnly() {
 
   assert.strictEqual(qaBrowser, "npm run build:chrome && node tests/browser/extension_qa_harness.test.mjs && node tests/browser/chrome_smoke.test.mjs && node tests/browser/edge_smoke.test.mjs");
   assert.doesNotMatch(qaBrowserFull, /firefox|geckodriver/i);
-  assert.strictEqual(packageRelease, "node scripts/package-extension.mjs chrome --release-dir artifacts/release && node scripts/package-extension.mjs chrome-enterprise --release-dir artifacts/release");
+  assert.strictEqual(
+    packageRelease,
+    "npm run release:clean && node scripts/package-extension.mjs chrome --release-dir artifacts/release && node scripts/package-extension.mjs chrome-enterprise --release-dir artifacts/release",
+    "Chrome/Edge packaging should remove stale out-of-scope artifacts before writing the active release"
+  );
+  assert.match(
+    runtimeSizeReportSource,
+    /const buildTargets = \["chrome", "chrome-enterprise"\];/,
+    "active runtime size reporting should cover Chrome consumer and enterprise targets only"
+  );
+  assert.doesNotMatch(
+    runtimeSizeReportSource.match(/const buildTargets = \[[^;]+;/)?.[0] || "",
+    /firefox/i,
+    "active runtime size targets should exclude Firefox"
+  );
   assert.ok(
     testRelease.includes("npm run test:nightly") && !testRelease.includes("npm run smoke:firefox"),
     "test:release should use the complete nightly aggregate rather than repeating a standalone smoke"
@@ -1238,8 +1256,8 @@ function testPhase17fScriptsAndWorkflowsAreTiered() {
   );
   assert.strictEqual(
     packageJson.scripts["release:artifacts"],
-    "npm run release:clean && npm run build:release && npm run package:release && npm run release:checksums",
-    "release:artifacts should avoid the all-browser developer build aggregate"
+    "npm run build:release && npm run package:release && npm run release:checksums",
+    "release:artifacts should rely on the self-cleaning Chrome/Edge package aggregate"
   );
   assert.strictEqual(
     packageJson.scripts["test:nightly"],
