@@ -1220,6 +1220,21 @@ async function run() {
   assertReleaseArtifactsAreSanitized(results);
   assertPackageStructure(results);
 
+  const debugResult = buildTarget("chrome", "debug");
+  assert.strictEqual(debugResult.target, "chrome-debug", "debug build should use a separate unpacked folder");
+  assert.strictEqual(debugResult.mode, "debug", "debug build should record debug mode");
+  const debugContentSource = fs.readFileSync(path.join(debugResult.targetRoot, "content/content.js"), "utf8");
+  const debugLoggerSource = fs.readFileSync(
+    path.join(debugResult.targetRoot, "content/diagnostics/debugLogger.js"),
+    "utf8"
+  );
+  assert.ok(debugContentSource.includes("debugReveal"), "debug build should preserve content debug calls");
+  assert.ok(debugLoggerSource.includes("pwm:debug"), "debug build should preserve local debug storage key");
+  assert.ok(
+    debugLoggerSource.includes("targetConsole.groupCollapsed"),
+    "debug build should preserve safe console debug output"
+  );
+
   results.forEach((result) => {
     const manifestPath = path.join(result.targetRoot, "manifest.json");
     assert.ok(fs.existsSync(manifestPath), `expected manifest to exist for ${result.target}`);

@@ -1286,6 +1286,16 @@ function testPhase17fScriptsAndWorkflowsAreTiered() {
     /dist\/firefox/,
     "active build-target validation should not require Firefox dist artifacts"
   );
+  for (const required of [
+    'buildTarget("chrome", "debug")',
+    'debugResult.target, "chrome-debug"',
+    'debugResult.mode, "debug"',
+    'debugContentSource.includes("debugReveal")',
+    'debugLoggerSource.includes("pwm:debug")',
+    'debugLoggerSource.includes("targetConsole.groupCollapsed")'
+  ]) {
+    assert.ok(buildTargetsSource.includes(required), `Chrome debug build regression coverage should include: ${required}`);
+  }
 
   assert.ok(testWorkflow.includes("npm run test:ci"), "PR workflow should run Tier A through test:ci");
   assert.strictEqual(
