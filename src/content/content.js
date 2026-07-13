@@ -7364,21 +7364,16 @@
     window.addEventListener("paste", onPaste, true);
     document.addEventListener("paste", onPaste, true);
 
-    document.addEventListener(
-      "change",
-      (event) => {
-        maybeHandleFileInputChange(event).catch(handleContentError);
-      },
-      true
-    );
-
-    document.addEventListener(
-      "input",
-      (event) => {
-        maybeHandleFileInputChange(event).catch(handleContentError);
-      },
-      true
-    );
+    const observedFileInputEvents = new WeakSet();
+    const onFileInputChange = (event) => {
+      if (observedFileInputEvents.has(event)) return;
+      observedFileInputEvents.add(event);
+      maybeHandleFileInputChange(event).catch(handleContentError);
+    };
+    window.addEventListener("change", onFileInputChange, true);
+    document.addEventListener("change", onFileInputChange, true);
+    window.addEventListener("input", onFileInputChange, true);
+    document.addEventListener("input", onFileInputChange, true);
 
     document.addEventListener(
       "click",

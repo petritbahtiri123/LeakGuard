@@ -1,9 +1,11 @@
 const assert = require("assert");
+const fs = require("fs");
 const path = require("path");
 
 const repoRoot = path.join(__dirname, "..");
 
 require(path.join(repoRoot, "src/content/files/fileInputChangeOrchestration.js"));
+const contentSource = fs.readFileSync(path.join(repoRoot, "src/content/content.js"), "utf8");
 
 function createFileInput(files = []) {
   return {
@@ -236,6 +238,50 @@ async function testRawInputEventStopsWithoutStartingInsert() {
   assert.strictEqual(calls.debug[0].label, "file-input:raw-input-event-suppressed");
 }
 
+async function testWhatsAppRawInputClearsAndProcessesBeforeAsyncInsert() {
+  let releaseInsert;
+  const insertGate = new Promise((resolve) => {
+    releaseInsert = resolve;
+  });
+  const { calls, fileInput, orchestration } = createHarness({
+    isWhatsAppHost: () => true,
+    isSupportedWhatsAppImageAttach: () => true,
+    maybeHandleLocalFileInsert: async (...args) => {
+      calls.inserts.push(args);
+      await insertGate;
+      return { handled: true, ok: false, reason: "ocr_box_confidence_too_low" };
+    }
+  });
+  const event = createEvent(fileInput, "input");
+
+  const resultPromise = orchestration.maybeHandleFileInputChange(event);
+
+  assert.deepStrictEqual(
+    calls.clears,
+    [fileInput],
+    "WhatsApp raw input must be cleared synchronously before the page can render a preview"
+  );
+  assert.strictEqual(calls.inserts.length, 1, "the captured input event should continue through sanitized processing");
+  fileInput.files = [];
+  const followupResult = await orchestration.maybeHandleFileInputChange(createEvent(fileInput, "change"));
+  assert.strictEqual(followupResult.strategy, "whatsapp-empty-processing-event-suppressed");
+  assert.strictEqual(calls.inserts.length, 1, "the follow-up empty change event must not duplicate processing");
+  releaseInsert();
+  const result = await resultPromise;
+  assert.strictEqual(result.reason, "ocr_box_confidence_too_low");
+}
+
+function testFileInputListenersStartAtWindowCapture() {
+  const documentBindingIndex = contentSource.indexOf('document.addEventListener("change", onFileInputChange, true)');
+  const windowBindingIndex = contentSource.indexOf('window.addEventListener("change", onFileInputChange, true)');
+  assert.ok(windowBindingIndex >= 0, "file input interception should bind change at window capture");
+  assert.ok(documentBindingIndex > windowBindingIndex, "window capture must bind before the document fallback");
+  assert.ok(
+    contentSource.includes('window.addEventListener("input", onFileInputChange, true)'),
+    "file input interception should bind input at window capture"
+  );
+}
+
 async function testFirefoxProtectedInputTracksReplacementState() {
   const {
     calls,
@@ -264,6 +310,8 @@ async function testFirefoxProtectedInputTracksReplacementState() {
   await testNormalFileInputDelegatesAndClearsProcessingSignature();
   await testOwnedFileInputStopsPropagationBeforeAsyncInsert();
   await testRawInputEventStopsWithoutStartingInsert();
+  await testWhatsAppRawInputClearsAndProcessesBeforeAsyncInsert();
   await testFirefoxProtectedInputTracksReplacementState();
+  testFileInputListenersStartAtWindowCapture();
   console.log("PASS file input change orchestration");
 })();

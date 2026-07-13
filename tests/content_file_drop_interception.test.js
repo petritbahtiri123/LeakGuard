@@ -12188,11 +12188,19 @@ async function testNonGeminiFileInputWithoutComposerStillIgnored() {
 }
 
 async function testChangeListenerUsesCapturePhaseForFileInputInterception() {
+  const documentChangeBindingIndex = contentSource.indexOf('document.addEventListener("change", onFileInputChange, true)');
+  const startupFileInputBindings = contentSource.slice(
+    Math.max(0, documentChangeBindingIndex - 700),
+    documentChangeBindingIndex + 500
+  );
   assert.ok(
-    /document\.addEventListener\(\s*"change"[\s\S]*maybeHandleFileInputChange\(event\)[\s\S]*true\s*\)/.test(
-      contentSource
-    ),
-    "file input change interception should stay capture-phase"
+    /const onFileInputChange = \(event\) => \{[\s\S]*maybeHandleFileInputChange\(event\)\.catch\(handleContentError\);[\s\S]*\};/.test(
+      startupFileInputBindings
+    ) &&
+      /window\.addEventListener\("change", onFileInputChange, true\);/.test(startupFileInputBindings) &&
+      /document\.addEventListener\("change", onFileInputChange, true\);/.test(startupFileInputBindings) &&
+      /window\.addEventListener\("input", onFileInputChange, true\);/.test(startupFileInputBindings),
+    "file input interception should start at window capture before protected sites can render raw previews"
   );
 }
 

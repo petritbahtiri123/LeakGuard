@@ -639,10 +639,11 @@ function testContentScriptBindsBeforeInputAndKeepsFallbackGuard() {
     "content script should keep the delayed input scan as a fallback safety net"
   );
   assert.ok(
-    /document\.addEventListener\(\s*"input"[\s\S]*maybeHandleFileInputChange\(event\)[\s\S]*true\s*\)/.test(
-      contentSource
-    ),
-    "Firefox file input events should be captured before page handlers and before delayed scanning"
+    contentSource.includes('window.addEventListener("input", onFileInputChange, true);') &&
+      contentSource.includes('document.addEventListener("input", onFileInputChange, true);') &&
+      contentSource.indexOf('window.addEventListener("input", onFileInputChange, true);') <
+        contentSource.indexOf('document.addEventListener("input", onFileInputChange, true);'),
+    "protected file input events should be captured at window before page handlers and delayed scanning"
   );
   assert.ok(
     modalSource.includes('event.key === "Enter" || event.key === " "'),

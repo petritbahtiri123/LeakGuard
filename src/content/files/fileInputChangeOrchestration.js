@@ -331,7 +331,13 @@
       if (shouldOwnRawFileInputEvent) {
         stopOwnedRawFileInputEventPropagation(event);
       }
-      if (shouldOwnRawFileInputEvent && event?.type === "input") {
+      const shouldProcessWhatsAppRawSelection = Boolean(
+        shouldOwnRawFileInputEvent && isWhatsAppHost() && hasWhatsAppFileInputSelection
+      );
+      if (shouldProcessWhatsAppRawSelection) {
+        clearLocalFileInputSelection(event.target);
+      }
+      if (shouldOwnRawFileInputEvent && event?.type === "input" && !shouldProcessWhatsAppRawSelection) {
         debugReveal("file-input:raw-input-event-suppressed", {
           eventType: event.type || "",
           input: describeFileInputForDebug(event.target, "raw-input"),
