@@ -1617,7 +1617,8 @@ async function runFirefoxSmoke() {
 
     console.log("PASS firefox extension smoke");
   } catch (error) {
-    if (geckodriver?.stderr?.()) console.error(geckodriver.stderr());
+    const stderr = geckodriver?.stderr?.();
+    if (stderr) console.error(sanitizeFirefoxSmokeDiagnostic(stderr));
     throw error;
   } finally {
     await webdriver?.quit();

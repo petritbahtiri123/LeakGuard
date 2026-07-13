@@ -1965,8 +1965,9 @@ async function runChromiumSmoke(options = {}) {
 
     console.log(`PASS ${browserName.toLowerCase()} extension smoke`);
   } catch (error) {
-    if (chrome?.stderr?.()) {
-      console.error(chrome.stderr());
+    const stderr = chrome?.stderr?.();
+    if (stderr) {
+      console.error(sanitizeChromeSmokeDiagnostic(stderr));
     }
     throw classifyChromiumStartupError({
       browserName,

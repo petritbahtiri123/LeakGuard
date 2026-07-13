@@ -897,10 +897,20 @@ function testEnterpriseSmokeFailuresStayRawSafe() {
     assert.notStrictEqual(end, -1, `${runnerName} direct-run catch should close`);
     return source.slice(start, end + matchingClose.closeMarker.length);
   };
+  const extractRunnerCatch = (source, successMarker) => {
+    const success = source.indexOf(successMarker);
+    assert.notStrictEqual(success, -1, "smoke runner success marker should exist");
+    const start = source.indexOf("} catch (error) {", success + successMarker.length);
+    assert.notStrictEqual(start, -1, "smoke runner catch should exist");
+    const end = source.indexOf("} finally {", start);
+    assert.notStrictEqual(end, -1, "smoke runner catch should end before finally");
+    return source.slice(start, end + 1);
+  };
   const smokeContracts = {
     Chrome: {
       composer: extractAsyncFunction(chromeSmokeSource, "runEnterpriseComposerBlockSmoke"),
       reveal: extractAsyncFunction(chromeSmokeSource, "runEnterpriseSecureRevealUnavailableSmoke"),
+      runnerCatch: extractRunnerCatch(chromeSmokeSource, "console.log(`PASS ${browserName.toLowerCase()} extension smoke`);"),
       directCatch: extractDirectCatch(chromeSmokeSource, "runChromiumSmoke"),
       requiredComposerPredicates: [
         "payloadPreserved: textarea.value === text",
@@ -920,11 +930,25 @@ function testEnterpriseSmokeFailuresStayRawSafe() {
     sanitizeBrowserQaText(error?.stack || error?.message || error, chromeSmokeSecretCanaries)
   );
   process.exitCode = 1;
-});`
+});`,
+      expectedRunnerCatch: `} catch (error) {
+    const stderr = chrome?.stderr?.();
+    if (stderr) {
+      console.error(sanitizeChromeSmokeDiagnostic(stderr));
+    }
+    throw classifyChromiumStartupError({
+      browserName,
+      tempDir,
+      error,
+      browserProcess: chrome,
+      extensionLoaded
+    });
+}`
     },
     Firefox: {
       composer: extractAsyncFunction(firefoxSmokeSource, "runFirefoxEnterprisePromptBlockQa"),
       reveal: extractAsyncFunction(firefoxSmokeSource, "runFirefoxEnterpriseSecureRevealUnavailableQa"),
+      runnerCatch: extractRunnerCatch(firefoxSmokeSource, 'console.log("PASS firefox extension smoke");'),
       directCatch: extractDirectCatch(firefoxSmokeSource, "runFirefoxSmoke"),
       requiredComposerPredicates: [
         "payloadPreserved: (textarea.value || '') === payload",
@@ -944,7 +968,12 @@ function testEnterpriseSmokeFailuresStayRawSafe() {
     sanitizeBrowserQaText(error?.stack || error?.message || error, firefoxSmokeSecretCanaries)
   );
   process.exitCode = 1;
-});`
+});`,
+      expectedRunnerCatch: `} catch (error) {
+    const stderr = geckodriver?.stderr?.();
+    if (stderr) console.error(sanitizeFirefoxSmokeDiagnostic(stderr));
+    throw error;
+}`
     }
   };
   const forbiddenRawBearingNodeShapes = [
@@ -991,6 +1020,11 @@ function testEnterpriseSmokeFailuresStayRawSafe() {
       normalizeWhitespace(contract.directCatch) === normalizeWhitespace(contract.expectedCatch),
       true,
       `${browser} direct-run catch should exclusively log a sanitized stack or message and preserve failure exit behavior`
+    );
+    assert.strictEqual(
+      normalizeWhitespace(contract.runnerCatch) === normalizeWhitespace(contract.expectedRunnerCatch),
+      true,
+      `${browser} runner catch should sanitize captured process stderr before logging it`
     );
   }
 
