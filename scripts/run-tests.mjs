@@ -99,6 +99,7 @@ const testFiles = [
   "tests/streaming_file_redactor.test.js",
   "tests/manual_qa_artifact_safety.test.js",
   "tests/browser_qa_assertions.test.js",
+  "tests/browser_environment_targets.test.mjs",
   "tests/browser_qa_matrix.test.js",
   "tests/full_feature_reliability_matrix.test.js",
   "tests/live_prompt_capture_qa_docs.test.js",

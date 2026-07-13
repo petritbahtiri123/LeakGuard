@@ -1213,6 +1213,9 @@ function testPhase17fCiNightlyMatrixHardeningIsDocumented() {
 }
 
 function testPhase17fScriptsAndWorkflowsAreTiered() {
+  const runTestsSource = fs.readFileSync(path.join(repoRoot, "scripts/run-tests.mjs"), "utf8");
+  const buildTargetsSource = fs.readFileSync(path.join(repoRoot, "tests/build_targets.test.js"), "utf8");
+
   assert.strictEqual(
     packageJson.scripts["test:fast"],
     "npm test",
@@ -1267,6 +1270,21 @@ function testPhase17fScriptsAndWorkflowsAreTiered() {
     packageJson.scripts["preflight:browser"],
     "node scripts/check-browser-environment.mjs --targets=chrome,edge",
     "preflight:browser should probe only active Chrome/Edge gate targets"
+  );
+  assert.ok(runTestsSource.includes('"tests/build_targets.test.js"'), "npm test should retain active build-target security validation");
+  assert.ok(
+    runTestsSource.includes('"tests/browser_environment_targets.test.mjs"'),
+    "npm test should retain browser preflight target parsing coverage"
+  );
+  assert.match(
+    buildTargetsSource,
+    /const activeBuildTargets = BUILD_TARGETS\.filter\(\(target\) => target\.browser === "chrome"\)/,
+    "npm test should build only active Chrome targets"
+  );
+  assert.doesNotMatch(
+    buildTargetsSource,
+    /dist\/firefox/,
+    "active build-target validation should not require Firefox dist artifacts"
   );
 
   assert.ok(testWorkflow.includes("npm run test:ci"), "PR workflow should run Tier A through test:ci");

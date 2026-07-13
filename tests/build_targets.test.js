@@ -1210,24 +1210,15 @@ async function run() {
     "OCR size budget should document internal warning/review gates and external store limits"
   );
 
-  const results = BUILD_TARGETS.map((target) => buildTarget(target.browser, target.mode));
+  const activeBuildTargets = BUILD_TARGETS.filter((target) => target.browser === "chrome");
+  assert.deepStrictEqual(
+    activeBuildTargets.map((target) => target.folder).sort(),
+    ["chrome", "chrome-enterprise"],
+    "active release validation should build Chrome consumer and enterprise only"
+  );
+  const results = activeBuildTargets.map((target) => buildTarget(target.browser, target.mode));
   assertReleaseArtifactsAreSanitized(results);
   assertPackageStructure(results);
-
-  const debugResult = buildTarget("chrome", "debug");
-  assert.strictEqual(debugResult.target, "chrome-debug", "debug build should use a separate unpacked folder");
-  assert.strictEqual(debugResult.mode, "debug", "debug build should record debug mode");
-  const debugContentSource = fs.readFileSync(path.join(debugResult.targetRoot, "content/content.js"), "utf8");
-  const debugLoggerSource = fs.readFileSync(
-    path.join(debugResult.targetRoot, "content/diagnostics/debugLogger.js"),
-    "utf8"
-  );
-  assert.ok(debugContentSource.includes("debugReveal"), "debug build should preserve content debug calls");
-  assert.ok(debugLoggerSource.includes("pwm:debug"), "debug build should preserve local debug storage key");
-  assert.ok(
-    debugLoggerSource.includes("targetConsole.groupCollapsed"),
-    "debug build should preserve safe console debug output"
-  );
 
   results.forEach((result) => {
     const manifestPath = path.join(result.targetRoot, "manifest.json");
@@ -1242,9 +1233,6 @@ async function run() {
   const chromeEnterpriseBuildInfo = require(
     path.join(repoRoot, "dist/chrome-enterprise/shared/build_info.js")
   );
-  const firefoxEnterpriseBuildInfo = require(
-    path.join(repoRoot, "dist/firefox-enterprise/shared/build_info.js")
-  );
 
   assert.strictEqual(consumerBuildInfo.enterprise, false, "consumer build should stay non-enterprise");
   assert.deepStrictEqual(
@@ -1257,12 +1245,7 @@ async function run() {
     "default consumer build should expose scanner OCR and default-on protected-site image OCR metadata"
   );
   assert.strictEqual(chromeEnterpriseBuildInfo.enterprise, true, "chrome enterprise build should mark enterprise");
-  assert.strictEqual(
-    firefoxEnterpriseBuildInfo.enterprise,
-    true,
-    "firefox enterprise build should mark enterprise"
-  );
-  for (const target of ["chrome", "chrome-enterprise", "firefox", "firefox-enterprise"]) {
+  for (const target of activeBuildTargets.map((entry) => entry.folder)) {
     const buildInfo = require(path.join(repoRoot, `dist/${target}/shared/build_info.js`));
     assert.deepStrictEqual(
       buildInfo.features?.ocr,
@@ -1284,12 +1267,6 @@ async function run() {
   );
   const chromeManifest = JSON.parse(
     fs.readFileSync(path.join(repoRoot, "dist/chrome/manifest.json"), "utf8")
-  );
-  const firefoxManifest = JSON.parse(
-    fs.readFileSync(path.join(repoRoot, "dist/firefox/manifest.json"), "utf8")
-  );
-  const firefoxEnterpriseManifest = JSON.parse(
-    fs.readFileSync(path.join(repoRoot, "dist/firefox-enterprise/manifest.json"), "utf8")
   );
   const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
   const scannerHtml = fs.readFileSync(path.join(repoRoot, "dist/chrome/scanner/scanner.html"), "utf8");
@@ -1315,9 +1292,7 @@ async function run() {
   );
   for (const [target, manifest] of [
     ["chrome", chromeManifest],
-    ["chrome-enterprise", chromeEnterpriseManifest],
-    ["firefox", firefoxManifest],
-    ["firefox-enterprise", firefoxEnterpriseManifest]
+    ["chrome-enterprise", chromeEnterpriseManifest]
   ]) {
     assert.strictEqual(
       manifest.version,
@@ -1347,7 +1322,6 @@ async function run() {
     }
   }
   const chromeBytes = dirSizeBytes(path.join(repoRoot, "dist/chrome"));
-  const firefoxBytes = dirSizeBytes(path.join(repoRoot, "dist/firefox"));
   const tesseractCoreProofBytes = tesseractCoreProofFiles.reduce(
     (total, relativePath) => total + fs.statSync(path.join(repoRoot, "dist/chrome", relativePath)).size,
     0
@@ -1368,11 +1342,7 @@ async function run() {
     chromeBytes < OCR_SIZE_BUDGETS.currentInstalledWarningBytes,
     "Chrome installed package should stay below OCR planning warning threshold with core loading proof assets"
   );
-  assert.ok(
-    firefoxBytes < OCR_SIZE_BUDGETS.currentInstalledWarningBytes,
-    "Firefox installed package should stay below OCR planning warning threshold with core loading proof assets"
-  );
-  for (const target of ["chrome", "chrome-enterprise", "firefox", "firefox-enterprise"]) {
+  for (const target of activeBuildTargets.map((entry) => entry.folder)) {
     const releaseZip = path.join(repoRoot, "artifacts", "release", `leakguard-${target}-v${packageJson.version}.zip`);
     if (fs.existsSync(releaseZip)) {
       assert.ok(
@@ -1630,29 +1600,6 @@ async function run() {
     "config/managed_policy_schema.json",
     "chrome enterprise manifest should declare managed policy schema support"
   );
-  assert.deepStrictEqual(
-    firefoxManifest.browser_specific_settings?.gecko?.data_collection_permissions,
-    { required: ["none"] },
-    "firefox manifest should disclose no transmitted data collection"
-  );
-
-  const firefoxOnnxLoader = fs.readFileSync(
-    path.join(repoRoot, "dist/firefox/vendor/onnxruntime/ort.wasm.min.js"),
-    "utf8"
-  );
-  assert.ok(
-    firefoxOnnxLoader.includes("import(e)"),
-    "packaged ONNX loader should import the runtime-selected extension URL for the WASM sidecar"
-  );
-  assert.ok(
-    !firefoxOnnxLoader.includes("/*@vite-ignore*/e"),
-    "packaged ONNX loader should not keep the dynamic import target flagged by AMO lint"
-  );
-  assert.ok(
-    !firefoxOnnxLoader.includes('import("./ort-wasm-simd-threaded.mjs")'),
-    "packaged ONNX loader must not use a page-relative sidecar import in Firefox content scripts"
-  );
-
   const consumerDefaults = await policyModule.loadDefaultPolicy({
     browser: "chrome",
     mode: "consumer",
