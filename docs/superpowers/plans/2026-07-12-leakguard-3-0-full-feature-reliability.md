@@ -2,11 +2,15 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make the complete documented LeakGuard feature surface release-verifiable across shared logic, packaged Chrome/Firefox consumer and enterprise targets, Edge smoke, all built-in authenticated providers, and one managed site without weakening local-only or fail-closed behavior.
+**Goal:** Make the complete documented LeakGuard feature surface release-verifiable across shared logic, packaged Chrome consumer and enterprise targets, Edge smoke, all built-in authenticated providers, and one managed site without weakening local-only or fail-closed behavior.
 
 **Architecture:** Establish one authoritative release matrix and a schema/completeness test, repair only confirmed gate omissions and duplication, then validate shared features, packaged browsers, and authenticated provider verticals in that order. A live failure stops its current batch and receives a separate focused TDD addendum before execution resumes; no speculative runtime changes are permitted.
 
-**Tech Stack:** Chrome/Firefox MV3 JavaScript, Node `assert` tests, Playwright Chromium E2E, Chrome CDP smoke harness, Firefox WebDriver/geckodriver smoke, GitHub Actions, Markdown evidence records, existing synthetic fixtures and npm scripts.
+**Tech Stack:** Chromium MV3 JavaScript, Node `assert` tests, Playwright Chromium E2E, Chrome/Edge CDP smoke harnesses, GitHub Actions, Markdown evidence records, existing synthetic fixtures and npm scripts.
+
+## Owner scope amendment (2026-07-13)
+
+Firefox is fully excluded from the active reliability and release-evidence scope. Existing Firefox implementation files and standalone developer commands are left untouched unless a Chrome/Edge safety fix necessarily shares code with them, but Firefox builds, packages, smokes, workflows, required matrix rows, authenticated testing, and compatibility claims are not executed or required. Where an earlier completed task below mentions Firefox, this amendment governs all remaining work and the final evidence contract.
 
 ## Global Constraints
 
@@ -17,7 +21,7 @@
 - Supported actions complete from one user action. Do not add second-click workarounds or duplicate send/upload/input/change replay.
 - File-only and image-only flows do not gain composer-text fallback.
 - Preserve deterministic detection order, placeholder stability/reuse/order, trusted-placeholder pass-through, right-to-left replacement, enterprise policy, consumer defaults, and metadata-only audit behavior.
-- Preserve Chrome/Firefox MV3 compatibility, manifest permissions, host permissions, CSP, runtime script order, local OCR/model behavior, and public privacy behavior unless the owner separately approves a proven unavoidable change.
+- Preserve Chrome MV3 compatibility, manifest permissions, host permissions, CSP, runtime script order, local OCR/model behavior, and public privacy behavior unless the owner separately approves a proven unavoidable change. Do not change Firefox runtime files merely to remove it from release scope.
 - Do not edit `dist/`, `node_modules/`, `ai/models/`, generated release artifacts, or `package-lock.json`.
 - Do not add dependencies, a new test framework, selector registries, generic retry engines, or broad refactors.
 - Keep `src/content/content.js` and `src/background/core.js` last in their runtime lists.
@@ -503,124 +507,62 @@ git diff --cached --check
 git commit -m "test: smoke enterprise browser targets"
 ```
 
-### Task 6: Close deterministic Firefox feature-parity gaps
+### Task 6: Exclude Firefox gates and close Chrome/Edge release-target parity
 
 **Files:**
-- Modify: `tests/browser/firefox_smoke.test.mjs`
+- Modify: `package.json`
+- Modify: `.github/workflows/browser-nightly.yml`
 - Modify: `tests/browser_qa_matrix.test.js`
-- Reuse: `tests/fixtures/manual/live-site-qa/full-redaction-matrix/uploads/*`
+- Modify: `tests/full_feature_reliability_matrix.test.js`
+- Modify: `tests/productization.test.js`
+- Modify: `docs/qa/3.0-full-feature-reliability-matrix.md`
 - Modify: `docs/BROWSER_COMPATIBILITY_MATRIX.md`
+- Reuse: existing Chrome consumer/enterprise and Edge smoke harnesses and synthetic fixtures
 
 **Interfaces:**
-- Consumes: existing `runFirefoxScannerQa`, `runFirefoxOcrWasmProbeQa`, local protected harness, WebDriver file-input support, and existing synthetic full-redaction fixtures.
-- Produces: Firefox packaged evidence for scanner document/image families, protected file input/drop, OCR runtime readiness, refresh/session reset, and permission lifecycle.
+- Consumes: current Chrome consumer/enterprise smoke targets, Edge Chrome-target smoke, release-matrix schema, and release/nightly aggregate scripts.
+- Produces: Chrome/Edge-only active release gates and matrix requirements. Firefox source and standalone developer commands remain untouched but are non-gating and unsupported by this pass.
 
-- [ ] **Step 1: Add failing matrix requirements**
+- [ ] **Step 1: Write failing scope-contract assertions**
 
-Extend `tests/browser_qa_matrix.test.js` to require these Firefox cases in the exported/recorded browser matrix metadata:
-
-```js
-const REQUIRED_FIREFOX_PARITY_CASES = [
-  "scanner text PDF sanitized export",
-  "scanner DOCX sanitized export",
-  "scanner XLSX sanitized export",
-  "scanner image metadata and OCR readiness",
-  "protected supported file input sanitized handoff",
-  "protected supported file drop sanitized handoff",
-  "protected raw file handoff failure block",
-  "service-worker or runtime restart truthful reset",
-  "managed-site revoke and regrant"
-];
-```
-
-The test must assert that Firefox smoke source exposes one named function or case label for every string.
+Update the focused contract tests so required browser/package/auth rows include Chrome consumer/enterprise and Edge smoke only. Assert that `qa:browser`, `qa:browser:full`, `package:release`, and the nightly workflow do not invoke Firefox build, smoke, packaging, setup, or geckodriver steps. Assert that the compatibility document explicitly says Firefox is excluded and unverified rather than supported.
 
 - [ ] **Step 2: Verify RED**
 
-Run: `node tests/browser_qa_matrix.test.js`
-
-Expected: FAIL on the first missing Firefox parity label.
-
-- [ ] **Step 3: Extend scanner parity using existing fixtures**
-
-Inside `runFirefoxScannerQa`, use WebDriver file selection for the existing PDF, DOCX, XLSX, PNG, JPG, JPEG, and WEBP fixtures. For every supported fixture:
-
-1. select exactly one file;
-2. wait for the scanner result state;
-3. assert raw synthetic canaries are absent from page text;
-4. assert the expected sanitized download control exists;
-5. download and inspect `.redacted.txt` plus the regenerated family output where promised;
-6. assert unsupported/malformed cases never expose a sanitized-success claim.
-
-Add one local helper inside the existing smoke file and reuse the existing scanner selectors:
-
-```js
-async function runFirefoxScannerFixtureQa(webdriver, filePath, expected) {
-  await webdriver.clickElement("#clear-btn");
-  await waitFor(
-    () => webdriver.execute("return document.querySelector('#scan-btn')?.disabled;"),
-    `Firefox scanner reset before ${expected.label}`
-  );
-  await webdriver.setFileInputFiles("#file-input", [filePath]);
-  const result = await webdriver.executeAsync(`const expectedButton = arguments[0];
-    const rawValues = arguments[1];
-    const done = arguments[arguments.length - 1];
-    const started = Date.now();
-    let clicked = false;
-    const timer = setInterval(() => {
-      const status = document.querySelector('#status')?.textContent || '';
-      const preview = document.querySelector('#redacted-preview')?.textContent || '';
-      const scanButton = document.querySelector('#scan-btn');
-      if (!clicked && scanButton && !scanButton.disabled) {
-        clicked = true;
-        scanButton.click();
-      }
-      if (/Scan complete/i.test(status)) {
-        const output = document.querySelector(expectedButton);
-        clearInterval(timer);
-        done({
-          status,
-          hasAnyRaw: rawValues.some((raw) => preview.includes(raw)),
-          outputReady: Boolean(output && !output.disabled && !output.hidden)
-        });
-      } else if (Date.now() - started > 30000) {
-        clearInterval(timer);
-        done({ error: 'Timed out waiting for scanner result', status });
-      }
-    }, 50);`, [expected.button, rawValues]);
-  assert.equal(result.error, undefined, result.error || `${expected.label} scan failed`);
-  assert.equal(result.hasAnyRaw, false, `${expected.label} preview exposed a raw canary`);
-  assert.equal(result.outputReady, true, `${expected.label} sanitized output was unavailable`);
-}
-```
-
-Use `#download-redacted-pdf-btn`, `#download-redacted-docx-btn`, `#download-redacted-xlsx-btn`, and `#download-redacted-image-btn` for their respective tracked fixtures. Do not create a new framework or duplicate document-generation code.
-
-- [ ] **Step 4: Extend protected-site and lifecycle parity**
-
-Use the existing localhost protected harness to add named cases for file input, drop, forced handoff failure, refresh/runtime reset, and permission revoke/regrant. Assert:
-
-```js
-assert.equal(rawVisible, false, "Firefox protected flow exposed a raw synthetic canary");
-assert.equal(hostDeliveryCount, 1, "Firefox protected flow should deliver exactly one sanitized action");
-assert.equal(panelPlaceholderCount, expectedPlaceholderCount);
-```
-
-For a forced handoff failure, expected delivery count is zero and the raw file input must be empty.
-
-- [ ] **Step 5: Run focused Firefox parity and commit Task 6**
+Run:
 
 ```powershell
+node tests/full_feature_reliability_matrix.test.js
 node tests/browser_qa_matrix.test.js
-npm run build:firefox
-node tests/browser/firefox_smoke.test.mjs
-npm run build:firefox-enterprise
-node tests/browser/firefox_smoke.test.mjs --extension-target=firefox-enterprise
+node tests/productization.test.js
+```
+
+Expected: at least one assertion fails because Firefox is still required or invoked.
+
+- [ ] **Step 3: Make the smallest gate and evidence changes**
+
+Remove Firefox from the aggregate browser, nightly, release-package, and required-matrix paths. Keep the Chrome consumer harness exactly once, Chrome consumer smoke exactly once, Edge smoke exactly once, and Chrome enterprise smoke exactly once. Do not delete Firefox runtime, manifests, build scripts, or standalone commands; they are outside this pass and must not be changed speculatively.
+
+Change every Firefox package/auth matrix row to `NOT APPLICABLE` or remove it if the matrix contract no longer requires it, with the owner scope amendment as evidence. Update shared feature rows to require Chrome/Edge evidence only. Do not convert any unexecuted Chrome row to `PASS`.
+
+- [ ] **Step 4: Verify focused Chrome/Edge scope**
+
+```powershell
+node tests/full_feature_reliability_matrix.test.js
+node tests/browser_qa_matrix.test.js
+node tests/productization.test.js
 npm run docs:check-links
 git diff --check
-git add -- docs/BROWSER_COMPATIBILITY_MATRIX.md tests/browser/firefox_smoke.test.mjs tests/browser_qa_matrix.test.js
+```
+
+Expected: all commands exit 0 and no focused gate invokes Firefox.
+
+- [ ] **Step 5: Commit Task 6**
+
+```powershell
+git add -- package.json .github/workflows/browser-nightly.yml tests/browser_qa_matrix.test.js tests/full_feature_reliability_matrix.test.js tests/productization.test.js docs/qa/3.0-full-feature-reliability-matrix.md docs/BROWSER_COMPATIBILITY_MATRIX.md
 git diff --cached --check
-git commit -m "test: add firefox full-feature parity coverage"
+git commit -m "ci: focus reliability gates on chrome and edge"
 ```
 
 ### Task 7: Run the complete automated baseline and populate shared/package rows
@@ -745,35 +687,35 @@ git diff --cached --check
 git commit -m "docs: record chrome enterprise authenticated matrix"
 ```
 
-### Task 10: Execute authenticated Firefox consumer and enterprise matrices
+### Task 10: Complete Chrome live file-cache and multi-file serialization validation
 
 **Files:**
 - Modify: `docs/qa/3.0-full-feature-reliability-matrix.md`
-- Reuse: `docs/qa/cross-site-manual-checklist.md`
-- Reuse: `docs/qa/ENTERPRISE_METADATA_LIVE_SITE_QA_RUNBOOK.md`
+- Reuse: `%LOCALAPPDATA%\Temp\leakguard-live-qa`
+- Reuse: Chrome consumer package and the existing local live-file QA harness/runbook
 
 **Interfaces:**
-- Consumes: `dist/firefox`, `dist/firefox-enterprise`, Firefox profiles, and geckodriver/manual browser support.
-- Produces: all sixteen `AUTH-*-FIREFOX-*` rows.
+- Consumes: Chrome with **Allow access to file URLs** enabled, existing identical-metadata fixtures, and existing same-tab multi-file fixtures.
+- Produces: live evidence for cache identity, placeholder isolation, serialized same-tab handoff, raw absence, and exactly-once upload.
 
-- [ ] **Step 1: Run Firefox consumer provider matrix**
+- [ ] **Step 1: Validate identical-metadata cache isolation**
 
-Repeat Task 8 in Firefox, including scanner/generated exports, protected file/drop/OCR, refresh/runtime reset, permission revoke/regrant, current selectors, and exactly-one-action assertions.
+Use two different fixture files that share name-independent metadata dimensions used by the former cache key. Process them sequentially in the same Chrome tab. Verify each sanitized output contains only its own expected placeholders/content, neither output reuses the other file's sanitized payload, raw synthetic values are absent from the destination and extension state, and each user action produces exactly one upload.
 
-- [ ] **Step 2: Run Firefox enterprise provider matrix**
+- [ ] **Step 2: Validate same-tab multi-file serialization**
 
-Repeat Task 9 with Firefox enterprise policy deployment and strict managed profile. Policy deployment inability is `PENDING`, not `NOT APPLICABLE`.
+Select the existing multi-file batch in one action, then repeat the supported concurrent/same-tab scenario from the runbook. Verify stable input order, distinct placeholder mappings per file, no overwrite of pending placeholder state, zero raw destination content, and exactly one upload per accepted sanitized file with no duplicates.
 
-- [ ] **Step 3: Record provider limitations without weakening scope**
+- [ ] **Step 3: Record environment limitations truthfully**
 
-Advanced Security, MFA, bot-check, unavailable profiles, provider downtime, or unsupported browser login remain raw-free `PENDING` evidence. They do not justify code changes, `PASS`, or `NOT APPLICABLE`.
+If Chrome cannot expose the file fixture or the extension lacks file-URL access, keep the affected rows `PENDING` with the exact raw-free browser error. Do not convert an environment limitation into a code change. If the product assertion fails after the extension loads, mark the row `FAIL` and route it through Task 11.
 
-- [ ] **Step 4: Commit Firefox authenticated evidence**
+- [ ] **Step 4: Commit live file evidence**
 
 ```powershell
 git add -- docs/qa/3.0-full-feature-reliability-matrix.md
 git diff --cached --check
-git commit -m "docs: record firefox authenticated matrix"
+git commit -m "docs: record chrome live file reliability evidence"
 ```
 
 ### Task 11: Close every reproduced defect with focused TDD addenda

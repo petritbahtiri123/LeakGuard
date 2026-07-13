@@ -19,6 +19,7 @@ Fail-closed behavior remains the final safety boundary, but it is not sufficient
 - An inaccessible authenticated provider cell is not automatically a code defect, but it remains a 3.0 release blocker until tested or explicitly waived by the owner.
 - Work is evidence-first and divided into independent, rollback-friendly workstreams.
 - Edge remains a limited Chromium smoke boundary; strong Edge provider-parity claims are out of scope unless separately approved.
+- Desktop Firefox, Firefox Android, Firefox consumer/enterprise packages, and Firefox authenticated-provider evidence are excluded from this reliability pass by owner decision dated 2026-07-13. Existing Firefox source and standalone developer commands may remain untouched, but no Firefox build, smoke, package, matrix row, or compatibility claim is a release requirement.
 - No release version change or public release declaration occurs during reliability implementation.
 
 In this document, `owner` means the repository/release owner directing this work. A tester, provider limitation, automated result, or implementation agent cannot create a waiver implicitly.
@@ -30,7 +31,7 @@ The authoritative matrix covers every applicable combination of:
 1. feature family;
 2. user surface and ingress method;
 3. built-in or managed provider;
-4. Chrome, Firefox, or Edge-smoke boundary;
+4. Chrome or Edge-smoke boundary;
 5. consumer or enterprise build;
 6. automated, packaged-browser, or authenticated evidence.
 
@@ -64,7 +65,7 @@ The matrix is not a blind Cartesian product. A combination is `NOT APPLICABLE` o
 | Protected file ingress | Attach/select, drop, supported paste, sanitized `File`/`Blob` replacement, streaming, multi-file caps/order, duplicate names, identical metadata, failure isolation, pending handoff, and exactly one upload. |
 | WhatsApp specialization | Text typing/paste/send, clipboard image paste, supported attach/drop batches, all-or-nothing batch failure, no document/file paste, no extracted-text fallback, and adapter-specific verification. |
 | Diagnostics and audit | Metadata-only debug, reports, errors, audit retention/summaries, policy events, and no raw content, unsafe paths, credential URLs, or secret-bearing stacks. |
-| Browser, build, and privacy boundary | Chrome/Firefox consumer and enterprise packages, Edge Chrome-target smoke, MV3/runtime order, restrictive CSP, packaged OCR/model assets, local-only processing, and no telemetry/backend/remote model. |
+| Browser, build, and privacy boundary | Chrome consumer and enterprise packages, Edge Chrome-target smoke, Chromium MV3/runtime order, restrictive CSP, packaged OCR/model assets, local-only processing, and no telemetry/backend/remote model. |
 
 ## Provider and browser boundaries
 
@@ -79,11 +80,11 @@ Authenticated provider coverage includes:
 - WhatsApp Web;
 - one user-managed exact-origin site.
 
-Chrome and Firefox require authenticated provider coverage using both consumer and enterprise packages for applicable cells. Enterprise validation includes the packaged enterprise defaults and one strict managed-policy profile exercising destination enforcement, managed sites, restricted controls, strict-load failure, and metadata-only audit behavior.
+Chrome requires authenticated provider coverage using both consumer and enterprise packages for applicable cells. Enterprise validation includes the packaged enterprise defaults and one strict managed-policy profile exercising destination enforcement, managed sites, restricted controls, strict-load failure, and metadata-only audit behavior.
 
 Edge uses the Chrome consumer target and receives limited packaged smoke coverage. Edge authenticated-provider parity is not a release requirement under this design and must not be presented as full first-class support.
 
-Safari and Firefox Android are not current documented first-class release targets. Their cells are `NOT APPLICABLE` with this scope citation, and no compatibility claim may be inferred from desktop Chrome/Firefox evidence.
+Firefox desktop, Firefox Android, and Safari are not targets for this reliability pass. Firefox rows are removed from the required matrix rather than left `PENDING`; no Firefox compatibility, package, or authenticated-provider claim may be inferred from Chrome or Edge evidence.
 
 ## Workstream decomposition
 
@@ -117,7 +118,7 @@ Run the complete applicable matrix for every built-in provider and the managed g
 
 ### 8. Browser and build parity
 
-Validate Chrome and Firefox consumer/enterprise runtime behavior, Edge limited smoke, release packages, manifests, script order, CSP, permissions, packaged assets, refresh/restart behavior, and managed-policy enforcement.
+Validate Chrome consumer/enterprise runtime behavior, Edge limited smoke using the Chrome target, release packages, manifests, script order, CSP, permissions, packaged assets, refresh/restart behavior, and managed-policy enforcement.
 
 ### 9. Authenticated release evidence and final decision
 
@@ -187,19 +188,19 @@ Confirmed product tests omitted from `scripts/run-tests.mjs` are added to the no
 
 ### Tier 2: nightly browser and release gates
 
-Run Tier 1, release artifact gates, one browser preflight, one Chrome full browser matrix, and each Chrome/Edge/Firefox smoke exactly once. Remove duplicated builds/harness executions without dropping assertions. Nightly evidence must invoke the actual nightly aggregate rather than a differently scoped workflow command.
+Run Tier 1, release artifact gates, one browser preflight, one Chrome full browser matrix, and each Chrome/Edge smoke exactly once. Remove duplicated builds/harness executions without dropping assertions. Nightly evidence must invoke the actual nightly aggregate rather than a differently scoped workflow command.
 
 ### Tier 3: browser and enterprise parity
 
-Add missing packaged Firefox coverage for rebuilt file input/drop, protected-site OCR, document/scanner exports, restart/refresh, and permission lifecycle. Add packaged enterprise runtime coverage for managed policy, controls, managed sites, audit, and strict-load failure. Do not claim parity from static build inspection alone.
+Close missing packaged Chrome consumer/enterprise coverage for rebuilt file input/drop, protected-site OCR, document/scanner exports, restart/refresh, permission lifecycle, managed policy, controls, managed sites, audit, and strict-load failure. Edge receives the Chrome-target smoke boundary only. Do not claim parity from static build inspection alone.
 
 ### Tier 4: release candidate
 
-From a clean commit, build and package all four Chrome/Firefox consumer/enterprise targets, generate checksums, validate artifacts, run size/performance and privacy/security checks, perform raw-marker and remote-code sweeps, and record provenance. Model/dataset evaluation is required when AI model, features, dataset, or candidate-gate behavior changes.
+From a clean commit, build and package Chrome consumer and Chrome enterprise targets, generate checksums, validate artifacts, run Edge smoke, size/performance and privacy/security checks, perform raw-marker and remote-code sweeps, and record provenance. Model/dataset evaluation is required when AI model, features, dataset, or candidate-gate behavior changes.
 
 ### Tier 5: authenticated human gate
 
-Run every applicable provider cell in Chrome and Firefox consumer and enterprise packages using synthetic fixtures. No authenticated cell may remain `PENDING` unless the owner explicitly records a waiver. A provider login/profile limitation is not a waiver by itself.
+Run every applicable provider cell in Chrome consumer and enterprise packages using synthetic fixtures. No required Chrome authenticated cell may remain `PENDING` unless the owner explicitly records a waiver. A provider login/profile limitation is not a waiver by itself. Edge authenticated-provider parity is not required.
 
 ## Authenticated provider assertions
 
@@ -269,7 +270,7 @@ Gate work exists to make evidence reproducible, not to redesign CI.
 - No manifest, permission, host-permission, CSP, telemetry, analytics, remote verification, remote model, detector-threshold, OCR-model, policy-semantics, or public-privacy change unless a separately reviewed finding proves it unavoidable and the owner explicitly approves it.
 - No new dependencies, broad refactors, generated-artifact edits, or package-lock changes without explicit approval.
 - Raw secrets never appear in storage, DOM outside intended explicit `Allow once` delivery, logs, reports, audit records, debug data, filenames, exceptions, screenshots, or generated test/evidence artifacts outside controlled synthetic input fixtures.
-- Chrome and Firefox MV3 runtime order remains aligned, with `content.js` and `core.js` final in their respective lists.
+- Chrome MV3 runtime order remains valid, with `content.js` and `core.js` final in their respective lists. This pass does not modify or make claims about Firefox runtime behavior.
 
 ## Immediate NO-GO conditions
 
@@ -294,7 +295,7 @@ The full-feature reliability program is complete only when:
 4. unsupported and unsafe actions fail closed truthfully;
 5. no unintended raw value escapes and no duplicate action occurs;
 6. focused, full unit, deterministic E2E, packaged browser, enterprise, artifact, privacy, performance, and authenticated gates pass;
-7. Chrome and Firefox consumer/enterprise evidence is current, with Edge claims limited to smoke evidence;
+7. Chrome consumer/enterprise evidence is current, with Edge claims limited to smoke evidence and Firefox explicitly excluded;
 8. generated documents and images open successfully and contain no visible or searchable raw synthetic secret;
 9. panel, placeholder, hydration, reveal, session, restart, and audit state is truthful;
 10. public and internal support documentation matches the observed matrix;
@@ -308,7 +309,7 @@ The full-feature reliability program is complete only when:
 - authoritative full-feature matrix and evidence records;
 - minimal reliability-gate corrections;
 - focused regression tests and small runtime fixes for validated defects;
-- Chrome/Firefox consumer and enterprise packaged evidence;
+- Chrome consumer and enterprise packaged evidence plus Edge Chrome-target smoke evidence;
 - Edge limited smoke evidence;
 - authenticated provider results for all built-ins and one managed site;
 - generated-file inspection evidence;
