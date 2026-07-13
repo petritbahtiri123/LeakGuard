@@ -30,14 +30,6 @@ jobs:
       - name: Setup Chrome
         uses: browser-actions/setup-chrome@v2
 
-      - name: Setup Firefox
-        uses: browser-actions/setup-firefox@v1
-
-      - name: Setup geckodriver
-        uses: browser-actions/setup-geckodriver@latest
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Setup Edge
         uses: browser-actions/setup-edge@v1
 

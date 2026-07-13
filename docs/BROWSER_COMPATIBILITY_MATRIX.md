@@ -1,19 +1,19 @@
 # Browser Compatibility Matrix
 
-LeakGuard currently has first-class build targets for Chrome and Firefox. Edge can load the Chrome target because it is Chromium-based, and this repository has a basic Edge smoke gate that runs the Chrome build in Edge. It still does not maintain a separate Edge build or store target.
+LeakGuard's active reliability and release scope is Chrome consumer, Chrome enterprise, and Edge smoke using the Chrome consumer target. Firefox is excluded and unverified in this pass, so this document makes no Firefox support or release-readiness claim. Standalone Firefox developer build and smoke commands remain available, but they are non-gating. Edge does not have a separate build or store target.
 
 ## Build Targets
 
 | Browser family | Consumer target | Enterprise target | Notes |
 | --- | --- | --- | --- |
 | Chrome / Chromium | `dist/chrome` | `dist/chrome-enterprise` | Chrome manifest overlay requires Chrome 120 or later. |
-| Firefox | `dist/firefox` | `dist/firefox-enterprise` | Firefox overlay uses a background script shape and Gecko metadata. |
+| Firefox | developer-only `dist/firefox` | developer-only `dist/firefox-enterprise` | Excluded and unverified; not part of the active release gate or support claim. |
 | Edge | use `dist/chrome` | use `dist/chrome-enterprise` | Basic smoke coverage uses the Chrome target. Treat release claims as version-specific until release QA proves the exact Edge version. |
 | Safari | none | none | Not supported by this repository today. |
 
-## Shared Behavior
+## Active Shared Behavior
 
-Chrome and Firefox share:
+Chrome and Edge (using the Chrome target) share the following active release expectations:
 
 - deterministic detection, redaction, placeholder, and network classification logic
 - popup, options, scanner, and content-script source
@@ -22,9 +22,9 @@ Chrome and Firefox share:
 - local-only processing claims
 - no telemetry, backend secret processing, or remote model calls
 
-## Known Differences
+## Target Notes
 
-| Area | Chrome / Chromium | Firefox |
+| Area | Chrome / Chromium and Edge | Firefox developer target |
 | --- | --- | --- |
 | Background runtime | MV3 service worker | Firefox manifest overlay uses background scripts for compatibility |
 | Managed policy schema | Chrome enterprise manifest declares `config/managed_policy_schema.json` | Firefox enterprise build includes Gecko metadata but does not declare Chrome managed schema |
@@ -54,10 +54,10 @@ The standalone smoke commands build and exercise each packaged runtime through t
 | --- | --- |
 | Chrome consumer | `npm run smoke:chrome` |
 | Chrome enterprise | `npm run smoke:chrome-enterprise` |
-| Firefox consumer | `npm run smoke:firefox` |
-| Firefox enterprise | `npm run smoke:firefox-enterprise` |
+| Firefox consumer (standalone, non-gating) | `npm run smoke:firefox` |
+| Firefox enterprise (standalone, non-gating) | `npm run smoke:firefox-enterprise` |
 
-`npm run qa:browser:full` runs the full QA harness once against the Chrome consumer build, then smokes Chrome consumer, Edge with the Chrome consumer build, Firefox consumer, Chrome enterprise, and Firefox enterprise. The enterprise smoke runs the packaged runtime under its normal defaults; it asserts feedback, secure reveal, and user-added sites remain unavailable, sensitive composer actions produce no host delivery, and shared OCR/scanner checks still pass. It does not synthesize managed policy. There is no separate Edge enterprise smoke target.
+`npm run qa:browser:full` runs the full QA harness once against the Chrome consumer build, then smokes Chrome consumer, Edge with the Chrome consumer build, and Chrome enterprise exactly once each. The enterprise smoke runs the packaged runtime under its normal defaults; it asserts feedback, secure reveal, and user-added sites remain unavailable, sensitive composer actions produce no host delivery, and shared OCR/scanner checks still pass. It does not synthesize managed policy. There is no separate Edge enterprise smoke target. Firefox standalone commands are outside this active gate.
 
 ## Compatibility Review Checklist
 

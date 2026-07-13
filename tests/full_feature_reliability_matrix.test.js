@@ -66,13 +66,11 @@ const contractObligations = {
 };
 
 const providers = ["CHATGPT", "OPENAI", "CLAUDE", "GEMINI", "GROK", "X", "WHATSAPP", "MANAGED"];
-const browsers = ["CHROME", "FIREFOX"];
+const browsers = ["CHROME"];
 const modes = ["CONSUMER", "ENTERPRISE"];
 const packageCoverage = {
   "PKG-CHROME-CONSUMER": "COVERAGE-PACKAGE-FULL",
   "PKG-CHROME-ENTERPRISE": "COVERAGE-PACKAGE-FULL",
-  "PKG-FIREFOX-CONSUMER": "COVERAGE-PACKAGE-FULL",
-  "PKG-FIREFOX-ENTERPRISE": "COVERAGE-PACKAGE-FULL",
   "PKG-EDGE-SMOKE": "COVERAGE-EDGE-SMOKE"
 };
 const packageIds = Object.keys(packageCoverage);
@@ -279,6 +277,9 @@ function runValidatorSelfTests() {
 
 runValidatorSelfTests();
 validateCoverageContracts();
+
+assert.doesNotMatch(matrix, /^\| (?:PKG|AUTH)-[^|]*FIREFOX[^|]*\|/mi, "Firefox package/auth rows should be absent from the active reliability matrix");
+assert.doesNotMatch(matrix, /Chrome\/Firefox|Chrome and Firefox|Chrome and `Firefox`/i, "shared feature requirements should not require Firefox evidence");
 
 const rows = [...featureIds, ...packageIds, ...authIds].map(rowFor);
 assert.match(matrix, /Exactly one send\/upload\/event sequence/);

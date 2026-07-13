@@ -66,11 +66,19 @@ function assertRequiredFailureCodesExist() {
 
 function assertFullBrowserQaScriptIsOptIn() {
   const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
+  const compatibility = fs.readFileSync(path.join(repoRoot, "docs/BROWSER_COMPATIBILITY_MATRIX.md"), "utf8");
+  const count = (source, value) => source.split(value).length - 1;
   assert.ok(packageJson.scripts["qa:browser"], "qa:browser should remain available");
   assert.ok(packageJson.scripts["qa:browser:full"], "qa:browser:full should run the full browser matrix");
   assert.match(packageJson.scripts["qa:browser:full"], /--full-matrix/);
-  assert.match(packageJson.scripts["qa:browser:full"], /extension_qa_harness\.test\.mjs/);
-  assert.match(packageJson.scripts["qa:browser:full"], /firefox_smoke\.test\.mjs/);
+  for (const scriptName of ["qa:browser", "qa:browser:full"]) {
+    const script = packageJson.scripts[scriptName];
+    assert.strictEqual(count(script, "extension_qa_harness.test.mjs"), 1, `${scriptName} should run the Chrome consumer harness exactly once`);
+    assert.strictEqual(count(script, "chrome_smoke.test.mjs"), scriptName === "qa:browser:full" ? 2 : 1, `${scriptName} should run each required Chrome smoke exactly once`);
+    assert.strictEqual(count(script, "edge_smoke.test.mjs"), 1, `${scriptName} should run Edge smoke exactly once`);
+    assert.doesNotMatch(script, /firefox|geckodriver/i, `${scriptName} should exclude Firefox gates`);
+  }
+  assert.match(compatibility, /Firefox[^\n]*(?:excluded)[^\n]*(?:unverified)/i);
 }
 
 async function loadHarness() {

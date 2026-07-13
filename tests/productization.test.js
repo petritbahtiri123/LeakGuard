@@ -826,18 +826,16 @@ function testPublicDocsAlignWithCurrentFileCapabilities() {
   }
 }
 
-function testBrowserQaScriptOwnsFirefoxSmokeCoverage() {
+function testBrowserQaScriptsGateChromeAndEdgeOnly() {
   const qaBrowser = packageJson.scripts["qa:browser"] || "";
+  const qaBrowserFull = packageJson.scripts["qa:browser:full"] || "";
+  const packageRelease = packageJson.scripts["package:release"] || "";
   const testRelease = packageJson.scripts["test:release"] || "";
   const smokeFirefox = packageJson.scripts["smoke:firefox"] || "";
 
-  assert.ok(
-    qaBrowser.includes("extension_qa_harness.test.mjs") &&
-      qaBrowser.includes("chrome_smoke.test.mjs") &&
-      qaBrowser.includes("edge_smoke.test.mjs") &&
-      qaBrowser.includes("firefox_smoke.test.mjs"),
-    "qa:browser should run the browser QA harness plus Chrome, Edge, and Firefox smoke coverage"
-  );
+  assert.strictEqual(qaBrowser, "npm run build:chrome && node tests/browser/extension_qa_harness.test.mjs && node tests/browser/chrome_smoke.test.mjs && node tests/browser/edge_smoke.test.mjs");
+  assert.doesNotMatch(qaBrowserFull, /firefox|geckodriver/i);
+  assert.strictEqual(packageRelease, "node scripts/package-extension.mjs chrome --release-dir artifacts/release && node scripts/package-extension.mjs chrome-enterprise --release-dir artifacts/release");
   assert.ok(
     testRelease.includes("npm run test:nightly") && !testRelease.includes("npm run smoke:firefox"),
     "test:release should use the complete nightly aggregate rather than repeating a standalone smoke"
@@ -847,6 +845,7 @@ function testBrowserQaScriptOwnsFirefoxSmokeCoverage() {
     "npm run build:firefox && node tests/browser/firefox_smoke.test.mjs",
     "smoke:firefox should remain available as the standalone Firefox smoke command"
   );
+  assert.doesNotMatch(browserNightlyWorkflow, /setup-firefox|setup-geckodriver|firefox_smoke|build:firefox|package-extension\.mjs firefox/i);
   assert.ok(
     !testWorkflow.includes("npm run test:browser-gates") &&
       browserNightlyWorkflow.includes("npm run test:nightly"),
@@ -862,7 +861,7 @@ function testBrowserQaScriptOwnsFirefoxSmokeCoverage() {
 function testEnterpriseTargetsHavePackagedRuntimeSmoke() {
   assert.strictEqual(
     packageJson.scripts["qa:browser:full"],
-    "npm run build:chrome && node tests/browser/extension_qa_harness.test.mjs --full-matrix && node tests/browser/chrome_smoke.test.mjs && node tests/browser/edge_smoke.test.mjs && npm run build:firefox && node tests/browser/firefox_smoke.test.mjs && npm run build:chrome-enterprise && node tests/browser/chrome_smoke.test.mjs --extension-target=chrome-enterprise && npm run build:firefox-enterprise && node tests/browser/firefox_smoke.test.mjs --extension-target=firefox-enterprise"
+    "npm run build:chrome && node tests/browser/extension_qa_harness.test.mjs --full-matrix && node tests/browser/chrome_smoke.test.mjs && node tests/browser/edge_smoke.test.mjs && npm run build:chrome-enterprise && node tests/browser/chrome_smoke.test.mjs --extension-target=chrome-enterprise"
   );
   assert.strictEqual(
     packageJson.scripts["smoke:chrome-enterprise"],
@@ -1657,7 +1656,7 @@ async function run() {
   testPhase16cProtectedSiteXlsxPlanIsSupersededByPhase16eCloseout();
   testPhase14cProtectedSitePdfPlanIsPlanningOnly();
   testPublicDocsAlignWithCurrentFileCapabilities();
-  testBrowserQaScriptOwnsFirefoxSmokeCoverage();
+  testBrowserQaScriptsGateChromeAndEdgeOnly();
   testEnterpriseTargetsHavePackagedRuntimeSmoke();
   testEnterpriseSmokeFailuresStayRawSafe();
   testPhase17aTestingGapAnalysisDocumentsAutomationGaps();
