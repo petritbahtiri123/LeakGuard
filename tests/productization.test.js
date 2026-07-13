@@ -1220,13 +1220,23 @@ function testPhase17fScriptsAndWorkflowsAreTiered() {
   );
   assert.strictEqual(
     packageJson.scripts["test:release-gates"],
-    "npm run build:all && npm run package:release && npm run test:release-artifacts && npm run bench:file-extraction",
+    "npm run build:release && npm run package:release && npm run test:release-artifacts && npm run bench:file-extraction",
     "test:release-gates should own Tier B release artifact validation"
   );
   assert.strictEqual(
     packageJson.scripts["test:browser-gates"],
     "npm run preflight:browser && npm run qa:browser:full",
     "test:browser-gates should own Tier C browser validation"
+  );
+  assert.strictEqual(
+    packageJson.scripts["build:release"],
+    "npm run prepare:build && node scripts/build-extension.mjs --browser chrome --mode consumer && node scripts/build-extension.mjs --browser chrome --mode enterprise",
+    "build:release should own the Chrome-only release build aggregate"
+  );
+  assert.strictEqual(
+    packageJson.scripts["release:artifacts"],
+    "npm run release:clean && npm run build:release && npm run package:release && npm run release:checksums",
+    "release:artifacts should avoid the all-browser developer build aggregate"
   );
   assert.strictEqual(
     packageJson.scripts["test:nightly"],
@@ -1253,9 +1263,10 @@ function testPhase17fScriptsAndWorkflowsAreTiered() {
     "npm run test:fast",
     "test:ci should stay PR-safe and avoid browser flake by default"
   );
-  assert.ok(
-    packageJson.scripts["preflight:browser"] === "node scripts/check-browser-environment.mjs",
-    "preflight:browser should expose browser environment diagnostics"
+  assert.strictEqual(
+    packageJson.scripts["preflight:browser"],
+    "node scripts/check-browser-environment.mjs --targets=chrome,edge",
+    "preflight:browser should probe only active Chrome/Edge gate targets"
   );
 
   assert.ok(testWorkflow.includes("npm run test:ci"), "PR workflow should run Tier A through test:ci");
@@ -1537,6 +1548,10 @@ function testPhase20cQualityPerformanceSecurityCloseoutIsDocumented() {
 function testPhase17fBrowserDiagnosticsAreActionable() {
   assert.ok(fileExists("scripts/check-browser-environment.mjs"), "browser preflight script should exist");
   const preflightSource = fs.readFileSync(path.join(repoRoot, "scripts/check-browser-environment.mjs"), "utf8");
+
+  for (const required of ["--targets=", "requestedTargets.has(\"chrome\")", "requestedTargets.has(\"edge\")", "requestedTargets.has(\"firefox\")"]) {
+    assert.ok(preflightSource.includes(required), `browser preflight should scope probes by requested target: ${required}`);
+  }
 
   for (const required of [
     "Chrome executable",

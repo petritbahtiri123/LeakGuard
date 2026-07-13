@@ -70,6 +70,21 @@ function assertFullBrowserQaScriptIsOptIn() {
   const count = (source, value) => source.split(value).length - 1;
   assert.ok(packageJson.scripts["qa:browser"], "qa:browser should remain available");
   assert.ok(packageJson.scripts["qa:browser:full"], "qa:browser:full should run the full browser matrix");
+  assert.strictEqual(
+    packageJson.scripts["preflight:browser"],
+    "node scripts/check-browser-environment.mjs --targets=chrome,edge",
+    "browser gates should preflight Chrome and Edge only"
+  );
+  assert.strictEqual(
+    packageJson.scripts["build:release"],
+    "npm run prepare:build && node scripts/build-extension.mjs --browser chrome --mode consumer && node scripts/build-extension.mjs --browser chrome --mode enterprise",
+    "release gates should build Chrome consumer and enterprise only"
+  );
+  for (const scriptName of ["release:artifacts", "test:release-gates"]) {
+    const script = packageJson.scripts[scriptName];
+    assert.match(script, /npm run build:release/);
+    assert.doesNotMatch(script, /build:all|firefox|geckodriver/i, `${scriptName} should exclude Firefox build paths`);
+  }
   assert.match(packageJson.scripts["qa:browser:full"], /--full-matrix/);
   for (const scriptName of ["qa:browser", "qa:browser:full"]) {
     const script = packageJson.scripts[scriptName];

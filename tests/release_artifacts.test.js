@@ -8,9 +8,9 @@ const distRoot = path.join(repoRoot, "dist");
 const releaseRoot = path.join(repoRoot, "artifacts", "release");
 const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
 
-const defaultDistTargets = ["chrome", "firefox"];
-const optionalDistTargets = ["edge"];
-const releaseTargets = ["chrome", "chrome-enterprise", "firefox", "firefox-enterprise"];
+const defaultDistTargets = ["chrome", "chrome-enterprise"];
+const optionalDistTargets = [];
+const releaseTargets = ["chrome", "chrome-enterprise"];
 const expectedRuntimeFiles = [
   "manifest.json",
   "background/core.js",

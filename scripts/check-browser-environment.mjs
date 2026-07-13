@@ -133,25 +133,44 @@ function printCheck(label, ok, detail) {
   console.log(`${status}: ${label}${detail ? ` - ${detail}` : ""}`);
 }
 
+const targetArgument = process.argv.find((argument) => argument.startsWith("--targets="));
+const requestedTargets = new Set(
+  (targetArgument?.slice("--targets=".length) || "chrome,edge,firefox")
+    .split(",")
+    .map((target) => target.trim().toLowerCase())
+    .filter(Boolean)
+);
+const unsupportedTargets = [...requestedTargets].filter((target) => !["chrome", "edge", "firefox"].includes(target));
+if (unsupportedTargets.length) {
+  console.error(`Browser environment failure: unsupported preflight target(s): ${unsupportedTargets.join(", ")}`);
+  process.exit(1);
+}
+
 const checks = [];
-const chrome = findChromeExecutable();
-const edge = findEdgeExecutable();
-const firefox = findFirefoxExecutable();
-const geckodriver = findGeckodriverExecutable();
-const npmExecutable = findExecutable([npmCommand(), "npm"]);
+const chrome = requestedTargets.has("chrome") ? findChromeExecutable() : "";
+const edge = requestedTargets.has("edge") ? findEdgeExecutable() : "";
+const firefox = requestedTargets.has("firefox") ? findFirefoxExecutable() : "";
+const geckodriver = requestedTargets.has("firefox") ? findGeckodriverExecutable() : "";
+const npmExecutable = requestedTargets.has("firefox") ? findExecutable([npmCommand(), "npm"]) : "";
 const npmAvailable = Boolean(npmExecutable);
 
-checks.push(["Chrome executable", Boolean(chrome), chrome || "set CHROME_BIN or GOOGLE_CHROME_BIN"]);
-checks.push(["Edge executable", Boolean(edge), edge || "set EDGE_BIN or MSEDGE_BIN"]);
-checks.push(["Firefox executable", Boolean(firefox), firefox || "set FIREFOX_BIN"]);
-checks.push([
-  "geckodriver",
-  Boolean(geckodriver) || npmAvailable,
-  geckodriver ||
-    (npmAvailable
-      ? "npm exec --yes --package geckodriver fallback is available; smoke:firefox verifies the status endpoint"
-      : "install geckodriver or set GECKODRIVER_BIN")
-]);
+if (requestedTargets.has("chrome")) {
+  checks.push(["Chrome executable", Boolean(chrome), chrome || "set CHROME_BIN or GOOGLE_CHROME_BIN"]);
+}
+if (requestedTargets.has("edge")) {
+  checks.push(["Edge executable", Boolean(edge), edge || "set EDGE_BIN or MSEDGE_BIN"]);
+}
+if (requestedTargets.has("firefox")) {
+  checks.push(["Firefox executable", Boolean(firefox), firefox || "set FIREFOX_BIN"]);
+  checks.push([
+    "geckodriver",
+    Boolean(geckodriver) || npmAvailable,
+    geckodriver ||
+      (npmAvailable
+        ? "npm exec --yes --package geckodriver fallback is available; smoke:firefox verifies the status endpoint"
+        : "install geckodriver or set GECKODRIVER_BIN")
+  ]);
+}
 
 const tempProfile = assertTempProfileWritable();
 checks.push(["temp profile directory writable", tempProfile.ok, tempProfile.path]);
