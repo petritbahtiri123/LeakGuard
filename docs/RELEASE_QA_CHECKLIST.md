@@ -2,6 +2,7 @@
 
 ## Before Packaging
 
+- Active 3.0 reliability scope is Google Chrome and Microsoft Edge only. Firefox builds, packages, smoke tests, manual QA, and store-submission checks are non-gating and must not be included in the active release evidence.
 - Review [RELEASE_3_0_0_RELIABILITY.md](RELEASE_3_0_0_RELIABILITY.md) and complete its 3.0.0 reliability/manual-QA gates before changing release identity.
 - Complete the [LeakGuard 3.0 Full-Feature Reliability Matrix](qa/3.0-full-feature-reliability-matrix.md); `npm run test:release-matrix` must pass before any release identity changes. The completion gate intentionally fails while required evidence remains `PENDING` or `FAIL`.
 - Reload the unpacked extension after the latest branch changes.
@@ -23,14 +24,14 @@
 - Tier C packaged browser validation is heavy and environment-sensitive, remains outside PR CI, and runs through `npm run test:browser-gates`, which owns `npm run preflight:browser` followed by `npm run qa:browser:full`.
 - The release-artifacts workflow installs Playwright Chromium after `npm ci`, then runs Tier A, Tier B, deterministic E2E, and `npm run test:release-matrix` before generating checksums.
 - Authenticated live-site E2E against ChatGPT, Gemini, WhatsApp, or other logged-in providers remains manual/headed only and is not required for PR CI.
-- A browser startup failure before extension load, such as Chrome/Edge GPU/CDP startup failure or Firefox geckodriver status timeout, is a local or CI environment failure until rerun evidence shows the extension loaded and failed product assertions.
+- A browser startup failure before extension load, such as a Chrome/Edge GPU/CDP startup failure, is a local or CI environment failure until rerun evidence shows the extension loaded and failed product assertions.
 - Product failures are failures after the extension loads and a LeakGuard behavior assertion fails, such as missing popup controls, missing protected-site panel, raw marker leakage, failed redaction, or missing scanner export behavior.
 
 ## Enterprise Metadata Release-Candidate Helper
 
 - Review [Enterprise Metadata Release-Candidate Evidence](ENTERPRISE_METADATA_RELEASE_CANDIDATE_EVIDENCE.md) before making release claims for enterprise/cloud/internal metadata coverage.
 - Record live logged-in provider results in [Enterprise Metadata Live Manual QA Results](qa/ENTERPRISE_METADATA_LIVE_MANUAL_QA_RESULTS.md).
-- Follow [Enterprise Metadata Live Site QA Runbook](qa/ENTERPRISE_METADATA_LIVE_SITE_QA_RUNBOOK.md) for Chrome, Firefox, ChatGPT, Gemini, and failure-handling steps.
+- Follow [Enterprise Metadata Live Site QA Runbook](qa/ENTERPRISE_METADATA_LIVE_SITE_QA_RUNBOOK.md) for Chrome, ChatGPT, Gemini, and failure-handling steps. Firefox steps in older runbook material are outside the active 3.0 scope.
 - Local evidence refresh commands:
 
 ```powershell
@@ -159,20 +160,11 @@ git diff --check
 - Confirm WhatsApp never receives extracted file text inserted into the message composer as fallback.
 - Confirm unsafe filenames, raw content, OCR text, stack traces, and debug details do not appear in WhatsApp UI, logs, reports, or metadata.
 
-## Firefox Protected-Site File/Drop Checks
+## Chrome Protected-Site File/Drop Checks
 
-- Automated local Firefox smoke now covers popup loading, user-managed protected-site add/disable/re-enable/remove, secure reveal, refresh safety, File Scanner supported/unsupported files, and scanner exports. Keep live AI-site Firefox checks manual.
-- In Firefox on ChatGPT, upload supported PDF/DOCX/XLSX/image metadata files and confirm text PDFs hand off `.redacted.pdf` only when complete, DOCX files hand off `.redacted.docx` only when complete, XLSX files hand off `.redacted.xlsx` only when complete, and sanitized `.redacted.txt` fallback remains available where required; image metadata remains `.redacted.txt`.
-- In Firefox on ChatGPT, upload unsupported files such as archive, executable, legacy/macro Office, binary, and invalid UTF-8 text files; confirm LeakGuard does not claim they were scanned/redacted and normal site upload continues only where the path is explicitly safe.
-- In Firefox on ChatGPT, confirm unsupported and invalid UTF-8 uploads do not claim sanitization and block raw upload when LeakGuard consumed the event or attempted sanitization.
-- If Firefox ChatGPT login is blocked by account Advanced Security, mark Firefox ChatGPT as limited manual coverage and rely on Chrome live QA plus automated ChatGPT DOM/state tests for release gating.
-- In Firefox on Gemini, drag and drop a supported UTF-8 text file and confirm LeakGuard scans/redacts locally, then hands off a sanitized file or inserts sanitized text without leaking raw content.
-- In Firefox on Gemini, paste a multiline supported `.env` block with synthetic secrets and confirm sanitized placeholders preserve line breaks instead of collapsing into one long line.
-- In Firefox on ChatGPT, Grok, Gemini, Perplexity, and one user-managed protected site, drag and drop a supported UTF-8 text file and confirm either sanitized file handoff or sanitized text insertion succeeds without raw secrets.
 - In Chrome on Gemini, drag and drop supported UTF-8 text/config/code files at small size, 5 MB, 25 MB, and exactly 50 MiB; confirm LeakGuard redacts locally and Gemini receives only sanitized content.
-- In Firefox and Chrome on Gemini, confirm dropping a file does not unexpectedly open the operating system file picker or duplicate upload dialogs.
-- In Firefox on Gemini, drag and drop unsupported or invalid UTF-8 files and confirm LeakGuard warns once, blocks raw upload when it cannot safely pass through, and does not open duplicate picker/modal loops.
-- In Firefox on Perplexity or another user-managed protected site, type a synthetic password and confirm redaction succeeds without `Rewrite verification failed` when the raw secret is removed and placeholders remain visible.
+- In Chrome on Gemini, confirm dropping a file does not unexpectedly open the operating system file picker or duplicate upload dialogs.
+- In Chrome on a controlled user-managed protected site, type a synthetic password and confirm redaction succeeds without `Rewrite verification failed` when the raw secret is removed and placeholders remain visible.
 - If Claude manual access is unavailable, keep Claude covered through automated selector and smoke tests rather than blocking release QA on manual validation.
 
 ## Size-Aware Local Payload Flow
@@ -207,7 +199,5 @@ git diff --check
 - Confirm [STORE_ASSETS_CHECKLIST.md](STORE_ASSETS_CHECKLIST.md) is complete for the target store.
 - Confirm publication contacts are finalized in `docs/PRIVACY_POLICY.md`: support, privacy, and security all use `petritbahtiri24@gmail.com`.
 - Review the Chrome Web Store copy in `docs/CHROME_WEB_STORE_LISTING.md`.
-- Review the Firefox AMO submission notes in `docs/FIREFOX_AMO_CHECKLIST.md` if publishing a Firefox package.
-- Review release-facing wording for Firefox Add-ons suitability: local-only processing, no telemetry, no cloud processing, no remote model calls, and no perfect-protection claims.
 - Review [FILE_CAPABILITY_MATRIX.md](FILE_CAPABILITY_MATRIX.md) against release copy: scanner and protected-site text PDFs, DOCX, and XLSX can export regenerated files from sanitized text only, protected-site regenerated outputs fall back to `.redacted.txt` when regeneration would truncate, scanner visual image redaction exports PNG, protected-site OCR is settings-controlled/default-on for supported image uploads with opt-out, no scanned-PDF OCR, no non-English OCR, no remote OCR/backend, and no image format preservation.
 - GO/NO-GO for image redaction: GO only after supported image fixtures produce sanitized outputs with no visible/searchable raw fake secret; NO-GO if image OCR, canvas processing, redaction, export, or provider handoff fails without blocking raw upload.

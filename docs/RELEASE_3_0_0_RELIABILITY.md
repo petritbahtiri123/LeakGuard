@@ -2,7 +2,7 @@
 
 ## Release status
 
-This is an internal reliability record, not a release declaration. `package.json` and `manifests/base.json` remain at `2.2.1`; this pass does not itself declare 3.0.0 release-ready. Authenticated live-site QA is still outstanding.
+This is an internal reliability record, not a release declaration. `package.json` and `manifests/base.json` remain at `2.2.1`; this pass does not itself declare 3.0.0 release-ready. Active reliability scope is Google Chrome and Microsoft Edge only. Authenticated live-site QA is still incomplete.
 
 Publishing this record does not change runtime code, release identity, manifests, permissions, CSP, telemetry, network behavior, policy, redaction, model behavior, public privacy claims, or older live-browser evidence.
 
@@ -33,11 +33,12 @@ Publishing this record does not change runtime code, release identity, manifests
 
 ## Recovery paths implemented
 
-These fixes were implemented, covered by focused regression tests, and independently reviewed before this record was written:
+These fixes were implemented and covered by focused regression tests before this record was written:
 
 - `d949190` isolates extraction-cache authorization by `File` object identity. Same-object reuse, TTL, the 24-entry cap, and raw-free snapshots remain intact.
 - `1355d1d` serializes redaction mutations per tab. Different tabs remain concurrent and a rejected operation does not poison later work.
 - `c1e33df` routes a verified non-WhatsApp Enter replay with a missing button through the existing form-derived submit path exactly once. WhatsApp retains its block.
+- `bee803b` discards a timed-out protected-site OCR broker frame and retries preparation once within the existing bounded request budget; persistent failure still blocks the raw image. The same change carries placeholder state only across a short, verified Gemini/Grok post-send route transition and prevents subframes from resetting top-frame tab state.
 
 These are local implementation and review results; they are not authenticated provider evidence.
 
@@ -63,7 +64,7 @@ These come from source and fixture review and are not confirmed live defects:
 
 ### Authenticated live QA gaps
 
-- Current logged-in Chrome and Firefox behavior remains unverified for ChatGPT, OpenAI, Gemini, Claude, Grok, X, WhatsApp, and a generic managed site.
+- Exact-package authenticated Chrome coverage remains incomplete for ChatGPT, legacy OpenAI Chat, Gemini, Claude, Grok, X, WhatsApp, and a generic managed site. Firefox is outside the active scope.
 - Current composer remount frequency, localized control labels, file-input readiness, and site navigation behavior cannot be established from static fixtures.
 - Gemini/Grok pending handoff, custom-site permission restart, service-worker restart, and the full supported/unsupported file matrix still require manual browser execution.
 
@@ -77,7 +78,7 @@ These come from source and fixture review and are not confirmed live defects:
 6. Exercise Gemini/Grok pending attach through navigation, late input exposure, expiry, and cancellation. Confirm there is no duplicate upload.
 7. Restart the service worker and verify placeholder/reveal state resets clearly without persistence to local storage.
 8. Add a custom protected site, restart, revoke and regrant permission, and verify an `Active` status corresponds to an injected working content panel.
-9. Run authenticated Chrome and Firefox QA for ChatGPT, OpenAI, Gemini, Claude, Grok, X, WhatsApp, and one generic managed site.
+9. Run authenticated Chrome QA for ChatGPT, OpenAI, Gemini, Claude, Grok, X, WhatsApp, and one generic managed site; repeat the Chromium compatibility subset in Edge.
 
 ## Validation evidence
 
@@ -87,7 +88,7 @@ These come from source and fixture review and are not confirmed live defects:
 - Enter replay passed fallback-key, typed-interception, submit, click-orchestration, and syntax validation; independent review approved it.
 - The final branch `npm test` passed. Browser preflight also passed.
 - The full local Playwright gate passed with 106 scenarios and one intentionally manual `@live` WhatsApp diagnostic skipped. This covered text, paste, files, images, multi-file ordering, adapter fixtures, and fail-closed paths.
-- Chrome and Firefox builds and smoke suites passed. The isolated hot-path and file-extraction performance benchmarks stayed within budget.
+- Chrome and Edge browser gates passed. Chrome consumer and enterprise builds/packages passed; active release packaging and runtime-size reporting exclude Firefox. The isolated hot-path and file-extraction performance benchmarks stayed within budget.
 - `npm run docs:check-links`, `git diff --check`, the staged-diff checks, and final clean-worktree verification passed.
 - No authenticated live-site QA was performed or inferred by this pass.
 
