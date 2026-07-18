@@ -8,7 +8,7 @@
   const MAX_SCANNER_OCR_IMAGE_BYTES = 8 * 1024 * 1024;
   const MAX_SCANNER_OCR_IMAGE_DIMENSION = 4096;
   const MAX_SCANNER_OCR_IMAGE_PIXELS = 12 * 1000 * 1000;
-  const DEFAULT_SCANNER_OCR_TIMEOUT_MS = 15000;
+  const DEFAULT_SCANNER_OCR_TIMEOUT_MS = 50000;
 
   function normalizeFileName(fileName) {
     if (FileTypeRegistry.normalizeFileName) return FileTypeRegistry.normalizeFileName(fileName);
@@ -189,66 +189,69 @@
     };
   }
 
+  function boxesFromEntries(entries, kind, normalizedText) {
+    const boxes = [];
+    let cursor = 0;
+    for (const entry of Array.isArray(entries) ? entries : []) {
+      const entryText = String(entry?.text || "");
+      const fallbackStart = entryText ? normalizedText.indexOf(entryText, cursor) : -1;
+      const box = layoutBoxFromEntry(entry, kind, fallbackStart);
+      if (!box) continue;
+      boxes.push(box);
+      cursor = Math.max(cursor, box.end);
+    }
+    return boxes;
+  }
+
+  function sanitizedStructuredBoxes(entries, expectedKind, fallbackKind) {
+    return (Array.isArray(entries) ? entries : [])
+      .map((entry) => {
+        const box = normalizeOcrBox(entry);
+        const start = Number(entry?.start);
+        const end = Number(entry?.end);
+        if (!box || !Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start) return null;
+        const boxKind = expectedKind || normalizeBoxKind(entry?.boxKind || entry?.kind || fallbackKind);
+        const quality = qualityForBox(boxKind, entry?.confidenceBucket || entry?.confidence);
+        if (entry?.fallbackUsed === true || boxKind === "fallback") {
+          quality.fallbackUsed = true;
+          quality.visualRedactionSafe = false;
+          quality.protectedSiteEligible = false;
+        }
+        return {
+          ...quality,
+          start,
+          end,
+          x: box.x,
+          y: box.y,
+          width: box.width,
+          height: box.height
+        };
+      })
+      .filter(Boolean);
+  }
+
   function sanitizeOcrLayout(result, text) {
     if (Array.isArray(result?.layout?.boxes)) {
-      const boxes = result.layout.boxes
-        .map((entry) => {
-          const box = normalizeOcrBox(entry);
-          const start = Number(entry?.start);
-          const end = Number(entry?.end);
-          if (!box || !Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start) return null;
-          const boxKind = normalizeBoxKind(entry?.boxKind || entry?.kind || result.layout.source);
-          const quality = qualityForBox(boxKind, entry?.confidenceBucket || entry?.confidence);
-          if (entry?.fallbackUsed === true || boxKind === "fallback") {
-            quality.fallbackUsed = true;
-            quality.visualRedactionSafe = false;
-            quality.protectedSiteEligible = false;
-          }
-          return {
-            ...quality,
-            start,
-            end,
-            x: box.x,
-            y: box.y,
-            width: box.width,
-            height: box.height
-          };
-        })
-        .filter(Boolean);
+      const boxes = sanitizedStructuredBoxes(result.layout.boxes, null, result.layout.source);
+      const lineBoxes = sanitizedStructuredBoxes(result.layout.lineBoxes, "line");
       const source = result.layout.source === "fallback" ? "fallback" : result.layout.source === "word" ? "word" : boxes.length ? "line" : "none";
-      return layoutSummary(source, boxes);
+      return {
+        ...layoutSummary(source, boxes),
+        ...(source === "word" && lineBoxes.length ? { lineBoxes } : {})
+      };
     }
 
-    const words = Array.isArray(result?.words) ? result.words : [];
-    const lines = Array.isArray(result?.lines) ? result.lines : [];
-    const boxes = [];
     const normalizedText = String(text || "");
-    let cursor = 0;
-
-    for (const word of words) {
-      const wordText = String(word?.text || "");
-      const fallbackStart = wordText ? normalizedText.indexOf(wordText, cursor) : -1;
-      const layoutBox = layoutBoxFromEntry(word, "word", fallbackStart);
-      if (layoutBox) {
-        boxes.push(layoutBox);
-        cursor = Math.max(cursor, layoutBox.end);
-      }
+    const wordBoxes = boxesFromEntries(result?.words, "word", normalizedText);
+    const lineBoxes = boxesFromEntries(result?.lines, "line", normalizedText);
+    if (wordBoxes.length) {
+      return {
+        ...layoutSummary("word", wordBoxes),
+        ...(lineBoxes.length ? { lineBoxes } : {})
+      };
     }
 
-    if (!boxes.length) {
-      cursor = 0;
-      for (const line of lines) {
-        const lineText = String(line?.text || "");
-        const fallbackStart = lineText ? normalizedText.indexOf(lineText, cursor) : -1;
-        const layoutBox = layoutBoxFromEntry(line, "line", fallbackStart);
-        if (layoutBox) {
-          boxes.push(layoutBox);
-          cursor = Math.max(cursor, layoutBox.end);
-        }
-      }
-    }
-
-    return layoutSummary(boxes.some((box) => box.boxKind === "word") ? "word" : boxes.length ? "line" : "none", boxes);
+    return layoutSummary(lineBoxes.length ? "line" : "none", lineBoxes);
   }
 
   function sanitizeOcrFailure(status, warning) {
@@ -429,10 +432,25 @@
     };
   }
 
+  function eligibleContainingLineBox(lineBoxes, findingStart, findingEnd) {
+    return lineBoxes
+      .filter(
+        (box) =>
+          box?.boxKind === "line" &&
+          box.start <= findingStart &&
+          box.end >= findingEnd &&
+          box.protectedSiteEligible === true &&
+          box.visualRedactionSafe === true &&
+          (box.confidenceBucket === "high" || box.confidenceBucket === "medium")
+      )
+      .sort((left, right) => left.end - left.start - (right.end - right.start) || left.width * left.height - right.width * right.height)[0];
+  }
+
   function redactionBoxesForOcrFindings({ ocr, scanResult, scanText, ocrText } = {}) {
     // Protected-site visual image upload must require visualRedactionSafe === true
     // and protectedSiteEligible === true; fallback boxes are scanner-only.
     const boxes = Array.isArray(ocr?.layout?.boxes) ? ocr.layout.boxes : [];
+    const lineBoxes = Array.isArray(ocr?.layout?.lineBoxes) ? ocr.layout.lineBoxes : [];
     const findings = Array.isArray(scanResult?.findings) ? scanResult.findings : [];
     const text = String(scanText || "");
     const recognizedText = String(ocrText || ocr?.text || "");
@@ -464,7 +482,12 @@
       if (!Number.isFinite(findingStart) || !Number.isFinite(findingEnd) || findingEnd <= 0) continue;
       if (findingStart < 0 || findingStart >= recognizedText.length) continue;
       const matchedBoxes = boxes.filter((box) => overlaps(box.start, box.end, findingStart, findingEnd));
-      if (!matchedBoxes.length) {
+      const primaryMerged = matchedBoxes.length ? mergeBoxes(matchedBoxes) : null;
+      const containingLine =
+        !primaryMerged || (primaryMerged.confidenceBucket !== "high" && primaryMerged.confidenceBucket !== "medium")
+          ? eligibleContainingLineBox(lineBoxes, findingStart, findingEnd)
+          : null;
+      if (!primaryMerged && !containingLine) {
         return {
           ok: false,
           status: "ocr_box_mapping_missing",
@@ -473,7 +496,7 @@
           warnings: ["ocr_box_mapping_missing"]
         };
       }
-      const merged = mergeBoxes(matchedBoxes);
+      const merged = containingLine ? mergeBoxes([containingLine]) : primaryMerged;
       if (merged.confidenceBucket !== "high" && merged.confidenceBucket !== "medium") {
         return {
           ok: false,

@@ -306,6 +306,26 @@ export async function imageFixture(kind) {
   });
 }
 
+export async function multilineImageFixture() {
+  const secret = "sk-proj-LGQAMultilineImageKey1234567890abcdef";
+  const lines = Array.from({ length: 12 }, (_, index) =>
+    index === 7 ? `API_KEY=${secret}` : `SAFE_LINE_${index + 1}=visible test content`
+  );
+  const svgLines = lines
+    .map(
+      (line, index) =>
+        `<text x="40" y="${80 + index * 68}" font-family="Arial" font-size="44" fill="black">${line}</text>`
+    )
+    .join("");
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="900"><rect width="100%" height="100%" fill="white"/>${svgLines}</svg>`;
+  const buffer = await sharp(Buffer.from(svg)).png().toBuffer();
+  return payload("lgqa-multiline-image-secret.png", "image/png", buffer, {
+    secret,
+    text: lines.join("\n"),
+    expectedOutputName: "lgqa-multiline-image-secret.redacted.png"
+  });
+}
+
 export function malformedImageFixture() {
   const secret = fakeSecret("MALFORMED_IMAGE");
   return payload(

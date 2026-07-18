@@ -981,6 +981,80 @@ async function testProtectedSiteImageOcrFallbackBoxesFailClosedWithoutTextOutput
   }
 }
 
+async function testProtectedSiteImageOcrRecoversWithEligibleContainingLine() {
+  const originalHelper = globalThis.PWM.isProtectedSiteOcrEnabled;
+  const rawSecret = "sk-proj-ProtectedMultilineRecovery1234567890abcdef";
+  const lines = Array.from({ length: 12 }, (_, index) =>
+    index === 7 ? `API_KEY=${rawSecret}` : `SAFE_LINE_${index + 1}=visible`
+  );
+  const ocrText = lines.join("\n");
+  const secretStart = ocrText.indexOf(rawSecret);
+  const secretLine = `API_KEY=${rawSecret}`;
+  const lineStart = ocrText.indexOf(secretLine);
+  const redactorCalls = [];
+  globalThis.PWM.isProtectedSiteOcrEnabled = async () => true;
+  globalThis.PWM.OcrRuntime = makeProtectedSiteOcrRuntime(
+    {
+      text: ocrText,
+      layout: {
+        source: "word",
+        boxes: [
+          {
+            boxKind: "word",
+            start: secretStart,
+            end: secretStart + rawSecret.length,
+            x: 260,
+            y: 350,
+            width: 900,
+            height: 42,
+            confidenceBucket: "low",
+            visualRedactionSafe: false
+          }
+        ],
+        lineBoxes: [
+          {
+            boxKind: "line",
+            start: lineStart,
+            end: lineStart + secretLine.length,
+            x: 24,
+            y: 340,
+            width: 1180,
+            height: 62,
+            confidenceBucket: "medium",
+            visualRedactionSafe: true
+          }
+        ]
+      }
+    },
+    []
+  );
+  const restoreRedactor = installProtectedSiteImageRedactor(redactorCalls);
+
+  try {
+    const result = await processFileForAdapterHandoff({
+      file: fileFromBuffer("multiline.png", "image/png", bufferFromText("raw image bytes")),
+      context: "drop",
+      ocrDimensions: { width: 1400, height: 720 }
+    });
+
+    assert.strictEqual(redactorCalls.length, 1);
+    assert.strictEqual(result.status, "ready");
+    assert.strictEqual(result.safeForUpload, true);
+    assert.strictEqual(result.outputKind, "redacted_image_file");
+    assert.match(result.outputName, /\.redacted\.png$/);
+    assert.strictEqual(result.fileOnlyUpload, true);
+    assert.strictEqual(result.skipTextFallback, true);
+    assert.ok(result.sanitizedText.includes("[PWM_1]"));
+    assert.strictEqual(JSON.stringify(result).includes(rawSecret), false);
+    assert.strictEqual(redactorCalls[0].boxes.length, 1);
+    assert.strictEqual(redactorCalls[0].boxes[0].boxKind, "line");
+  } finally {
+    globalThis.PWM.isProtectedSiteOcrEnabled = originalHelper;
+    delete globalThis.PWM.OcrRuntime;
+    restoreRedactor();
+  }
+}
+
 async function testProtectedSiteImageOcrUnsafeBoxesFailClosed() {
   const originalHelper = globalThis.PWM.isProtectedSiteOcrEnabled;
   const rawSecret = "sk-proj-ProtectedSiteUnsafeBoxes1234567890abcdef";
@@ -1002,6 +1076,22 @@ async function testProtectedSiteImageOcrUnsafeBoxesFailClosed() {
             y: 12,
             width: 320,
             height: 40,
+            confidenceBucket: "low",
+            fallbackUsed: false,
+            visualRedactionSafe: false,
+            protectedSiteEligible: false
+          }
+        ],
+        lineBoxes: [
+          {
+            boxKind: "line",
+            kind: "line",
+            start: 0,
+            end: ocrText.length,
+            x: 8,
+            y: 8,
+            width: 400,
+            height: 56,
             confidenceBucket: "low",
             fallbackUsed: false,
             visualRedactionSafe: false,
@@ -1666,6 +1756,7 @@ async function run() {
   await testProtectedSiteImageOcrRejectsEmptyGeneratedPngWithoutRawFallback();
   await testProtectedSiteImageOcrEnabledWithLineBoxesProducesPngWithWarning();
   await testProtectedSiteImageOcrFallbackBoxesFailClosedWithoutTextOutput();
+  await testProtectedSiteImageOcrRecoversWithEligibleContainingLine();
   await testProtectedSiteImageOcrUnsafeBoxesFailClosed();
   await testProtectedSiteImageBlockedMetadataDoesNotExposeRawFilenameSecret();
   await testProtectedSiteImageOcrRedactsSupportedFormatsWhenEnabled();

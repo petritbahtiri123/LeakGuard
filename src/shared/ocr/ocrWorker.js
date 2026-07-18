@@ -472,9 +472,13 @@ function extractIteratorBoxes(module, api, text, level, boxKind) {
 
 function buildOcrLayout(module, api, image, text, confidence) {
   const wordBoxes = extractIteratorBoxes(module, api, text, module.RIL_WORD, "word");
-  if (wordBoxes.length) return layoutSummary("word", wordBoxes);
-
   const lineBoxes = extractIteratorBoxes(module, api, text, module.RIL_TEXTLINE, "line");
+  if (wordBoxes.length) {
+    return {
+      ...layoutSummary("word", wordBoxes),
+      ...(lineBoxes.length ? { lineBoxes } : {})
+    };
+  }
   if (lineBoxes.length) return layoutSummary("line", lineBoxes);
 
   return layoutSummary(

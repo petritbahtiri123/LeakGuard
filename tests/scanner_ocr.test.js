@@ -41,6 +41,14 @@ function makeFile(name, type, size, buffer = bufferFromText("image bytes")) {
   };
 }
 
+function testDefaultOcrTimeoutAllowsBrokerToSettleFirst() {
+  assert.strictEqual(ScannerOcr.DEFAULT_SCANNER_OCR_TIMEOUT_MS, 50000);
+  const runtimeSource = fs.readFileSync(path.join(repoRoot, "src/shared/ocr/ocrRuntime.js"), "utf8");
+  const brokerSource = fs.readFileSync(path.join(repoRoot, "src/content/files/protectedSiteOcrBroker.js"), "utf8");
+  assert.ok(runtimeSource.includes("const DEFAULT_IMAGE_RECOGNITION_TIMEOUT_MS = 40000;"));
+  assert.ok(brokerSource.includes("const DEFAULT_TIMEOUT_MS = 45000;"));
+}
+
 async function makeSyntheticApiKeyPng(text) {
   return makeSyntheticTextImage(text, "png");
 }
@@ -584,6 +592,163 @@ async function testOcrWordBoxesArePreferredOverLineBoxes() {
   assert.strictEqual(boxes.boxKind, "word");
   assert.strictEqual(boxes.boxes[0].width, 360);
   assert.deepStrictEqual(boxes.warnings, []);
+}
+
+async function testLowConfidenceWordBoxRecoversWithEligibleContainingLine() {
+  const rawSecret = "sk-proj-MultilineRecovery1234567890abcdef";
+  const lines = Array.from({ length: 12 }, (_, index) =>
+    index === 7 ? `API_KEY=${rawSecret}` : `SAFE_LINE_${index + 1}=visible`
+  );
+  const ocrText = lines.join("\n");
+  const secretStart = ocrText.indexOf(rawSecret);
+  const secretLine = `API_KEY=${rawSecret}`;
+  const secretLineStart = ocrText.indexOf(secretLine);
+  const runtime = {
+    recognizeImageBytes() {
+      return Promise.resolve({
+        ok: true,
+        status: "ocr_recognition_ready",
+        language: "eng",
+        text: ocrText,
+        textLength: ocrText.length,
+        confidenceBucket: "medium",
+        warnings: [],
+        layout: {
+          source: "word",
+          boxes: [
+            {
+              start: secretStart,
+              end: secretStart + rawSecret.length,
+              x: 260,
+              y: 350,
+              width: 900,
+              height: 42,
+              confidenceBucket: "low",
+              text: rawSecret
+            }
+          ],
+          lineBoxes: [
+            {
+              boxKind: "line",
+              start: secretLineStart,
+              end: secretLineStart + secretLine.length,
+              x: 24,
+              y: 340,
+              width: 1180,
+              height: 62,
+              confidenceBucket: "medium",
+              text: secretLine
+            }
+          ]
+        }
+      });
+    }
+  };
+  const imageBuffer = await makeSyntheticApiKeyPng(ocrText);
+  const ocr = await ScannerOcr.recognizeScannerImageFile(
+    makeFile("multiline.png", "image/png", imageBuffer.byteLength, imageBuffer),
+    { runtime, timeoutMs: 1000, dimensions: { width: 1400, height: 720 } }
+  );
+  const scanText = ScannerOcr.buildScannerOcrScanText({
+    metadataText: "file_name=multiline.png",
+    ocrText,
+    ocrMetadata: ocr
+  });
+  const scanResult = scanOcrText(scanText, "multiline.png");
+  const result = ScannerOcr.redactionBoxesForOcrFindings({ ocr, scanResult, scanText, ocrText });
+
+  assert.strictEqual(ocr.layout.boxes[0].boxKind, "word");
+  assert.strictEqual(ocr.layout.lineBoxes[0].boxKind, "line");
+  assert.strictEqual(ocr.layout.lineBoxes[0].protectedSiteEligible, true);
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(ocr.layout.lineBoxes[0], "text"), false);
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.boxKind, "line");
+  assert.strictEqual(result.boxes[0].x, 24);
+  assert.strictEqual(result.boxes[0].width, 1180);
+  assert.ok(result.warnings.includes("ocr_line_boxes_used"));
+  assert.strictEqual(JSON.stringify(ocr.layout).includes(rawSecret), false);
+}
+
+async function testLineRecoveryRequiresContainmentAndPreservesIndependentFindings() {
+  const firstSecret = "sk-proj-MultilineFirst1234567890abcdef";
+  const secondSecret = "sk-proj-MultilineSecond1234567890abcdef";
+  const lines = [
+    "SAFE_LINE_1=visible",
+    `FIRST_KEY=${firstSecret}`,
+    "SAFE_LINE_3=visible",
+    `SECOND_KEY=${secondSecret}`
+  ];
+  const ocrText = lines.join("\n");
+  const firstStart = ocrText.indexOf(firstSecret);
+  const secondStart = ocrText.indexOf(secondSecret);
+  const firstLineStart = ocrText.indexOf(lines[1]);
+  const secondLineStart = ocrText.indexOf(lines[3]);
+  const imageBuffer = await makeSyntheticApiKeyPng(ocrText);
+
+  async function recognize(linesOverride, dimensions = { width: 900, height: 240 }) {
+    return ScannerOcr.recognizeScannerImageFile(
+      makeFile("line-recovery.png", "image/png", imageBuffer.byteLength, imageBuffer),
+      {
+        runtime: {
+          recognizeImageBytes() {
+            return Promise.resolve({
+              ok: true,
+              status: "ocr_recognition_ready",
+              language: "eng",
+              text: ocrText,
+              textLength: ocrText.length,
+              confidenceBucket: "medium",
+              warnings: [],
+              words: [
+                wordBox(firstSecret, firstStart, { x: 180, y: 70, width: 600, height: 34 }, 42),
+                wordBox(secondSecret, secondStart, { x: 180, y: 170, width: 600, height: 34 }, 42)
+              ],
+              lines: linesOverride
+            });
+          }
+        },
+        timeoutMs: 1000,
+        dimensions
+      }
+    );
+  }
+
+  function mapFindings(ocr) {
+    const scanText = ScannerOcr.buildScannerOcrScanText({
+      metadataText: "file_name=line-recovery.png",
+      ocrText,
+      ocrMetadata: ocr
+    });
+    return ScannerOcr.redactionBoxesForOcrFindings({
+      ocr,
+      scanResult: scanOcrText(scanText, "line-recovery.png"),
+      scanText,
+      ocrText
+    });
+  }
+
+  const partialOcr = await recognize([
+    {
+      ...lineBox(lines[1], firstLineStart, { x: 16, y: 60, width: 820, height: 50 }, 78),
+      end: firstStart + firstSecret.length - 1
+    }
+  ]);
+  const partialContainmentResult = mapFindings(partialOcr);
+  assert.strictEqual(partialContainmentResult.ok, false);
+  assert.strictEqual(partialContainmentResult.status, "ocr_box_confidence_too_low");
+
+  const eligibleLines = [
+    lineBox(lines[1], firstLineStart, { x: 16, y: 60, width: 820, height: 50 }, 78),
+    lineBox(lines[3], secondLineStart, { x: 16, y: 160, width: 820, height: 50 }, 78)
+  ];
+  const multipleSecretResult = mapFindings(await recognize(eligibleLines));
+  assert.strictEqual(multipleSecretResult.ok, true);
+  assert.strictEqual(multipleSecretResult.boxes.length, 2);
+  assert.strictEqual(multipleSecretResult.boxes.every((box) => box.boxKind === "line"), true);
+
+  const lowResolutionResult = mapFindings(await recognize(eligibleLines, { width: 320, height: 240 }));
+  assert.strictEqual(lowResolutionResult.ok, true);
+  assert.strictEqual(lowResolutionResult.protectedSiteEligible, true);
 }
 
 async function testOcrLineBoxesAcceptedWithWarning() {
@@ -1168,6 +1333,7 @@ function testDownloadedImageOutputNameIsRedactedTxtCompatible() {
 }
 
 (async () => {
+  testDefaultOcrTimeoutAllowsBrokerToSettleFirst();
   await testSupportedImageTypesOnly();
   await testOversizedImageFailsSafely();
   await testOversizedDimensionsFailSafely();
@@ -1180,6 +1346,8 @@ function testDownloadedImageOutputNameIsRedactedTxtCompatible() {
   await testOcrLayoutFallbackIndexesRemainStableForWordAndLineResults();
   await testOcrWordBoxesMapDetectedSecretToRedactionBoxes();
   await testOcrWordBoxesArePreferredOverLineBoxes();
+  await testLowConfidenceWordBoxRecoversWithEligibleContainingLine();
+  await testLineRecoveryRequiresContainmentAndPreservesIndependentFindings();
   await testOcrLineBoxesAcceptedWithWarning();
   await testFallbackBoxesAreMarkedScannerOnlyAndNotProtectedSiteEligible();
   await testMissingBoxesFailClosedForVisualRedaction();

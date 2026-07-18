@@ -948,6 +948,22 @@ async function assertOcrWorkerEngineProof(targetRoot) {
               visualRedactionSafe: true,
               protectedSiteEligible: true
             }
+          ],
+          lineBoxes: [
+            {
+              boxKind: "line",
+              kind: "line",
+              start: 0,
+              end: 8,
+              x: 13,
+              y: 28,
+              width: 211,
+              height: 32,
+              confidenceBucket: "high",
+              fallbackUsed: false,
+              visualRedactionSafe: true,
+              protectedSiteEligible: true
+            }
           ]
         },
         warnings: []

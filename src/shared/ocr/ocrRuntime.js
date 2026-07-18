@@ -3,6 +3,7 @@
   root.PWM = root.PWM || {};
 
   const workerPath = "shared/ocr/ocrWorker.js";
+  const DEFAULT_IMAGE_RECOGNITION_TIMEOUT_MS = 40000;
   let worker = null;
   let workerStatus = "idle";
 
@@ -400,24 +401,30 @@
     });
   }
 
+  function sanitizeLayoutBoxes(entries, expectedKind) {
+    return (Array.isArray(entries) ? entries : [])
+      .map((box) => {
+        const boxKind = String(expectedKind || box?.boxKind || box?.kind || "line");
+        return {
+          boxKind,
+          kind: boxKind,
+          start: Math.max(0, Number(box?.start || 0)),
+          end: Math.max(0, Number(box?.end || 0)),
+          x: Math.max(0, Number(box?.x || 0)),
+          y: Math.max(0, Number(box?.y || 0)),
+          width: Math.max(0, Number(box?.width || 0)),
+          height: Math.max(0, Number(box?.height || 0)),
+          confidenceBucket: String(box?.confidenceBucket || "unknown"),
+          fallbackUsed: box?.fallbackUsed === true || box?.boxKind === "fallback" || box?.kind === "fallback",
+          visualRedactionSafe: box?.visualRedactionSafe === true
+        };
+      })
+      .filter((box) => box.end > box.start && box.width > 0 && box.height > 0);
+  }
+
   function sanitizeRecognitionResponse(response) {
-    const layoutBoxes = Array.isArray(response?.layout?.boxes)
-      ? response.layout.boxes
-          .map((box) => ({
-            boxKind: String(box?.boxKind || box?.kind || "line"),
-            kind: String(box?.boxKind || box?.kind || "line"),
-            start: Math.max(0, Number(box?.start || 0)),
-            end: Math.max(0, Number(box?.end || 0)),
-            x: Math.max(0, Number(box?.x || 0)),
-            y: Math.max(0, Number(box?.y || 0)),
-            width: Math.max(0, Number(box?.width || 0)),
-            height: Math.max(0, Number(box?.height || 0)),
-            confidenceBucket: String(box?.confidenceBucket || "unknown"),
-            fallbackUsed: box?.fallbackUsed === true || box?.boxKind === "fallback" || box?.kind === "fallback",
-            visualRedactionSafe: box?.visualRedactionSafe === true
-          }))
-          .filter((box) => box.end > box.start && box.width > 0 && box.height > 0)
-      : [];
+    const layoutBoxes = sanitizeLayoutBoxes(response?.layout?.boxes);
+    const lineBoxes = sanitizeLayoutBoxes(response?.layout?.lineBoxes, "line");
     const result = {
       ok: response?.ok === true,
       status: response?.status || "ocr_recognition_blocked",
@@ -442,7 +449,8 @@
         fallbackUsed,
         visualRedactionSafe,
         protectedSiteEligible: visualRedactionSafe && !fallbackUsed,
-        boxes: layoutBoxes
+        boxes: layoutBoxes,
+        ...(source === "word" && lineBoxes.length ? { lineBoxes } : {})
       };
     }
     if (!result.ok) {
@@ -498,7 +506,7 @@
           worker = null;
         }
         reject(new Error("OCR image recognition timed out."));
-      }, 20000);
+      }, DEFAULT_IMAGE_RECOGNITION_TIMEOUT_MS);
 
       activeWorker.onmessage = (event) => {
         root.clearTimeout(timeout);

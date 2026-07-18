@@ -22,6 +22,7 @@ import {
 } from "./helpers/extensionFixture.mjs";
 import {
   imageFixture,
+  multilineImageFixture,
   encryptedPdfFixture,
   imageOnlyPdfFixture,
   malformedDocxFixture,
@@ -407,6 +408,27 @@ test.describe("@whatsapp @text WhatsApp-like reproduction contract", () => {
       await expectBlocked(page, /Raw image upload blocked/i);
       await expectNoFileEvents(page);
     }
+    await expectNoRawSecretVisible(page, file.secret);
+  });
+
+  test("@images readable multiline image produces sanitized WhatsApp preview", async ({ extensionApp }) => {
+    test.setTimeout(180000);
+    const page = await extensionApp.openProtectedFixture("whatsapp");
+    const file = await multilineImageFixture();
+
+    await uploadWhatsAppAttachFile(page, file);
+    await expect.poll(async () => (await getWhatsAppPreviewState(page))?.sanitized, {
+      timeout: 120000
+    }).toBe(true);
+
+    const preview = await getWhatsAppPreviewState(page);
+    expect(preview?.rawPreviewSeen, "WhatsApp raw preview must never appear").toBe(false);
+    expect(preview?.rawPreviewBeforeSanitized, "Raw preview must not appear before sanitized handoff").toBe(false);
+    expect(preview?.files).toEqual([
+      expect.objectContaining({ name: file.expectedOutputName, type: "image/png", sanitized: true })
+    ]);
+    const events = await getFileEvents(page);
+    expect(events.every((event) => event.name !== file.name), "WhatsApp must not receive the raw multiline image").toBe(true);
     await expectNoRawSecretVisible(page, file.secret);
   });
 
