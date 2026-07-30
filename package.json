@@ -59,7 +59,7 @@
     "validate:codex-release-env": "node scripts/validate-codex-cloud-release-env.mjs"
   },
   "devDependencies": {
-    "@playwright/test": "^1.61.1",
+    "@playwright/test": "^1.62.0",
     "eslint": "^10.6.0",
     "globals": "^17.7.0",
     "knip": "^6.24.0",
