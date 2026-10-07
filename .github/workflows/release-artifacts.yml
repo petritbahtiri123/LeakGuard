@@ -13,7 +13,7 @@ permissions:
 jobs:
   release-artifacts:
     name: Build release artifacts
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Checkout
